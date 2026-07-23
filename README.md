@@ -142,12 +142,18 @@ and screenshot wrappers after AWSM verifies their encrypted server copies. Those
 Artifacts require the configured Account and a network connection until retrieved again; compact
 Library data remains local.
 
-## Optional self-hosted synchronization
+## Optional synchronization
 
 The local client is the primary application. Synchronization is an optional coordination layer for
 encrypted data between devices.
 
-Start the development Coordination Server and PostgreSQL with Docker Compose:
+The extension offers the pre-release hosted Coordination Server at <https://awsm.foo> and supports
+compatible self-hosted Coordination Servers. The hosted origin is a synchronization API, not a web
+client: browsing, Capture, Search, Export, and Import remain trusted client behavior. The hosted
+service is not advertised as a production-ready public service.
+
+To run a self-hosted development server, start the Coordination Server and PostgreSQL with Docker
+Compose:
 
 ```bash
 docker compose up --build

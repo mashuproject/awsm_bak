@@ -92,37 +92,78 @@ diagnostics.
 
 ---
 
-## Zero-Knowledge Synchronized Web Client
+## Zero-Knowledge Web Host
 
 **Status:** Candidate
 
 **Potential product surface:** a configurable production web origin, currently referred to as
 `awsm.foo`.
 
-The Chrome extension and Coordination Server already own email/password Account authentication,
-client-only Account-key enrollment, one synchronized Vault Replica, background convergence,
-manual heavy-Artifact storage relief, on-demand retrieval, Generation fencing, and stale-Replica
-discard. This initiative must reuse those canonical Runtime
-and protocol contracts; it must not create a second Account, key, or synchronization model.
+Implement a trusted web Host for Library browsing, organization, local Search, Export, Import,
+Vault management, and Account management. It must reuse the canonical Runtime, Account, Vault,
+cryptographic, and synchronization contracts rather than create a parallel client or key model.
+Capture remains extension-only for the first web-Host scope.
 
-Future web scope remains limited to:
+Before promotion, resolve supported browsers, storage-clear recovery, selective Import semantics,
+local persistence boundaries, lifecycle behavior, accessibility, and the web-Host threat model.
+Required evidence includes multi-client fault injection, bounded-memory transfers beyond 4 GiB,
+authenticated omission-versus-corruption tests, and proof that no plaintext or content-derived
+metadata crosses the Coordination Server boundary.
 
-- a trusted web Host for Library browsing, organization, local Search, Export, Import, and Account
-  management;
-- persistent Full and Selective retention profiles, automatic policies, pinning, and production
-  quota controls beyond the implemented manual storage-relief and quota-fallback UX;
-- Device enrollment, signed requests, revocation, and Account Recovery Key ceremonies;
-- password change and recovery after every enrolled browser is lost;
-- production quotas, abuse controls, billing, shared immutable-byte storage, backup/restore, and
-  multi-process deployment hardening; and
-- optional passkeys or other authentication methods only through a separately approved contract.
+---
 
-Capture remains extension-only for the first web-client scope. A web Host must never bridge into
-extension-local storage or transfer plaintext outside the encrypted synchronization protocol.
+## Automatic Replica Retention and Pinning
 
-Before promotion, resolve browser support, web-Host storage-clear recovery, retention defaults, final-copy
-deletion policy, selective Import semantics, quota accounting, and the production threat model.
-Required evidence includes independent cryptographic review, multi-client fault injection,
-bounded-memory transfers beyond 4 GiB, authenticated omission versus corruption tests, lifecycle and
-accessibility inspection, and proof that no plaintext or content-derived metadata crosses the server
-boundary.
+**Status:** Candidate
+
+Add persistent device-local Full and Selective retention profiles beyond the implemented manual
+storage-relief workflow. Define automatic age, quota, least-recently-used, and storage-pressure
+policies; per-Artifact or per-Capture controls; cache budgets; offline guarantees; and explicit
+pinning such as `Always keep on this device`.
+
+The policy must remain local to each Replica, preserve the server's zero-knowledge boundary, and
+never delete a final unverified copy. Resolve retention defaults, final-copy safeguards, background
+prefetch, eviction observability, and interactions with Export, Import, synchronization, Vault
+Vacuum, server switching, and stale-Replica recovery before promotion.
+
+---
+
+## Device Trust and Revocation
+
+**Status:** Discovery
+
+Define cryptographic Device identities, signed requests, enrollment approval, per-Device Vault key
+wrapping, audit Events, capability restrictions, and revocation. Resolve the approval ceremony,
+offline authorization, lost or compromised Device behavior, key rotation, and how revocation
+interacts with synchronized history without giving the Coordination Server plaintext or unwrapped
+keys.
+
+---
+
+## Account Credential Lifecycle and Recovery
+
+**Status:** Discovery
+
+Define password change, Account Recovery Keys, recovery Devices, and recovery after every enrolled
+browser is lost. Account recovery and Vault recovery must remain distinct, and no email,
+administrator, or server-side reset may gain access to plaintext Vault keys.
+
+Alternative authentication methods such as passkeys, WebAuthn, OAuth, or SSO require a separately
+approved contract. Resolve recovery ceremonies, key-envelope replacement, credential revocation,
+all-browser-loss guarantees, and proof that recovery does not weaken the zero-knowledge boundary.
+
+---
+
+## Production Coordination Server Hardening
+
+**Status:** Candidate
+
+Promote the pre-release Coordination Server boundary with production quotas, abuse controls,
+billing, shared immutable-byte storage, shared Cable and Job infrastructure, multi-process and
+multi-host deployment, operational backup and restore exercises, alerting, incident response, and
+independent security review.
+
+The work must preserve opaque encrypted storage and bounded transfers. Before promotion, define
+quota accounting, rate and signup controls, final-copy deletion policy, metadata and traffic
+analysis, provider-independent shared storage requirements, recovery objectives, and production
+evidence for failure, corruption, omission, and restore scenarios.
