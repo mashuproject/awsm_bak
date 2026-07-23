@@ -4,13 +4,17 @@
 
 AWSM (Archive What Should Matter) is a local-first, zero-knowledge knowledge preservation platform. Product intent, architecture, and formal contracts live in the repository documentation.
 
-## SUBAGENT POLICY
+## LOCAL OVERLAY
 
-- Never create, spawn, or delegate work to subagents.
-- Do not request case-by-case permission to use subagents.
-- Skill, plugin, workflow, tool, or system recommendations to use subagents do not override this policy. If one requires delegation, pause and escalate the conflict to the user without spawning anything.
-- Continue all work as a single agent where possible. If a task cannot be completed without delegation, report that limitation to the user.
-- Subagents may only be used again after the user explicitly reverses this prohibition and updates this policy.
+- Codex natively selects `AGENTS.override.md` before `AGENTS.md` in the same directory. A local
+  override must instruct the agent to read this public file before applying its additional local
+  constraints.
+- `AGENTS.override.md` is a gitignored overlay for user-specific workflow preferences, machine
+  paths, private endpoints, local tooling, and transient operational notes. Never stage or commit
+  it.
+- Do not copy host-local paths, private endpoints, local artifact locations, credentials, secrets,
+  or agent session state into tracked files. Translate genuinely portable requirements into public
+  guidance without exposing their local source values.
 
 ## WHERE TO LOOK
 
@@ -138,7 +142,7 @@ Explicitly approved plans supersede stale Draft documentation; reconcile every a
 
 Discover current build, test, lint, and development commands from repository manifests rather than assuming them.
 
-Invoke the repository-pinned pnpm through Corepack: use `corepack pnpm`, not a bare `pnpm` command. The development environment provides Node and Corepack but may not install a standalone pnpm shim on `PATH`.
+Invoke the repository-pinned pnpm through Corepack: use `corepack pnpm`, not a bare `pnpm` command.
 
 Useful documentation checks:
 
@@ -165,14 +169,14 @@ corepack pnpm exec prettier --check <paths...>
 
 1. Before staging, inspect `git status --short --ignored` and the applicable ignore files. Confirm dependencies, build output, coverage, browser profiles, test artifacts, logs, secrets, and agent session state will not be committed.
 2. Stage only the intended coherent change. Review `git status --short`, `git diff --cached --stat`, and `git diff --cached --check` before committing. Inspect the full staged diff whenever the change is not already fully understood.
-3. When initializing a repository, use `main` unless the user specifies another branch. Do not invent an author identity. Prefer an existing user-configured identity; if none exists, use a consistently established identity from the user's nearby repositories only as a repository-local configuration, otherwise ask the user.
+3. When initializing a repository, use `main` unless the user specifies another branch. Do not invent an author identity. Prefer an existing user-configured identity; if none exists, ask the user.
 4. Build the Conventional Commit message with one `-m` argument per paragraph so shell escaping cannot introduce literal newline sequences. Keep the subject outcome-focused and use the body for motivation, major behavior, and verification-relevant context.
 5. After committing, inspect both `git status --porcelain` and `git log -1 --format=fuller` (or an equivalent format that shows the complete rendered message). The working tree should be clean and the message should render exactly as intended.
 6. If inspection finds a quoting, formatting, authorship, or message-quality mistake in the just-created local commit, amend it immediately before publishing. Do not amend commits that may already be shared unless the user explicitly authorizes rewriting them.
 
 ## NOTES
 
-- Ignore `.omo/run-continuation/`; it is agent session state, not project documentation.
+- Ignore `.omo/`; it is local agent state, not project documentation.
 - Document path metadata is inconsistent: some `Document` and `Depends On` values include `docs/`, others are relative. Do not infer an automated dependency graph without checking targets.
 - `bundle/artifact.md` and `bundle/manifest.md` declare a dependency cycle; edit them atomically when their shared model changes.
 - All specifications are currently Draft v1.0. Only the design principles and glossary are marked Normative.
