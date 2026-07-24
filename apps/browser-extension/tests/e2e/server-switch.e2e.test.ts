@@ -75,8 +75,9 @@ test("publishes a live source Vault to an empty candidate server", async ({
     await observerLibrary.goto(`chrome-extension://${observer.extensionId}/library.html`);
 
     await library.getByRole("button", { name: "Settings" }).click();
+    await library.getByRole("tab", { name: "Account" }).click();
     let settings = library.getByRole("dialog", {
-      name: "Account and synchronization",
+      name: "Settings",
     });
     await settings
       .getByRole("textbox", { name: "Change synchronization server" })
@@ -85,8 +86,9 @@ test("publishes a live source Vault to an empty candidate server", async ({
     await settings.getByRole("button", { name: "Change server" }).click();
     await expect(settings).toBeHidden({ timeout: 60_000 });
     await library.getByRole("button", { name: "Settings" }).click();
+    await library.getByRole("tab", { name: "Account" }).click();
     settings = library.getByRole("dialog", {
-      name: "Account and synchronization",
+      name: "Settings",
     });
     await expect(settings.getByText(/current server remains active/u)).toBeVisible();
     await library.screenshot({
@@ -252,7 +254,9 @@ test("fast-forwards a stale local Replica from a candidate successor", async ({
       "server-switch-fast-forward-local",
     );
     expect(await activeGeneration(stalePage)).toEqual(successor);
-    await expect(liveSurface.getByText("Deleted is empty.")).toBeVisible({ timeout: 60_000 });
+    await expect(liveSurface.getByText("Deleted is empty.")).toBeVisible({
+      timeout: 60_000,
+    });
     await stalePage.getByText("Deleted (0)", { exact: true }).click();
     await expect(stalePage.getByText("Deleted is empty.")).toBeVisible();
     expect(await localAuthoritySnapshot(stalePage)).toEqual(candidateAuthority);
@@ -374,10 +378,9 @@ test("reports sibling successor Generations as a conflict without changing serve
     });
     expect(await activeGeneration(setup.page)).toEqual(localSuccessor);
     await setup.page.getByRole("button", { name: "Settings" }).click();
+    await setup.page.getByRole("tab", { name: "Account" }).click();
     await expect(setup.page.getByRole("heading", { name: "Server switch conflict" })).toBeVisible();
-    const text = await setup.page
-      .getByRole("dialog", { name: "Account and synchronization" })
-      .innerText();
+    const text = await setup.page.getByRole("dialog", { name: "Settings" }).innerText();
     expect(text).not.toMatch(/(?:Generation|Object|Event|Account|key) ID|ciphertext/iu);
     await setup.page.screenshot({
       path: testInfo.outputPath("server-switch-conflict-desktop.png"),

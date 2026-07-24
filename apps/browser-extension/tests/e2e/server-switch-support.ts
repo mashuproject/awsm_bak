@@ -437,7 +437,7 @@ export async function archiveFixture(
       )
       .toBe(true);
     captured = terminal?.state === "Succeeded";
-    if (!captured && (terminal?.errorId !== "MHTML_CAPTURE_FAILED" || attempt > 0))
+    if (!captured && (terminal?.errorId !== "PAGE_SNAPSHOT_FAILED" || attempt > 0))
       throw new Error(`Capture failed: ${JSON.stringify(terminal)}`);
   }
   const observer = await client.context.newPage();

@@ -29,7 +29,7 @@ descriptorVersion: 1
 bundleId: canonical UUID
 createdAt: canonical UTC timestamp
 clientVersion: non-empty string
-captureProfileId: ChromeWebPage-v1
+captureProfileId: WebPageSnapshot-v1
 captureAdapterVersion: 1
 metadata: CaptureMetadataV1
 artifacts: ArtifactReferenceV1[]

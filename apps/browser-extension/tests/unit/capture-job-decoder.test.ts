@@ -10,7 +10,7 @@ it("rejects fields outside the non-sensitive canonical Capture Job schema", () =
       commandId: "00000000-0000-4000-8000-000000000002",
       tabId: 7,
       state: "Running",
-      stage: "MHTML",
+      stage: "Snapshot",
       createdAt: "2026-07-16T17:00:00.000Z",
       updatedAt: "2026-07-16T17:00:01.000Z",
       url: "https://secret.test",

@@ -149,13 +149,13 @@ type ArtifactKind = "CAPTURE" | "IMAGE" | "TEXT" | "STRUCTURED_CONTENT";
 
 The closed Role contracts are:
 
-| Role                 | Kind                 | MIME type                  | Production rule                        | Selective omission |
-| -------------------- | -------------------- | -------------------------- | -------------------------------------- | ------------------ |
-| `PRIMARY`            | `CAPTURE`            | `multipart/related`        | mandatory, non-empty                   | permitted          |
-| `SCREENSHOT_FULL`    | `IMAGE`              | `image/webp`               | best effort, non-empty                 | permitted          |
-| `THUMBNAIL`          | `IMAGE`              | `image/webp`               | best effort, 640×360, non-empty        | prohibited         |
-| `TEXT_EXTRACTED`     | `TEXT`               | `text/plain;charset=utf-8` | best effort, empty permitted           | prohibited         |
-| `CONTENT_STRUCTURED` | `STRUCTURED_CONTENT` | `application/cbor-seq`     | best effort, empty block set permitted | prohibited         |
+| Role                 | Kind                 | MIME type                           | Production rule                        | Selective omission |
+| -------------------- | -------------------- | ----------------------------------- | -------------------------------------- | ------------------ |
+| `PRIMARY`            | `CAPTURE`            | `application/vnd.awsm.web-page+zip` | mandatory, valid                       | permitted          |
+| `SCREENSHOT_FULL`    | `IMAGE`              | `image/webp`                        | best effort, non-empty                 | permitted          |
+| `THUMBNAIL`          | `IMAGE`              | `image/webp`                        | best effort, 640×360, non-empty        | prohibited         |
+| `TEXT_EXTRACTED`     | `TEXT`               | `text/plain;charset=utf-8`          | best effort, empty permitted           | prohibited         |
+| `CONTENT_STRUCTURED` | `STRUCTURED_CONTENT` | `application/cbor-seq`              | best effort, empty block set permitted | prohibited         |
 
 Unknown Kinds, Roles, MIME types, duplicate Roles, or Role/Kind/MIME mismatches SHALL be rejected.
 Each Bundle has exactly one `PRIMARY` reference and at most one reference for every optional Role.
@@ -197,7 +197,7 @@ interface BundleDescriptorV1 {
   readonly bundleId: string;
   readonly createdAt: string;
   readonly clientVersion: string;
-  readonly captureProfileId: "ChromeWebPage-v1";
+  readonly captureProfileId: "WebPageSnapshot-v1";
   readonly captureAdapterVersion: 1;
   readonly metadata: CaptureMetadataV1;
   readonly artifacts: readonly ArtifactReferenceV1[];
@@ -267,7 +267,7 @@ interface BundleRegisteredPayloadV1 {
   readonly descriptorObjectId: string;
   readonly artifactObjectIds: readonly string[];
   readonly collectionId: string;
-  readonly captureProfileId: "ChromeWebPage-v1";
+  readonly captureProfileId: "WebPageSnapshot-v1";
   readonly warnings: readonly CaptureWarningId[];
 }
 ```
@@ -594,7 +594,7 @@ Replace the Capture Job stages with:
 
 ```text
 Preflight
-MHTML
+Snapshot
 Content
 Screenshot
 Commit
@@ -604,7 +604,7 @@ The pass through a page is:
 
 1. validate active Vault, URL, permission, idempotency, and management lease;
 2. create the Capture Job;
-3. acquire mandatory MHTML as a Blob and stream-encrypt it;
+3. collect, package, and validate the mandatory page snapshot, then stream-encrypt it;
 4. collect metadata and stream live-DOM semantic blocks plus normalized text;
 5. acquire and stream-encrypt full screenshot and thumbnail best effort;
 6. validate every successfully prepared Artifact;
@@ -619,8 +619,8 @@ records or Artifact files.
 
 ## 8.2 Host streaming
 
-- `pageCapture.saveAsMHTML` returns its Blob unchanged. Remove the current `arrayBuffer()` copy and
-  stream `blob.stream()`.
+- Page-snapshot packaging streams its ZIP64-capable output into temporary OPFS storage and passes
+  the validated staged Blob directly to chunk encryption.
 - The screenshot offscreen document may use canvas/Blob internally because image encoding requires
   it, but it SHALL return bounded Blob slices over an acknowledged port instead of one complete
   base64 string.
@@ -1033,10 +1033,11 @@ and raw-file scans proving known plaintext is absent.
 ## Task 5: Atomic Bundle graph Capture
 
 **RED:** Runtime and IndexedDB tests require five-Artifact success, every independent optional
-failure, mandatory MHTML failure, exact Event closure, and rollback at every store write.
+failure, mandatory snapshot failure, exact Event closure, and rollback at every store write.
 
 **GREEN:** replace Bundle construction with streamed Artifact preparation, descriptor encryption,
-and multi-Object atomic registration. Stream MHTML and offscreen image output in bounded chunks.
+and multi-Object atomic registration. Stream page-snapshot and offscreen image output in bounded
+chunks.
 
 **Verification:** unit, integration, worker-restart, idempotency, quota, cancellation, dynamic-page,
 and no-partial-authority tests.
@@ -1147,7 +1148,8 @@ The feature is complete only when every statement is true:
    whole-Bundle limit remains.
 2. Every Capture has one encrypted descriptor and one independently encrypted Object per successful
    Artifact.
-3. `PRIMARY` MHTML remains mandatory; all other Artifacts are best effort with typed visible warnings.
+3. The `PRIMARY` page snapshot remains mandatory; all other Artifacts are best effort with typed
+   visible warnings.
 4. Empty text creates valid empty text and structured Artifacts rather than a failure.
 5. Artifact plaintext is never persisted in IndexedDB, OPFS, logs, diagnostics, package metadata,
    or temporary extension files.

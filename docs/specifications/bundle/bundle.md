@@ -23,7 +23,7 @@ independently encrypted Artifact Object for each successfully produced payload.
 # 2. Graph
 
 Every Bundle SHALL contain exactly one Bundle Descriptor and one or more Artifact references. The
-initial `ChromeWebPage-v1` Capture Profile requires `PRIMARY` and permits `SCREENSHOT_FULL`,
+initial `WebPageSnapshot-v1` Capture Profile requires `PRIMARY` and permits `SCREENSHOT_FULL`,
 `THUMBNAIL`, `TEXT_EXTRACTED`, and `CONTENT_STRUCTURED`.
 
 The descriptor Object ID is independent of the Bundle ID. Each Artifact ID is its Object ID. All
@@ -66,6 +66,7 @@ invalid MIME contracts, closure mismatches, warning mismatches, or checksum/leng
 
 - `artifact.md`
 - `manifest.md`
+- `page-snapshot.md`
 - `../event/event.md`
 - `../storage/object-store.md`
 - `../portability/import-export.md`

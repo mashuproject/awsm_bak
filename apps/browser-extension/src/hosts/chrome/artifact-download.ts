@@ -8,6 +8,7 @@ import {
 import { mhtmlDownloadFilenameSuggestion } from "./mhtml-download";
 
 const DIRECTORY = "awsm-artifact-downloads";
+const SNAPSHOT_DIRECTORY = "awsm-page-snapshots";
 
 const listeners = new Map<
   ChromeDownloadListener,
@@ -45,6 +46,8 @@ function downloadError(cause?: unknown): Error {
 }
 
 function preparedUrl(value: unknown): string {
+  if (typeof value === "object" && value !== null && "error" in value && value.error === true)
+    throw downloadError();
   if (
     typeof value !== "object" ||
     value === null ||
@@ -59,15 +62,18 @@ function preparedUrl(value: unknown): string {
 export class ChromeMhtmlDownloadHost {
   async download(
     input: {
-      readonly temporaryName: string;
+      readonly snapshotTemporaryName: string;
+      readonly mhtmlTemporaryName: string;
       readonly filename: string;
       readonly stream: ReadableStream<Uint8Array>;
     },
     signal: AbortSignal,
   ): Promise<void> {
     const root = await navigator.storage.getDirectory();
-    const directory = await root.getDirectoryHandle(DIRECTORY, { create: true });
-    const handle = await directory.getFileHandle(input.temporaryName, { create: true });
+    const snapshotDirectory = await root.getDirectoryHandle(SNAPSHOT_DIRECTORY, { create: true });
+    const handle = await snapshotDirectory.getFileHandle(input.snapshotTemporaryName, {
+      create: true,
+    });
     const writable = await handle.createWritable({ keepExistingData: false });
     try {
       await input.stream.pipeTo(writable, { signal });
@@ -85,7 +91,8 @@ export class ChromeMhtmlDownloadHost {
       try {
         const prepared: unknown = await browser.runtime.sendMessage({
           type: "awsm:prepare-mhtml-download",
-          temporaryName: input.temporaryName,
+          snapshotTemporaryName: input.snapshotTemporaryName,
+          mhtmlTemporaryName: input.mhtmlTemporaryName,
         });
         signal.throwIfAborted();
         const url = preparedUrl(prepared);
@@ -113,13 +120,13 @@ export class ChromeMhtmlDownloadHost {
         await browser.runtime
           .sendMessage({
             type: "awsm:release-mhtml-download",
-            temporaryName: input.temporaryName,
+            mhtmlTemporaryName: input.mhtmlTemporaryName,
           })
           .catch(() => undefined);
         if (createdDocument) await browser.offscreen.closeDocument().catch(() => undefined);
       }
     } finally {
-      await directory.removeEntry(input.temporaryName).catch(() => undefined);
+      await snapshotDirectory.removeEntry(input.snapshotTemporaryName).catch(() => undefined);
     }
   }
 
@@ -128,9 +135,12 @@ export class ChromeMhtmlDownloadHost {
     const directory = await root.getDirectoryHandle(DIRECTORY, { create: true });
     for await (const name of directory.keys())
       await directory.removeEntry(name).catch(() => undefined);
+    const snapshots = await root.getDirectoryHandle(SNAPSHOT_DIRECTORY, { create: true });
+    for await (const name of snapshots.keys())
+      await snapshots.removeEntry(name).catch(() => undefined);
   }
 }
 
 export function mhtmlDownloadFilename(bundleId: string): string {
-  return `awsm-${bundleId.slice(0, 8)}-mhtml.mhtml`;
+  return `awsm-${bundleId.slice(0, 8)}-page.mhtml`;
 }

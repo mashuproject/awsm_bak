@@ -102,14 +102,17 @@ The standard pipeline is:
 2. Run capability preflight
 3. Freeze page state
 4. Collect metadata
-5. Stream mandatory MHTML into a prepared `PRIMARY` Artifact
-6. Collect structured content and normalized text
-7. Stream and stitch screenshot tiles, then derive a thumbnail
-8. Prepare one independently encrypted Object per successful Artifact
-9. Generate and encrypt the Bundle Descriptor
-10. Validate the exact descriptor and Artifact dependency closure
-11. Atomically persist records, Event, Projection, and command outcome
-12. Publish one canonical invalidation after commit
+5. Capture the rendered top document, accessible same-origin frames, live form state, open shadow
+   roots, and an ordered resource inventory in one acknowledged frozen result
+6. Capture the screenshot immediately from that frozen state
+7. Acquire permitted resource bodies and record typed omissions
+8. Derive structured content and normalized text from the frozen result
+9. Stream and validate the mandatory page-snapshot ZIP64 container in temporary OPFS storage
+10. Prepare one independently encrypted Object per successful Artifact
+11. Generate and encrypt the Bundle Descriptor
+12. Validate the exact descriptor and Artifact dependency closure
+13. Atomically persist records, Event, Projection, and command outcome
+14. Publish one canonical invalidation after commit
 
 ---
 
@@ -166,30 +169,27 @@ Metadata becomes part of the Bundle.
 
 A Capture Profile determines which representations are produced.
 
-Examples:
-
-- MHTML
-- HTML
-- DOM snapshot
-- PDF (future)
-- Markdown (future)
-
-Profiles MAY request multiple representations.
-
 The first implementation profile SHALL be:
 
 ```text
-ChromeWebPage-v1
+WebPageSnapshot-v1
 ```
 
 This profile requires:
 
 - an HTTP(S) target
-- MHTML Host capability
-- one non-empty MHTML Artifact with Kind `CAPTURE`, Role `PRIMARY`, and MIME type `multipart/related`
+- one valid AWSM page-snapshot Artifact with Kind `CAPTURE`, Role `PRIMARY`, and MIME type
+  `application/vnd.awsm.web-page+zip`
 - required capture metadata
 
-The profile requests a lossy full-page WebP as a best-effort Artifact with Kind `IMAGE`, Role `SCREENSHOT_FULL`, and MIME type `image/webp`. MHTML remains the mandatory high-fidelity representation; the screenshot is a space-efficient visual preview.
+The page snapshot preserves the post-render DOM, live non-file form state, accessible same-origin
+frames, captured resource bodies, and typed omissions. Its canonical contract is defined by the
+Page Snapshot Container Specification. MHTML is an on-demand, inert download derivative and is
+never an Artifact or synchronized Vault state.
+
+The profile requests a lossy full-page WebP as a best-effort Artifact with Kind `IMAGE`, Role
+`SCREENSHOT_FULL`, and MIME type `image/webp`. The snapshot remains the mandatory preserved
+representation; the screenshot is a space-efficient visual preview.
 
 The profile also requests a 640×360 WebP `THUMBNAIL`, canonical-CBOR-sequence
 `CONTENT_STRUCTURED`, and normalized UTF-8 `TEXT_EXTRACTED`. These are best effort. Structured and
@@ -197,7 +197,8 @@ text outputs SHALL derive from the same size-bounded live-DOM block sequence. A 
 collects the sequence through an injected page function SHALL return it in one acknowledged script
 result so page lifecycle changes cannot interrupt a multi-message producer handshake.
 
-Failure to produce the WebP SHALL record a typed warning but SHALL NOT invalidate otherwise valid required MHTML.
+Failure to produce the WebP SHALL record a typed warning but SHALL NOT invalidate an otherwise
+valid required snapshot.
 
 ---
 
@@ -302,11 +303,8 @@ Hosts SHALL expose browser capabilities.
 
 Unavailable capabilities SHALL degrade gracefully.
 
-Examples:
-
-- MHTML unavailable
-- full-page capture unavailable
-- restricted URLs
+Examples include unavailable screenshot capture, restricted URLs, and inaccessible frames or
+resources.
 
 ---
 
@@ -322,9 +320,9 @@ Incomplete Bundles are never stored.
 
 Capability preflight completes before any Bundle is generated.
 
-The `ChromeWebPage-v1` profile never persists a Bundle without valid MHTML.
+The `WebPageSnapshot-v1` profile never persists a Bundle without a valid canonical page snapshot.
 
-Screenshot warnings never weaken mandatory MHTML validation.
+Screenshot and omission warnings never weaken mandatory snapshot validation.
 
 ---
 

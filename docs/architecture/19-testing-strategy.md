@@ -126,9 +126,11 @@ The following invariants are fundamental.
 - Complete Export tests source remote-only wrappers through active or Recovery Snapshot tickets
   without local rehydration. Chrome Download Host tests register completion observation before
   starting a download, reconcile already-terminal downloads, surface interruption as a typed
-  failure, and prove a failed imported-Vault re-export can be retried successfully. MHTML Download
-  Host tests inspect Chromium's completed output and prove the canonical `.mhtml` filename,
-  `multipart/related` media type, and exact verified plaintext bytes. Server-switch
+  failure, and prove a failed imported-Vault re-export can be retried successfully. Page-snapshot
+  tests validate canonical members, manifest, streaming limits, Export/Import, and synchronization.
+  MHTML Download Host tests inspect Chromium's completed derived output and prove the canonical
+  `.mhtml` filename, `multipart/related` media type, sanitizer invariants, and deterministic bytes.
+  Server-switch
   tests relay source-only wrappers, terminalize source authentication expiry, source corruption,
   and candidate upload interruption without changing source authority or availability, and clear
   availability only when a fully local candidate Replica is installed.

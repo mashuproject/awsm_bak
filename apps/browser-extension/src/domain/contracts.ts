@@ -6,6 +6,7 @@ export const CAPTURE_WARNINGS = [
   "THUMBNAIL_CAPTURE_FAILED",
   "TEXT_EXTRACTION_FAILED",
   "STRUCTURED_CONTENT_EXTRACTION_FAILED",
+  "PAGE_SNAPSHOT_INCOMPLETE",
 ] as const;
 
 export type CaptureWarningId = (typeof CAPTURE_WARNINGS)[number];
@@ -14,8 +15,9 @@ export const RUNTIME_ERROR_IDS = [
   "VAULT_LOCKED",
   "UNSUPPORTED_URL",
   "PERMISSION_DENIED",
-  "MHTML_UNAVAILABLE",
-  "MHTML_CAPTURE_FAILED",
+  "PAGE_SNAPSHOT_FAILED",
+  "PAGE_SNAPSHOT_TOO_LARGE",
+  "PAGE_PACKAGE_FAILED",
   "MHTML_DOWNLOAD_FAILED",
   "CAPTURE_INTERRUPTED",
   "BUNDLE_INVALID",
@@ -75,7 +77,7 @@ export interface CapturePageCommandV1 {
   readonly createdAt: string;
   readonly tabId: number;
   readonly observedUrl: string;
-  readonly captureProfileId: "ChromeWebPage-v1";
+  readonly captureProfileId: "WebPageSnapshot-v1";
   readonly idempotencyKey: string;
 }
 
@@ -109,7 +111,13 @@ export interface LibraryItemV1 {
 }
 
 export type CaptureJobState = "Created" | "Running" | "Succeeded" | "Failed";
-export type CaptureJobStage = "Preflight" | "MHTML" | "Content" | "Screenshot" | "Commit";
+export type CaptureJobStage =
+  | "Preflight"
+  | "Snapshot"
+  | "Screenshot"
+  | "Resources"
+  | "Package"
+  | "Commit";
 
 export interface CaptureJob {
   readonly version: 1;

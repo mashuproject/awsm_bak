@@ -20,7 +20,7 @@ export function decodeCapturePageCommand(value: unknown): CapturePageCommandV1 {
     observedUrl: httpUrl(input.observedUrl, "command.observedUrl"),
     captureProfileId: literal(
       input.captureProfileId,
-      "ChromeWebPage-v1",
+      "WebPageSnapshot-v1",
       "command.captureProfileId",
     ),
     idempotencyKey,

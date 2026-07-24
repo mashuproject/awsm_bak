@@ -2,10 +2,6 @@ import { browser } from "wxt/browser";
 import { wipe } from "../crypto/sodium";
 import { RUNTIME_ERROR_IDS, type RuntimeErrorId } from "../domain/contracts";
 import {
-  encodeStructuredContentSequence,
-  normalizedTextFromBlocks,
-} from "../domain/structured-content";
-import {
   IndexedDbAccountRepository,
   IndexedDbDriver,
   IndexedDbImportRepository,
@@ -19,10 +15,11 @@ import { ChromeAccountServerHost } from "../hosts/chrome/account-server";
 import { ChromeCaptureHost, ChromeScreenshotHost } from "../hosts/chrome/api";
 import { ChromeMhtmlDownloadHost, mhtmlDownloadFilename } from "../hosts/chrome/artifact-download";
 import { ChromeArtifactStore } from "../hosts/chrome/artifact-store";
-import { acquireMandatoryMhtml, preflightCapture } from "../hosts/chrome/capture";
+import { preflightCapture } from "../hosts/chrome/capture";
 import { ChromeVaultExportHost } from "../hosts/chrome/export";
 import { ChromeVaultImportHost } from "../hosts/chrome/import";
 import { acquireBestEffortScreenshot } from "../hosts/chrome/screenshot";
+import { reconcileTemporaryFiles, stagePlaintextFile } from "../hosts/shared/temporary-file";
 import { TestingFaultCheckpoint } from "../hosts/testing/fault-checkpoint";
 import { CoordinationAccountHttp } from "../runtime/account/http";
 import { configureSyncServer, validateSyncServer } from "../runtime/account/server";
@@ -50,6 +47,7 @@ import {
   type VacuumRepository,
   VaultVacuumService,
 } from "../runtime/library/vacuum";
+import { validatePageSnapshot, writePageSnapshot } from "../runtime/page-snapshot";
 import { StorageReliefCandidateEnumerator } from "../runtime/storage-relief/candidates";
 import { ActiveGenerationStorageReliefProver } from "../runtime/storage-relief/proof";
 import { StorageReliefJobRunner } from "../runtime/storage-relief/runner";
@@ -1576,7 +1574,7 @@ function artifactFilename(
 ): string {
   const extension =
     role === "PRIMARY"
-      ? "mhtml"
+      ? "awsm-page"
       : role === "TEXT_EXTRACTED"
         ? "txt"
         : role === "CONTENT_STRUCTURED"
@@ -1711,6 +1709,7 @@ async function reconcileServerSwitchOnStartup(
 }
 
 const startup = contexts.initialize().then(async () => {
+  await reconcileTemporaryFiles();
   await mhtmlDownloadHost.cleanupOrphans();
   await browser.alarms.create("awsm:synchronization-poll", {
     periodInMinutes: 1,
@@ -1797,8 +1796,9 @@ function safeError(error: unknown): AppResponse {
     VAULT_LOCKED: "Unlock the Vault to continue.",
     UNSUPPORTED_URL: "Only regular HTTP and HTTPS pages can be captured.",
     PERMISSION_DENIED: "Chrome did not grant capture permission.",
-    MHTML_UNAVAILABLE: "This Chrome installation cannot capture MHTML.",
-    MHTML_CAPTURE_FAILED: "Chrome could not archive this page as MHTML.",
+    PAGE_SNAPSHOT_FAILED: "The rendered page could not be collected.",
+    PAGE_SNAPSHOT_TOO_LARGE: "The rendered page exceeds the Capture size limit.",
+    PAGE_PACKAGE_FAILED: "The page snapshot could not be packaged safely.",
     MHTML_DOWNLOAD_FAILED: "The MHTML archive could not be downloaded.",
     CAPTURE_INTERRUPTED: "Capture was interrupted. Retry it manually.",
     BUNDLE_INVALID: "The archived capture is missing or corrupt.",
@@ -2414,14 +2414,12 @@ async function captureActivePage(
     createdAt: new Date().toISOString(),
     tabId: tab.id,
     observedUrl: tab.url,
-    captureProfileId: "ChromeWebPage-v1" as const,
+    captureProfileId: "WebPageSnapshot-v1" as const,
     idempotencyKey: commandId,
   };
   const selectedHost = {
     getActiveTab: async () => tab,
     hasCapturePermission: () => captureHost.hasCapturePermission(),
-    isMhtmlAvailable: () => captureHost.isMhtmlAvailable(),
-    saveAsMhtml: (selectedTabId: number) => captureHost.saveAsMhtml(selectedTabId),
   };
   const runtime = new CaptureRuntime({
     vaultId: records.metadata.vaultId,
@@ -2442,21 +2440,26 @@ async function captureActivePage(
       return outcome;
     },
     preflight: () => preflightCapture(selectedHost, context.vault.isUnlocked()),
-    acquireMhtml: (tabId) => acquireMandatoryMhtml(captureHost, tabId),
-    collectContent: async (tabId) => {
-      try {
-        const blocks = await captureHost.collectStructuredContent(tabId);
-        return {
-          structured: encodeStructuredContentSequence(blocks),
-          normalizedText: normalizedTextFromBlocks(blocks),
-          warnings: [],
-        };
-      } catch {
-        return {
-          warnings: ["STRUCTURED_CONTENT_EXTRACTION_FAILED", "TEXT_EXTRACTION_FAILED"] as const,
-        };
-      }
-    },
+    collectSnapshot: (captureCommand, preflight, capturedAt, onFrozen) =>
+      captureHost.collectPageSnapshot(
+        preflight.tabId,
+        captureCommand,
+        capturedAt,
+        browser.runtime.getManifest().version,
+        onFrozen,
+      ),
+    packageSnapshot: (input) =>
+      stagePlaintextFile(".awsm-page.tmp", async (output) => {
+        await writePageSnapshot(input, output);
+      }).then(async (staged) => {
+        try {
+          await validatePageSnapshot(staged.blob);
+          return staged;
+        } catch (error) {
+          await staged.cleanup();
+          throw error;
+        }
+      }),
     acquireScreenshot: async (tabId) => {
       try {
         return await acquireBestEffortScreenshot(await ChromeScreenshotHost.create(tabId));
@@ -2464,13 +2467,6 @@ async function captureActivePage(
         return { warnings: ["SCREENSHOT_UNAVAILABLE"] };
       }
     },
-    collectMetadata: (captureCommand, preflight) =>
-      captureHost.collectMetadata(
-        preflight.tabId,
-        captureCommand,
-        new Date().toISOString(),
-        browser.runtime.getManifest().version,
-      ),
     collectionContext: async () => {
       const service = await library(expectedVaultId);
       const [items, topology] = await Promise.all([service.list(), service.topology()]);
@@ -3194,6 +3190,10 @@ async function handle(request: AppRequest): Promise<AppResponse> {
         };
       }
       case "OpenArtifact": {
+        if (request.role === "PRIMARY")
+          throw Object.assign(new Error("Use Download MHTML for the primary page snapshot."), {
+            id: "BUNDLE_INVALID",
+          });
         const service = await library(request.expectedVaultId);
         const opened = await service.openArtifact(request.bundleId, request.role);
         const wasRemote = await storageReliefRepository.isArtifactRemoteOnly(
@@ -3230,7 +3230,8 @@ async function handle(request: AppRequest): Promise<AppResponse> {
         const filename = mhtmlDownloadFilename(request.bundleId);
         await mhtmlDownloadHost.download(
           {
-            temporaryName: `${crypto.randomUUID()}.mhtml.tmp`,
+            snapshotTemporaryName: `${crypto.randomUUID()}.awsm-page.tmp`,
+            mhtmlTemporaryName: `${crypto.randomUUID()}.mhtml.tmp`,
             filename,
             stream: opened.stream,
           },

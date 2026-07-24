@@ -171,7 +171,7 @@ Browser example:
 
 - page URL
 - page title
-- MHTML snapshot
+- rendered DOM snapshot and permitted resource bodies
 - full-page screenshot
 - favicon
 - browser metadata
@@ -247,7 +247,7 @@ The browser adapter should collect, where available:
 - current URL
 - final resolved URL
 - page title
-- MHTML snapshot
+- rendered page snapshot and permitted resource bodies
 - full-page screenshot
 - viewport dimensions
 - document dimensions
@@ -267,13 +267,17 @@ Optional:
 
 The platform should tolerate unavailable fields.
 
-## Initial Chrome Capture Profile
+## Initial Web Page Capture Profile
 
-The first implementation profile is `ChromeWebPage-v1`.
+The first implementation profile is `WebPageSnapshot-v1`.
 
-The profile requires an HTTP(S) target, required capture metadata, and a valid high-fidelity MHTML `PRIMARY` Artifact. It requests a lossy full-page WebP `SCREENSHOT_FULL` preview on a best-effort basis.
+The profile requires an HTTP(S) target, browser-neutral capture metadata, and a valid canonical
+AWSM page-snapshot `PRIMARY` Artifact. It requests a lossy full-page WebP `SCREENSHOT_FULL` preview
+on a best-effort basis.
 
-Failure to acquire MHTML fails before Bundle persistence. Failure to encode the WebP records a warning and preserves the valid MHTML Bundle.
+Failure to collect, package, or validate the snapshot fails before Bundle persistence. Optional
+omissions are typed in the snapshot and produce one `PAGE_SNAPSHOT_INCOMPLETE` warning. Failure to
+encode the WebP records a warning and preserves the valid snapshot Bundle.
 
 Live page acquisition is not automatically resumed after Runtime interruption because the external page may have changed. Recovery either recognizes an already committed Command outcome or requires a new user-initiated capture.
 
@@ -287,15 +291,9 @@ The adapter abstracts these differences.
 
 Examples:
 
-Chrome:
-
-- native MHTML support
-- full-page capture APIs
-
-Firefox:
-
-- different extension APIs
-- different permission model
+Chrome and Firefox expose different screenshot, lifecycle, storage, and download APIs. Hosts adapt
+those mechanics to the same frozen-snapshot and Artifact contracts. Native browser archive formats
+are not Capture inputs.
 
 The Capture Pipeline remains unchanged.
 

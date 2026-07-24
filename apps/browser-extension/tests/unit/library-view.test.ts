@@ -41,7 +41,7 @@ describe("Library collection navigation", () => {
     expect(storageReliefConfirmation(2, 3_250_586)).toBe(
       "Remove up to 3.1 MiB from this device?\n\n" +
         "AWSM will verify each encrypted server copy before removing its local copy.\n\n" +
-        "These 2 MHTML archives and screenshots will require your Account and a connection until retrieved again.",
+        "These 2 page snapshots and screenshots will require your Account and a connection until retrieved again.",
     );
   });
 

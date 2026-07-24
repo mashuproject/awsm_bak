@@ -3,4 +3,5 @@ packages:
 
 allowBuilds:
   esbuild: true
+  geckodriver: true
   spawn-sync: true

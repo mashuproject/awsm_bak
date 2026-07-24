@@ -23,7 +23,7 @@ const command: CapturePageCommandV1 = {
   createdAt: timestamp,
   tabId: 7,
   observedUrl: "https://fixture.test/start",
-  captureProfileId: "ChromeWebPage-v1",
+  captureProfileId: "WebPageSnapshot-v1",
   idempotencyKey: fixedId(0),
 };
 const metadata: CaptureMetadataV1 = {
@@ -35,9 +35,10 @@ const metadata: CaptureMetadataV1 = {
   contentType: "text/html",
   viewport: { width: 800, height: 600 },
   document: { width: 800, height: 1200 },
-  chromeVersion: "149",
+  browserName: "Chrome",
+  browserVersion: "149",
   extensionVersion: "0.1.0",
-  captureProfileId: "ChromeWebPage-v1",
+  captureProfileId: "WebPageSnapshot-v1",
   captureProfileVersion: 1,
 };
 
@@ -85,7 +86,11 @@ function registration(): AtomicRegistrationV1 {
       orderingTimestamp: timestamp,
       envelopeBytes: new Uint8Array([2]),
     },
-    projection: { version: 1, bundleId: result.bundleId, envelopeBytes: new Uint8Array([3]) },
+    projection: {
+      version: 1,
+      bundleId: result.bundleId,
+      envelopeBytes: new Uint8Array([3]),
+    },
     outcome: result,
   };
 }
@@ -102,17 +107,38 @@ function ports(overrides: Partial<CaptureRuntimePorts> = {}): CaptureRuntimePort
     saveJob: vi.fn(async () => undefined),
     commitRegistration: vi.fn(async (value) => value.outcome),
     preflight: vi.fn(async () => ({ tabId: 7, url: command.observedUrl })),
-    acquireMhtml: vi.fn(async () => new Blob(["MIME-Version: 1.0"])),
+    collectSnapshot: vi.fn(async () => ({
+      metadata,
+      documents: [
+        {
+          originalUrl: metadata.originalUrl,
+          finalUrl: metadata.finalUrl,
+          bytes: new TextEncoder().encode("<!doctype html><title>Fixture</title>"),
+          scrollX: 0,
+          scrollY: 0,
+        },
+      ],
+      resources: [],
+      omissions: [],
+      contentWarnings: [],
+      structuredBlocks: [
+        {
+          blockVersion: 1,
+          blockId: "B000001",
+          kind: "Paragraph",
+          text: "Fixture",
+          links: [],
+        } as const,
+      ],
+    })),
+    packageSnapshot: vi.fn(async () => ({
+      blob: new Blob(["snapshot"]),
+      cleanup: vi.fn(async () => undefined),
+    })),
     acquireScreenshot: vi.fn(async () => ({
       webpBlob: new Blob([new Uint8Array([137, 80, 78, 71])]),
       warnings: [],
     })),
-    collectContent: vi.fn(async () => ({
-      structured: new Uint8Array([1]),
-      normalizedText: new Uint8Array([2]),
-      warnings: [],
-    })),
-    collectMetadata: vi.fn(async () => metadata),
     collectionContext: vi.fn(async () => ({ items: [], topology: [] })),
     prepareRegistration: vi.fn(async () => registration()),
     prepareArtifact: vi.fn(async (objectId) => ({
@@ -142,9 +168,10 @@ describe("capture Runtime job", () => {
     expect(fake.commitRegistration).toHaveBeenCalledOnce();
     expect(vi.mocked(fake.saveJob).mock.calls.map(([job]) => [job.state, job.stage])).toEqual([
       ["Created", "Preflight"],
-      ["Running", "MHTML"],
-      ["Running", "Content"],
+      ["Running", "Snapshot"],
       ["Running", "Screenshot"],
+      ["Running", "Resources"],
+      ["Running", "Package"],
       ["Running", "Commit"],
       ["Succeeded", "Commit"],
     ]);
@@ -169,26 +196,28 @@ describe("capture Runtime job", () => {
     expect(fake.commitRegistration).not.toHaveBeenCalled();
   });
 
-  it("records mandatory MHTML failure without constructing or committing a Bundle", async () => {
+  it("records mandatory snapshot failure without constructing or committing a Bundle", async () => {
     const fake = ports({
-      acquireMhtml: vi.fn(async () =>
-        Promise.reject(new CaptureHostError("MHTML_CAPTURE_FAILED", "safe")),
+      collectSnapshot: vi.fn(async () =>
+        Promise.reject(new CaptureHostError("PAGE_SNAPSHOT_FAILED", "safe")),
       ),
     });
     await expect(new CaptureRuntime(fake).execute(command)).rejects.toMatchObject({
-      id: "MHTML_CAPTURE_FAILED",
+      id: "PAGE_SNAPSHOT_FAILED",
     });
     expect(fake.prepareRegistration).not.toHaveBeenCalled();
     expect(fake.commitRegistration).not.toHaveBeenCalled();
     expect(vi.mocked(fake.saveJob).mock.calls.at(-1)?.[0]).toMatchObject({
       state: "Failed",
-      errorId: "MHTML_CAPTURE_FAILED",
+      errorId: "PAGE_SNAPSHOT_FAILED",
     });
   });
 
-  it("commits mandatory MHTML when the screenshot returns a warning", async () => {
+  it("commits the mandatory snapshot when the screenshot returns a warning", async () => {
     const fake = ports({
-      acquireScreenshot: vi.fn(async () => ({ warnings: ["SCREENSHOT_CAPTURE_FAILED"] as const })),
+      acquireScreenshot: vi.fn(async () => ({
+        warnings: ["SCREENSHOT_CAPTURE_FAILED"] as const,
+      })),
     });
     await new CaptureRuntime(fake).execute(command);
     expect(fake.prepareRegistration).toHaveBeenCalledWith(
@@ -204,14 +233,16 @@ describe("capture Runtime job", () => {
     const prepareArtifact = vi.fn(
       async (...args: Parameters<CaptureRuntimePorts["prepareArtifact"]>) => {
         prepareCalls += 1;
-        if (prepareCalls === 2) throw new Error("structured storage failed");
+        if (prepareCalls === 1) throw new Error("structured storage failed");
         return base.prepareArtifact(...args);
       },
     );
     const fake = ports({ prepareArtifact });
     await new CaptureRuntime(fake).execute(command);
     expect(fake.prepareRegistration).toHaveBeenCalledWith(
-      expect.objectContaining({ warnings: ["STRUCTURED_CONTENT_EXTRACTION_FAILED"] }),
+      expect.objectContaining({
+        warnings: ["STRUCTURED_CONTENT_EXTRACTION_FAILED"],
+      }),
     );
     expect(vi.mocked(fake.prepareRegistration).mock.calls[0]?.[0].artifacts).toHaveLength(3);
     expect(fake.commitRegistration).toHaveBeenCalledOnce();
@@ -231,7 +262,10 @@ describe("capture Runtime job", () => {
       warnings: [],
     };
     const fake = ports({
-      collectionContext: vi.fn(async () => ({ items: [existing], topology: [] })),
+      collectionContext: vi.fn(async () => ({
+        items: [existing],
+        topology: [],
+      })),
     });
     await new CaptureRuntime(fake).execute(command);
     expect(fake.prepareRegistration).toHaveBeenCalledWith(
@@ -246,6 +280,9 @@ describe("capture Runtime job", () => {
     const fake = ports({ saveJob });
     await expect(new CaptureRuntime(fake).execute(command)).rejects.toThrow("worker terminated");
     expect(fake.commitRegistration).toHaveBeenCalledOnce();
-    expect(saveJob.mock.calls.at(-2)?.[0]).toMatchObject({ state: "Running", stage: "Commit" });
+    expect(saveJob.mock.calls.at(-2)?.[0]).toMatchObject({
+      state: "Running",
+      stage: "Commit",
+    });
   });
 });

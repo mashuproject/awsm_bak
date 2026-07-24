@@ -1,0 +1,19 @@
+{
+  "geckodriver": {
+    "version": "0.37.1"
+  },
+  "stable": {
+    "version": "153.0",
+    "webdriverVersion": "153.0",
+    "archiveUrl": "https://download-installer.cdn.mozilla.net/pub/firefox/releases/153.0/linux-x86_64/en-US/firefox-153.0.tar.xz",
+    "archiveSha512": "2058a88bea97a3a52780023b794d389f4f914ada8c3a053e62b92a72972b9003de34cc783dd9e15cae37b93c6fc39845295395e968547f5503fd45dee079bfdd",
+    "executable": ".output/firefox-browsers/stable/firefox"
+  },
+  "esr": {
+    "version": "140.13.0esr",
+    "webdriverVersion": "140.13.0",
+    "archiveUrl": "https://download-installer.cdn.mozilla.net/pub/firefox/releases/140.13.0esr/linux-x86_64/en-US/firefox-140.13.0esr.tar.xz",
+    "archiveSha512": "3a12a13a9f2f49224e847adeaf3032478e68d7e1d393039d9aab1016088d2068b87e99bb80d4135ed0eadc73a82c91cad62eebaea31e9c863603cd4abadf3f4d",
+    "executable": ".output/firefox-browsers/esr/firefox"
+  }
+}

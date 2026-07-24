@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "build": "wxt build && node scripts/verify-release.mjs",
+    "build:firefox:feasibility": "wxt build -c tests/firefox-feasibility/wxt.config.ts -b firefox --mv3",
     "dev": "wxt",
     "lint": "biome check .",
     "postinstall": "wxt prepare",
@@ -13,6 +14,7 @@
     "test:integration": "tsc -p tests/integration/tsconfig.json && LD_LIBRARY_PATH=.output/browser-libs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH} playwright test tests/integration/indexeddb.browser.test.ts --project=chromium",
     "test:e2e": "wxt build --mode e2e && AWSM_EXTENSION_BUILD=.output/chrome-mv3-e2e LD_LIBRARY_PATH=.output/browser-libs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH} playwright test -c playwright.e2e.config.ts",
     "test:e2e:chrome": "wxt build --mode e2e && AWSM_EXTENSION_BUILD=.output/chrome-mv3-e2e LD_LIBRARY_PATH=.output/browser-libs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH} playwright test -c playwright.e2e.config.ts",
+    "test:firefox:feasibility": "wxt build -c tests/firefox-feasibility/wxt.config.ts -b firefox --mv3 && playwright test -c tests/firefox-feasibility/playwright.config.mjs",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "zip": "wxt zip"
@@ -25,8 +27,11 @@
   "devDependencies": {
     "@biomejs/biome": "2.5.4",
     "@playwright/test": "1.61.1",
+    "geckodriver": "6.1.1",
+    "selenium-webdriver": "4.46.0",
     "typescript": "5.9.3",
     "vitest": "4.1.10",
+    "web-ext": "10.5.0",
     "wxt": "0.20.27"
   }
 }

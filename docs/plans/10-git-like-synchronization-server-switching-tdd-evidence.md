@@ -71,7 +71,7 @@ therefore an entire synchronization journey from reaching a terminal state.
 
 **GREEN:** every screenshot Host operation is bounded and restoration still runs. The packaged
 harness reports terminal Capture failure promptly and retries only the known pre-authority
-`MHTML_CAPTURE_FAILED` condition once.
+`PAGE_SNAPSHOT_FAILED` condition once.
 
 **RED:** the richer union baseline distributed Captures across Collections, exposing a harness wait
 that looked for one rendered group containing the global Capture count.
@@ -134,7 +134,7 @@ through synchronized Vacuum and later Server Switch publication.
 
 **RED:** a neighboring packaged Capture test used a fixed sleep and assumed MHTML acquisition could
 not reach its documented recoverable pre-authority failure, leaving the test waiting for success
-after the UI had correctly rendered `MHTML_CAPTURE_FAILED`.
+after the UI had correctly rendered `PAGE_SNAPSHOT_FAILED`.
 
 **GREEN:** the test waits on canonical rendered success or the bounded recoverable failure and uses
 the visible retry control once. No timeout was increased to conceal a terminal state.

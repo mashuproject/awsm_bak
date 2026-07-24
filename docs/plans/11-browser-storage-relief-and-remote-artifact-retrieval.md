@@ -26,7 +26,7 @@ an authenticated Coordination Server. It is written for an implementer starting 
 checkout with no conversation context. Do not reopen the decisions recorded here.
 
 Browser extension Vaults currently retain every authoritative Artifact wrapper in OPFS. A large
-number of MHTML primary captures and full-page screenshots can therefore consume substantial
+number of page-snapshot primary captures and full-page screenshots can therefore consume substantial
 browser storage even after their exact encrypted bytes are durably synchronized. The completed
 feature SHALL let the user run **Free up browser storage** whenever desired. Each run synchronizes,
 proves which eligible encrypted wrappers are members of the active server Generation, removes only

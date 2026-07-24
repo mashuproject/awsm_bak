@@ -1,6 +1,8 @@
 import { type Browser, browser } from "wxt/browser";
+import { readySodium } from "../../src/crypto/sodium";
 import { mhtmlDownloadBlob } from "../../src/hosts/chrome/mhtml-download";
 import type { ScreenshotPlan, ScreenshotTile } from "../../src/hosts/chrome/screenshot";
+import { deriveMhtml, validatePageSnapshot } from "../../src/runtime/page-snapshot";
 
 const SCREENSHOT_WEBP_QUALITY = 0.72;
 const THUMBNAIL_WEBP_QUALITY = 0.78;
@@ -17,7 +19,8 @@ interface ReleaseExportDownloadRequest {
 
 interface MhtmlDownloadRequest {
   readonly type: "awsm:prepare-mhtml-download" | "awsm:release-mhtml-download";
-  readonly temporaryName: string;
+  readonly snapshotTemporaryName?: string;
+  readonly mhtmlTemporaryName: string;
 }
 
 const activeExportUrls = new Map<string, string>();
@@ -63,28 +66,57 @@ function isMhtmlDownloadRequest(value: unknown): value is MhtmlDownloadRequest {
     "type" in value &&
     (value.type === "awsm:prepare-mhtml-download" ||
       value.type === "awsm:release-mhtml-download") &&
-    "temporaryName" in value &&
-    typeof value.temporaryName === "string"
+    "mhtmlTemporaryName" in value &&
+    typeof value.mhtmlTemporaryName === "string" &&
+    (value.type === "awsm:release-mhtml-download" ||
+      ("snapshotTemporaryName" in value && typeof value.snapshotTemporaryName === "string"))
   );
 }
 
 async function mhtmlDownload(
   request: MhtmlDownloadRequest,
 ): Promise<{ readonly url: string } | true> {
-  if (!/^[0-9a-f-]{36}\.mhtml\.tmp$/iu.test(request.temporaryName))
+  if (!/^[0-9a-f-]{36}\.mhtml\.tmp$/iu.test(request.mhtmlTemporaryName))
     throw new Error("Invalid temporary MHTML name.");
-  const previous = activeMhtmlUrls.get(request.temporaryName);
+  const previous = activeMhtmlUrls.get(request.mhtmlTemporaryName);
   if (request.type === "awsm:release-mhtml-download") {
     if (previous !== undefined) URL.revokeObjectURL(previous);
-    activeMhtmlUrls.delete(request.temporaryName);
+    activeMhtmlUrls.delete(request.mhtmlTemporaryName);
+    const root = await navigator.storage.getDirectory();
+    const directory = await root.getDirectoryHandle("awsm-artifact-downloads", { create: true });
+    await directory.removeEntry(request.mhtmlTemporaryName).catch(() => undefined);
     return true;
   }
+  if (
+    request.snapshotTemporaryName === undefined ||
+    !/^[0-9a-f-]{36}\.awsm-page\.tmp$/iu.test(request.snapshotTemporaryName)
+  )
+    throw new Error("Invalid temporary page snapshot name.");
   const root = await navigator.storage.getDirectory();
-  const directory = await root.getDirectoryHandle("awsm-artifact-downloads");
-  const handle = await directory.getFileHandle(request.temporaryName);
+  const snapshots = await root.getDirectoryHandle("awsm-page-snapshots");
+  const snapshotHandle = await snapshots.getFileHandle(request.snapshotTemporaryName);
+  const snapshotBlob = await snapshotHandle.getFile();
+  const validated = await validatePageSnapshot(snapshotBlob);
+  const sodium = await readySodium();
+  const state = sodium.crypto_hash_sha256_init();
+  const reader = snapshotBlob.stream().getReader();
+  try {
+    for (;;) {
+      const next = await reader.read();
+      if (next.done) break;
+      sodium.crypto_hash_sha256_update(state, next.value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const checksum = Uint8Array.from(sodium.crypto_hash_sha256_final(state));
+  const directory = await root.getDirectoryHandle("awsm-artifact-downloads", { create: true });
+  const handle = await directory.getFileHandle(request.mhtmlTemporaryName, { create: true });
+  const writable = await handle.createWritable({ keepExistingData: false });
+  await deriveMhtml(validated, checksum, writable);
   if (previous !== undefined) URL.revokeObjectURL(previous);
   const url = URL.createObjectURL(mhtmlDownloadBlob(await handle.getFile()));
-  activeMhtmlUrls.set(request.temporaryName, url);
+  activeMhtmlUrls.set(request.mhtmlTemporaryName, url);
   return { url };
 }
 
@@ -240,7 +272,7 @@ browser.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) 
           typeof message.temporaryName === "string"
         ? Promise.resolve(releaseExportDownload(message as ReleaseExportDownloadRequest))
         : undefined;
-  if (operation === undefined) return false;
-  void operation.then(sendResponse, () => sendResponse(undefined));
+  if (operation === undefined) return undefined;
+  void operation.then(sendResponse, () => sendResponse({ error: true }));
   return true;
 });

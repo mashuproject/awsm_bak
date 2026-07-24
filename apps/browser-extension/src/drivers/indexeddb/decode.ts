@@ -241,9 +241,10 @@ function captureJobState(value: unknown): CaptureJobState {
 function captureJobStage(value: unknown): CaptureJobStage {
   if (
     value === "Preflight" ||
-    value === "MHTML" ||
-    value === "Content" ||
+    value === "Snapshot" ||
     value === "Screenshot" ||
+    value === "Resources" ||
+    value === "Package" ||
     value === "Commit"
   ) {
     return value;

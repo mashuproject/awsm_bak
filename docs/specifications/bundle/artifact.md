@@ -21,13 +21,13 @@ is independently identifiable, encrypted, stored, streamed, and verifiable.
 
 # 2. Canonical Initial Roles
 
-| Role                 | Kind                 | MIME type                  | Requirement |
-| -------------------- | -------------------- | -------------------------- | ----------- |
-| `PRIMARY`            | `CAPTURE`            | `multipart/related`        | mandatory   |
-| `SCREENSHOT_FULL`    | `IMAGE`              | `image/webp`               | best effort |
-| `THUMBNAIL`          | `IMAGE`              | `image/webp`               | best effort |
-| `TEXT_EXTRACTED`     | `TEXT`               | `text/plain;charset=utf-8` | best effort |
-| `CONTENT_STRUCTURED` | `STRUCTURED_CONTENT` | `application/cbor-seq`     | best effort |
+| Role                 | Kind                 | MIME type                           | Requirement |
+| -------------------- | -------------------- | ----------------------------------- | ----------- |
+| `PRIMARY`            | `CAPTURE`            | `application/vnd.awsm.web-page+zip` | mandatory   |
+| `SCREENSHOT_FULL`    | `IMAGE`              | `image/webp`                        | best effort |
+| `THUMBNAIL`          | `IMAGE`              | `image/webp`                        | best effort |
+| `TEXT_EXTRACTED`     | `TEXT`               | `text/plain;charset=utf-8`          | best effort |
+| `CONTENT_STRUCTURED` | `STRUCTURED_CONTENT` | `application/cbor-seq`              | best effort |
 
 Readers SHALL reject any other Kind, Role, or Role/MIME pairing in the initial format. Roles SHALL
 be unique within a Bundle.
@@ -89,5 +89,6 @@ and SHALL NOT be intentionally omitted from a Selective package.
 
 - `bundle.md`
 - `manifest.md`
+- `page-snapshot.md`
 - `../crypto/object-encryption.md`
 - `../runtime/capture.md`

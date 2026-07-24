@@ -8,8 +8,6 @@ export interface ActiveCaptureTab {
 export interface CaptureHost {
   getActiveTab(): Promise<ActiveCaptureTab | undefined>;
   hasCapturePermission(): Promise<boolean>;
-  isMhtmlAvailable(): boolean;
-  saveAsMhtml(tabId: number): Promise<Blob>;
 }
 
 export interface CapturePreflight {
@@ -54,24 +52,5 @@ export async function preflightCapture(
   if (!(await host.hasCapturePermission())) {
     throw new CaptureHostError("PERMISSION_DENIED", "Chrome did not grant capture permission.");
   }
-  if (!host.isMhtmlAvailable()) {
-    throw new CaptureHostError(
-      "MHTML_UNAVAILABLE",
-      "This Chrome installation cannot capture MHTML.",
-    );
-  }
   return { tabId: tab.id, url: tab.url };
-}
-
-export async function acquireMandatoryMhtml(host: CaptureHost, tabId: number): Promise<Blob> {
-  try {
-    const blob = await host.saveAsMhtml(tabId);
-    if (blob.size === 0) throw new Error("empty MHTML");
-    return blob;
-  } catch {
-    throw new CaptureHostError(
-      "MHTML_CAPTURE_FAILED",
-      "Chrome could not archive this page as MHTML.",
-    );
-  }
 }

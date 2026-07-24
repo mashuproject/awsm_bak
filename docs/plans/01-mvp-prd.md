@@ -290,13 +290,14 @@ The system shall:
 - preserve favicons
 - preserve Open Graph metadata
 
-The first `ChromeWebPage-v1` Capture Profile requires non-empty MHTML.
+The first `WebPageSnapshot-v1` Capture Profile requires a valid canonical AWSM page snapshot.
 
 Every successful payload is an independently encrypted Artifact Object referenced by one compact
-Bundle Descriptor. Mandatory MHTML failure rejects Capture; optional Artifact failure remains
+Bundle Descriptor. Mandatory snapshot failure rejects Capture; optional Artifact failure remains
 visible through a typed warning.
 
-Firefox capture is deferred until after the first Chrome vertical slice and should eventually produce an equivalent self-contained representation.
+Browser Hosts produce the same self-contained snapshot representation. Firefox release work remains
+subject to the gates in Plan 13.
 
 ---
 
@@ -477,7 +478,10 @@ Desktop operating systems.
 
 The first executable slice is defined by `docs/plans/02-chrome-extension-capture-vertical-slice.md`.
 
-It is Chrome-only and includes Vault onboarding/unlock, mandatory MHTML, best-effort full-page PNG, deterministic encrypted Bundle persistence, `BundleRegistered`, an offline library, and MHTML download. The remaining items below describe the broader public-release target and do not expand that first slice.
+It includes Vault onboarding/unlock, a mandatory browser-independent page snapshot, best-effort
+full-page WebP, deterministic encrypted Bundle persistence, `BundleRegistered`, an offline
+library, and derived MHTML download. The remaining items below describe the broader public-release
+target and do not expand that first slice.
 
 The first public release includes:
 

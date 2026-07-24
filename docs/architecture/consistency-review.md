@@ -212,11 +212,12 @@ The following questions remain intentionally unresolved and are outside the firs
 2. Which Backup retention policy should exist in MVP, if any?
 3. How much operational metadata leakage is acceptable for synchronization routing?
 
-The following first-slice decisions are resolved by `docs/plans/02-chrome-extension-capture-vertical-slice.md`:
+The following current decisions are resolved by the approved Capture plans:
 
 1. The synchronized Vault Event is `BundleRegistered`.
-2. The first Capture Profile is `ChromeWebPage-v1`: high-fidelity MHTML is mandatory and a lossy full-page WebP preview is best effort.
-3. The first implementation supports Chrome only.
+2. The first Capture Profile is `WebPageSnapshot-v1`: the canonical page snapshot is mandatory and
+   a lossy full-page WebP preview is best effort.
+3. Chrome implements Phase A; the Firefox Host remains gated Phase B work under Plan 13.
 4. Bundle serialization is deterministic ZIP with canonical CBOR.
 5. The initial browser Storage Driver is IndexedDB.
 6. Bundle, Event, and Projection keys are context-derived with HKDF-SHA256.

@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  acquireMandatoryMhtml,
   type CaptureHost,
   CaptureHostError,
   preflightCapture,
@@ -10,8 +9,6 @@ function host(overrides: Partial<CaptureHost> = {}): CaptureHost {
   return {
     getActiveTab: vi.fn(async () => ({ id: 7, url: "https://example.test/page" })),
     hasCapturePermission: vi.fn(async () => true),
-    isMhtmlAvailable: () => true,
-    saveAsMhtml: vi.fn(async () => new Blob(["MIME-Version: 1.0\r\n"])),
     ...overrides,
   };
 }
@@ -22,10 +19,9 @@ describe("Chrome capture Host preflight", () => {
     "chrome-extension://id/page",
     "file:///tmp/a",
     "view-source:https://x.test",
-  ])("rejects restricted URL %s before MHTML capture", async (url) => {
+  ])("rejects restricted URL %s before snapshot collection", async (url) => {
     const fake = host({ getActiveTab: vi.fn(async () => ({ id: 7, url })) });
     await expect(preflightCapture(fake, true)).rejects.toMatchObject({ id: "UNSUPPORTED_URL" });
-    expect(fake.saveAsMhtml).not.toHaveBeenCalled();
   });
 
   it("accepts active HTTP and HTTPS tabs", async () => {
@@ -41,7 +37,7 @@ describe("Chrome capture Host preflight", () => {
     ).resolves.toEqual({ tabId: 8, url: "http://localhost/" });
   });
 
-  it("rejects a locked Vault, missing tab ID, denied permission, and missing API with typed errors", async () => {
+  it("rejects a locked Vault, missing tab ID, and denied permission with typed errors", async () => {
     await expect(preflightCapture(host(), false)).rejects.toMatchObject({ id: "VAULT_LOCKED" });
     await expect(
       preflightCapture(
@@ -52,36 +48,12 @@ describe("Chrome capture Host preflight", () => {
     await expect(
       preflightCapture(host({ hasCapturePermission: vi.fn(async () => false) }), true),
     ).rejects.toMatchObject({ id: "PERMISSION_DENIED" });
-    await expect(
-      preflightCapture(host({ isMhtmlAvailable: () => false }), true),
-    ).rejects.toMatchObject({ id: "MHTML_UNAVAILABLE" });
-  });
-});
-
-describe("mandatory MHTML acquisition", () => {
-  it("returns the original non-empty Blob for streaming", async () => {
-    const result = await acquireMandatoryMhtml(host(), 7);
-    expect(result).toBeInstanceOf(Blob);
-    expect(await result.text()).toBe("MIME-Version: 1.0\r\n");
-  });
-
-  it("maps empty and rejected Blobs to MHTML_CAPTURE_FAILED", async () => {
-    const cases: CaptureHost[] = [
-      host({ saveAsMhtml: vi.fn(async () => new Blob()) }),
-      host({ saveAsMhtml: vi.fn(async () => Promise.reject(new Error("sensitive URL"))) }),
-    ];
-    for (const fake of cases) {
-      await expect(acquireMandatoryMhtml(fake, 7)).rejects.toMatchObject({
-        id: "MHTML_CAPTURE_FAILED",
-        message: expect.not.stringContaining("sensitive URL"),
-      });
-    }
   });
 
   it("uses a stable typed Host error", () => {
-    expect(new CaptureHostError("MHTML_UNAVAILABLE", "Unavailable")).toMatchObject({
+    expect(new CaptureHostError("PAGE_SNAPSHOT_FAILED", "Unavailable")).toMatchObject({
       name: "CaptureHostError",
-      id: "MHTML_UNAVAILABLE",
+      id: "PAGE_SNAPSHOT_FAILED",
     });
   });
 });

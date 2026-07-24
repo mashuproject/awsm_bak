@@ -44,7 +44,7 @@ checksum. It contains no payloads, filenames, storage paths, availability, or Ex
 
 The initial web Capture graph supports:
 
-- mandatory MHTML `PRIMARY`;
+- mandatory canonical AWSM page-snapshot `PRIMARY`;
 - best-effort full WebP screenshot and 640×360 WebP `THUMBNAIL`;
 - best-effort canonical semantic `CONTENT_STRUCTURED`; and
 - normalized UTF-8 `TEXT_EXTRACTED` derived from the same semantic stream.
@@ -75,11 +75,11 @@ authenticated omissions only where the Import and Export Specification permits t
 
 # Design Consequences
 
-- MHTML, screenshots, thumbnails, and text can be fetched or exported independently.
+- Page snapshots, screenshots, thumbnails, and text can be fetched or exported independently.
 - A server or local selective replica can coordinate opaque Artifact availability without learning
   semantic content.
 - Vacuum follows descriptor-to-Artifact reachability and can reclaim exact wrapper bytes.
-- Structured content can feed local Search without decrypting full MHTML or screenshots.
+- Structured content can feed local Search without decrypting full snapshots or screenshots.
 
 # References
 

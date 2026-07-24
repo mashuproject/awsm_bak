@@ -14,7 +14,7 @@ function artifact(
   envelopeByteLength: number,
 ): { object: StoredArtifactObjectV1; reference: ArtifactReferenceV1 } {
   const properties = {
-    PRIMARY: ["CAPTURE", "multipart/related"],
+    PRIMARY: ["CAPTURE", "application/vnd.awsm.web-page+zip"],
     SCREENSHOT_FULL: ["IMAGE", "image/webp"],
     TEXT_EXTRACTED: ["TEXT", "text/plain;charset=utf-8"],
   } as const;
@@ -64,9 +64,10 @@ describe("StorageReliefCandidateEnumerator", () => {
       contentType: "text/html",
       viewport: { width: 800, height: 600 },
       document: { width: 800, height: 1200 },
-      chromeVersion: "149",
+      browserName: "Chrome",
+      browserVersion: "149",
       extensionVersion: "0.1.0",
-      captureProfileId: "ChromeWebPage-v1",
+      captureProfileId: "WebPageSnapshot-v1",
       captureProfileVersion: 1,
     };
     const registration = await prepareCaptureRegistration({

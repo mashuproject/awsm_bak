@@ -29,7 +29,7 @@ function validCommand(): Record<string, unknown> {
     createdAt: "2026-07-16T17:00:00.000Z",
     tabId: 42,
     observedUrl: "https://example.test/article",
-    captureProfileId: "ChromeWebPage-v1",
+    captureProfileId: "WebPageSnapshot-v1",
     idempotencyKey: IDS.command,
   };
 }
@@ -118,7 +118,7 @@ describe("domain boundary decoders", () => {
         commandId: IDS.command,
         tabId: 42,
         state: "Running",
-        stage: "MHTML",
+        stage: "Snapshot",
         createdAt: "2026-07-16T17:00:00.000Z",
         updatedAt: "2026-07-16T17:00:00.000Z",
       }),

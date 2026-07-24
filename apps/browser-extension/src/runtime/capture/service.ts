@@ -8,11 +8,21 @@ import type {
   RuntimeErrorId,
 } from "../../domain/contracts";
 import { decodeCapturePageCommand } from "../../domain/decode-command";
+import {
+  encodeStructuredContentSequence,
+  normalizedTextFromBlocks,
+} from "../../domain/structured-content";
 import type { AtomicRegistrationV1, CommandOutcomeV1 } from "../../drivers/indexeddb";
 import type { CapturePreflight } from "../../hosts/chrome/capture";
 import type { ScreenshotResult } from "../../hosts/chrome/screenshot";
 import type { PreparedArtifact } from "../artifact";
 import { type CollectionTopologyEventV1, selectCollectionForCapture } from "../library/collections";
+import type {
+  CreatePageSnapshotInput,
+  SnapshotDocumentSource,
+  SnapshotOmissionV1,
+  SnapshotResourceSource,
+} from "../page-snapshot";
 import { type PrepareCaptureRegistrationInput, prepareCaptureRegistration } from "./registration";
 
 export class CaptureRuntimeError extends Error {
@@ -35,17 +45,24 @@ export interface CaptureRuntimePorts {
   saveJob(job: CaptureJob): Promise<void>;
   commitRegistration(input: AtomicRegistrationV1): Promise<CommandOutcomeV1>;
   preflight(command: CapturePageCommandV1): Promise<CapturePreflight>;
-  acquireMhtml(tabId: number): Promise<Blob>;
-  collectContent(tabId: number): Promise<{
-    readonly structured?: Uint8Array;
-    readonly normalizedText?: Uint8Array;
-    readonly warnings: readonly CaptureWarningId[];
-  }>;
-  acquireScreenshot(tabId: number): Promise<ScreenshotResult>;
-  collectMetadata(
+  collectSnapshot(
     command: CapturePageCommandV1,
     preflight: CapturePreflight,
-  ): Promise<CaptureMetadataV1>;
+    capturedAt: string,
+    onFrozen: () => Promise<void>,
+  ): Promise<{
+    readonly metadata: CaptureMetadataV1;
+    readonly documents: readonly SnapshotDocumentSource[];
+    readonly resources: readonly SnapshotResourceSource[];
+    readonly omissions: readonly SnapshotOmissionV1[];
+    readonly structuredBlocks: Parameters<typeof encodeStructuredContentSequence>[0];
+    readonly contentWarnings: readonly CaptureWarningId[];
+  }>;
+  packageSnapshot(input: CreatePageSnapshotInput): Promise<{
+    readonly blob: Blob;
+    cleanup(): Promise<void>;
+  }>;
+  acquireScreenshot(tabId: number): Promise<ScreenshotResult>;
   collectionContext(): Promise<{
     readonly items: readonly LibraryItemV1[];
     readonly topology: readonly CollectionTopologyEventV1[];
@@ -100,15 +117,54 @@ export class CaptureRuntime {
       await this.ports.saveJob(job);
     };
     const fail = async (id: RuntimeErrorId): Promise<void> => {
-      job = { ...job, state: "Failed", updatedAt: this.ports.now(), errorId: id };
+      job = {
+        ...job,
+        state: "Failed",
+        updatedAt: this.ports.now(),
+        errorId: id,
+      };
       await this.ports.saveJob(job);
     };
 
     let registration: AtomicRegistrationV1;
     const preparedObjectIds: string[] = [];
     try {
-      await saveRunning("MHTML");
-      const mhtml = await this.ports.acquireMhtml(preflight.tabId);
+      await saveRunning("Snapshot");
+      const capturedAt = this.ports.now();
+      let screenshot: ScreenshotResult | undefined;
+      const afterFrozen = async (): Promise<void> => {
+        if (screenshot !== undefined) return;
+        await saveRunning("Screenshot");
+        screenshot = await this.ports.acquireScreenshot(preflight.tabId);
+        await saveRunning("Resources");
+      };
+      const snapshot = await this.ports.collectSnapshot(
+        command,
+        preflight,
+        capturedAt,
+        afterFrozen,
+      );
+      await afterFrozen();
+      const acquiredScreenshot = screenshot;
+      if (acquiredScreenshot === undefined)
+        throw new Error("Frozen Capture screenshot is unavailable.");
+      let extractedContent: {
+        readonly structured?: Uint8Array;
+        readonly normalizedText?: Uint8Array;
+        readonly warnings: readonly CaptureWarningId[];
+      };
+      try {
+        extractedContent = {
+          structured: encodeStructuredContentSequence(snapshot.structuredBlocks),
+          normalizedText: normalizedTextFromBlocks(snapshot.structuredBlocks),
+          warnings: [],
+        };
+      } catch {
+        extractedContent = {
+          warnings: ["STRUCTURED_CONTENT_EXTRACTION_FAILED", "TEXT_EXTRACTION_FAILED"],
+        };
+      }
+      const metadata = snapshot.metadata;
       const prepare = async (
         role: ArtifactRole,
         kind: ArtifactKind,
@@ -134,22 +190,20 @@ export class CaptureRuntime {
           },
         };
       };
-      const metadata = await this.ports.collectMetadata(command, preflight);
-      const artifacts = [
-        await prepare("PRIMARY", "CAPTURE", "multipart/related", mhtml, metadata.capturedAt),
-      ];
+      const supplementalArtifacts: Awaited<ReturnType<typeof prepare>>[] = [];
       const warningSet = new Set<CaptureWarningId>();
-      await saveRunning("Content");
-      const content = await this.ports.collectContent(preflight.tabId);
-      for (const warning of content.warnings) warningSet.add(warning);
-      if (content.structured !== undefined) {
+      if (snapshot.omissions.length > 0) warningSet.add("PAGE_SNAPSHOT_INCOMPLETE");
+      for (const warning of snapshot.contentWarnings) warningSet.add(warning);
+      for (const warning of acquiredScreenshot.warnings) warningSet.add(warning);
+      for (const warning of extractedContent.warnings) warningSet.add(warning);
+      if (extractedContent.structured !== undefined) {
         try {
-          artifacts.push(
+          supplementalArtifacts.push(
             await prepare(
               "CONTENT_STRUCTURED",
               "STRUCTURED_CONTENT",
               "application/cbor-seq",
-              content.structured,
+              extractedContent.structured,
               metadata.capturedAt,
             ),
           );
@@ -157,14 +211,14 @@ export class CaptureRuntime {
           warningSet.add("STRUCTURED_CONTENT_EXTRACTION_FAILED");
         }
       }
-      if (content.normalizedText !== undefined) {
+      if (extractedContent.normalizedText !== undefined) {
         try {
-          artifacts.push(
+          supplementalArtifacts.push(
             await prepare(
               "TEXT_EXTRACTED",
               "TEXT",
               "text/plain;charset=utf-8",
-              content.normalizedText,
+              extractedContent.normalizedText,
               metadata.capturedAt,
             ),
           );
@@ -172,18 +226,37 @@ export class CaptureRuntime {
           warningSet.add("TEXT_EXTRACTION_FAILED");
         }
       }
-      await saveRunning("Screenshot");
-      const screenshot = await this.ports.acquireScreenshot(preflight.tabId);
-      for (const warning of screenshot.warnings) warningSet.add(warning);
+      await saveRunning("Package");
+      const primary = await this.ports.packageSnapshot({
+        capturedAt: metadata.capturedAt,
+        originalUrl: metadata.originalUrl,
+        finalUrl: metadata.finalUrl,
+        documents: snapshot.documents,
+        resources: snapshot.resources,
+        omissions: snapshot.omissions,
+      });
+      let primaryArtifact: Awaited<ReturnType<typeof prepare>>;
+      try {
+        primaryArtifact = await prepare(
+          "PRIMARY",
+          "CAPTURE",
+          "application/vnd.awsm.web-page+zip",
+          primary.blob,
+          metadata.capturedAt,
+        );
+      } finally {
+        await primary.cleanup();
+      }
+      const artifacts = [primaryArtifact, ...supplementalArtifacts];
       let fullScreenshotPrepared = false;
-      if (screenshot.webpBlob !== undefined) {
+      if (acquiredScreenshot.webpBlob !== undefined) {
         try {
           artifacts.push(
             await prepare(
               "SCREENSHOT_FULL",
               "IMAGE",
               "image/webp",
-              screenshot.webpBlob,
+              acquiredScreenshot.webpBlob,
               metadata.capturedAt,
             ),
           );
@@ -192,14 +265,14 @@ export class CaptureRuntime {
           warningSet.add("SCREENSHOT_CAPTURE_FAILED");
         }
       }
-      if (fullScreenshotPrepared && screenshot.thumbnailWebpBlob !== undefined) {
+      if (fullScreenshotPrepared && acquiredScreenshot.thumbnailWebpBlob !== undefined) {
         try {
           artifacts.push(
             await prepare(
               "THUMBNAIL",
               "IMAGE",
               "image/webp",
-              screenshot.thumbnailWebpBlob,
+              acquiredScreenshot.thumbnailWebpBlob,
               metadata.capturedAt,
             ),
           );
@@ -208,7 +281,7 @@ export class CaptureRuntime {
         }
       }
       const collectionContext = await this.ports.collectionContext();
-      const capturedAt = metadata.capturedAt;
+      const registeredAt = metadata.capturedAt;
       const warnings: readonly CaptureWarningId[] = [...warningSet].toSorted();
       await saveRunning("Commit");
       registration = await this.ports.prepareRegistration({
@@ -225,18 +298,27 @@ export class CaptureRuntime {
           metadata.originalUrl,
           () => this.ports.uuid(),
         ),
-        capturedAt,
+        capturedAt: registeredAt,
         metadata,
         artifacts,
-        ...(screenshot.thumbnailWebpBlob === undefined
+        ...(acquiredScreenshot.thumbnailWebpBlob === undefined
           ? {}
-          : { thumbnailWebp: new Uint8Array(await screenshot.thumbnailWebpBlob.arrayBuffer()) }),
+          : {
+              thumbnailWebp: new Uint8Array(
+                await acquiredScreenshot.thumbnailWebpBlob.arrayBuffer(),
+              ),
+            }),
         warnings,
         clientVersion: this.ports.clientVersion,
       });
     } catch (error) {
       await Promise.all(preparedObjectIds.map((objectId) => this.ports.removeArtifact(objectId)));
-      const defaultId = job.stage === "MHTML" ? "MHTML_CAPTURE_FAILED" : "BUNDLE_INVALID";
+      const defaultId =
+        job.stage === "Snapshot"
+          ? "PAGE_SNAPSHOT_FAILED"
+          : job.stage === "Package"
+            ? "PAGE_PACKAGE_FAILED"
+            : "BUNDLE_INVALID";
       const id = errorId(error, defaultId);
       await fail(id);
       throw error instanceof CaptureRuntimeError
@@ -256,7 +338,12 @@ export class CaptureRuntime {
       );
     }
 
-    job = { ...job, state: "Succeeded", stage: "Commit", updatedAt: this.ports.now() };
+    job = {
+      ...job,
+      state: "Succeeded",
+      stage: "Commit",
+      updatedAt: this.ports.now(),
+    };
     await this.ports.saveJob(job);
     return outcome;
   }

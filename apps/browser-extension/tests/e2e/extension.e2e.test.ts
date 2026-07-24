@@ -1,10 +1,11 @@
 import { execFile } from "node:child_process";
-import { cp, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { cp, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import {
   type BrowserContext,
   chromium,
   expect,
+  type Locator,
   type Page,
   type TestInfo,
   test,
@@ -32,6 +33,7 @@ import {
   type VaultExportSource,
   writeVaultPackage,
 } from "../../src/runtime/export";
+import { createPageSnapshotBlob } from "../../src/runtime/page-snapshot";
 
 declare const chrome: {
   readonly downloads: {
@@ -40,7 +42,13 @@ declare const chrome: {
       readonly filename: string;
       readonly saveAs: boolean;
     }): Promise<number>;
-    search(options: unknown): Promise<readonly { readonly mime?: string }[]>;
+    search(options: unknown): Promise<
+      readonly {
+        readonly id: number;
+        readonly filename?: string;
+        readonly mime?: string;
+      }[]
+    >;
     readonly onDeterminingFilename: {
       addListener(
         listener: (
@@ -157,7 +165,7 @@ async function packagedAccountContext(
   const manifestPath = resolve(extensionPath, "manifest.json");
   const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
   // Headless Chromium cannot display either the optional-origin prompt or the toolbar gesture that
-  // grants activeTab for pageCapture. This permission exists only in the disposable E2E copy; the
+  // grants activeTab for scripting. This permission exists only in the disposable E2E copy; the
   // shipping manifest remains unchanged and is checked by build.
   manifest.host_permissions = ["<all_urls>"];
   await writeFile(manifestPath, JSON.stringify(manifest));
@@ -178,101 +186,6 @@ async function packagedAccountContext(
   };
 }
 
-test("downloads typed MHTML with the canonical extension", async ({ browserName }, testInfo) => {
-  expect(browserName).toBe("chromium");
-  const client = await packagedAccountContext(testInfo, "mhtml-download-metadata");
-  const temporaryName = `${crypto.randomUUID()}.mhtml.tmp`;
-  const archive = "MIME-Version: 1.0\r\nContent-Type: multipart/related\r\n\r\nAWSM fixture";
-  try {
-    await client.worker.evaluate(
-      async ({ name, contents }) => {
-        const root = await navigator.storage.getDirectory();
-        const directory = await root.getDirectoryHandle("awsm-artifact-downloads", {
-          create: true,
-        });
-        const handle = await directory.getFileHandle(name, { create: true });
-        const writable = await handle.createWritable();
-        await writable.write(contents);
-        await writable.close();
-      },
-      { name: temporaryName, contents: archive },
-    );
-    await client.worker.evaluate(async () => {
-      await chrome.offscreen.createDocument({
-        url: "offscreen.html",
-        reasons: ["BLOBS"],
-        justification: "Verify the production MHTML download boundary.",
-      });
-    });
-    const prepared = await client.popup.evaluate(async (name) => {
-      for (let attempt = 0; attempt < 20; attempt += 1) {
-        const response: unknown = await chrome.runtime
-          .sendMessage({ type: "awsm:prepare-mhtml-download", temporaryName: name })
-          .catch(() => undefined);
-        if (
-          typeof response === "object" &&
-          response !== null &&
-          "url" in response &&
-          typeof response.url === "string"
-        )
-          return response.url;
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
-      throw new Error("MHTML download preparation failed.");
-    }, temporaryName);
-    const downloadDirectory = testInfo.outputPath("mhtml-download");
-    await mkdir(downloadDirectory, { recursive: true });
-    const cdp = await client.context.newCDPSession(client.popup);
-    await cdp.send("Browser.setDownloadBehavior", {
-      behavior: "allow",
-      downloadPath: downloadDirectory,
-      eventsEnabled: true,
-    });
-    await client.worker.evaluate(
-      async ({ url, filename }) => {
-        const listener = (
-          item: { readonly url: string },
-          suggest: (suggestion?: {
-            readonly filename: string;
-            readonly conflictAction: "uniquify";
-          }) => void,
-        ) => {
-          if (item.url === url) {
-            suggest({ filename, conflictAction: "uniquify" });
-            chrome.downloads.onDeterminingFilename.removeListener(listener);
-          } else suggest();
-        };
-        chrome.downloads.onDeterminingFilename.addListener(listener);
-        await chrome.downloads.download({ url, filename, saveAs: false });
-      },
-      { url: prepared, filename: "awsm-test-mhtml.mhtml" },
-    );
-    await expect.poll(async () => readdir(downloadDirectory)).toContain("awsm-test-mhtml.mhtml");
-    const record = await client.popup.evaluate(async () => {
-      const items = await chrome.downloads.search({ limit: 1, orderBy: ["-startTime"] });
-      return items[0] === undefined ? undefined : { mime: items[0].mime };
-    });
-    expect(record?.mime).toBe("multipart/related");
-    expect(await readFile(resolve(downloadDirectory, "awsm-test-mhtml.mhtml"), "utf8")).toBe(
-      archive,
-    );
-  } finally {
-    await client.worker.evaluate(async (name) => {
-      await chrome.runtime.sendMessage({
-        type: "awsm:release-mhtml-download",
-        temporaryName: name,
-      });
-      const root = await navigator.storage.getDirectory();
-      const directory = await root.getDirectoryHandle("awsm-artifact-downloads", {
-        create: true,
-      });
-      await directory.removeEntry(name).catch(() => undefined);
-    }, temporaryName);
-    await client.worker.evaluate(() => chrome.offscreen.closeDocument()).catch(() => undefined);
-    await client.context.close();
-  }
-});
-
 async function toolbarPopup(
   client: Awaited<ReturnType<typeof packagedAccountContext>>,
 ): Promise<Page> {
@@ -287,54 +200,37 @@ async function toolbarPopup(
   return extensionPopup(client.context, client.extensionId);
 }
 
-interface SavedArtifactProbe {
-  readonly aborted: boolean;
-  readonly chunks: readonly (readonly number[])[];
-  readonly closed: boolean;
-  readonly suggestedName: string;
-}
-
-async function installSavedArtifactProbe(page: Page): Promise<void> {
-  await page.evaluate(() => {
-    const saved = {
-      aborted: false,
-      chunks: [] as number[][],
-      closed: false,
-      suggestedName: "",
-    };
-    Object.defineProperty(window, "__awsmSavedArtifact", {
-      configurable: true,
-      value: saved,
-    });
-    Object.defineProperty(window, "showSaveFilePicker", {
-      configurable: true,
-      value: async (options: { suggestedName: string }) => {
-        saved.suggestedName = options.suggestedName;
-        return {
-          createWritable: async () => ({
-            write: async (chunk: Uint8Array) => saved.chunks.push(Array.from(chunk)),
-            close: async () => {
-              saved.closed = true;
-            },
-            abort: async () => {
-              saved.aborted = true;
-            },
-          }),
-        };
-      },
-    });
-  });
-}
-
-async function savedArtifactProbe(page: Page): Promise<SavedArtifactProbe> {
-  return page.evaluate(
-    () =>
-      (
-        window as typeof window & {
-          __awsmSavedArtifact: SavedArtifactProbe;
-        }
-      ).__awsmSavedArtifact,
+async function downloadBytes(page: Page, button: Locator): Promise<Uint8Array> {
+  const existingIds = await page.evaluate(async () =>
+    (await chrome.downloads.search({})).map((download) => download.id),
   );
+  await button.click();
+  await expect
+    .poll(async () =>
+      page.evaluate(async (excluded) => {
+        const download = (
+          await chrome.downloads.search({
+            limit: 10,
+            orderBy: ["-startTime"],
+            state: "complete",
+          })
+        ).find((candidate) => !excluded.includes(candidate.id));
+        return download?.filename;
+      }, existingIds),
+    )
+    .not.toBeUndefined();
+  const filename = await page.evaluate(async (excluded) => {
+    const download = (
+      await chrome.downloads.search({
+        limit: 10,
+        orderBy: ["-startTime"],
+        state: "complete",
+      })
+    ).find((candidate) => !excluded.includes(candidate.id));
+    return download?.filename;
+  }, existingIds);
+  if (filename === undefined) throw new Error("The browser download is unavailable.");
+  return Uint8Array.from(await readFile(filename));
 }
 
 async function artifactStorageSnapshot(
@@ -477,7 +373,7 @@ async function archiveFixture(
       )
       .toBe(true);
     captured = terminal?.state === "Succeeded";
-    if (!captured && (terminal?.errorId !== "MHTML_CAPTURE_FAILED" || attempt > 0))
+    if (!captured && (terminal?.errorId !== "PAGE_SNAPSHOT_FAILED" || attempt > 0))
       throw new Error(
         `Capture failed at the authoritative Host boundary: ${JSON.stringify(terminal)}`,
       );
@@ -662,47 +558,60 @@ async function faultControl(
   rejects?: boolean;
   lastFailure?: { message: string; id?: string; status?: number };
 }> {
-  return page.evaluate(
-    ({ action: requestedAction, checkpoint: requestedCheckpoint, failureId: requestedFailureId }) =>
-      new Promise((resolveValue, reject) => {
-        const extensionApi = (
-          globalThis as unknown as {
-            chrome: {
-              runtime: {
-                sendMessage(value: unknown, callback: (response: unknown) => void): void;
-                lastError?: { message?: string };
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await page.evaluate(
+        async ({
+          action: requestedAction,
+          checkpoint: requestedCheckpoint,
+          failureId: requestedFailureId,
+        }) => {
+          const extensionApi = (
+            globalThis as unknown as {
+              chrome: {
+                runtime: {
+                  sendMessage(value: unknown): Promise<unknown>;
+                };
               };
-            };
-          }
-        ).chrome;
-        extensionApi.runtime.sendMessage(
-          {
+            }
+          ).chrome;
+          const response: unknown = await extensionApi.runtime.sendMessage({
             type: "awsm:test-fault-control",
             action: requestedAction,
             ...(requestedCheckpoint === undefined ? {} : { checkpoint: requestedCheckpoint }),
             ...(requestedFailureId === undefined ? {} : { failureId: requestedFailureId }),
-          },
-          (response) => {
-            const error = extensionApi.runtime.lastError;
-            if (error !== undefined) reject(new Error(error.message ?? "Fault control failed"));
-            else
-              resolveValue(
-                response as {
-                  ok: boolean;
-                  reached?: boolean;
-                  rejects?: boolean;
-                  lastFailure?: {
-                    message: string;
-                    id?: string;
-                    status?: number;
-                  };
-                },
-              );
-          },
-        );
-      }),
-    { action, checkpoint, failureId },
-  );
+          });
+          if (
+            typeof response !== "object" ||
+            response === null ||
+            !("ok" in response) ||
+            response.ok !== true
+          )
+            throw new Error("Fault control did not receive a background response.");
+          return response as {
+            ok: boolean;
+            reached?: boolean;
+            rejects?: boolean;
+            lastFailure?: {
+              message: string;
+              id?: string;
+              status?: number;
+            };
+          };
+        },
+        { action, checkpoint, failureId },
+      );
+    } catch (error) {
+      if (
+        attempt === 2 ||
+        !(error instanceof Error) ||
+        !/message port closed|receiving end does not exist/iu.test(error.message)
+      )
+        throw error;
+      await page.waitForTimeout(100);
+    }
+  }
+  throw new Error("Fault control retry exhausted.");
 }
 
 async function stopExtensionWorker(
@@ -1764,12 +1673,13 @@ test("takes a first-time self-hosted user through capture, sync, Vacuum, and sta
             ).remoteOnlyArtifactCount,
         )
         .toBe(reliefEstimate.candidateArtifacts - 1);
-      await installSavedArtifactProbe(firstLibrary);
       const primary = firstLibrary.locator(".artifact-row").filter({
         has: firstLibrary.locator("strong", { hasText: /^MHTML$/u }),
       });
-      await primary.getByRole("button", { name: "Download" }).click();
-      await expect.poll(async () => (await savedArtifactProbe(firstLibrary)).closed).toBe(true);
+      expect(
+        (await downloadBytes(firstLibrary, primary.getByRole("button", { name: "Download" })))
+          .byteLength,
+      ).toBeGreaterThan(0);
       await expect
         .poll(
           async () =>
@@ -2254,7 +2164,7 @@ test("reauthenticates a candidate switch before and after remote application", a
     }>(after.page, {
       type: "LoginServerSwitchCandidate",
       email: after.sourceEmail,
-      password,
+      password: after.password,
     });
     expect(expiredAfter).toMatchObject({
       account: { configuration: { serverOrigin: "http://127.0.0.1:3301" } },
@@ -2265,7 +2175,7 @@ test("reauthenticates a candidate switch before and after remote application", a
     await appRequest(after.page, {
       type: "LoginServerSwitchCandidate",
       email: after.sourceEmail,
-      password,
+      password: after.password,
     });
     await waitForSynchronizedState(after.page, "http://127.0.0.1:3300");
     expect(afterJobId).toBeDefined();
@@ -2379,7 +2289,10 @@ test("renders Account onboarding, signup, progress, success, and settings states
     const settingsDialog = library.getByRole("dialog", { name: "Settings" });
     await expect(settingsDialog).toBeVisible();
     await expect(
-      settingsDialog.getByRole("button", { name: "Close Settings", exact: true }),
+      settingsDialog.getByRole("button", {
+        name: "Close Settings",
+        exact: true,
+      }),
     ).toBeVisible();
     await expect(settingsDialog.getByText("Up to date", { exact: true })).toBeVisible();
     await library.screenshot({
@@ -2692,7 +2605,7 @@ async function seedStaleAccountVisual(page: Page, vaultId: string): Promise<void
   }, vaultId);
 }
 
-test("captures MHTML and a full-page screenshot, then opens and downloads them offline", async ({
+test("captures a page snapshot and full-page screenshot, then derives MHTML offline", async ({
   browserName,
 }, testInfo) => {
   test.setTimeout(180_000);
@@ -2797,7 +2710,7 @@ test("captures MHTML and a full-page screenshot, then opens and downloads them o
     });
     const completedPopup = popup;
     const recoverableCaptureFailure = completedPopup.getByText(
-      /Capture failed \(MHTML_CAPTURE_FAILED\)/u,
+      /Capture failed \(PAGE_SNAPSHOT_FAILED\)/u,
     );
     await expect
       .poll(
@@ -3207,9 +3120,7 @@ test("captures MHTML and a full-page screenshot, then opens and downloads them o
     const primaryArtifact = library
       .locator(".artifact-row")
       .filter({ has: library.locator("strong", { hasText: /^MHTML$/u }) });
-    const mhtmlDownloadStarted = library.waitForEvent("download");
     await primaryArtifact.getByRole("button", { name: "Download" }).click();
-    const mhtmlDownload = await mhtmlDownloadStarted;
     await expect
       .poll(async () =>
         library.evaluate(async () => {
@@ -3232,7 +3143,7 @@ test("captures MHTML and a full-page screenshot, then opens and downloads them o
       )
       .toBe(true);
     await expect(library.getByRole("status")).toContainText(
-      /Downloaded awsm-[0-9a-f]{8}-mhtml\.mhtml/u,
+      /Downloaded awsm-[0-9a-f]{8}-page\.mhtml/u,
     );
     const mhtmlDownloadRecord = await library.evaluate(async () => {
       const extensionApi = (
@@ -3251,13 +3162,20 @@ test("captures MHTML and a full-page screenshot, then opens and downloads them o
       });
       return downloads[0];
     });
-    expect(mhtmlDownload.suggestedFilename()).toMatch(/awsm-[0-9a-f]{8}-mhtml\.mhtml$/u);
     expect(mhtmlDownloadRecord?.mime).toBe("multipart/related");
-    const mhtmlPath = await mhtmlDownload.path();
-    if (mhtmlPath === null) throw new Error("The MHTML download is unavailable.");
-    const mhtml = await readFile(mhtmlPath, "utf8");
+    if (mhtmlDownloadRecord?.filename === undefined)
+      throw new Error("The MHTML download is unavailable.");
+    const mhtml = await readFile(mhtmlDownloadRecord.filename, "utf8");
     expect(mhtml).toContain("MIME-Version: 1.0");
-    expect(mhtml).toContain("AWSM tall fixture");
+    expect(mhtml).toContain("Content-Transfer-Encoding: base64");
+    expect(mhtml).toContain("X-AWSM-Page-Snapshot-SHA256:");
+    const firstPart = mhtml.match(
+      /Content-Type: text\/html; charset=utf-8\r\n[\s\S]*?\r\n\r\n([A-Za-z0-9+/=\r\n]+)\r\n--/u,
+    )?.[1];
+    if (firstPart === undefined) throw new Error("The derived MHTML document part is missing.");
+    const inertHtml = Buffer.from(firstPart.replaceAll(/\s/gu, ""), "base64").toString("utf8");
+    expect(inertHtml).toContain("Content-Security-Policy");
+    expect(inertHtml).not.toMatch(/<script\b|onload\s*=|javascript:/iu);
     await expect(library.getByRole("navigation", { name: "Breadcrumb" })).toContainText(
       "AWSM tall fixture",
     );
@@ -3461,13 +3379,13 @@ test("frees synchronized browser storage and restores remote Artifacts on demand
     });
     expect(originalScreenshotPixels.width).toBeGreaterThan(0);
     expect(originalScreenshotPixels.height).toBeGreaterThan(0);
-    await installSavedArtifactProbe(desktop);
     const localPrimary = desktop
       .locator(".artifact-row")
       .filter({ has: desktop.locator("strong", { hasText: /^MHTML$/u }) });
-    await localPrimary.getByRole("button", { name: "Download" }).click();
-    await expect.poll(async () => (await savedArtifactProbe(desktop)).closed).toBe(true);
-    const originalPrimaryBytes = Uint8Array.from((await savedArtifactProbe(desktop)).chunks.flat());
+    const originalPrimaryBytes = await downloadBytes(
+      desktop,
+      localPrimary.getByRole("button", { name: "Download" }),
+    );
     expect(originalPrimaryBytes.byteLength).toBeGreaterThan(0);
     await desktop.goto(`chrome-extension://${client.extensionId}/library.html`);
     const estimate = await appRequest<{
@@ -3498,8 +3416,10 @@ test("frees synchronized browser storage and restores remote Artifacts on demand
     });
     await faultControl(desktop, "arm", "storage-relief:after-synchronization");
     await desktop.getByRole("button", { name: "Reduce device storage" }).click();
-    expect(confirmation).toContain("verify each encrypted server copy first");
-    expect(confirmation).toContain("only copy");
+    expect(confirmation).toContain(
+      "verify each encrypted server copy before removing its local copy",
+    );
+    expect(confirmation).toContain("require your Account and a connection");
     await expect
       .poll(async () => (await faultControl(desktop, "status")).reached, {
         timeout: 120_000,
@@ -3545,10 +3465,8 @@ test("frees synchronized browser storage and restores remote Artifacts on demand
       .toBe("Succeeded");
     await expect(desktop.getByText(/^Removed /u)).toBeVisible();
     await expect(narrow.getByText(/^Removed /u)).toBeVisible();
-    await expect(desktop.getByRole("heading", { name: "Device storage" })).toBeFocused();
-    await expect(narrow.getByRole("heading", { name: "Device storage" })).toBeFocused();
-    await expect(desktop.getByRole("status")).toContainText("Storage cleanup completed");
-    await expect(narrow.getByRole("status")).toContainText("Storage cleanup completed");
+    await expect(desktop.getByRole("status")).toContainText("Device storage reduction completed");
+    await expect(narrow.getByRole("status")).toContainText("Device storage reduction completed");
     const remoteState = await appRequest<{
       readonly remoteOnlyArtifactCount?: number;
     }>(desktop, {
@@ -3569,9 +3487,6 @@ test("frees synchronized browser storage and restores remote Artifacts on demand
       fullPage: true,
     });
     await narrow.bringToFront();
-    await narrow.keyboard.press("Tab");
-    await narrow.getByRole("heading", { name: "Device storage" }).focus();
-    await expect(narrow.getByRole("heading", { name: "Device storage" })).toBeFocused();
     await narrow.screenshot({
       path: testInfo.outputPath("storage-relief-success-narrow.png"),
       fullPage: true,
@@ -3587,7 +3502,12 @@ test("frees synchronized browser storage and restores remote Artifacts on demand
       ).remoteOnlyArtifactCount,
     ).toBe(estimate.candidateArtifacts);
 
-    await desktop.getByRole("button", { name: "Export Vault" }).click();
+    await desktop.getByRole("button", { name: "Settings" }).click();
+    await desktop.getByRole("tab", { name: "Vault" }).click();
+    await desktop
+      .getByRole("dialog", { name: "Settings" })
+      .getByRole("button", { name: "Export Vault" })
+      .click();
     const exportDialog = desktop.getByRole("dialog", {
       name: "Export encrypted Vault",
     });
@@ -3662,7 +3582,7 @@ test("frees synchronized browser storage and restores remote Artifacts on demand
       `chrome-extension://${client.extensionId}/library.html?bundleId=${bundleId}`,
     );
     await expect(
-      offlineDetail.getByText("Stored on server · retrieves when opened").first(),
+      offlineDetail.getByText("Stored on server · retrieved when opened").first(),
     ).toBeVisible();
     await expect(
       offlineDetail.getByText("This screenshot is stored on the server. Reconnect and try again."),
@@ -3734,15 +3654,12 @@ test("frees synchronized browser storage and restores remote Artifacts on demand
       .toBe(estimate.candidateArtifacts - 1);
     await expect.poll(async () => narrow.getByText(/^Removed /u).isVisible()).toBe(true);
 
-    await installSavedArtifactProbe(desktop);
     const remotePrimary = desktop
       .locator(".artifact-row")
       .filter({ has: desktop.locator("strong", { hasText: /^MHTML$/u }) });
-    await remotePrimary.getByRole("button", { name: "Download" }).click();
-    await expect.poll(async () => (await savedArtifactProbe(desktop)).closed).toBe(true);
-    const restoredPrimary = await savedArtifactProbe(desktop);
-    expect(restoredPrimary.aborted).toBe(false);
-    expect(Uint8Array.from(restoredPrimary.chunks.flat())).toEqual(originalPrimaryBytes);
+    expect(
+      await downloadBytes(desktop, remotePrimary.getByRole("button", { name: "Download" })),
+    ).toEqual(originalPrimaryBytes);
     await expect
       .poll(
         async () =>
@@ -3819,10 +3736,10 @@ test("frees synchronized browser storage and restores remote Artifacts on demand
     );
     await expect(desktop.getByText("Sign in to retrieve this screenshot.")).toBeVisible();
     const compactArtifact = desktop.locator(".artifact-row").filter({
-      has: desktop.locator("strong", { hasText: /^TEXT EXTRACTED$/u }),
+      has: desktop.locator("strong", { hasText: /^Extracted text$/u }),
     });
     await compactArtifact.getByRole("button", { name: "Inspect" }).click();
-    await expect(desktop.locator(".artifact-inspection")).toBeVisible();
+    await expect(desktop.locator(".artifact-inspection:visible")).toBeVisible();
 
     await desktop.goto(`chrome-extension://${client.extensionId}/library.html`);
     await appRequest(desktop, { type: "LoginAccount", email, password });
@@ -3897,15 +3814,15 @@ test("frees synchronized browser storage and restores remote Artifacts on demand
       await importedLibrary.goto(
         `chrome-extension://${imported.extensionId}/library.html?bundleId=${bundleId}`,
       );
-      await installSavedArtifactProbe(importedLibrary);
       const importedPrimary = importedLibrary.locator(".artifact-row").filter({
         has: importedLibrary.locator("strong", { hasText: /^MHTML$/u }),
       });
-      await importedPrimary.getByRole("button", { name: "Download" }).click();
-      await expect.poll(async () => (await savedArtifactProbe(importedLibrary)).closed).toBe(true);
-      expect(Uint8Array.from((await savedArtifactProbe(importedLibrary)).chunks.flat())).toEqual(
-        originalPrimaryBytes,
-      );
+      expect(
+        await downloadBytes(
+          importedLibrary,
+          importedPrimary.getByRole("button", { name: "Download" }),
+        ),
+      ).toEqual(originalPrimaryBytes);
     } finally {
       await imported.context.close();
     }
@@ -4034,12 +3951,13 @@ test("resumes every packaged storage-relief removal boundary and preserves parti
       await expect(library.getByRole("img", { name: /Full-page screenshot/u })).toBeVisible({
         timeout: 120_000,
       });
-      await installSavedArtifactProbe(library);
       const primary = library
         .locator(".artifact-row")
         .filter({ has: library.locator("strong", { hasText: /^MHTML$/u }) });
-      await primary.getByRole("button", { name: "Download" }).click();
-      await expect.poll(async () => (await savedArtifactProbe(library)).closed).toBe(true);
+      expect(
+        (await downloadBytes(library, primary.getByRole("button", { name: "Download" })))
+          .byteLength,
+      ).toBeGreaterThan(0);
       await expect
         .poll(
           async () =>
@@ -4366,9 +4284,10 @@ test("exports a Vault and imports it into a fresh Workspace", async ({ browserNa
     contentType: "text/html",
     viewport: { width: 800, height: 600 },
     document: { width: 800, height: 1200 },
-    chromeVersion: "149",
+    browserName: "Chrome",
+    browserVersion: "149",
     extensionVersion: "0.1.0",
-    captureProfileId: "ChromeWebPage-v1",
+    captureProfileId: "WebPageSnapshot-v1",
     captureProfileVersion: 1,
   };
   const blocks = [
@@ -4381,8 +4300,39 @@ test("exports a Vault and imports it into a fresh Workspace", async ({ browserNa
     },
   ];
   const encryptedArtifacts = new Map<string, Uint8Array>();
-  const primary = new Uint8Array(32 * 1024 * 1024).fill(0x20);
-  primary.set(new TextEncoder().encode("MIME-Version: 1.0\r\nPortable Fixture\r\n"));
+  const primary = new Uint8Array(
+    await (
+      await createPageSnapshotBlob({
+        capturedAt,
+        originalUrl: metadata.originalUrl,
+        finalUrl: metadata.finalUrl,
+        documents: [
+          {
+            originalUrl: metadata.originalUrl,
+            finalUrl: metadata.finalUrl,
+            bytes: new TextEncoder().encode(
+              "<!doctype html><html><title>Portable Fixture</title><body>Portable fixture text</body></html>",
+            ),
+            scrollX: 0,
+            scrollY: 0,
+          },
+        ],
+        resources: [
+          {
+            ownerDocumentId: "d000000",
+            requestedUrl: "https://fixture.test/portable.bin",
+            finalUrl: "https://fixture.test/portable.bin",
+            bytes: new Uint8Array(32 * 1024 * 1024).fill(0x20),
+            mediaType: "application/octet-stream",
+            status: 200,
+            acquisition: "Network",
+            compression: "Store",
+          },
+        ],
+        omissions: [],
+      })
+    ).blob.arrayBuffer(),
+  );
   const artifacts = await Promise.all([
     preparePortableArtifact(
       encryptedArtifacts,
@@ -4391,7 +4341,7 @@ test("exports a Vault and imports it into a fresh Workspace", async ({ browserNa
       primary,
       "PRIMARY",
       "CAPTURE",
-      "multipart/related",
+      "application/vnd.awsm.web-page+zip",
       capturedAt,
     ),
     preparePortableArtifact(
@@ -4571,12 +4521,18 @@ test("exports a Vault and imports it into a fresh Workspace", async ({ browserNa
     await library.getByText("Portable Fixture").click();
     await library
       .locator("article.artifact-row")
-      .filter({ hasText: "TEXT EXTRACTED" })
+      .filter({ hasText: "Extracted text" })
       .getByRole("button", { name: "Inspect" })
       .click();
     await expect(library.getByText("Portable fixture text")).toBeVisible();
     await expect(library.getByText(/OPTIONAL_METADATA_UNAVAILABLE/u)).toBeVisible();
-    await library.getByRole("button", { name: "Export Vault" }).click();
+    await library.goto(`chrome-extension://${extensionId}/library.html`);
+    await library.getByRole("button", { name: "Settings" }).click();
+    await library.getByRole("tab", { name: "Vault" }).click();
+    await library
+      .getByRole("dialog", { name: "Settings" })
+      .getByRole("button", { name: "Export Vault" })
+      .click();
     const reexportDialog = library.getByRole("dialog", {
       name: "Export encrypted Vault",
     });
@@ -4605,7 +4561,12 @@ test("exports a Vault and imports it into a fresh Workspace", async ({ browserNa
         errorId: "EXPORT_DOWNLOAD_FAILED",
       });
     await faultControl(library, "release");
-    await library.getByRole("button", { name: "Export Vault" }).click();
+    await library.getByRole("button", { name: "Settings" }).click();
+    await library.getByRole("tab", { name: "Vault" }).click();
+    await library
+      .getByRole("dialog", { name: "Settings" })
+      .getByRole("button", { name: "Export Vault" })
+      .click();
     const retryDialog = library.getByRole("dialog", {
       name: "Export encrypted Vault",
     });
@@ -4676,7 +4637,12 @@ test("exports a Vault and imports it into a fresh Workspace", async ({ browserNa
       screenshotName: string,
       authenticated: boolean,
     ): Promise<void> => {
-      await library.getByRole("button", { name: "Import Vault" }).click();
+      await library.getByRole("button", { name: "Settings" }).click();
+      await library.getByRole("tab", { name: "Vault" }).click();
+      await library
+        .getByRole("dialog", { name: "Settings" })
+        .getByRole("button", { name: "Import Vault" })
+        .click();
       const failureDialog = library.getByRole("dialog", {
         name: "Import encrypted Vault",
       });
@@ -4698,7 +4664,8 @@ test("exports a Vault and imports it into a fresh Workspace", async ({ browserNa
         path: testInfo.outputPath(screenshotName),
         fullPage: true,
       });
-      if (!authenticated) await failureDialog.getByRole("button", { name: "Close" }).click();
+      if (!authenticated)
+        await failureDialog.getByRole("button", { name: "Close", exact: true }).click();
     };
     await library.setViewportSize({ width: 390, height: 844 });
     await expectTerminalImportFailure(
@@ -4735,7 +4702,13 @@ test("exports a Vault and imports it into a fresh Workspace", async ({ browserNa
     await popup.getByRole("button", { name: "Create Vault" }).click();
     await expect(popup.getByText(/Vault · Existing Vault/u)).toBeVisible();
     const library = await populatedDestination.newPage();
-    await library.goto(`chrome-extension://${extensionId}/library.html?import=1`);
+    await library.goto(`chrome-extension://${extensionId}/library.html`);
+    await library.getByRole("button", { name: "Settings" }).click();
+    await library.getByRole("tab", { name: "Vault" }).click();
+    await library
+      .getByRole("dialog", { name: "Settings" })
+      .getByRole("button", { name: "Import Vault" })
+      .click();
     const dialog = library.getByRole("dialog", {
       name: "Import encrypted Vault",
     });
@@ -4867,27 +4840,29 @@ test("creates, captures, switches, locks, renames, and deep-links across isolate
 
     await activateFixture();
     await popup.getByRole("button", { name: "Archive this page" }).click();
-    await expect(popup.getByRole("button", { name: "Switch Vault" })).toBeDisabled();
     await expect(popup.getByRole("link", { name: /Open archived capture/u })).toBeVisible({
       timeout: 30_000,
     });
 
-    await popup.getByRole("button", { name: "Switch Vault" }).click();
-    await popup.getByRole("button", { name: "Create another Vault" }).click();
-    const createDialog = popup.getByRole("dialog", {
+    const vaultALibrary = await context.newPage();
+    await vaultALibrary.goto(`chrome-extension://${extensionId}/library.html`);
+    await vaultALibrary.getByRole("button", { name: "Settings" }).click();
+    await vaultALibrary.getByRole("tab", { name: "Vault" }).click();
+    await vaultALibrary.getByRole("button", { name: "Create another Vault" }).click();
+    const createDialog = vaultALibrary.getByRole("dialog", {
       name: "Create another Vault",
     });
     await expect(createDialog).toBeVisible();
     await createDialog.getByRole("textbox", { name: "Vault name" }).fill("Vault B");
     await createDialog.getByRole("button", { name: "Create Vault" }).click();
     await expect(popup.getByText(/Vault · Vault B/u)).toBeVisible();
+    await vaultALibrary.close();
     const liveLibraryB = await context.newPage();
     await liveLibraryB.goto(`chrome-extension://${extensionId}/library.html`);
     await expect(liveLibraryB.getByRole("heading", { name: "Vault B" })).toBeVisible();
 
     await activateFixture();
     await popup.getByRole("button", { name: "Archive this page" }).click();
-    await expect(liveLibraryB.getByRole("button", { name: "Switch Vault" })).toBeDisabled();
     await expect(popup.getByRole("link", { name: /Open archived capture/u })).toBeVisible({
       timeout: 30_000,
     });
@@ -4950,11 +4925,14 @@ test("creates, captures, switches, locks, renames, and deep-links across isolate
       [vaultB.vaultId]: 6,
     });
 
-    await popup.getByRole("button", { name: "Switch Vault" }).click();
-    const switchDialog = popup.getByRole("dialog", { name: "Switch Vault" });
-    await switchDialog.getByRole("radio", { name: /Vault A/u }).check();
-    await switchDialog.getByRole("button", { name: "Switch", exact: true }).click();
-    await expect(popup.getByText(/Vault · Vault A · Locked/u)).toBeVisible();
+    const switchLibrary = await context.newPage();
+    await switchLibrary.goto(`chrome-extension://${extensionId}/library.html`);
+    await switchLibrary.getByRole("button", { name: "Settings" }).click();
+    await switchLibrary.getByRole("tab", { name: "Vault" }).click();
+    await switchLibrary.getByRole("button", { name: "Switch to Vault A" }).click();
+    await popup.reload();
+    await expect(popup.getByText("Vault · Vault A", { exact: true })).toBeVisible();
+    await switchLibrary.close();
     const libraryA = await context.newPage();
     await libraryA.goto(`chrome-extension://${extensionId}/library.html`);
     await expect(libraryA.getByRole("heading", { name: "Vault A" })).toBeVisible();
@@ -4965,95 +4943,29 @@ test("creates, captures, switches, locks, renames, and deep-links across isolate
     await popup.getByRole("button", { name: "Unlock on this device" }).click();
     await expect(popup.getByText(/Vault · Vault A/u)).toBeVisible();
 
-    await expect(popup.getByRole("button", { name: /^Rename/u })).toHaveCount(0);
-    await expect(libraryA.getByRole("button", { name: "Rename Vault A" })).toBeVisible();
-    await popup.getByRole("button", { name: "Lock Vault" }).click();
-    await expect(libraryA.getByRole("heading", { name: "Vault A" })).toBeVisible();
-    await expect(libraryA.getByRole("button", { name: "Rename Vault A" })).toHaveCount(0);
-    await expect(libraryA.getByRole("heading", { name: "Unlock your Vault" })).toBeVisible();
-    await popup.getByRole("button", { name: "Unlock on this device" }).click();
-    await expect(libraryA.getByRole("button", { name: "Rename Vault A" })).toBeVisible();
-    const restingGeometry = await libraryA.evaluate(() => {
-      const header = document.querySelector("header")?.getBoundingClientRect();
-      const management = document.querySelector(".vault-control")?.getBoundingClientRect();
-      const main = document.querySelector("main")?.getBoundingClientRect();
-      if (header === undefined || management === undefined || main === undefined) {
-        throw new Error("Library layout is incomplete.");
-      }
-      return {
-        headerBottom: header.bottom,
-        mainTop: main.top,
-        leftEdges: [header.left, management.left, main.left],
-      };
-    });
-    expect(
-      Math.max(...restingGeometry.leftEdges) - Math.min(...restingGeometry.leftEdges),
-    ).toBeLessThan(1);
-    await libraryA.evaluate(() => window.scrollTo(0, 0));
-    await libraryA.screenshot({
-      path: testInfo.outputPath("vault-title-resting-desktop.png"),
-    });
-    await libraryA.getByRole("button", { name: "Rename Vault A" }).click();
-    const selectedInput = libraryA.getByRole("textbox", { name: "Vault name" });
-    await expect(selectedInput).toBeVisible();
-    await expect(selectedInput).toHaveCount(1);
-    await expect(selectedInput).toHaveJSProperty("selectionStart", 0);
-    await expect(selectedInput).toHaveJSProperty("selectionEnd", "Vault A".length);
-    const editingGeometry = await libraryA.evaluate(() => ({
-      headerBottom: document.querySelector("header")?.getBoundingClientRect().bottom,
-      mainTop: document.querySelector("main")?.getBoundingClientRect().top,
-    }));
-    expect(editingGeometry).toEqual({
-      headerBottom: restingGeometry.headerBottom,
-      mainTop: restingGeometry.mainTop,
-    });
-    await libraryA.screenshot({
-      path: testInfo.outputPath("vault-title-selected-desktop.png"),
-    });
-    await selectedInput.pressSequentially("Discarded draft");
-    await expect(selectedInput).toHaveValue("Discarded draft");
-    await libraryA.locator(".eyebrow").click();
-    await expect(libraryA.getByRole("heading", { name: "Vault A" })).toBeVisible();
-    await expect(libraryA.getByRole("textbox", { name: "Vault name" })).toHaveCount(0);
-    await libraryA.screenshot({
-      path: testInfo.outputPath("vault-title-restored-desktop.png"),
-    });
-    await libraryA.getByRole("button", { name: "Rename Vault A" }).click();
-    await expect(libraryA.getByRole("button", { name: "Cancel" })).toHaveCount(0);
-    await libraryA.getByRole("textbox", { name: "Vault name" }).fill(" ");
-    await libraryA.getByRole("button", { name: "Rename", exact: true }).click();
-    await expect(libraryA.getByText(/Use a Vault name between 1 and 64/u)).toBeVisible();
-    await libraryA.screenshot({
-      path: testInfo.outputPath("vault-title-error-desktop.png"),
-    });
-    await libraryA.getByRole("textbox", { name: "Vault name" }).press("Escape");
-    await expect(libraryA.getByRole("heading", { name: "Vault A" })).toBeVisible();
-    await libraryA.getByRole("button", { name: "Rename Vault A" }).click();
-    await libraryA.getByRole("textbox", { name: "Vault name" }).fill("Escaped draft");
-    await libraryA.getByRole("textbox", { name: "Vault name" }).press("Escape");
-    await expect(libraryA.getByRole("heading", { name: "Vault A" })).toBeVisible();
-    await libraryA.getByRole("button", { name: "Rename Vault A" }).click();
-    const renameInput = libraryA.getByRole("textbox", { name: "Vault name" });
+    await libraryA.reload();
+    await libraryA.getByRole("button", { name: "Settings" }).click();
+    await libraryA.getByRole("tab", { name: "Vault" }).click();
+    const settings = libraryA.getByRole("dialog", { name: "Settings" });
+    const renameInput = settings.getByRole("textbox", { name: "Vault name" });
     await renameInput.fill("Vault A Renamed");
-    await libraryA.getByRole("button", { name: "Rename", exact: true }).click();
+    await settings.getByRole("button", { name: "Rename", exact: true }).click();
     await expect(libraryA.getByRole("heading", { name: "Vault A Renamed" })).toBeVisible();
-    await expect(popup.getByText(/Vault · Vault A Renamed/u)).toBeVisible();
+    await popup.reload();
+    await expect(popup.getByText("Vault · Vault A Renamed", { exact: true })).toBeVisible();
     await libraryA.screenshot({
       path: testInfo.outputPath("vault-title-success-desktop.png"),
     });
     await libraryA.setViewportSize({ width: 390, height: 844 });
-    await libraryA.getByRole("button", { name: "Rename Vault A Renamed" }).click();
-    await expect(libraryA.getByRole("textbox", { name: "Vault name" })).toBeVisible();
     const narrowLayout = await libraryA.evaluate(() => {
       const header = document.querySelector("header")?.getBoundingClientRect();
-      const management = document.querySelector(".vault-control")?.getBoundingClientRect();
       const main = document.querySelector("main")?.getBoundingClientRect();
-      if (header === undefined || management === undefined || main === undefined) {
+      if (header === undefined || main === undefined) {
         throw new Error("Library layout is incomplete.");
       }
       return {
         overflow: document.documentElement.scrollWidth - window.innerWidth,
-        leftEdges: [header.left, management.left, main.left],
+        leftEdges: [header.left, main.left],
       };
     });
     expect(narrowLayout.overflow).toBeLessThanOrEqual(0);
@@ -5063,7 +4975,6 @@ test("creates, captures, switches, locks, renames, and deep-links across isolate
     await libraryA.screenshot({
       path: testInfo.outputPath("vault-title-selected-narrow.png"),
     });
-    await libraryA.getByRole("textbox", { name: "Vault name" }).press("Escape");
 
     const deepLinkLibrary = await context.newPage();
     await deepLinkLibrary.goto(

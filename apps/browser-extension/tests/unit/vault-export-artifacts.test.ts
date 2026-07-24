@@ -28,6 +28,7 @@ import {
 } from "../../src/runtime/export";
 import { prepareImportedArtifacts } from "../../src/runtime/import/artifacts";
 import { prepareImportedVaultCredentials } from "../../src/runtime/import/credentials";
+import { createPageSnapshotBlob } from "../../src/runtime/page-snapshot";
 import { type VaultRecordsV1, type VaultRepository, VaultService } from "../../src/runtime/vault";
 import { prepareVaultNameChange } from "../../src/runtime/vault/name-crypto";
 
@@ -177,9 +178,10 @@ describe("Artifact graph Vault Export", () => {
       contentType: "text/html",
       viewport: { width: 800, height: 600 },
       document: { width: 800, height: 1200 },
-      chromeVersion: "149",
+      browserName: "Chrome",
+      browserVersion: "149",
       extensionVersion: "0.1.0",
-      captureProfileId: "ChromeWebPage-v1",
+      captureProfileId: "WebPageSnapshot-v1",
       captureProfileVersion: 1,
     };
     const blocks = [
@@ -193,6 +195,26 @@ describe("Artifact graph Vault Export", () => {
     ];
     const structured = encodeStructuredContentSequence(blocks);
     const text = normalizedTextFromBlocks(blocks);
+    const primary = new Uint8Array(
+      await (
+        await createPageSnapshotBlob({
+          capturedAt,
+          originalUrl: metadata.originalUrl,
+          finalUrl: metadata.finalUrl,
+          documents: [
+            {
+              originalUrl: metadata.originalUrl,
+              finalUrl: metadata.finalUrl,
+              bytes: new TextEncoder().encode("<!doctype html><title>Fixture</title>"),
+              scrollX: 0,
+              scrollY: 0,
+            },
+          ],
+          resources: [],
+          omissions: [],
+        })
+      ).blob.arrayBuffer(),
+    );
     const store = new MemoryArtifactStore();
     const artifacts = await Promise.all([
       prepareArtifact(
@@ -200,10 +222,10 @@ describe("Artifact graph Vault Export", () => {
         preparedVault.rootKey,
         vaultId,
         id(20),
-        new TextEncoder().encode("MIME-Version: 1.0\r\nFixture"),
+        primary,
         "PRIMARY",
         "CAPTURE",
-        "multipart/related",
+        "application/vnd.awsm.web-page+zip",
         capturedAt,
       ),
       prepareArtifact(

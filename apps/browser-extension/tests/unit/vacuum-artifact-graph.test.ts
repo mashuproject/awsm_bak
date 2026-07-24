@@ -13,7 +13,7 @@ async function rootKey(): Promise<CryptoKey> {
 
 function artifact(objectId: string, role: ArtifactReferenceV1["role"]) {
   const properties = {
-    PRIMARY: ["CAPTURE", "multipart/related"],
+    PRIMARY: ["CAPTURE", "application/vnd.awsm.web-page+zip"],
     TEXT_EXTRACTED: ["TEXT", "text/plain;charset=utf-8"],
     CONTENT_STRUCTURED: ["STRUCTURED_CONTENT", "application/cbor-seq"],
   } as const;
@@ -56,9 +56,10 @@ describe("Vacuum Artifact graph reachability", () => {
       contentType: "text/html",
       viewport: { width: 800, height: 600 },
       document: { width: 800, height: 1200 },
-      chromeVersion: "149",
+      browserName: "Chrome",
+      browserVersion: "149",
       extensionVersion: "0.1.0",
-      captureProfileId: "ChromeWebPage-v1",
+      captureProfileId: "WebPageSnapshot-v1",
       captureProfileVersion: 1,
     };
     const first = await prepareCaptureRegistration({

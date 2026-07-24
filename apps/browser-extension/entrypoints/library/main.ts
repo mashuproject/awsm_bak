@@ -1908,13 +1908,13 @@ function storageMaintenance(
       element(
         "p",
         estimate.candidateArtifacts === 0
-          ? "No large MHTML archives or screenshots can currently be removed"
+          ? "No large page snapshots or screenshots can currently be removed"
           : `Up to ${formatByteSize(estimate.candidateBytes)} can be removed from this device · ${String(estimate.candidateArtifacts)} ${estimate.candidateArtifacts === 1 ? "file" : "files"}`,
         "storage-maintenance__estimate",
       ),
       element(
         "p",
-        "Remove verified local copies of large MHTML archives and screenshots. Encrypted copies stay on your server and are retrieved when you open them. They are unavailable offline until retrieved.",
+        "Remove verified local copies of large page snapshots and screenshots. Encrypted copies stay on your server and are retrieved when you open them. They are unavailable offline until retrieved.",
         "muted",
       ),
     );

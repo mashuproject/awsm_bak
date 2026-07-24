@@ -1229,7 +1229,7 @@ async function atomicVaultSelectScenario(): Promise<unknown> {
     commandId: id("981"),
     tabId: 7,
     state: "Running" as const,
-    stage: "MHTML" as const,
+    stage: "Snapshot" as const,
     createdAt: "2026-07-18T16:02:00.000Z",
     updatedAt: "2026-07-18T16:02:01.000Z",
   };
@@ -1625,7 +1625,7 @@ async function interruptionScenario(): Promise<unknown> {
     commandId: beforeCommit.outcome.commandId,
     tabId: 7,
     state: "Running",
-    stage: "MHTML",
+    stage: "Snapshot",
     createdAt: "2026-07-16T17:00:00.000Z",
     updatedAt: "2026-07-16T17:00:01.000Z",
   });
@@ -2232,7 +2232,7 @@ async function managementBusyScenario(): Promise<unknown> {
     commandId: id("971"),
     tabId: 7,
     state: "Running" as const,
-    stage: "MHTML" as const,
+    stage: "Snapshot" as const,
     createdAt: "2026-07-18T12:00:00.000Z",
     updatedAt: "2026-07-18T12:00:01.000Z",
   };
@@ -3327,7 +3327,7 @@ async function artifactStoreScenario(): Promise<unknown> {
         artifactObjectId: objectId,
         kind: "CAPTURE",
         role: "PRIMARY",
-        mimeType: "multipart/related",
+        mimeType: "application/vnd.awsm.web-page+zip",
         acquiredAt: "2026-07-18T00:00:00.000Z",
         plaintextByteLength: prepared.plaintextByteLength,
         checksumAlgorithm: "hash:sha256:v1",

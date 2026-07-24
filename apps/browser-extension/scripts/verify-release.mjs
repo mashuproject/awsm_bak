@@ -6,7 +6,6 @@ const output = new URL(".output/chrome-mv3/", root);
 const approvedPermissions = [
   "activeTab",
   "scripting",
-  "pageCapture",
   "offscreen",
   "unlimitedStorage",
   "downloads",
@@ -40,6 +39,10 @@ const manifest = JSON.parse(await readFile(new URL("manifest.json", output), "ut
 assert(
   JSON.stringify(manifest.permissions) === JSON.stringify(approvedPermissions),
   "Built permissions differ from the approved allowlist.",
+);
+assert(
+  !manifest.permissions.includes("pageCapture"),
+  "The shipping manifest must not request pageCapture.",
 );
 assert(
   !("host_permissions" in manifest),

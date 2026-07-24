@@ -43,9 +43,10 @@ export interface CaptureMetadataV1 {
   readonly contentType: string;
   readonly viewport: { readonly width: number; readonly height: number };
   readonly document: { readonly width: number; readonly height: number };
-  readonly chromeVersion: string;
+  readonly browserName: string;
+  readonly browserVersion: string;
   readonly extensionVersion: string;
-  readonly captureProfileId: "ChromeWebPage-v1";
+  readonly captureProfileId: "WebPageSnapshot-v1";
   readonly captureProfileVersion: 1;
 }
 
@@ -54,7 +55,7 @@ export interface BundleDescriptorV1 {
   readonly bundleId: string;
   readonly createdAt: string;
   readonly clientVersion: string;
-  readonly captureProfileId: "ChromeWebPage-v1";
+  readonly captureProfileId: "WebPageSnapshot-v1";
   readonly captureAdapterVersion: 1;
   readonly metadata: CaptureMetadataV1;
   readonly artifacts: readonly ArtifactReferenceV1[];
@@ -63,7 +64,7 @@ export interface BundleDescriptorV1 {
 const ROLE_CONTRACT: Readonly<
   Record<ArtifactRole, { readonly kind: ArtifactKind; readonly mimeType: string }>
 > = {
-  PRIMARY: { kind: "CAPTURE", mimeType: "multipart/related" },
+  PRIMARY: { kind: "CAPTURE", mimeType: "application/vnd.awsm.web-page+zip" },
   SCREENSHOT_FULL: { kind: "IMAGE", mimeType: "image/webp" },
   THUMBNAIL: { kind: "IMAGE", mimeType: "image/webp" },
   TEXT_EXTRACTED: { kind: "TEXT", mimeType: "text/plain;charset=utf-8" },
@@ -100,7 +101,8 @@ function metadata(value: unknown): CaptureMetadataV1 {
     "contentType",
     "viewport",
     "document",
-    "chromeVersion",
+    "browserName",
+    "browserVersion",
     "extensionVersion",
     "captureProfileId",
     "captureProfileVersion",
@@ -114,11 +116,12 @@ function metadata(value: unknown): CaptureMetadataV1 {
     contentType: string(input.contentType, "descriptor.metadata.contentType"),
     viewport: dimensions(input.viewport, "descriptor.metadata.viewport"),
     document: dimensions(input.document, "descriptor.metadata.document"),
-    chromeVersion: string(input.chromeVersion, "descriptor.metadata.chromeVersion"),
+    browserName: string(input.browserName, "descriptor.metadata.browserName"),
+    browserVersion: string(input.browserVersion, "descriptor.metadata.browserVersion"),
     extensionVersion: string(input.extensionVersion, "descriptor.metadata.extensionVersion"),
     captureProfileId: literal(
       input.captureProfileId,
-      "ChromeWebPage-v1",
+      "WebPageSnapshot-v1",
       "descriptor.metadata.captureProfileId",
     ),
     captureProfileVersion: literal(
@@ -223,7 +226,7 @@ function decodeValue(value: unknown): BundleDescriptorV1 {
     clientVersion: string(input.clientVersion, "descriptor.clientVersion"),
     captureProfileId: literal(
       input.captureProfileId,
-      "ChromeWebPage-v1",
+      "WebPageSnapshot-v1",
       "descriptor.captureProfileId",
     ),
     captureAdapterVersion: literal(

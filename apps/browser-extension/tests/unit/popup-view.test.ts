@@ -137,13 +137,13 @@ describe("popup state model", () => {
           commandId: "00000000-0000-4000-8000-000000000002",
           tabId: 7,
           state: "Failed",
-          stage: "MHTML",
-          errorId: "MHTML_CAPTURE_FAILED",
+          stage: "Snapshot",
+          errorId: "PAGE_SNAPSHOT_FAILED",
           createdAt: "2026-07-16T17:00:00.000Z",
           updatedAt: "2026-07-16T17:00:01.000Z",
         },
       }),
-    ).toEqual({ screen: "ready", notice: "MHTML_CAPTURE_FAILED" });
+    ).toEqual({ screen: "ready", notice: "PAGE_SNAPSHOT_FAILED" });
   });
 
   it("shows a visible warning when the committed capture lacks its screenshot", () => {

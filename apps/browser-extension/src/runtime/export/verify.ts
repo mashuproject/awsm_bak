@@ -30,8 +30,10 @@ import type {
   StoredVaultGenerationV1,
   StoredVaultHeadV1,
 } from "../../drivers/indexeddb/schema";
+import { stagePlaintextFile } from "../../hosts/shared/temporary-file";
 import { decodeBundleRegisteredPayload, validateArtifactWarnings } from "../capture/contracts";
 import { assertCanonicalEventFields } from "../library/vacuum";
+import { validatePageSnapshot } from "../page-snapshot";
 import { verifyVaultGeneration } from "../vault/generation";
 import { normalizeVaultName } from "../vault/name";
 import type { ExportManifestV1 } from "./contracts";
@@ -106,6 +108,51 @@ export interface VerifiedAuthoritativeVaultPackage {
   readonly objects: readonly StoredObjectV1[];
   readonly currentVaultName: string;
   readonly vaultCreatedAt: string;
+}
+
+async function primaryValidationSink(): Promise<{
+  write(bytes: Uint8Array): Promise<void>;
+  finish(): Promise<void>;
+  abort(error: unknown): Promise<void>;
+}> {
+  if (typeof navigator !== "undefined" && navigator.storage?.getDirectory !== undefined) {
+    const bridge = new TransformStream<Uint8Array, Uint8Array>();
+    const writer = bridge.writable.getWriter();
+    const staged = stagePlaintextFile(".awsm-verify-page.tmp", (output) =>
+      bridge.readable.pipeTo(output),
+    );
+    return {
+      write: (bytes) => writer.write(bytes),
+      finish: async () => {
+        await writer.close();
+        const file = await staged;
+        try {
+          await validatePageSnapshot(file.blob);
+        } finally {
+          await file.cleanup();
+        }
+      },
+      abort: async (error) => {
+        await writer.abort(error).catch(() => undefined);
+        const file = await staged.catch(() => undefined);
+        await file?.cleanup();
+      },
+    };
+  }
+  const chunks: ArrayBuffer[] = [];
+  let byteLength = 0;
+  return {
+    write: async (bytes) => {
+      byteLength += bytes.byteLength;
+      if (byteLength > 512 * 1024 * 1024)
+        throw new Error("Page snapshot exceeds the non-browser validation bound");
+      chunks.push(Uint8Array.from(bytes).buffer);
+    },
+    finish: async () => {
+      await validatePageSnapshot(new Blob(chunks));
+    },
+    abort: async () => undefined,
+  };
 }
 
 export async function verifyAuthoritativeVaultPackage(input: {
@@ -348,22 +395,32 @@ export async function verifyAuthoritativeVaultPackage(input: {
         if (compact && reference.plaintextByteLength > 16 * 1024 * 1024)
           throw new Error("Compact Artifact exceeds validation bound");
         const chunks: Uint8Array[] = [];
+        const primarySink =
+          reference.role === "PRIMARY" ? await primaryValidationSink() : undefined;
         const prefix = new Uint8Array(16);
         let prefixLength = 0;
-        const summary = await readArtifactEnvelope({
-          expectedObjectId: artifact.objectId,
-          key: artifactKey,
-          encrypted: await input.openArtifact(artifact.objectId),
-          write: (chunk: Uint8Array) => {
-            if (compact) chunks.push(Uint8Array.from(chunk));
-            if (prefixLength < prefix.byteLength) {
-              const length = Math.min(prefix.byteLength - prefixLength, chunk.byteLength);
-              prefix.set(chunk.subarray(0, length), prefixLength);
-              prefixLength += length;
-            }
-          },
-          ...(input.signal === undefined ? {} : { signal: input.signal }),
-        });
+        let summary: Awaited<ReturnType<typeof readArtifactEnvelope>>;
+        try {
+          summary = await readArtifactEnvelope({
+            expectedObjectId: artifact.objectId,
+            key: artifactKey,
+            encrypted: await input.openArtifact(artifact.objectId),
+            write: async (chunk: Uint8Array) => {
+              if (compact) chunks.push(Uint8Array.from(chunk));
+              await primarySink?.write(chunk);
+              if (prefixLength < prefix.byteLength) {
+                const length = Math.min(prefix.byteLength - prefixLength, chunk.byteLength);
+                prefix.set(chunk.subarray(0, length), prefixLength);
+                prefixLength += length;
+              }
+            },
+            ...(input.signal === undefined ? {} : { signal: input.signal }),
+          });
+          await primarySink?.finish();
+        } catch (error) {
+          await primarySink?.abort(error);
+          throw error;
+        }
         if (
           summary.envelopeByteLength !== artifact.envelopeByteLength ||
           !bytesEqual(summary.envelopeChecksum, artifact.envelopeChecksum)
@@ -380,7 +437,7 @@ export async function verifyAuthoritativeVaultPackage(input: {
             throw new Error("Image Artifact is not WebP");
         }
         if (reference.role === "PRIMARY" && prefixLength === 0)
-          throw new Error("MHTML Artifact is empty");
+          throw new Error("Page snapshot Artifact is empty");
         const plaintext = new Uint8Array(
           chunks.reduce((total, chunk) => total + chunk.byteLength, 0),
         );

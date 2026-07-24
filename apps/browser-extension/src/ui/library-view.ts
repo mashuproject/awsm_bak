@@ -92,7 +92,7 @@ export function storageReliefConfirmation(
   return [
     `Remove up to ${formatByteSize(candidateBytes)} from this device?`,
     "AWSM will verify each encrypted server copy before removing its local copy.",
-    `These ${String(candidateArtifacts)} MHTML archives and screenshots will require your Account and a connection until retrieved again.`,
+    `These ${String(candidateArtifacts)} page snapshots and screenshots will require your Account and a connection until retrieved again.`,
   ].join("\n\n");
 }
 

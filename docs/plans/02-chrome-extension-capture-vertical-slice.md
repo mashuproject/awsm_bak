@@ -29,7 +29,7 @@ The implementer is expected to begin with a documentation-only checkout and no p
 The deliverable is a Chrome-only Manifest V3 extension that:
 
 1. creates and unlocks a local Vault;
-2. captures the active HTTP(S) page as mandatory MHTML;
+2. captures the active HTTP(S) page as a mandatory AWSM page snapshot;
 3. attempts a lossy full-page WebP screenshot and records a warning if it cannot;
 4. constructs a deterministic, immutable Bundle;
 5. encrypts all sensitive persisted data locally;
@@ -149,7 +149,6 @@ The manifest requests only:
 
 - `activeTab`
 - `scripting`
-- `pageCapture`
 - `offscreen`
 - `unlimitedStorage`
 
@@ -224,7 +223,7 @@ Implement versioned discriminated unions rather than untyped messages.
 - creation timestamp;
 - tab ID;
 - observed URL;
-- capture profile ID `ChromeWebPage-v1`; and
+- capture profile ID `WebPageSnapshot-v1`; and
 - idempotency key equal to the command ID.
 
 `CreateVaultCommandV1` contains:
@@ -251,7 +250,7 @@ Implement versioned discriminated unions rather than untyped messages.
 - Chrome version;
 - extension version;
 - Capture Profile ID and version;
-- mandatory MHTML bytes;
+- mandatory page-snapshot bytes;
 - optional lossy WebP bytes; and
 - zero or more typed warnings.
 
@@ -305,8 +304,9 @@ Use typed errors with stable identifiers:
 - `VAULT_LOCKED`
 - `UNSUPPORTED_URL`
 - `PERMISSION_DENIED`
-- `MHTML_UNAVAILABLE`
-- `MHTML_CAPTURE_FAILED`
+- `PAGE_SNAPSHOT_FAILED`
+- `PAGE_SNAPSHOT_TOO_LARGE`
+- `PAGE_PACKAGE_FAILED`
 - `CAPTURE_INTERRUPTED`
 - `BUNDLE_INVALID`
 - `CRYPTO_AUTHENTICATION_FAILED`
@@ -386,20 +386,22 @@ Use libsodium only after its readiness promise resolves during each extension ex
 
 ## 7.1 First Capture Profile
 
-The first and only profile is `ChromeWebPage-v1`.
+The first and only profile is `WebPageSnapshot-v1`.
 
 Required:
 
 - active HTTP(S) tab;
-- Chrome MHTML capture capability;
-- one MHTML Artifact with Kind `CAPTURE`, Role `PRIMARY`, and MIME type `multipart/related`; and
+- scripting and streamed page-snapshot capability;
+- one canonical page-snapshot Artifact with Kind `CAPTURE`, Role `PRIMARY`, and MIME type
+  `application/vnd.awsm.web-page+zip`; and
 - required capture metadata.
 
 Best effort:
 
 - lossy full-page WebP Artifact with Kind `IMAGE`, Role `SCREENSHOT_FULL`, and MIME type `image/webp`.
 
-The profile succeeds when MHTML and required metadata are valid. Screenshot failure produces a typed warning and no screenshot Artifact. It does not invalidate the Bundle.
+The profile succeeds when the page snapshot and required metadata are valid. Screenshot failure
+produces a typed warning and no screenshot Artifact. It does not invalidate the Bundle.
 
 ## 7.2 ZIP layout
 
@@ -421,7 +423,7 @@ Before collecting page bytes:
 2. resolve the current active tab from the user action;
 3. validate that its URL uses `http:` or `https:`;
 4. verify required permissions and Chrome APIs;
-5. verify `ChromeWebPage-v1` support;
+5. verify `WebPageSnapshot-v1` support;
 6. create a persisted capture job; and
 7. reject before Bundle construction if mandatory capability is unavailable.
 
@@ -429,7 +431,8 @@ Restricted URLs, browser pages, extension pages, view-source pages, and missing 
 
 ## 8.2 Mandatory MHTML
 
-Call `chrome.pageCapture.saveAsMHTML({ tabId })`.
+Collect the rendered DOM and resource inventory through the scripting Host, then stream the
+canonical page snapshot to temporary OPFS storage.
 
 - An unavailable API, rejection, empty Blob, or unreadable Blob is a terminal capture failure.
 - MHTML failure produces no Bundle, Event, or Projection row.
@@ -458,7 +461,7 @@ If a tile fails, the tab changes, or stitching fails:
 - discard all partial screenshot bytes;
 - restore the page;
 - add one typed screenshot warning; and
-- continue with mandatory MHTML.
+- continue with the mandatory page snapshot.
 
 ## 8.4 Interruption
 
@@ -694,7 +697,7 @@ Verify:
 
 - integration tests against real browser IndexedDB, not an in-memory imitation.
 
-## Task 7: Preflight and mandatory MHTML Host
+## Task 7: Preflight and mandatory page-snapshot Host
 
 RED:
 
@@ -732,7 +735,7 @@ Verify:
 RED:
 
 - Integration tests cover successful exact-closure atomic commit, optional Artifact warning commit,
-  mandatory MHTML failure, large streamed Artifacts, interruption before and after commit, and
+  mandatory snapshot failure, large streamed Artifacts, interruption before and after commit, and
   repeated command IDs.
 - Event replay tests prove duplicate Events do not duplicate library rows.
 
@@ -824,7 +827,7 @@ The slice is complete only when all are true:
 This plan records the explicit decisions that resolve the first-slice questions in `docs/architecture/consistency-review.md`:
 
 - Event name: `BundleRegistered`.
-- Capture Profile: `ChromeWebPage-v1`.
+- Capture Profile: `WebPageSnapshot-v1`.
 - Browser scope: Chrome only.
 - Bundle serialization: deterministic ZIP with canonical CBOR.
 - Browser persistence Driver: IndexedDB for v1.

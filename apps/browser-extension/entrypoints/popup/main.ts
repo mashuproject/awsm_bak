@@ -351,7 +351,13 @@ function render(state: AppState, transientError?: string): void {
         card.append(status("The full-page screenshot was unavailable.", "warning"));
       }
       cardGroup.append(card, progress);
-      content.append(cardGroup);
+      content.append(
+        cardGroup,
+        status(
+          "Captured pages preserve filled form values. File contents are not included.",
+          "success",
+        ),
+      );
       if (recentTimerState?.jobId !== recentCapture.jobId) {
         recentTimerState = {
           jobId: recentCapture.jobId,
@@ -407,9 +413,19 @@ function render(state: AppState, transientError?: string): void {
       updateTimer();
       recentTimerInterval = window.setInterval(updateTimer, 100);
     } else if (view.notice === "capture-succeeded") {
-      content.append(status("Page archived in your Vault.", "success"));
+      content.append(
+        status(
+          "Page archived in your Vault. Captured pages preserve filled form values. File contents are not included.",
+          "success",
+        ),
+      );
     } else if (view.notice === "screenshot-warning") {
-      content.append(status("Page archived. The full-page screenshot was unavailable.", "warning"));
+      content.append(
+        status(
+          "Page archived. The full-page screenshot was unavailable. Captured pages preserve filled form values. File contents are not included.",
+          "warning",
+        ),
+      );
     } else if (view.notice !== undefined) {
       content.append(status(`Capture failed (${view.notice}). Retry when ready.`, "error"));
     }
@@ -463,6 +479,7 @@ function render(state: AppState, transientError?: string): void {
   }
   app.replaceChildren(content);
   app.setAttribute("aria-busy", "false");
+  if (view.screen === "ready" && view.recentCapture !== undefined) window.scrollTo(0, 0);
 }
 
 let refreshRequested = false;

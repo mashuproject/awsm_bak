@@ -22,7 +22,7 @@ function payload(): Record<string, unknown> {
     descriptorObjectId: id(5),
     artifactObjectIds: [id(6), id(7)],
     collectionId: id(8),
-    captureProfileId: "ChromeWebPage-v1",
+    captureProfileId: "WebPageSnapshot-v1",
     warnings: ["TEXT_EXTRACTION_FAILED"],
   };
 }

@@ -582,7 +582,7 @@ record.
 - Preserve the existing 16 MiB bound for compact CBOR records and compact text/structured content.
 - It is acceptable to retain the validated collection of compact stored Event/Object records and
   prepared Projection records needed for one atomic IndexedDB transaction; memory SHALL remain
-  independent of large MHTML and screenshot payload sizes.
+  independent of large page-snapshot and screenshot payload sizes.
 - Multi-gigabyte test inputs may use sparse/generated streams. Tests must prove counters and peak
   retained transfer buffers without allocating proportional bytes.
 

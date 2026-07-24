@@ -17,7 +17,7 @@ export interface BundleRegisteredPayloadV1 {
   readonly descriptorObjectId: string;
   readonly artifactObjectIds: readonly string[];
   readonly collectionId: string;
-  readonly captureProfileId: "ChromeWebPage-v1";
+  readonly captureProfileId: "WebPageSnapshot-v1";
   readonly warnings: readonly CaptureWarningId[];
 }
 
@@ -118,7 +118,11 @@ export function decodeBundleRegisteredPayload(
     descriptorObjectId,
     artifactObjectIds,
     collectionId: uuid(input.collectionId, "event.collectionId"),
-    captureProfileId: literal(input.captureProfileId, "ChromeWebPage-v1", "event.captureProfileId"),
+    captureProfileId: literal(
+      input.captureProfileId,
+      "WebPageSnapshot-v1",
+      "event.captureProfileId",
+    ),
     warnings: warnings(input.warnings),
   };
 }

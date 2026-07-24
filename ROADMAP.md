@@ -54,15 +54,52 @@ bypassing the real Host in release builds.
 
 ## Firefox Extension Host
 
+**Status:** Approved
+
+Implement the Linux Firefox Manifest V3 Host defined by Phase B of
+`docs/plans/13-browser-independent-web-page-snapshot-and-firefox-host.md`. Gate A feasibility and
+the browser-independent snapshot foundation are complete. Remaining stop gates require written
+Mozilla data-classification guidance and explicit authorization for the first signed unlisted
+beta. Firefox-specific behavior must remain behind Host or Driver boundaries and must not fork
+canonical Vault, Bundle, Account, synchronization, or cryptographic contracts.
+
+---
+
+## Static Archived Page Viewer
+
 **Status:** Discovery
 
-Define and implement Firefox as a supported extension Host rather than treating Chrome-specific
-behavior as portable by assumption. Resolve manifest and background lifecycle differences, storage
-and download Drivers, permissions, native-dialog behavior, packaging, signing, and update delivery.
-Run the shared Runtime conformance suites and the first-use, capture, synchronization, stale-Replica
-recovery, Export, Import, lock, and live-Projection journeys against a packaged Firefox build. Any
-Firefox-specific accommodation must remain behind Host or Driver boundaries and must not fork the
-canonical Vault, Account, synchronization, or cryptographic contracts.
+Define a sandboxed viewer for the canonical AWSM page snapshot so a user can view an archived page
+inside AWSM instead of relying only on screenshots, extracted content, or a downloaded derivative.
+Resolve script isolation, network prohibition, form behavior, missing-resource presentation,
+frame composition, accessibility, and navigation before promotion. This initiative does not imply
+that MHTML becomes authoritative or that captured scripts execute.
+
+---
+
+## Recorded Web Application Capture and Replay
+
+**Status:** Discovery
+
+Evaluate an optional high-fidelity Capture mode that records response traffic under stronger,
+explicit browser permissions and can replay an interactive application offline in a controlled
+environment. Resolve permission ceremonies, authenticated and non-GET traffic, credential
+exclusion, service workers, storage APIs, script isolation, determinism, bounded storage, and the
+zero-knowledge boundary. Also evaluate archive-first and time-relative link resolution without
+changing ordinary links in the initial static snapshot contract.
+
+---
+
+## Coordinated Browser Store Release
+
+**Status:** Candidate
+
+Prepare compatible AWSM versions for Firefox AMO and Chrome Web Store, but announce the first public
+browser-store release only after both listings are live. Complete macOS and Windows Firefox proof,
+Mozilla data-classification review, store privacy and permission disclosures, listing assets,
+review handling, signed update delivery, release monitoring, and rollback procedures. Preserve the
+separate unlisted Linux Firefox beta and verified GitHub artifacts until this initiative is
+approved and implemented.
 
 ---
 
@@ -84,11 +121,11 @@ is possible without silently weakening Incognito expectations. Until one design 
 implemented, the extension should enforce its unsupported status rather than relying only on
 documentation.
 
-Required evidence includes packaged-Chrome journeys for MHTML, full-page screenshot, extracted
-text, structured content, cancellation, failure, locking, worker termination, and Incognito-window
-closure. Tests must prove the chosen persistence boundary, prevent cross-profile Vault-context
-confusion, and verify that plaintext or temporary Capture data does not enter unintended storage or
-diagnostics.
+Required evidence includes packaged-Chrome journeys for page snapshots, MHTML download, full-page
+screenshot, extracted text, structured content, cancellation, failure, locking, worker termination,
+and Incognito-window closure. Tests must prove the chosen persistence boundary, prevent
+cross-profile Vault-context confusion, and verify that plaintext or temporary Capture data does not
+enter unintended storage or diagnostics.
 
 ---
 

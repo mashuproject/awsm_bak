@@ -21,9 +21,10 @@ const metadata: CaptureMetadataV1 = {
   contentType: "text/html",
   viewport: { width: 800, height: 600 },
   document: { width: 800, height: 1200 },
-  chromeVersion: "149.0.0.0",
+  browserName: "Chrome",
+  browserVersion: "149.0.0.0",
   extensionVersion: "0.1.0",
-  captureProfileId: "ChromeWebPage-v1",
+  captureProfileId: "WebPageSnapshot-v1",
   captureProfileVersion: 1,
 };
 
@@ -65,7 +66,7 @@ describe("encrypted Artifact graph registration", () => {
   it("encrypts one descriptor and registers its exact Artifact closure", async () => {
     const key = await rootKey();
     const artifacts = [
-      artifact(id(20), "PRIMARY", "CAPTURE", "multipart/related"),
+      artifact(id(20), "PRIMARY", "CAPTURE", "application/vnd.awsm.web-page+zip"),
       artifact(id(21), "SCREENSHOT_FULL", "IMAGE", "image/webp"),
       artifact(id(22), "THUMBNAIL", "IMAGE", "image/webp"),
       artifact(id(23), "TEXT_EXTRACTED", "TEXT", "text/plain;charset=utf-8"),
@@ -149,7 +150,7 @@ describe("encrypted Artifact graph registration", () => {
   });
 
   it("rejects a prepared record/reference identity mismatch", async () => {
-    const mismatched = artifact(id(20), "PRIMARY", "CAPTURE", "multipart/related");
+    const mismatched = artifact(id(20), "PRIMARY", "CAPTURE", "application/vnd.awsm.web-page+zip");
     mismatched.reference = { ...mismatched.reference, artifactObjectId: id(21) };
     await expect(
       prepareCaptureRegistration({

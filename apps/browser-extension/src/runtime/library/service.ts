@@ -72,7 +72,7 @@ export interface OpenArtifactResult {
 const ROLE_DEFINITION: Readonly<
   Record<ArtifactRole, { readonly kind: ArtifactKind; readonly mimeType: string }>
 > = {
-  PRIMARY: { kind: "CAPTURE", mimeType: "multipart/related" },
+  PRIMARY: { kind: "CAPTURE", mimeType: "application/vnd.awsm.web-page+zip" },
   SCREENSHOT_FULL: { kind: "IMAGE", mimeType: "image/webp" },
   THUMBNAIL: { kind: "IMAGE", mimeType: "image/webp" },
   TEXT_EXTRACTED: { kind: "TEXT", mimeType: "text/plain;charset=utf-8" },
