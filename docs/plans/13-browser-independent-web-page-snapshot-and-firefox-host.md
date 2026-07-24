@@ -6,7 +6,7 @@
 
 **Owner:** Engineering
 
-**Last Updated:** 2026-07-23
+**Last Updated:** 2026-07-24
 
 **Depends On:** `docs/plans/02-chrome-extension-capture-vertical-slice.md`,
 `docs/plans/09-account-authentication-and-full-vault-synchronization.md`,
@@ -34,7 +34,8 @@ The work has two mandatory phases:
    replace the sole canonical Capture Profile, implement it in Chrome, and generate MHTML only as
    an on-demand derivative.
 2. **Phase B — Firefox Host:** implement the same Runtime contract in Firefox Manifest V3, prove
-   Linux Firefox Stable and ESR parity, and automate Mozilla-signed unlisted beta artifacts.
+   Linux Firefox Stable and ESR parity, and implement a non-submitting, release-gated path for a
+   future Mozilla-signed unlisted beta.
 
 Phase B depends on the completed Phase A contract. Do not create a Firefox-only Bundle shape,
 Capture Profile, cryptographic path, synchronization behavior, or user-data model.
@@ -54,9 +55,10 @@ The completed work SHALL:
 9. keep local-only use available without data transmission and request Mozilla data permissions
    only when the user enables synchronization;
 10. prove Chrome-to-Firefox and Firefox-to-Chrome live synchronization without reload;
-11. produce a Mozilla-signed unlisted Linux XPI before the plan is complete; and
-12. leave page playback, recorded interactive replay, temporal links, public store listing, and
-    non-Linux Firefox claims on the Roadmap.
+11. produce a reproducible validated unsigned Linux package and a tested, non-submitting signed-XPI
+    workflow before the plan is complete; and
+12. leave real AMO signing/distribution, page playback, recorded interactive replay, temporal
+    links, public store listing, and non-Linux Firefox claims on the Roadmap.
 
 # 2. Mandatory Stop Gates
 
@@ -130,7 +132,7 @@ If the official taxonomy cannot accurately describe the payload, stop and return
 implementer must not omit a category or treat encrypted data as uncollected merely because Mozilla
 or the Coordination Server cannot read its plaintext.
 
-## 2.3 Gate C — external signing authorization
+## 2.3 Deferred Gate C — external signing authorization
 
 Implementing and testing the signing workflow does not authorize creating a tag, GitHub Release, or
 AMO submission. Before the first real unlisted submission:
@@ -140,8 +142,10 @@ AMO submission. Before the first real unlisted submission:
 - the user must explicitly authorize the exact beta version/tag submission; and
 - the tagged commit must already satisfy every local and CI acceptance gate in this plan.
 
-Without that authorization, complete all local, temporary-install, packaging, metadata, and dry-run
-work, then report Gate C as the remaining external blocker. Do not print secrets or inspect secret
+The project owner deferred real AMO submission, signed-XPI retrieval, signed-browser proof, tagging,
+and GitHub Release publication to the Roadmap on 2026-07-24. Those actions are not Plan 13
+completion requirements. Complete all local, temporary-install, packaging, metadata, verifier, and
+non-submitting dry-run work without crossing this gate. Do not print secrets or inspect secret
 values.
 
 # 3. Scope, Deferrals, and Canonical Replacement
@@ -161,13 +165,15 @@ values.
 - Firefox MV3 manifest, lifecycle, screenshot, storage, download, and permission adapters;
 - Linux Firefox Stable and ESR testing;
 - mixed Playwright/Selenium E2E orchestration;
-- Mozilla unlisted signing and GitHub Release assets after all stop gates;
+- a non-submitting Mozilla signing and joint-release workflow with synthetic verifier coverage;
 - live UI state and rendered visual verification;
 - full canonical documentation reconciliation; and
 - destruction and recreation of pre-release development data.
 
 ## 3.2 Explicitly deferred
 
+- real AMO submission, signed-XPI retrieval and installation proof, tag creation, and GitHub Release
+  publication;
 - an AWSM archived-page viewer or any Library playback surface;
 - parsing, importing, or rendering arbitrary third-party MHTML;
 - executing captured scripts;
@@ -682,14 +688,15 @@ Initial supported Firefox:
 - current Stable and current ESR;
 - Manifest V3 only;
 - minimum installable version `140.0`; and
-- unlisted Mozilla-signed XPI distribution through GitHub Releases.
+- temporary development installation from the validated unsigned MV3 build.
 
 The initial reproducible CI pins are Stable `153.0` and ESR `140.13.0esr`. Store these pins in one
 checked-in test configuration. Download official Mozilla release archives and verify them against
 the corresponding official release SHA512 sums before execution. Updating either pin is an explicit
 browser-test dependency change with manifest and parity reruns.
 
-Do not claim macOS, Windows, Android, public AMO availability, or automatic updates.
+Do not claim signed distribution, macOS, Windows, Android, public AMO availability, or automatic
+updates. Signed unlisted distribution remains Roadmap work.
 
 ## 8.2 Permanent identity and manifest
 
@@ -850,7 +857,11 @@ Also run one Chrome-to-Firefox and one Firefox-to-Chrome synchronization scenari
 local proof server. Each scenario SHALL mutate through the source client and prove the already-open
 destination Library updates without reload.
 
-### Tagged beta
+### Deferred tagged beta
+
+The workflow below is implemented and locally tested but is not a Plan 13 execution requirement.
+Run it only after the Roadmap initiative receives exact version/tag authorization and protected AMO
+configuration.
 
 Run:
 
@@ -865,7 +876,7 @@ Run Stable and ESR in parallel jobs. Do not duplicate every browser-neutral Runt
 both. Runtime contracts remain covered by unit/integration suites; signed-browser jobs cover Host
 boundaries.
 
-# 10. Firefox Packaging, Signing, and Release
+# 10. Firefox Packaging and Deferred Signing Gate
 
 ## 10.1 Local packaging
 
@@ -898,10 +909,13 @@ Validate the unsigned Firefox ZIP before signing:
 
 ## 10.2 Workflow contract
 
+This is a prepared future release contract. Plan 13 implements and tests it without creating a tag,
+submitting to AMO, retrieving a signed XPI, or publishing a GitHub Release.
+
 Extend the current tag release workflow or replace it with one browser-extension release workflow;
 do not create competing publishers for the same tag.
 
-After Gate B and before the next tag, configure:
+When the Roadmap signing initiative is authorized and before its tag, configure:
 
 ```text
 Repository variable: FIREFOX_AMO_SIGNING_ENABLED=true
@@ -939,11 +953,12 @@ artifact. A manual resume path SHALL query the exact add-on ID/version and retri
 submission without resubmitting. Pending review creates no GitHub Release. Rejection creates no
 Release and preserves validator output as evidence.
 
-If `FIREFOX_AMO_SIGNING_ENABLED` is absent or not exactly `true`, a tag-triggered workflow fails
-before publication once this plan is implemented. Manual dispatch remains a non-publishing dry run
-and performs no AMO submission.
+If `FIREFOX_AMO_SIGNING_ENABLED` is absent or not exactly `true`, a tag follows the existing
+Chrome-only publication path and performs no AMO submission. When it is exactly `true`, the
+Chrome-only publisher is disabled and the joint publisher cannot run until signed Firefox gates
+succeed. Manual dispatch remains a non-publishing dry run and performs no AMO submission.
 
-## 10.3 Release documentation
+## 10.3 Future release documentation
 
 Update release notes and installation guides so one release describes:
 
@@ -1095,7 +1110,7 @@ Execute in this order. A later task does not authorize skipping an earlier gate.
 10. **Shared and Firefox Host decomposition**
     - Move shared adapters out of `hosts/chrome`.
     - Add target-specific manifests and Firefox background/event-page adapters.
-    - Add Firefox local-only UI and Runtime parity.
+    - Add Firefox local-first UI and Runtime parity.
 
 11. **Firefox temporary-install parity**
     - Run the compact suite in Stable and ESR.
@@ -1117,10 +1132,9 @@ Execute in this order. A later task does not authorize skipping an earlier gate.
     - Run a manual non-publishing dry run.
     - Do not cross Gate C without explicit authorization.
 
-15. **Authorized signed beta proof**
-    - Submit the authorized exact tag/version.
-    - Retrieve, install, and test the signed XPI in Stable and ESR.
-    - Attach it only after all gates pass.
+15. **Defer authorized signed beta proof**
+    - Keep submission, retrieval, signed Stable/ESR proof, and publication on the Roadmap.
+    - Do not cross Gate C as part of Plan 13.
 
 16. **Documentation and Roadmap**
     - Reconcile every current contract.
@@ -1234,10 +1248,12 @@ This plan is complete only when all statements are true:
     contracts.
 16. Chrome-to-Firefox and Firefox-to-Chrome mutations appear live without reload.
 17. PR CI uses one Firefox Stable smoke rather than the full matrix.
-18. Main/nightly and tagged-beta lanes follow section 9.3.
-19. One authorized Mozilla-signed unlisted XPI installs and passes on pinned Stable and ESR.
-20. The GitHub Release contains validated Chrome ZIP/XPI assets and matching checksums only after
-    every tag gate succeeds.
+18. PR and nightly lanes follow section 9.3, and the deferred tag lane is implemented without being
+    executed.
+19. Consecutive Firefox package builds are byte-identical, and signed-XPI verification rejects
+    missing signatures or any AMO payload mutation in synthetic regression coverage.
+20. Manual workflow dispatch is non-publishing, the credential guard stops an invoked signing path
+    before AMO traffic, and no tag, AMO submission, or GitHub Release is required by this plan.
 21. No public AMO/Chrome Web Store submission or non-Linux claim was introduced.
 22. No playback, recorded app replay, temporal link, WACZ, broad Host permission, or audio/video
     body recording was implemented.
@@ -1268,8 +1284,8 @@ This plan is complete only when all statements are true:
 - [x] Mozilla's official taxonomy review and an explicit project-owner category decision are
       mandatory before data-category declaration or signing.
 - [x] Firefox data permission is optional and requested only when enabling synchronization.
-- [x] Every version tag produces both browser artifacts after signing is enabled.
-- [x] Plan completion requires a tested signed unlisted XPI.
+- [x] The deferred tag workflow produces both browser artifacts only after signing is enabled.
+- [x] Real AMO submission, signed-XPI proof, and GitHub Release publication remain Roadmap work.
 - [x] Browser tests use tiered Playwright/Selenium lanes.
 - [x] Public stores, macOS/Windows proof, playback, recorded replay, and temporal links remain future
       Roadmap work.

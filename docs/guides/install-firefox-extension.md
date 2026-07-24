@@ -1,7 +1,9 @@
-# Install the Firefox Extension on Desktop Linux
+# Install a Future Signed Firefox Extension on Desktop Linux
 
-AWSM's Firefox package is an unlisted Mozilla-signed beta for desktop Linux Firefox Stable and ESR
-140 or newer. It is distributed through an AWSM GitHub Release rather than a public AMO listing.
+This guide applies after AWSM's deferred AMO signing initiative publishes an unlisted
+Mozilla-signed beta for desktop Linux Firefox Stable and ESR 140 or newer. Today, Firefox is
+available only as the temporary development installation described in the project README; no
+signed XPI is currently distributed.
 
 ## Verify the download
 

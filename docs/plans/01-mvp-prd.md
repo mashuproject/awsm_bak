@@ -365,7 +365,7 @@ email/password Account authentication, client-only Account-key enrollment, one C
 synchronized Vault, background convergence, synchronized Vacuum, manual heavy-Artifact storage
 relief with on-demand retrieval, and export-first stale-Replica discard.
 The Linux Firefox Host provides the same optional synchronization after native data-collection and
-server-origin consent; its signed unlisted beta remains externally gated. Device signing/revocation,
+server-origin consent; its signed unlisted beta remains Roadmap work. Device signing/revocation,
 Selective Replicas, and production deployment hardening remain future.
 
 Synchronization shall:

@@ -37,7 +37,7 @@ export function releaseMetadata({ version, eventName, refName, repository }) {
   };
 }
 
-export function renderReleaseNotes(metadata) {
+export function renderChromeReleaseNotes(metadata) {
   return `## Install the Chrome extension
 
 1. Download \`${metadata.archiveName}\` and \`${metadata.checksumName}\` from this Release.
@@ -49,7 +49,11 @@ export function renderReleaseNotes(metadata) {
 7. Keep that directory in place. For an upgrade, replace its contents and reload the extension from the same path.
 
 [Read the full installation, checksum, upgrade, and troubleshooting guide](${metadata.guideUrl}).
+`;
+}
 
+export function renderReleaseNotes(metadata) {
+  return `${renderChromeReleaseNotes(metadata)}
 ## Install the Firefox beta on desktop Linux
 
 1. Download \`${metadata.firefoxXpiName}\` and \`${metadata.firefoxChecksumName}\`.
@@ -94,6 +98,7 @@ async function main() {
   ];
   await appendFile(outputPath, `${outputs.map(([key, value]) => `${key}=${value}`).join("\n")}\n`);
   await mkdir("dist", { recursive: true });
+  await writeFile("dist/chrome-release-notes.md", renderChromeReleaseNotes(metadata));
   await writeFile("dist/release-notes.md", renderReleaseNotes(metadata));
 }
 

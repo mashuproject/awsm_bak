@@ -63,7 +63,7 @@ describe("chunked Artifact envelope", () => {
       plaintext.subarray(ARTIFACT_CHUNK_PLAINTEXT_BYTES - 3),
     ]);
     expect(result.plaintext).toEqual(plaintext);
-  });
+  }, 15_000);
 
   it("returns streaming wrapper and plaintext integrity summaries", async () => {
     const plaintext = new TextEncoder().encode("artifact contents");

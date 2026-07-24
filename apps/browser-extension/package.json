@@ -12,7 +12,7 @@
     "dev": "wxt",
     "lint": "biome check .",
     "postinstall": "wxt prepare",
-    "test": "node --test scripts/chrome-release-metadata.test.mjs scripts/firefox-signing.test.mjs scripts/signed-firefox-xpi.test.mjs && vitest run",
+    "test": "node --test scripts/browser-release-workflow.test.mjs scripts/chrome-release-metadata.test.mjs scripts/firefox-signing.test.mjs scripts/signed-firefox-xpi.test.mjs && vitest run",
     "test:integration": "tsc -p tests/integration/tsconfig.json && LD_LIBRARY_PATH=.output/browser-libs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH} playwright test tests/integration/indexeddb.browser.test.ts --project=chromium",
     "test:e2e": "corepack pnpm test:e2e:chrome && corepack pnpm test:e2e:firefox",
     "test:e2e:chrome": "wxt build --mode e2e && AWSM_EXTENSION_BUILD=.output/chrome-mv3-e2e LD_LIBRARY_PATH=.output/browser-libs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH} playwright test -c playwright.e2e.config.ts",

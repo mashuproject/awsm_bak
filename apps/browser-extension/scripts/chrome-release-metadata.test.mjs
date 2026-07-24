@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { releaseMetadata, renderReleaseNotes } from "./chrome-release-metadata.mjs";
+import {
+  releaseMetadata,
+  renderChromeReleaseNotes,
+  renderReleaseNotes,
+} from "./chrome-release-metadata.mjs";
 
 const repository = "parasquid/awsm";
 
@@ -146,4 +150,18 @@ test("renders Chrome and Firefox installation guidance and one trailing newline"
   assert.match(notes, new RegExp(`\\]\\(${metadata.firefoxGuideUrl.replaceAll(".", "\\.")}\\)`));
   assert.equal(notes.endsWith("\n"), true);
   assert.equal(notes.endsWith("\n\n"), false);
+});
+
+test("renders Chrome-only notes without promising an unsigned Firefox asset", () => {
+  const metadata = releaseMetadata({
+    version: "0.1.0",
+    eventName: "workflow_dispatch",
+    refName: "main",
+    repository,
+  });
+  const notes = renderChromeReleaseNotes(metadata);
+
+  assert.match(notes, /`awsm-chrome-v0\.1\.0\.zip`/);
+  assert.doesNotMatch(notes, /Firefox/u);
+  assert.doesNotMatch(notes, /\.xpi/u);
 });

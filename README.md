@@ -67,7 +67,7 @@ Import, and synchronization. Enabling synchronization requests Firefox's native 
 permissions for website content, browsing activity, authentication information, personally
 identifying information, and the selected server origin. Denial or revocation leaves local
 features available and prevents server traffic. Mozilla signing remains disabled until the first
-unlisted submission is explicitly authorized.
+unlisted distribution initiative on the Roadmap is explicitly authorized.
 
 Search, AI-generated summaries, tags, embeddings, classifications, annotations, and folders are
 not implemented user-facing features. AWSM already preserves normalized text and document structure

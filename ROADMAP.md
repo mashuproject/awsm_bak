@@ -52,15 +52,14 @@ bypassing the real Host in release builds.
 
 ---
 
-## Firefox Synchronization and Signed Beta
+## Firefox AMO Signing and Distribution
 
 **Status:** Approved
 
-Complete the externally gated remainder of Phase B in
-`docs/plans/13-browser-independent-web-page-snapshot-and-firefox-host.md`: authorize the exact
-version/tag, provide the protected AMO credentials and repository signing gate, retrieve the
-Mozilla-signed unlisted XPI, and pass its Stable/ESR and cross-browser release lanes before
-publishing the joint GitHub Release.
+Authorize an exact version/tag, provide the protected AMO credentials, enable the prepared repository
+signing gate, retrieve the Mozilla-signed unlisted XPI, and pass its Stable/ESR and cross-browser
+release lanes before publishing a joint GitHub Release. Until then, Firefox remains a temporary
+development install and tag releases follow the existing Chrome-only path.
 
 ---
 

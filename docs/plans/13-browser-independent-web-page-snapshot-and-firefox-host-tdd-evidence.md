@@ -260,9 +260,9 @@ signed-XPI verifiers therefore assert that `gecko_android` remains absent.
 The release workflow now has:
 
 - one Firefox Stable production smoke on relevant pull requests;
-- parallel Firefox Stable/ESR production and Export/Import lanes on the nightly schedule;
-- a nightly bidirectional live Chrome/Firefox synchronization proof;
-- a tag-only protected signing gate requiring `FIREFOX_AMO_SIGNING_ENABLED=true`;
+- parallel Firefox Stable/ESR production and Export/Import lanes on main and the nightly schedule;
+- a main/nightly bidirectional live Chrome/Firefox synchronization proof;
+- a future tag-only protected signing gate requiring `FIREFOX_AMO_SIGNING_ENABLED=true`;
 - exact ID/version AMO query, resumable non-secret upload identity, source upload, pending/rejected
   handling, and AMO SHA-256 verification;
 - deterministic unsigned-package reproduction before submission;
@@ -271,16 +271,18 @@ The release workflow now has:
 - one joint GitHub Release only after Chrome and Firefox assets and checksums pass.
 
 Manual dispatch remains a non-publishing dry run and performs no AMO submission. No live submission
-has been made: Gate C still requires protected credentials and explicit authorization of the exact
-tag/version.
+has been made. On 2026-07-24 the project owner deferred Gate C, signed-XPI proof, and joint
+publication to the Roadmap. With the signing variable absent, tag releases remain Chrome-only and
+perform no AMO request; enabling the variable disables that publisher and requires every signed
+Firefox gate before joint publication.
 
 Current-worktree verification:
 
 | Command                                                                | Result                                                                                      |
 | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `corepack pnpm lint`                                                   | PASS — 284 files.                                                                           |
+| `corepack pnpm lint`                                                   | PASS — 285 files.                                                                           |
 | `corepack pnpm typecheck`                                              | PASS.                                                                                       |
-| `corepack pnpm test`                                                   | PASS — 80 Vitest files, 385 tests, and 26 release/signing script tests.                     |
+| `corepack pnpm test`                                                   | PASS — 80 Vitest files, 385 tests, and 29 release/signing script tests.                     |
 | `corepack pnpm build`                                                  | PASS — Chrome and Firefox production MV3.                                                   |
 | `corepack pnpm test:integration`                                       | PASS — 45 browser integration tests.                                                        |
 | `corepack pnpm test:e2e:chrome`                                        | PASS — complete packaged matrix, 25 tests in 6.3 minutes.                                   |

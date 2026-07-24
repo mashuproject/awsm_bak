@@ -11,6 +11,8 @@ on:
   schedule:
     - cron: "23 4 * * *"
   push:
+    branches:
+      - main
     tags:
       - "v*"
   workflow_dispatch:
@@ -61,7 +63,7 @@ jobs:
         run: corepack pnpm --filter @awsm/browser-extension exec playwright test -c tests/firefox-production/playwright.config.mjs
 
   firefox-nightly:
-    if: github.event_name == 'schedule'
+    if: github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     timeout-minutes: 25
     strategy:
@@ -103,7 +105,7 @@ jobs:
           corepack pnpm --filter @awsm/browser-extension exec playwright test -c tests/firefox-production/playwright.config.mjs
 
   cross-browser-nightly:
-    if: github.event_name == 'schedule'
+    if: github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
@@ -125,7 +127,7 @@ jobs:
         run: corepack pnpm --filter @awsm/browser-extension test:e2e:cross-browser
 
   build:
-    if: github.event_name != 'pull_request' && github.event_name != 'schedule'
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     timeout-minutes: 40
     outputs:
@@ -170,12 +172,6 @@ jobs:
         run: |
           git fetch origin main
           git merge-base --is-ancestor "$(git rev-list -n 1 "$GITHUB_REF_NAME")" origin/main
-
-      - name: Require the protected Firefox signing gate for tags
-        if: github.event_name == 'push'
-        env:
-          FIREFOX_AMO_SIGNING_ENABLED: ${{ vars.FIREFOX_AMO_SIGNING_ENABLED }}
-        run: test "$FIREFOX_AMO_SIGNING_ENABLED" = "true"
 
       - name: Lint
         run: corepack pnpm lint
@@ -241,6 +237,7 @@ jobs:
             dist/awsm-firefox-unsigned-v${{ steps.metadata.outputs.version }}.zip
             dist/awsm-firefox-unsigned-v${{ steps.metadata.outputs.version }}.zip.sha256
             dist/${{ steps.metadata.outputs.firefox_source_name }}
+            dist/chrome-release-notes.md
             dist/release-notes.md
           if-no-files-found: error
           retention-days: 14
@@ -248,7 +245,7 @@ jobs:
 
   sign-firefox:
     needs: build
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && vars.FIREFOX_AMO_SIGNING_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -357,9 +354,63 @@ jobs:
           retention-days: 14
           compression-level: 0
 
-  publish:
+  publish-chrome:
+    needs: build
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && vars.FIREFOX_AMO_SIGNING_ENABLED != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Download validated Chrome release assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: browser-extension-inputs-${{ needs.build.outputs.tag }}
+          path: dist
+
+      - name: Revalidate transferred Chrome assets
+        env:
+          ARCHIVE_NAME: ${{ needs.build.outputs.archive_name }}
+          CHECKSUM_NAME: ${{ needs.build.outputs.checksum_name }}
+        run: |
+          cd dist
+          sha256sum --check "$CHECKSUM_NAME"
+          unzip -t "$ARCHIVE_NAME"
+          if [[ "$(unzip -Z1 "$ARCHIVE_NAME" | grep -Fxc 'manifest.json')" -ne 1 ]]; then
+            echo "Archive must contain exactly one root manifest.json" >&2
+            exit 1
+          fi
+
+      - name: Publish Chrome GitHub Release
+        env:
+          ARCHIVE_NAME: ${{ needs.build.outputs.archive_name }}
+          CHECKSUM_NAME: ${{ needs.build.outputs.checksum_name }}
+          GH_TOKEN: ${{ github.token }}
+          PRERELEASE: ${{ needs.build.outputs.prerelease }}
+          TAG: ${{ needs.build.outputs.tag }}
+        run: |
+          prerelease_args=()
+          if [[ "$PRERELEASE" == "true" ]]; then
+            prerelease_args+=(--prerelease)
+          fi
+          gh release create "$TAG" \
+            "dist/$ARCHIVE_NAME" \
+            "dist/$CHECKSUM_NAME" \
+            --verify-tag \
+            --title "$TAG" \
+            --generate-notes \
+            --notes "$(cat dist/chrome-release-notes.md)" \
+            --fail-on-no-commits \
+            "${prerelease_args[@]}"
+
+  publish-joint:
     needs: [build, sign-firefox]
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && vars.FIREFOX_AMO_SIGNING_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
