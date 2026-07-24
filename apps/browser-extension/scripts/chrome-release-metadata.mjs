@@ -29,7 +29,11 @@ export function releaseMetadata({ version, eventName, refName, repository }) {
     prerelease: versionMatch[4] !== undefined,
     archiveName: `awsm-chrome-v${version}.zip`,
     checksumName: `awsm-chrome-v${version}.zip.sha256`,
+    firefoxXpiName: `awsm-firefox-v${version}.xpi`,
+    firefoxChecksumName: `awsm-firefox-v${version}.xpi.sha256`,
+    firefoxSourceName: `awsm-firefox-source-v${version}.zip`,
     guideUrl: `https://github.com/${repository}/blob/${tag}/docs/guides/install-chrome-extension.md`,
+    firefoxGuideUrl: `https://github.com/${repository}/blob/${tag}/docs/guides/install-firefox-extension.md`,
   };
 }
 
@@ -45,6 +49,18 @@ export function renderReleaseNotes(metadata) {
 7. Keep that directory in place. For an upgrade, replace its contents and reload the extension from the same path.
 
 [Read the full installation, checksum, upgrade, and troubleshooting guide](${metadata.guideUrl}).
+
+## Install the Firefox beta on desktop Linux
+
+1. Download \`${metadata.firefoxXpiName}\` and \`${metadata.firefoxChecksumName}\`.
+2. Verify the XPI against its checksum.
+3. Open the XPI in Firefox Stable or ESR and approve the ordinary signed-add-on installation.
+
+Firefox synchronization remains optional. Enabling it asks for Firefox's native data-collection and
+server-origin permissions; local Capture, Library, MHTML, Export, and Import remain available
+without them. Firefox can download MHTML but does not promise to render it natively.
+
+[Read the Linux Firefox beta installation and privacy guide](${metadata.firefoxGuideUrl}).
 `;
 }
 
@@ -70,7 +86,11 @@ async function main() {
     ["prerelease", String(metadata.prerelease)],
     ["archive_name", metadata.archiveName],
     ["checksum_name", metadata.checksumName],
+    ["firefox_xpi_name", metadata.firefoxXpiName],
+    ["firefox_checksum_name", metadata.firefoxChecksumName],
+    ["firefox_source_name", metadata.firefoxSourceName],
     ["guide_url", metadata.guideUrl],
+    ["firefox_guide_url", metadata.firefoxGuideUrl],
   ];
   await appendFile(outputPath, `${outputs.map(([key, value]) => `${key}=${value}`).join("\n")}\n`);
   await mkdir("dist", { recursive: true });

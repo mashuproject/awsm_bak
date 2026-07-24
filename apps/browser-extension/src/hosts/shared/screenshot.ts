@@ -2,7 +2,7 @@ import type { CaptureWarningId } from "../../domain/contracts";
 
 const MAX_CANVAS_DIMENSION = 16_384;
 const MIN_CAPTURE_INTERVAL_MS = 600;
-const HOST_OPERATION_TIMEOUT_MS = 15_000;
+const SCREENSHOT_HOST_OPERATION_TIMEOUT_MS = 15_000;
 
 export interface PageDimensions {
   readonly documentWidth: number;
@@ -143,7 +143,7 @@ function bounded<T>(operation: Promise<T>, timeoutMs: number): Promise<T> {
 
 export async function acquireBestEffortScreenshot(
   host: ScreenshotHost,
-  operationTimeoutMs = HOST_OPERATION_TIMEOUT_MS,
+  operationTimeoutMs = SCREENSHOT_HOST_OPERATION_TIMEOUT_MS,
 ): Promise<ScreenshotResult> {
   let stage: "measure" | "prepare" | "capture" | "stitch" = "measure";
   try {

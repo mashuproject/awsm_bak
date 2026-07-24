@@ -455,6 +455,7 @@ export interface AccountView {
     | "Downloading"
     | "UpToDate"
     | "Offline"
+    | "PermissionRequired"
     | "AuthenticationRequired"
     | "Conflict"
     | "Failed"

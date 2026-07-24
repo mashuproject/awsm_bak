@@ -1,21 +1,21 @@
 import { browser } from "wxt/browser";
 import {
-  type ChromeDownloadListener,
-  type ChromeDownloadsAdapter,
+  type DownloadListener,
+  type DownloadsAdapter,
   exportDownloadFailure,
-  waitForChromeDownload,
-} from "./download-waiter";
+  waitForDownload,
+} from "../shared/download-waiter";
 import { mhtmlDownloadFilenameSuggestion } from "./mhtml-download";
 
 const DIRECTORY = "awsm-artifact-downloads";
 const SNAPSHOT_DIRECTORY = "awsm-page-snapshots";
 
 const listeners = new Map<
-  ChromeDownloadListener,
+  DownloadListener,
   Parameters<typeof browser.downloads.onChanged.addListener>[0]
 >();
 
-const downloads: ChromeDownloadsAdapter = {
+const downloads: DownloadsAdapter = {
   search: async (downloadId) =>
     (await browser.downloads.search({ id: downloadId })).map((item) => ({
       state: item.state,
@@ -109,7 +109,7 @@ export class ChromeMhtmlDownloadHost {
           filename: input.filename,
           saveAs: false,
         });
-        await waitForChromeDownload(downloads, downloadId, signal);
+        await waitForDownload(downloads, downloadId, signal);
       } catch (error) {
         if (signal.aborted && downloadId !== undefined)
           await browser.downloads.cancel(downloadId).catch(() => undefined);

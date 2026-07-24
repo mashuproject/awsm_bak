@@ -2,7 +2,7 @@ import { readySodium } from "../../crypto/sodium";
 import { bytesEqual } from "../../domain/hash";
 import type { StoredArtifactObjectV1 } from "../../drivers/indexeddb/schema";
 
-export async function artifactFileMatches(
+export async function storedArtifactFileMatches(
   file: File,
   object: StoredArtifactObjectV1,
 ): Promise<boolean> {

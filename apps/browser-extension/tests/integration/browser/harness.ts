@@ -18,8 +18,8 @@ import type {
   StorageReliefCheckpointV1,
   StorageReliefJobV1,
 } from "../../../src/drivers/indexeddb/storage-relief-schema";
-import { ChromeArtifactStore } from "../../../src/hosts/chrome/artifact-store";
-import { ChromeVaultImportHost } from "../../../src/hosts/chrome/import";
+import { OpfsArtifactStore } from "../../../src/hosts/shared/artifact-store";
+import { VaultImportHost } from "../../../src/hosts/shared/import";
 import type { StorageReliefFaults } from "../../../src/runtime/storage-relief/contracts";
 import { StorageReliefJobRunner } from "../../../src/runtime/storage-relief/runner";
 import { InterruptedStaleDiscardReconciler } from "../../../src/runtime/synchronization/recovery-reconciliation";
@@ -3233,7 +3233,7 @@ async function staleDiscardRestartScenario(): Promise<unknown> {
 }
 
 async function artifactStoreScenario(): Promise<unknown> {
-  const store = new ChromeArtifactStore();
+  const store = new OpfsArtifactStore();
   const vaultId = crypto.randomUUID();
   const objectId = crypto.randomUUID();
   const rootKey = await crypto.subtle.importKey(
@@ -3375,7 +3375,7 @@ async function artifactStoreScenario(): Promise<unknown> {
 }
 
 async function importSourceStagingScenario(): Promise<unknown> {
-  const host = new ChromeVaultImportHost();
+  const host = new VaultImportHost();
   const jobId = crypto.randomUUID();
   const source = new Uint8Array(700_000);
   for (let offset = 0; offset < source.byteLength; offset += 65_536) {
@@ -3715,7 +3715,7 @@ async function storageReliefRunnerScenario(fault?: StorageReliefBoundary): Promi
   const generationId = crypto.randomUUID();
   const jobId = crypto.randomUUID();
   const accountId = crypto.randomUUID();
-  const store = new ChromeArtifactStore();
+  const store = new OpfsArtifactStore();
   const rootKey = await crypto.subtle.importKey(
     "raw",
     new Uint8Array(32).fill(4),

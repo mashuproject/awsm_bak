@@ -7,6 +7,7 @@ import {
   RECENT_CAPTURE_DURATION_MS,
   recentCaptureTimerProgress,
 } from "../../src/ui/recent-capture-timer";
+import { requestSynchronizationPermission } from "../../src/ui/synchronization-permission";
 
 function requiredElement(selector: string): HTMLElement {
   const node = document.querySelector<HTMLElement>(selector);
@@ -172,15 +173,17 @@ function render(state: AppState, transientError?: string): void {
     heading(
       view.screen === "server-choice"
         ? "Choose how AWSM starts"
-        : view.screen === "login"
-          ? "Sign in"
-          : view.screen === "account-setup"
-            ? "Finish setup"
-            : view.screen === "stale-replica"
-              ? "Resolve stale Vault"
-              : view.screen === "onboarding"
-                ? "Create your local Vault"
-                : "Archive this page",
+        : view.screen === "permission-required"
+          ? "Allow synchronization"
+          : view.screen === "login"
+            ? "Sign in"
+            : view.screen === "account-setup"
+              ? "Finish setup"
+              : view.screen === "stale-replica"
+                ? "Resolve stale Vault"
+                : view.screen === "onboarding"
+                  ? "Create your local Vault"
+                  : "Archive this page",
     ),
   );
   const activeVault = state.workspace.vaults.find((vault) => vault.active);
@@ -217,6 +220,26 @@ function render(state: AppState, transientError?: string): void {
       element("p", `Hosted service · ${view.hostedOrigin}`, "muted"),
     );
     content.append(actions);
+  } else if (view.screen === "permission-required") {
+    content.append(
+      element(
+        "p",
+        `Firefox permission is required before AWSM can exchange encrypted data with ${view.serverOrigin}. Local Vault features remain available.`,
+      ),
+    );
+    const allow = element("button", "Allow synchronization", "primary");
+    allow.type = "button";
+    allow.addEventListener("click", () => {
+      allow.disabled = true;
+      void requestSynchronizationPermission(view.serverOrigin).then(
+        (granted) =>
+          granted
+            ? sendRequest<AppState>({ type: "WakeSynchronization" }).then(render)
+            : refresh("Synchronization permission was not granted."),
+        (cause) => refresh(errorText(cause)),
+      );
+    });
+    content.append(allow);
   } else if (view.screen === "login") {
     content.append(element("p", `Sign in to synchronize through ${view.serverOrigin}.`));
     const login = element("form");

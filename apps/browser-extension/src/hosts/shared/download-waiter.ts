@@ -1,17 +1,17 @@
-export interface ChromeDownloadDelta {
+export interface DownloadDelta {
   readonly id: number;
   readonly state?: string;
   readonly error?: string;
 }
 
-export type ChromeDownloadListener = (delta: ChromeDownloadDelta) => void;
+export type DownloadListener = (delta: DownloadDelta) => void;
 
-export interface ChromeDownloadsAdapter {
+export interface DownloadsAdapter {
   search(
     downloadId: number,
   ): Promise<readonly { readonly state?: string; readonly error?: string }[]>;
-  addChangedListener(listener: ChromeDownloadListener): void;
-  removeChangedListener(listener: ChromeDownloadListener): void;
+  addChangedListener(listener: DownloadListener): void;
+  removeChangedListener(listener: DownloadListener): void;
 }
 
 export function exportDownloadFailure(cause?: unknown): Error {
@@ -20,8 +20,8 @@ export function exportDownloadFailure(cause?: unknown): Error {
   });
 }
 
-export async function waitForChromeDownload(
-  downloads: ChromeDownloadsAdapter,
+export async function waitForDownload(
+  downloads: DownloadsAdapter,
   downloadId: number,
   signal: AbortSignal,
 ): Promise<void> {
@@ -38,7 +38,7 @@ export async function waitForChromeDownload(
       else reject(exportDownloadFailure(cause));
     };
     const aborted = (): void => finish("aborted");
-    const changed: ChromeDownloadListener = (delta): void => {
+    const changed: DownloadListener = (delta): void => {
       if (delta.id !== downloadId) return;
       if (delta.state === "complete") finish("complete");
       else if (delta.state === "interrupted" || delta.error !== undefined)

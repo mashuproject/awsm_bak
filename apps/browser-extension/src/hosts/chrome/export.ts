@@ -6,11 +6,11 @@ import {
   writeVaultPackage,
 } from "../../runtime/export";
 import {
-  type ChromeDownloadListener,
-  type ChromeDownloadsAdapter,
+  type DownloadListener,
+  type DownloadsAdapter,
   exportDownloadFailure,
-  waitForChromeDownload,
-} from "./download-waiter";
+  waitForDownload,
+} from "../shared/download-waiter";
 
 const TEMP_DIRECTORY = "awsm-vault-exports";
 
@@ -39,10 +39,10 @@ function preparedDownloadUrl(value: unknown): string {
 }
 
 const downloadListeners = new Map<
-  ChromeDownloadListener,
+  DownloadListener,
   Parameters<typeof browser.downloads.onChanged.addListener>[0]
 >();
-const downloadsAdapter: ChromeDownloadsAdapter = {
+const downloadsAdapter: DownloadsAdapter = {
   search: async (downloadId) =>
     (await browser.downloads.search({ id: downloadId })).map((item) => ({
       state: item.state,
@@ -136,7 +136,7 @@ export class ChromeVaultExportHost {
       }
       if (signal.aborted) cancel();
       signal.throwIfAborted();
-      await waitForChromeDownload(downloadsAdapter, downloadId, signal);
+      await waitForDownload(downloadsAdapter, downloadId, signal);
     } finally {
       signal.removeEventListener("abort", cancel);
       await browser.runtime

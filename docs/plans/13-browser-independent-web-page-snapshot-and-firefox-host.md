@@ -104,7 +104,7 @@ fixture, and observed API behavior in
 rewrite the canonical format, add broader permissions, add a native application, substitute MV2,
 or invent a browser-specific contract without a new user decision.
 
-## 2.2 Gate B — Mozilla data-classification guidance
+## 2.2 Gate B — Firefox data-classification decision
 
 AWSM synchronization transmits encrypted user-selected web content, browsing activity, Account
 authentication material, and identifiers to the user's configured Coordination Server. Mozilla's
@@ -113,21 +113,22 @@ that transmission.
 
 Before adding final `optional` data categories or submitting any package to AMO:
 
-1. obtain written guidance from Mozilla Add-ons support/review or a subsequently published official
-   Mozilla document that expressly resolves AWSM's synchronization case;
-2. record the source, date, question asked, answer, and exact category mapping in the Plan 13 TDD
-   evidence document without copying credentials, private user data, or unrelated correspondence;
-3. make the mapping a single typed source constant consumed by manifest generation, Runtime
+1. review Mozilla's current official data-collection permission and AMO submission documentation;
+2. obtain an explicit project-owner decision for every category that accurately describes the
+   synchronization payload, conservatively including encrypted data transmitted outside Firefox;
+3. record the sources, date, decision, rationale, and exact category mapping in the Plan 13 TDD
+   evidence document without copying credentials or private user data;
+4. make the mapping a single typed source constant consumed by manifest generation, Runtime
    permission requests, UI copy, and tests; and
-4. add a manifest snapshot test for the exact approved mapping.
+5. add a manifest snapshot test for the exact approved mapping.
 
 Until this gate passes, the Firefox build SHALL be local-only, declare
 `data_collection_permissions.required: ["none"]`, expose no functional synchronization setup
 action, make no Coordination Server request, and remain unsigned.
 
-If the guidance is ambiguous, stop and return to the user. The implementer must not guess a
-category, submit a knowingly incomplete declaration, or treat encrypted data as uncollected merely
-because Mozilla or the Coordination Server cannot read its plaintext.
+If the official taxonomy cannot accurately describe the payload, stop and return to the user. The
+implementer must not omit a category or treat encrypted data as uncollected merely because Mozilla
+or the Coordination Server cannot read its plaintext.
 
 ## 2.3 Gate C — external signing authorization
 
@@ -708,14 +709,21 @@ The generated Firefox manifest SHALL include:
       "id": "{f6f49704-8d53-4eda-aef7-619ab88dda5f}",
       "strict_min_version": "140.0",
       "data_collection_permissions": {
-        "required": ["none"]
+        "required": ["none"],
+        "optional": [
+          "websiteContent",
+          "browsingActivity",
+          "authenticationInfo",
+          "personallyIdentifyingInfo"
+        ]
       }
     }
   }
 }
 ```
 
-After Gate B, add the exact approved categories as `optional`; do not change `required`.
+The four optional categories are the project-owner-approved Gate B mapping; do not change
+`required`.
 
 Firefox permissions are exactly:
 
@@ -1095,7 +1103,7 @@ Execute in this order. A later task does not authorize skipping an earlier gate.
       stale-Replica/server switching, lock, and live surfaces.
 
 12. **Mozilla consent gate**
-    - Obtain and record Gate B guidance.
+    - Review Mozilla's current taxonomy and record the explicit Gate B owner decision.
     - Add exact categories, permission request/revocation behavior, UI, and tests.
     - Run both cross-browser synchronization directions without reload.
 
@@ -1218,7 +1226,7 @@ This plan is complete only when all statements are true:
 11. Firefox is MV3, uses the permanent ID, enforces Firefox 140, and has no Chrome-only manifest
     key.
 12. Local-only Firefox works without data transmission permission.
-13. Gate B guidance is recorded and the exact approved optional categories drive manifest,
+13. Gate B sources and owner decision are recorded and the exact approved optional categories drive manifest,
     Runtime, UI, and tests.
 14. Denied or revoked Firefox data permission prevents Coordination Server traffic without breaking
     local-only Vault use.
@@ -1257,7 +1265,8 @@ This plan is complete only when all statements are true:
 - [x] Chrome native MHTML Capture and `pageCapture` are deleted.
 - [x] Firefox is MV3 desktop Linux Stable plus ESR with minimum version 140.
 - [x] The Firefox ID is `{f6f49704-8d53-4eda-aef7-619ab88dda5f}`.
-- [x] Mozilla guidance is mandatory before data-category declaration or signing.
+- [x] Mozilla's official taxonomy review and an explicit project-owner category decision are
+      mandatory before data-category declaration or signing.
 - [x] Firefox data permission is optional and requested only when enabling synchronization.
 - [x] Every version tag produces both browser artifacts after signing is enabled.
 - [x] Plan completion requires a tested signed unlisted XPI.

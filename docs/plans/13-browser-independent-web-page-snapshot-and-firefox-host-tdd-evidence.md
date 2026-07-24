@@ -6,7 +6,7 @@
 
 **Owner:** Engineering
 
-**Last Updated:** 2026-07-23
+**Last Updated:** 2026-07-24
 
 **Implements:** `docs/plans/13-browser-independent-web-page-snapshot-and-firefox-host.md`
 
@@ -147,10 +147,10 @@ Verified current-worktree commands:
 | `corepack pnpm lint`             | PASS — 265 files.                                                                                                                                                          |
 | `corepack pnpm typecheck`        | PASS.                                                                                                                                                                      |
 | `corepack pnpm test`             | PASS — 79 Vitest files, 380 tests, and 21 release-metadata tests.                                                                                                          |
-| `corepack pnpm build`            | PASS — Chrome MV3 build plus release manifest/security verification.                                                                                                       |
+| `corepack pnpm build`            | PASS — Chrome and Firefox MV3 builds plus release verification.                                                                                                            |
 | `corepack pnpm test:integration` | PASS — 45 Chromium integration tests.                                                                                                                                      |
 | `corepack pnpm test:sync-proof`  | PASS — replicas converged, restored remote-only Artifacts, recovered, and purged.                                                                                          |
-| `corepack pnpm zip`              | PASS — the production Chrome package built and zipped.                                                                                                                     |
+| `corepack pnpm zip`              | PASS — Chrome and deterministic Firefox production packages.                                                                                                               |
 | Firefox Gate A rerun             | PASS — Stable and ESR, two tests in 7.2 seconds.                                                                                                                           |
 | Focused packaged Chrome Capture  | PASS — snapshot Capture, screenshot, offline MHTML derivation, sanitizer assertions, download.                                                                             |
 | Export/Import packaged journey   | PASS — 32 MiB snapshot PRIMARY, Export, fresh/populated Workspace Import, unlock, inspection, failed-download retry, collision/selective/corrupt rejection, and re-export. |
@@ -159,3 +159,138 @@ Verified current-worktree commands:
 Rendered inspection covered the packaged recent-Capture popup, including the required passive form
 and file-input notice, plus wide and narrow Artifact detail and Export-dialog states. The inspected
 layouts had readable copy, visible controls, no horizontal overflow, and no unintended popup scroll.
+
+# 6. Phase B Firefox Host
+
+## 6.1 Production Host GREEN evidence
+
+On 2026-07-24 the production Firefox MV3 build passed temporary-install tests in both pinned Linux
+desktop lanes:
+
+- official branded Firefox Stable `153.0`;
+- official branded Firefox ESR `140.13.0esr`;
+- permanent extension ID `{f6f49704-8d53-4eda-aef7-619ab88dda5f}`;
+- local Vault creation;
+- production `WebPageSnapshot-v1` Capture of rendered DOM and live form state;
+- Library Projection visibility;
+- MHTML derivation from the authoritative `PRIMARY`;
+- terminal native-download observation and exact downloaded content; and
+- local-only synchronization state with an explicit, non-transmitting server setup entry point.
+
+The first production MHTML run found a Firefox-specific API difference: completed
+`downloads.search` records expose `error: null`. The initial adapter treated every present
+non-`undefined` value as an error and reported a failed download after Firefox had completed it.
+The adapter now accepts only a string as a download error. Stable and ESR then both passed.
+
+The shared OPFS Import Host no longer carries a Chrome-specific type or path. A Firefox MV3 E2E
+build additionally passed Capture, Library, MHTML, encrypted Vault Export, local reset, file-input
+staging, authenticated Import, and restored Workspace visibility in real Firefox Stable and ESR.
+The same Runtime package validation and Import implementation remains covered by the browser
+integration and packaged Chrome Export/Import suites.
+
+## 6.2 Synchronization consent boundary
+
+Gate B was resolved on 2026-07-24. The review used Mozilla's current official
+[data-collection permission documentation](https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/manifest.json/browser_specific_settings#data_collection_permissions),
+[permission API documentation](https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/permissions),
+and [AMO signing documentation](https://extensionworkshop.com/documentation/develop/web-ext-command-reference/#web-ext-sign).
+Those sources establish that transmission outside Firefox is collection, the categories can be
+optional and requested at runtime, and Firefox 140 is the first release supporting the declaration.
+Encryption and server opacity do not remove the need to disclose the transmitted data classes.
+
+The project owner explicitly selected this conservative mapping:
+
+| Firefox category            | AWSM synchronization payload                                                  |
+| --------------------------- | ----------------------------------------------------------------------------- |
+| `websiteContent`            | encrypted selected page snapshots, screenshots, and derived content           |
+| `browsingActivity`          | encrypted captured URLs, page titles, timestamps, and archive history         |
+| `authenticationInfo`        | Account authentication protocol material sent to the configured server        |
+| `personallyIdentifyingInfo` | Account identifiers and user-selected content that may identify an individual |
+
+One typed source constant owns the exact set. The Firefox manifest declares
+`required: ["none"]` and these four values as `optional`. A synchronization setup gesture requests
+the complete category set and normalized selected-server origin in one native prompt. Stable and
+ESR tests prove denial sends zero server-information requests, approval enables configuration,
+revocation updates open UI to `PermissionRequired` and rejects synchronization without traffic,
+and reapproval resumes without reload. Local Vault creation, Capture, Library, MHTML, Export, and
+Import remain usable without those permissions.
+
+Real Firefox testing found two permission-API constraints and retained them as regression coverage:
+
+- awaiting `permissions.getAll()` before `permissions.request()` loses the initiating user gesture,
+  so the native request is issued synchronously from that gesture; and
+- Firefox match patterns do not accept ports, so the requested origin pattern is normalized to its
+  scheme and hostname while the configured transport still uses the exact origin.
+
+Permission removal aborts active transfer controllers, disconnects the live Cable, clears session
+objects, pauses persisted synchronization/server-switch work, and invalidates every open surface.
+Regrant uses the existing passive reconciliation path.
+
+Rendered inspection covered the permission-required recovery surface at the primary desktop
+viewport and a 520-pixel narrow browser window. In both states the heading, explanation, selected
+server, local-feature guarantee, and **Allow synchronization** action are readable with no clipping,
+overflow, collision, or unintended layout movement. The same real-browser journey proves the
+native approval prompt and both denial and reapproval outcomes.
+
+## 6.3 Packaging and automation
+
+The production Firefox build has target-explicit `build:firefox` and `zip:firefox` commands. Static
+verification enforces the exact ID, Firefox 140 minimum, permission allowlists, optional data
+declaration, CSP, absence of Chrome-only manifest fields, release fault controls, and remote assets.
+Archive-level verification additionally rejects unexpected paths, source maps, test fixtures,
+profiles, downloads, dependency trees, credential-like files, missing pages, and manifest drift.
+The Chrome offscreen page is excluded from Firefox source and runtime entrypoints.
+WXT's initial ZIP was not reproducible because archive metadata changed between identical builds.
+The Firefox packaging command now replaces the installable ZIP with a sorted archive whose entry
+timestamps and compression inputs are canonical. Two complete consecutive `zip:firefox` runs
+produced byte-identical SHA-256 results.
+
+After the full packaged Chrome suite, WXT's default Firefox source ZIP included ignored Playwright
+profiles and grew to 222 MiB. The checked-in source-package exclusion list now removes tests,
+profiles, reports, coverage, dependencies, and generated output. Archive verification applies the
+same forbidden-path audit and a 5 MiB ceiling to the AMO source ZIP; the validated package is about
+457 KiB.
+
+Pinned `web-ext lint` completes with zero errors and zero notices. Its sole warning concerns Firefox
+for Android 140 predating the data-collection manifest key; Plan 13 supports desktop Linux only.
+Mozilla's official version-compatibility guidance defines `gecko` for desktop and requires an
+explicit `gecko_android` block to claim AMO Android compatibility. Manifest, unsigned-archive, and
+signed-XPI verifiers therefore assert that `gecko_android` remains absent.
+
+The release workflow now has:
+
+- one Firefox Stable production smoke on relevant pull requests;
+- parallel Firefox Stable/ESR production and Export/Import lanes on the nightly schedule;
+- a nightly bidirectional live Chrome/Firefox synchronization proof;
+- a tag-only protected signing gate requiring `FIREFOX_AMO_SIGNING_ENABLED=true`;
+- exact ID/version AMO query, resumable non-secret upload identity, source upload, pending/rejected
+  handling, and AMO SHA-256 verification;
+- deterministic unsigned-package reproduction before submission;
+- signed-XPI manifest/signature validation;
+- signed Stable, ESR, and bidirectional cross-browser gates; and
+- one joint GitHub Release only after Chrome and Firefox assets and checksums pass.
+
+Manual dispatch remains a non-publishing dry run and performs no AMO submission. No live submission
+has been made: Gate C still requires protected credentials and explicit authorization of the exact
+tag/version.
+
+Current-worktree verification:
+
+| Command                                                                | Result                                                                                      |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `corepack pnpm lint`                                                   | PASS — 284 files.                                                                           |
+| `corepack pnpm typecheck`                                              | PASS.                                                                                       |
+| `corepack pnpm test`                                                   | PASS — 80 Vitest files, 385 tests, and 26 release/signing script tests.                     |
+| `corepack pnpm build`                                                  | PASS — Chrome and Firefox production MV3.                                                   |
+| `corepack pnpm test:integration`                                       | PASS — 45 browser integration tests.                                                        |
+| `corepack pnpm test:e2e:chrome`                                        | PASS — complete packaged matrix, 25 tests in 6.3 minutes.                                   |
+| Firefox production consent/Capture/MHTML lanes                         | PASS — Stable and ESR, two tests per lane.                                                  |
+| Firefox E2E Export/Import lanes                                        | PASS — Stable and ESR through authenticated Import.                                         |
+| `corepack pnpm test:e2e:cross-browser`                                 | PASS — live Chrome-to-Firefox and Firefox-to-Chrome updates without reload in 18.6 seconds. |
+| `corepack pnpm test:sync-proof`                                        | PASS — two Replicas converged and recovered.                                                |
+| `corepack pnpm zip`                                                    | PASS — both browser packages.                                                               |
+| Deterministic Firefox package comparison                               | PASS — consecutive complete builds were byte-identical.                                     |
+| Signed-XPI verifier synthetic positive and payload-mutation regression | PASS.                                                                                       |
+| Non-submitting workflow metadata/credential gate                       | PASS — exact asset names; missing credentials fail before any AMO request.                  |
+| `node apps/browser-extension/scripts/verify-firefox-archive.mjs`       | PASS — unsigned Firefox ZIP and source archive.                                             |
+| `web-ext lint --source-dir apps/browser-extension/.output/firefox-mv3` | PASS with the documented desktop-only Android warning.                                      |

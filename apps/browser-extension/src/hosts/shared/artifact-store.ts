@@ -5,7 +5,7 @@ import { bytesEqual } from "../../domain/hash";
 import { uuid } from "../../domain/validation";
 import type { StoredArtifactObjectV1 } from "../../drivers/indexeddb/schema";
 import type { ArtifactStore, PreparedArtifact } from "../../runtime/artifact";
-import { artifactFileMatches, streamChunks } from "./artifact-store-file";
+import { storedArtifactFileMatches, streamChunks } from "./artifact-store-file";
 
 const ROOT_DIRECTORY = "awsm-vault-objects";
 const SUFFIX = ".artifact";
@@ -38,7 +38,7 @@ async function fileStream(vaultId: string, objectId: string): Promise<ReadableSt
   return (await handle.getFile()).stream();
 }
 
-export class ChromeArtifactStore implements ArtifactStore {
+export class OpfsArtifactStore implements ArtifactStore {
   async prepare(input: {
     readonly vaultId: string;
     readonly objectId: string;
@@ -114,7 +114,7 @@ export class ChromeArtifactStore implements ArtifactStore {
     try {
       const existing = await directory.getFileHandle(name);
       const file = await existing.getFile();
-      const matches = await artifactFileMatches(file, input.object);
+      const matches = await storedArtifactFileMatches(file, input.object);
       if (matches) {
         await input.encrypted.cancel();
         return;
@@ -183,7 +183,7 @@ export class ChromeArtifactStore implements ArtifactStore {
   async verifyEncrypted(vaultId: string, object: StoredArtifactObjectV1): Promise<boolean> {
     const directory = await vaultDirectory(vaultId);
     const handle = await directory.getFileHandle(filename(object.objectId));
-    return artifactFileMatches(await handle.getFile(), object);
+    return storedArtifactFileMatches(await handle.getFile(), object);
   }
 
   async openPlaintext(input: {

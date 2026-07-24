@@ -1,4 +1,5 @@
 import { defineConfig, type UserManifest } from "wxt";
+import { FIREFOX_SYNCHRONIZATION_DATA_CATEGORIES } from "./src/hosts/firefox/synchronization-permission";
 
 export const FIREFOX_EXTENSION_ID = "{f6f49704-8d53-4eda-aef7-619ab88dda5f}";
 
@@ -36,6 +37,7 @@ export function createManifest(browser: "chrome" | "firefox"): UserManifest {
           strict_min_version: "140.0",
           data_collection_permissions: {
             required: ["none"],
+            optional: [...FIREFOX_SYNCHRONIZATION_DATA_CATEGORIES],
           },
         },
       },
@@ -51,4 +53,13 @@ export function createManifest(browser: "chrome" | "firefox"): UserManifest {
 
 export default defineConfig({
   manifest: ({ browser }) => createManifest(browser === "firefox" ? "firefox" : "chrome"),
+  zip: {
+    excludeSources: [
+      "blob-report/**",
+      "coverage/**",
+      "playwright-report/**",
+      "test-results/**",
+      "tests/**",
+    ],
+  },
 });

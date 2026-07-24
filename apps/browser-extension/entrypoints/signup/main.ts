@@ -1,7 +1,6 @@
-import { browser } from "wxt/browser";
 import { AppClientError, sendRequest } from "../../src/app/client";
 import type { AppState } from "../../src/app/protocol";
-import { serverPermissionPattern } from "../../src/runtime/account/server";
+import { requestSynchronizationPermission } from "../../src/ui/synchronization-permission";
 
 function required<T extends Element>(selector: string): T {
   const node = document.querySelector<T>(selector);
@@ -43,14 +42,10 @@ function showStatus(
 }
 
 async function configureServer(origin: string): Promise<void> {
-  if (
-    !(await browser.permissions.request({
-      origins: [serverPermissionPattern(origin)],
-    }))
-  ) {
+  if (!(await requestSynchronizationPermission(origin))) {
     throw new AppClientError(
       "SERVER_PERMISSION_DENIED",
-      "Chrome did not grant access to that synchronization server.",
+      "The browser did not grant access to that synchronization server.",
     );
   }
   await sendRequest<AppState>({

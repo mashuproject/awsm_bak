@@ -12,8 +12,8 @@ import type {
 } from "../../src/app/protocol";
 import type { ArtifactRole } from "../../src/domain/artifact-graph";
 import { decodeStructuredContentSequence } from "../../src/domain/structured-content";
-import { ChromeVaultImportHost } from "../../src/hosts/chrome/import";
-import { serverPermissionPattern, validateServerOrigin } from "../../src/runtime/account/server";
+import { VaultImportHost } from "../../src/hosts/shared/import";
+import { validateServerOrigin } from "../../src/runtime/account/server";
 import {
   artifactPresentation,
   captureDropRequest,
@@ -31,6 +31,7 @@ import {
   storageReliefAnnouncement,
   storageReliefFocusTarget,
 } from "../../src/ui/storage-relief-accessibility";
+import { requestSynchronizationPermission } from "../../src/ui/synchronization-permission";
 import { deepLinkVaultRoute, vaultManagementView } from "../../src/ui/vault-management-view";
 
 function requiredElement(selector: string): HTMLElement {
@@ -55,7 +56,7 @@ let draggedCollectionId: string | undefined;
 let activeVaultId: string | undefined;
 let vaultMutationDisabled = false;
 let expandedLibrarySection: "Active" | "Deleted" = "Active";
-const importHost = new ChromeVaultImportHost();
+const importHost = new VaultImportHost();
 let importRouteOpened = false;
 let cancelPageOwnedImport: (() => void) | undefined;
 let pageOwnedImportJobId: string | undefined;
@@ -100,6 +101,7 @@ const synchronizationLabels = {
   UpToDate: "Up to date",
   Offline: "Offline",
   AuthenticationRequired: "Sign-in required",
+  PermissionRequired: "Firefox permission required",
   Conflict: "Needs attention",
   Failed: "Failed",
   SetupRequired: "Setup required",
@@ -160,6 +162,26 @@ function installSettingsTabs(form: HTMLFormElement): void {
   activate(accountTab);
   tabs.append(vaultTab, accountTab);
   form.append(tabs, vaultPanel, accountPanel);
+}
+
+function appendResetDeviceSection(form: HTMLFormElement, dialog: HTMLDialogElement): void {
+  const resetSection = element("section", undefined, "reset-device");
+  resetSection.append(
+    element("h3", "Reset this device"),
+    element(
+      "p",
+      "Delete every local Vault, key, capture, setting, and cached file from this browser. Server-side Account and Vault data will not be deleted.",
+      "muted",
+    ),
+  );
+  const reset = element("button", "Reset this device", "danger-action");
+  reset.type = "button";
+  reset.addEventListener("click", () => {
+    dialog.close();
+    showResetDeviceDialog(reset);
+  });
+  resetSection.append(reset);
+  form.append(resetSection);
 }
 
 function showAccountSettings(): void {
@@ -399,6 +421,33 @@ function showAccountSettings(): void {
     });
     actions.append(finish);
   }
+  if (
+    account.vaultSyncState === "PermissionRequired" &&
+    account.configuration.mode === "Configured"
+  ) {
+    const configuredServerOrigin = account.configuration.serverOrigin;
+    const allow = element("button", "Allow synchronization");
+    allow.type = "button";
+    allow.addEventListener("click", () => {
+      allow.disabled = true;
+      void requestSynchronizationPermission(configuredServerOrigin).then(
+        (granted) => {
+          if (!granted) {
+            allow.disabled = false;
+            return;
+          }
+          return sendRequest<AppState>({ type: "WakeSynchronization" }).then((next) => {
+            dialog.close();
+            renderVaultBar(next);
+          });
+        },
+        () => {
+          allow.disabled = false;
+        },
+      );
+    });
+    actions.append(allow);
+  }
   if (account.vaultSyncState === "Failed" || account.vaultSyncState === "Offline") {
     const retry = element("button", "Retry synchronization");
     retry.type = "button";
@@ -431,22 +480,6 @@ function showAccountSettings(): void {
     actions.append(logout);
   }
   form.append(actions);
-  const resetSection = element("section", undefined, "reset-device");
-  resetSection.append(
-    element("h3", "Reset this device"),
-    element(
-      "p",
-      "Delete every local Vault, key, capture, setting, and cached file from this browser. Server-side Account and Vault data will not be deleted.",
-      "muted",
-    ),
-  );
-  const reset = element("button", "Reset this device", "danger-action");
-  reset.type = "button";
-  reset.addEventListener("click", () => {
-    dialog.close();
-    showResetDeviceDialog(reset);
-  });
-  resetSection.append(reset);
   const serverLabel = element(
     "label",
     account.configuration.mode === "Configured"
@@ -513,13 +546,12 @@ function showAccountSettings(): void {
       return;
     }
     save.disabled = true;
-    void browser.permissions
-      .request({ origins: [serverPermissionPattern(candidateOrigin)] })
+    void requestSynchronizationPermission(candidateOrigin)
       .then((granted) => {
         if (!granted)
           throw new AppClientError(
             "SERVER_PERMISSION_DENIED",
-            "Chrome did not grant access to that synchronization server.",
+            "The browser did not grant access to that synchronization server.",
           );
         return account.configuration.mode === "Configured"
           ? sendRequest<AppState>({
@@ -550,7 +582,7 @@ function showAccountSettings(): void {
         },
       );
   });
-  form.append(resetSection);
+  appendResetDeviceSection(form, dialog);
   installSettingsTabs(form);
   dialog.addEventListener("close", () => accountSettings.focus(), {
     once: true,

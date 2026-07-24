@@ -18,7 +18,11 @@ export function recentCaptureMatchesActiveUrl(
 }
 
 export type PopupView =
-  | { readonly screen: "server-choice"; readonly hostedOrigin: "https://awsm.foo" }
+  | {
+      readonly screen: "server-choice";
+      readonly hostedOrigin: "https://awsm.foo";
+    }
+  | { readonly screen: "permission-required"; readonly serverOrigin: string }
   | { readonly screen: "login"; readonly serverOrigin: string }
   | { readonly screen: "account-setup" }
   | { readonly screen: "stale-replica" }
@@ -37,9 +41,21 @@ export function popupView(state: AppState): PopupView {
   }
   if (
     state.account.configuration.mode === "Configured" &&
+    state.account.vaultSyncState === "PermissionRequired"
+  ) {
+    return {
+      screen: "permission-required",
+      serverOrigin: state.account.configuration.serverOrigin,
+    };
+  }
+  if (
+    state.account.configuration.mode === "Configured" &&
     state.account.accountState !== "Authenticated"
   ) {
-    return { screen: "login", serverOrigin: state.account.configuration.serverOrigin };
+    return {
+      screen: "login",
+      serverOrigin: state.account.configuration.serverOrigin,
+    };
   }
   if (state.account.vaultSyncState === "SetupRequired") return { screen: "account-setup" };
   if (state.account.staleResolutionRequired === true) return { screen: "stale-replica" };

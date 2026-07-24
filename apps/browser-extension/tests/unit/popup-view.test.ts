@@ -45,12 +45,33 @@ describe("popup state model", () => {
       popupView({
         ...base,
         account: {
-          configuration: { mode: "Configured", serverOrigin: "https://sync.example.test" },
+          configuration: {
+            mode: "Configured",
+            serverOrigin: "https://sync.example.test",
+          },
           accountState: "SignedOut",
           vaultSyncState: "AuthenticationRequired",
         },
       }),
     ).toEqual({ screen: "login", serverOrigin: "https://sync.example.test" });
+  });
+  it("shows Firefox permission recovery before attempting Account traffic", () => {
+    expect(
+      popupView({
+        ...base,
+        account: {
+          configuration: {
+            mode: "Configured",
+            serverOrigin: "https://sync.example.test",
+          },
+          accountState: "Authenticated",
+          vaultSyncState: "PermissionRequired",
+        },
+      }),
+    ).toEqual({
+      screen: "permission-required",
+      serverOrigin: "https://sync.example.test",
+    });
   });
   it("shows a recent capture only on the same fragmentless URL", () => {
     expect(

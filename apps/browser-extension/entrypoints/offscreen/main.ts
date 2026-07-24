@@ -1,7 +1,7 @@
 import { type Browser, browser } from "wxt/browser";
 import { readySodium } from "../../src/crypto/sodium";
 import { mhtmlDownloadBlob } from "../../src/hosts/chrome/mhtml-download";
-import type { ScreenshotPlan, ScreenshotTile } from "../../src/hosts/chrome/screenshot";
+import type { ScreenshotPlan, ScreenshotTile } from "../../src/hosts/shared/screenshot";
 import { deriveMhtml, validatePageSnapshot } from "../../src/runtime/page-snapshot";
 
 const SCREENSHOT_WEBP_QUALITY = 0.72;

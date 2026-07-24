@@ -849,7 +849,7 @@ input {
   color: #fff;
   background: transparent;
 }
-@media (max-width: 480px) {
+@media (max-width: 560px) {
   header,
   main,
   .vault-control {

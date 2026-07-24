@@ -14,11 +14,20 @@ import {
 import { ChromeAccountServerHost } from "../hosts/chrome/account-server";
 import { ChromeCaptureHost, ChromeScreenshotHost } from "../hosts/chrome/api";
 import { ChromeMhtmlDownloadHost, mhtmlDownloadFilename } from "../hosts/chrome/artifact-download";
-import { ChromeArtifactStore } from "../hosts/chrome/artifact-store";
 import { preflightCapture } from "../hosts/chrome/capture";
 import { ChromeVaultExportHost } from "../hosts/chrome/export";
-import { ChromeVaultImportHost } from "../hosts/chrome/import";
-import { acquireBestEffortScreenshot } from "../hosts/chrome/screenshot";
+import { FirefoxAccountServerHost } from "../hosts/firefox/account-server";
+import { FirefoxCaptureHost, FirefoxScreenshotHost } from "../hosts/firefox/api";
+import { FirefoxMhtmlDownloadHost } from "../hosts/firefox/artifact-download";
+import { FirefoxVaultExportHost } from "../hosts/firefox/export";
+import {
+  type FirefoxSynchronizationPermissionApi,
+  firefoxServerPermissionPattern,
+  hasFirefoxSynchronizationPermission,
+} from "../hosts/firefox/synchronization-permission";
+import { OpfsArtifactStore } from "../hosts/shared/artifact-store";
+import { VaultImportHost } from "../hosts/shared/import";
+import { acquireBestEffortScreenshot } from "../hosts/shared/screenshot";
 import { reconcileTemporaryFiles, stagePlaintextFile } from "../hosts/shared/temporary-file";
 import { TestingFaultCheckpoint } from "../hosts/testing/fault-checkpoint";
 import { CoordinationAccountHttp } from "../runtime/account/http";
@@ -104,7 +113,10 @@ const accountRepository = new IndexedDbAccountRepository();
 const serverSwitchRepository = new IndexedDbServerSwitchRepository();
 const storageReliefRepository = new IndexedDbStorageReliefRepository();
 const storageReliefControllers = new Map<string, AbortController>();
-const mhtmlDownloadHost = new ChromeMhtmlDownloadHost();
+const firefoxHost = browser.runtime.getManifest().browser_specific_settings?.gecko !== undefined;
+const mhtmlDownloadHost = firefoxHost
+  ? new FirefoxMhtmlDownloadHost()
+  : new ChromeMhtmlDownloadHost();
 const liveStorageReliefRepository = {
   latestStorageReliefJob: (vaultId: string) =>
     storageReliefRepository.latestStorageReliefJob(vaultId),
@@ -144,12 +156,16 @@ const liveServerSwitchRepository = {
   saveCheckpoint: (checkpoint: import("../drivers/indexeddb").ServerSwitchCheckpointV1) =>
     serverSwitchRepository.saveCheckpoint(checkpoint),
 };
-const accountServerHost = new ChromeAccountServerHost((configuration) =>
-  accountRepository.saveConfiguration(configuration),
-);
+const accountServerHost = firefoxHost
+  ? new FirefoxAccountServerHost((configuration) =>
+      accountRepository.saveConfiguration(configuration),
+    )
+  : new ChromeAccountServerHost((configuration) =>
+      accountRepository.saveConfiguration(configuration),
+    );
 const workspace = new WorkspaceService(workspaceRepository);
 const importRepository = new IndexedDbImportRepository();
-const importHost = new ChromeVaultImportHost();
+const importHost = new VaultImportHost();
 const importControllers = new Map<string, AbortController>();
 const enrollment = new EnrollmentService(accountRepository, vaultRepository);
 const serverSwitchService = new ServerSwitchService(serverSwitchRepository, accountRepository);
@@ -161,12 +177,33 @@ let serverSwitchController: AbortController | undefined;
 let activeCable: CableHintSubscriber | undefined;
 let activeCableContext: string | undefined;
 
+function firefoxPermissionApi(): FirefoxSynchronizationPermissionApi {
+  return browser.permissions as unknown as FirefoxSynchronizationPermissionApi;
+}
+
+async function firefoxSynchronizationPermissionGranted(origin: string): Promise<boolean> {
+  if (!firefoxHost) return true;
+  return hasFirefoxSynchronizationPermission(
+    await firefoxPermissionApi().getAll(),
+    firefoxServerPermissionPattern(origin),
+  );
+}
+
+async function assertFirefoxSynchronizationPermission(origin: string): Promise<void> {
+  if (await firefoxSynchronizationPermissionGranted(origin)) return;
+  throw Object.assign(
+    new Error("Firefox synchronization permission is required for this server."),
+    { id: "SERVER_PERMISSION_DENIED" },
+  );
+}
+
 async function sessionManager(): Promise<AccountSessionManager> {
   const configuration = await accountRepository.loadConfiguration();
   if (configuration.mode !== "Configured")
     throw Object.assign(new Error("No synchronization server is configured."), {
       id: "SERVER_INCOMPATIBLE",
     });
+  await assertFirefoxSynchronizationPermission(configuration.serverOrigin);
   if (activeSessionManager === undefined || activeSessionOrigin !== configuration.serverOrigin) {
     activeSessionManager = new AccountSessionManager(
       new CoordinationAccountHttp(configuration.serverOrigin),
@@ -177,7 +214,11 @@ async function sessionManager(): Promise<AccountSessionManager> {
   return activeSessionManager;
 }
 
-function serverSwitchSession(origin: string, accessToken?: string): AccountSessionManager {
+async function serverSwitchSession(
+  origin: string,
+  accessToken?: string,
+): Promise<AccountSessionManager> {
+  await assertFirefoxSynchronizationPermission(origin);
   if (candidateSessionManager === undefined || candidateSessionOrigin !== origin) {
     candidateSessionManager = new AccountSessionManager(
       new CoordinationAccountHttp(origin),
@@ -283,6 +324,7 @@ async function resumeInterruptedSynchronizedVacuum(
 async function executeSynchronization(signal?: AbortSignal): Promise<void> {
   const configuration = await accountRepository.loadConfiguration();
   if (configuration.mode !== "Configured") return;
+  if (!(await firefoxSynchronizationPermissionGranted(configuration.serverOrigin))) return;
   if (!(await accountRepository.hasAuthenticatedSecrets())) return;
   try {
     await resumeInterruptedSynchronizedVacuum(configuration, signal);
@@ -514,6 +556,38 @@ const synchronizationCoordinator = new SynchronizationCoordinator({
   },
 });
 
+async function reconcileFirefoxSynchronizationPermission(): Promise<void> {
+  if (!firefoxHost) return;
+  const configuration = await accountRepository.loadConfiguration();
+  if (configuration.mode !== "Configured") {
+    await notifyAppStateChanged();
+    return;
+  }
+  if (await firefoxSynchronizationPermissionGranted(configuration.serverOrigin)) {
+    await notifyAppStateChanged();
+    void synchronizationCoordinator.passivePoll();
+    return;
+  }
+  serverSwitchController?.abort();
+  for (const controller of storageReliefControllers.values()) controller.abort();
+  activeCable?.disconnect();
+  activeCable = undefined;
+  activeCableContext = undefined;
+  activeSessionManager = undefined;
+  activeSessionOrigin = undefined;
+  candidateSessionManager = undefined;
+  candidateSessionOrigin = undefined;
+  await synchronizationCoordinator.replaceContext(async () => undefined);
+  await notifyAppStateChanged();
+}
+
+browser.permissions.onAdded.addListener(() => {
+  void reconcileFirefoxSynchronizationPermission();
+});
+browser.permissions.onRemoved.addListener(() => {
+  void reconcileFirefoxSynchronizationPermission();
+});
+
 async function storageReliefContext(expectedVaultId: string) {
   const context = contexts.snapshot(expectedVaultId);
   const [configuration, metadata, registration, authenticated, head] = await Promise.all([
@@ -743,6 +817,32 @@ async function assertNoApplyingServerSwitch(): Promise<void> {
     });
 }
 
+async function synchronizationOriginForRequest(request: AppRequest): Promise<string | undefined> {
+  switch (request.type) {
+    case "ConfigureSyncServer":
+      return request.serverOrigin;
+    case "BeginServerSwitch":
+      return request.candidateOrigin;
+    case "LoginServerSwitchCandidate":
+    case "SignupServerSwitchCandidate":
+    case "RetryServerSwitch":
+      return (await serverSwitchRepository.loadJob())?.candidateOrigin;
+    case "WakeSynchronization":
+    case "RetrySynchronization":
+    case "DiscardStaleReplica":
+    case "LoginAccount":
+    case "SignupAccount":
+    case "CompleteAccountVault":
+    case "GetStorageReliefEstimate":
+    case "StartStorageRelief": {
+      const configuration = await accountRepository.loadConfiguration();
+      return configuration.mode === "Configured" ? configuration.serverOrigin : undefined;
+    }
+    default:
+      return undefined;
+  }
+}
+
 const contexts = new WorkspaceContextManager({
   workspaceRepository,
   createVaultPreparer: () => new VaultService(vaultRepository),
@@ -750,8 +850,8 @@ const contexts = new WorkspaceContextManager({
   createDriver: (vaultId) => new IndexedDbDriver(databaseName, vaultId),
   notify: notifyAppStateChanged,
 });
-const captureHost = new ChromeCaptureHost();
-const artifactStore = new ChromeArtifactStore();
+const captureHost = firefoxHost ? new FirefoxCaptureHost() : new ChromeCaptureHost();
+const artifactStore = new OpfsArtifactStore();
 
 function sameVaultHead(
   left: import("../drivers/indexeddb/schema").StoredVaultHeadV1,
@@ -794,7 +894,7 @@ async function compareServerSwitch(accessToken?: string): Promise<void> {
   serverSwitchController = controller;
   const transport = new SynchronizationHttp(
     job.candidateOrigin,
-    serverSwitchSession(job.candidateOrigin, accessToken),
+    await serverSwitchSession(job.candidateOrigin, accessToken),
     fetch,
     controller.signal,
   );
@@ -1406,12 +1506,18 @@ async function compareServerSwitchSafely(
       (current?.state === "Running" || current?.state === "WaitingForUnlock") &&
       current.stage !== "Compare"
     ) {
-      serverSwitchSession(current.candidateOrigin, accessToken);
+      await serverSwitchSession(current.candidateOrigin, accessToken);
       await reconcileServerSwitchOnStartup(contexts.snapshot(current.vaultId));
     } else await compareServerSwitch(accessToken);
   } catch (error) {
-    testingFaultCheckpoint?.recordFailure(error);
     const job = await serverSwitchRepository.loadJob();
+    if (
+      firefoxHost &&
+      job !== undefined &&
+      !(await firefoxSynchronizationPermissionGranted(job.candidateOrigin))
+    )
+      return;
+    testingFaultCheckpoint?.recordFailure(error);
     const errorId =
       error instanceof Error && "id" in error && typeof error.id === "string"
         ? error.id
@@ -1431,7 +1537,7 @@ async function compareServerSwitchSafely(
         if (job.direction === "FastForwardCandidate")
           await new SynchronizationHttp(
             job.candidateOrigin,
-            serverSwitchSession(job.candidateOrigin, accessToken),
+            await serverSwitchSession(job.candidateOrigin, accessToken),
           )
             .request(
               "DELETE",
@@ -1548,7 +1654,9 @@ const exportDownloadFault =
   testingFaultCheckpoint === undefined
     ? undefined
     : () => testingFaultCheckpoint.reach("export-download:before-download");
-const exportHost = new ChromeVaultExportHost(exportDownloadFault);
+const exportHost = firefoxHost
+  ? new FirefoxVaultExportHost(exportDownloadFault)
+  : new ChromeVaultExportHost(exportDownloadFault);
 const exportControllers = new Map<string, AbortController>();
 const ARTIFACT_MESSAGE_CHUNK_BYTES = 256 * 1024;
 interface ArtifactSession {
@@ -1623,7 +1731,7 @@ async function reconcileServerSwitchOnStartup(
   serverSwitchController ??= new AbortController();
   const transport = new SynchronizationHttp(
     job.candidateOrigin,
-    serverSwitchSession(job.candidateOrigin),
+    await serverSwitchSession(job.candidateOrigin),
     fetch,
     serverSwitchController.signal,
   );
@@ -1739,6 +1847,12 @@ const startup = contexts.initialize().then(async () => {
   await reconcileServerSwitchOnStartup(context).catch(async (error) => {
     const job = await serverSwitchRepository.loadJob();
     if (job?.state === "WaitingForUnlock") return;
+    if (
+      firefoxHost &&
+      job !== undefined &&
+      !(await firefoxSynchronizationPermissionGranted(job.candidateOrigin))
+    )
+      return;
     if (job?.state === "Running") {
       await accountRepository.eraseAuthenticated("server-switch-candidate");
       await accountRepository.eraseAccountVault("server-switch-candidate");
@@ -1795,7 +1909,7 @@ function safeError(error: unknown): AppResponse {
   const messages: Partial<Record<RuntimeErrorId, string>> = {
     VAULT_LOCKED: "Unlock the Vault to continue.",
     UNSUPPORTED_URL: "Only regular HTTP and HTTPS pages can be captured.",
-    PERMISSION_DENIED: "Chrome did not grant capture permission.",
+    PERMISSION_DENIED: "The browser did not grant capture permission.",
     PAGE_SNAPSHOT_FAILED: "The rendered page could not be collected.",
     PAGE_SNAPSHOT_TOO_LARGE: "The rendered page exceeds the Capture size limit.",
     PAGE_PACKAGE_FAILED: "The page snapshot could not be packaged safely.",
@@ -1828,7 +1942,7 @@ function safeError(error: unknown): AppResponse {
     SESSION_EXPIRED: "Your session expired. Sign in again.",
     SERVER_INCOMPATIBLE:
       "Use a different compatible AWSM coordination server. The current server cannot be selected again.",
-    SERVER_PERMISSION_DENIED: "Chrome did not grant access to that synchronization server.",
+    SERVER_PERMISSION_DENIED: "The browser did not grant access to that synchronization server.",
     SYNCHRONIZATION_AUTHENTICATION_REQUIRED: "Sign in again to continue synchronization.",
     SYNCHRONIZATION_INTERRUPTED:
       "The synchronization server is unavailable. Local data remains usable.",
@@ -1880,6 +1994,9 @@ async function state(): Promise<AppState> {
   const latestExportJob =
     context === undefined ? undefined : await context.driver.latestExportJob();
   const latestImportJob = await importRepository.latest();
+  const synchronizationPermissionGranted =
+    accountConfiguration.mode !== "Configured" ||
+    (await firefoxSynchronizationPermissionGranted(accountConfiguration.serverOrigin));
   if (
     records !== undefined &&
     context?.vault.isUnlocked() &&
@@ -1931,27 +2048,30 @@ async function state(): Promise<AppState> {
       accountState: authenticated ? "Authenticated" : "SignedOut",
       vaultSyncState:
         accountConfiguration.mode === "Configured"
-          ? !authenticated
-            ? "AuthenticationRequired"
-            : synchronizationJob?.errorId === "ACCOUNT_VAULT_SELECTION_REQUIRED"
-              ? "SetupRequired"
-              : synchronizationJob?.state === "Conflict"
-                ? "Conflict"
-                : synchronizationJob?.state === "Failed"
-                  ? "Failed"
-                  : synchronizationJob?.state === "AuthenticationRequired"
-                    ? "AuthenticationRequired"
-                    : synchronizationJob?.state === "Waiting"
-                      ? "Offline"
-                      : synchronizationJob === undefined || synchronizationJob.state === "Succeeded"
-                        ? "UpToDate"
-                        : synchronizationJob.stage === "FetchChanges" ||
-                            synchronizationJob.stage === "DownloadRecords" ||
-                            synchronizationJob.stage === "ActivateLocal"
-                          ? "Downloading"
-                          : synchronizationJob.stage === "EnrollVault"
-                            ? "Enrolling"
-                            : "Uploading"
+          ? !synchronizationPermissionGranted
+            ? "PermissionRequired"
+            : !authenticated
+              ? "AuthenticationRequired"
+              : synchronizationJob?.errorId === "ACCOUNT_VAULT_SELECTION_REQUIRED"
+                ? "SetupRequired"
+                : synchronizationJob?.state === "Conflict"
+                  ? "Conflict"
+                  : synchronizationJob?.state === "Failed"
+                    ? "Failed"
+                    : synchronizationJob?.state === "AuthenticationRequired"
+                      ? "AuthenticationRequired"
+                      : synchronizationJob?.state === "Waiting"
+                        ? "Offline"
+                        : synchronizationJob === undefined ||
+                            synchronizationJob.state === "Succeeded"
+                          ? "UpToDate"
+                          : synchronizationJob.stage === "FetchChanges" ||
+                              synchronizationJob.stage === "DownloadRecords" ||
+                              synchronizationJob.stage === "ActivateLocal"
+                            ? "Downloading"
+                            : synchronizationJob.stage === "EnrollVault"
+                              ? "Enrolling"
+                              : "Uploading"
           : "LocalOnly",
       ...(synchronizationJob?.errorId === undefined ? {} : { errorId: synchronizationJob.errorId }),
       ...(synchronizationJob?.state === "Conflict" ? { staleResolutionRequired: true } : {}),
@@ -2462,7 +2582,11 @@ async function captureActivePage(
       }),
     acquireScreenshot: async (tabId) => {
       try {
-        return await acquireBestEffortScreenshot(await ChromeScreenshotHost.create(tabId));
+        return await acquireBestEffortScreenshot(
+          firefoxHost
+            ? await FirefoxScreenshotHost.create(tabId)
+            : await ChromeScreenshotHost.create(tabId),
+        );
       } catch {
         return { warnings: ["SCREENSHOT_UNAVAILABLE"] };
       }
@@ -2611,6 +2735,9 @@ async function manageCollections(
 async function handle(request: AppRequest): Promise<AppResponse> {
   await startup;
   try {
+    const synchronizationOrigin = await synchronizationOriginForRequest(request);
+    if (synchronizationOrigin !== undefined)
+      await assertFirefoxSynchronizationPermission(synchronizationOrigin);
     switch (request.type) {
       case "GetState":
         return { ok: true, value: await state() };
@@ -2838,7 +2965,7 @@ async function handle(request: AppRequest): Promise<AppResponse> {
           (switchJob.state === "Running" || switchJob.state === "WaitingForUnlock")
         )
           await compareServerSwitchSafely(
-            await serverSwitchSession(switchJob.candidateOrigin).accessToken(),
+            await (await serverSwitchSession(switchJob.candidateOrigin)).accessToken(),
           );
         const relief = await storageReliefRepository.latestStorageReliefJob(
           request.expectedVaultId,

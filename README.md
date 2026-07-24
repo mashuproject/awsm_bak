@@ -35,29 +35,39 @@ For a guided walkthrough, continue with [Try a Capture](#try-a-capture) and
 [Verify offline behavior](#verify-offline-behavior). To review the hackathon development process,
 see [How OpenAI tools were used](#how-openai-tools-were-used).
 
-**Supported platform:** Chrome 116 or newer on a desktop operating system supported by Chrome. AWSM
-must be used in a normal Chrome profile; Incognito is not supported. AWSM is not currently packaged
-or tested as a Firefox, Safari, mobile, or standalone web application.
+**Released test platform:** Chrome 116 or newer on a desktop operating system supported by Chrome.
+AWSM must be used in a normal browser profile; Incognito and Firefox Private Browsing are not
+supported. A Firefox MV3 development build with optional synchronization is tested on Linux Firefox
+Stable and ESR 140 or newer, but it is not yet Mozilla-signed or distributed as an installable
+release. Safari, mobile, and standalone web applications are not currently packaged or tested.
 
 ## What works today
 
-The Chrome extension currently supports:
+The browser extension currently supports:
 
 - local-only setup with no Account or server;
 - webpage capture from active HTTP and HTTPS tabs;
-- immutable Captures containing MHTML, a full-page screenshot, a thumbnail, extracted text, and
-  structured content when each best-effort representation succeeds;
+- immutable Captures containing an AWSM-native web-page snapshot plus a full-page screenshot,
+  thumbnail, extracted text, and structured content when each best-effort representation succeeds;
 - an encrypted local Vault backed by browser-local storage;
 - offline Library browsing, screenshot viewing, text and structure inspection, and MHTML download;
 - multiple local Vaults, Vault locking and renaming, Collections, deletion, restoration, and Vault
   Vacuum;
 - passphrase-protected Complete Vault Export and Import; and
 - optional Account authentication and synchronization of an encrypted Vault Replica through a
-  compatible self-hosted Coordination Server.
+  compatible self-hosted Coordination Server in Chrome and Firefox.
 
-MHTML is preserved as the primary Capture Artifact and can be downloaded from the Library. AWSM
-does not render MHTML inside the Library. The full-page screenshot is previewed in the Capture detail
+The browser-independent page snapshot is the authoritative primary Capture Artifact. Chrome and
+Firefox can derive and download MHTML from it on demand; MHTML is not stored as authoritative Vault
+state or rendered inside the Library. The full-page screenshot is previewed in the Capture detail
 view, while extracted text and structured content can be inspected there.
+
+The current Firefox development build supports local Vaults, Capture, Library, MHTML, Export,
+Import, and synchronization. Enabling synchronization requests Firefox's native optional
+permissions for website content, browsing activity, authentication information, personally
+identifying information, and the selected server origin. Denial or revocation leaves local
+features available and prevents server traffic. Mozilla signing remains disabled until the first
+unlisted submission is explicitly authorized.
 
 Search, AI-generated summaries, tags, embeddings, classifications, annotations, and folders are
 not implemented user-facing features. AWSM already preserves normalized text and document structure
@@ -99,6 +109,18 @@ AWSM is now ready to capture without an Account or Coordination Server. For inst
 and its SHA-256 checksum. See the
 [Chrome extension installation guide](docs/guides/install-chrome-extension.md) for checksum
 verification, unpacked installation, upgrades, and troubleshooting.
+
+For local Firefox Host development, build explicitly with:
+
+```bash
+corepack pnpm --filter @awsm/browser-extension build:firefox
+```
+
+Load `apps/browser-extension/.output/firefox-mv3/manifest.json` as a temporary add-on from
+`about:debugging#/runtime/this-firefox`. Temporary installation is intended for development and
+ends when Firefox restarts. Local use needs no data-transmission permission; selecting
+synchronization presents Firefox's native consent prompt. Signed-XPI installation remains gated
+until the first unlisted beta is authorized.
 
 ## Try a Capture
 

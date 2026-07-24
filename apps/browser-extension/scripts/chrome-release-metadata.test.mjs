@@ -19,8 +19,13 @@ test("returns stable release metadata with exact asset names and guide URL", () 
       prerelease: false,
       archiveName: "awsm-chrome-v0.1.0.zip",
       checksumName: "awsm-chrome-v0.1.0.zip.sha256",
+      firefoxXpiName: "awsm-firefox-v0.1.0.xpi",
+      firefoxChecksumName: "awsm-firefox-v0.1.0.xpi.sha256",
+      firefoxSourceName: "awsm-firefox-source-v0.1.0.zip",
       guideUrl:
         "https://github.com/parasquid/awsm/blob/v0.1.0/docs/guides/install-chrome-extension.md",
+      firefoxGuideUrl:
+        "https://github.com/parasquid/awsm/blob/v0.1.0/docs/guides/install-firefox-extension.md",
     },
   );
 });
@@ -121,7 +126,7 @@ test("rejects unsupported events", () => {
   );
 });
 
-test("renders all seven ordered installation steps and one trailing newline", () => {
+test("renders Chrome and Firefox installation guidance and one trailing newline", () => {
   const metadata = releaseMetadata({
     version: "0.1.0",
     eventName: "workflow_dispatch",
@@ -135,7 +140,10 @@ test("renders all seven ordered installation steps and one trailing newline", ()
   }
   assert.match(notes, /`awsm-chrome-v0\.1\.0\.zip`/);
   assert.match(notes, /`awsm-chrome-v0\.1\.0\.zip\.sha256`/);
+  assert.match(notes, /`awsm-firefox-v0\.1\.0\.xpi`/);
+  assert.match(notes, /`awsm-firefox-v0\.1\.0\.xpi\.sha256`/);
   assert.match(notes, new RegExp(`\\]\\(${metadata.guideUrl.replaceAll(".", "\\.")}\\)`));
+  assert.match(notes, new RegExp(`\\]\\(${metadata.firefoxGuideUrl.replaceAll(".", "\\.")}\\)`));
   assert.equal(notes.endsWith("\n"), true);
   assert.equal(notes.endsWith("\n\n"), false);
 });

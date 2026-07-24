@@ -3,7 +3,7 @@ import {
   acquireBestEffortScreenshot,
   computeTilePlan,
   type ScreenshotHost,
-} from "../../src/hosts/chrome/screenshot";
+} from "../../src/hosts/shared/screenshot";
 
 describe("full-page screenshot geometry", () => {
   it("uses one tile for one viewport", () => {

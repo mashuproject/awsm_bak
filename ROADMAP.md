@@ -52,16 +52,15 @@ bypassing the real Host in release builds.
 
 ---
 
-## Firefox Extension Host
+## Firefox Synchronization and Signed Beta
 
 **Status:** Approved
 
-Implement the Linux Firefox Manifest V3 Host defined by Phase B of
-`docs/plans/13-browser-independent-web-page-snapshot-and-firefox-host.md`. Gate A feasibility and
-the browser-independent snapshot foundation are complete. Remaining stop gates require written
-Mozilla data-classification guidance and explicit authorization for the first signed unlisted
-beta. Firefox-specific behavior must remain behind Host or Driver boundaries and must not fork
-canonical Vault, Bundle, Account, synchronization, or cryptographic contracts.
+Complete the externally gated remainder of Phase B in
+`docs/plans/13-browser-independent-web-page-snapshot-and-firefox-host.md`: authorize the exact
+version/tag, provide the protected AMO credentials and repository signing gate, retrieve the
+Mozilla-signed unlisted XPI, and pass its Stable/ESR and cross-browser release lanes before
+publishing the joint GitHub Release.
 
 ---
 
@@ -96,7 +95,7 @@ changing ordinary links in the initial static snapshot contract.
 
 Prepare compatible AWSM versions for Firefox AMO and Chrome Web Store, but announce the first public
 browser-store release only after both listings are live. Complete macOS and Windows Firefox proof,
-Mozilla data-classification review, store privacy and permission disclosures, listing assets,
+store privacy and permission disclosures, listing assets,
 review handling, signed update delivery, release monitoring, and rollback procedures. Preserve the
 separate unlisted Linux Firefox beta and verified GitHub artifacts until this initiative is
 approved and implemented.

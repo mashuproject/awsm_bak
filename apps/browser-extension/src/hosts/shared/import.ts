@@ -51,7 +51,7 @@ export async function streamImportSource(input: {
   }
 }
 
-export class ChromeVaultImportHost {
+export class VaultImportHost {
   async stage(input: {
     readonly jobId: string;
     readonly source: Blob;

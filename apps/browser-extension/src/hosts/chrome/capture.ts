@@ -50,7 +50,10 @@ export async function preflightCapture(
     );
   }
   if (!(await host.hasCapturePermission())) {
-    throw new CaptureHostError("PERMISSION_DENIED", "Chrome did not grant capture permission.");
+    throw new CaptureHostError(
+      "PERMISSION_DENIED",
+      "The browser did not grant capture permission.",
+    );
   }
   return { tabId: tab.id, url: tab.url };
 }

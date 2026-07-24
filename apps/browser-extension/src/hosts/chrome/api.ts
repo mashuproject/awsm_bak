@@ -9,14 +9,14 @@ import type {
   SnapshotResourceSource,
 } from "../../runtime/page-snapshot";
 import { rewriteCssUrls } from "../../runtime/page-snapshot";
-import type { CaptureHost } from "./capture";
 import type {
   CapturedTile,
   PageDimensions,
   ScreenshotHost,
   ScreenshotPlan,
   ScreenshotTile,
-} from "./screenshot";
+} from "../shared/screenshot";
+import type { CaptureHost } from "./capture";
 
 interface MeasuredPage extends PageDimensions {
   readonly scrollX: number;
@@ -52,6 +52,12 @@ function firstResult<T>(results: readonly Browser.scripting.InjectionResult<T>[]
 }
 
 export class ChromeCaptureHost implements CaptureHost {
+  constructor(
+    private readonly browserName = "Chrome",
+    private readonly browserVersion = navigator.userAgent.match(/Chrome\/([^ ]+)/u)?.[1] ??
+      "unknown",
+  ) {}
+
   async getActiveTab(): Promise<{ readonly id?: number; readonly url?: string } | undefined> {
     const [tab] = await browser.tabs.query({
       active: true,
@@ -111,8 +117,8 @@ export class ChromeCaptureHost implements CaptureHost {
       contentType: page.contentType,
       viewport: { width: page.viewportWidth, height: page.viewportHeight },
       document: { width: page.documentWidth, height: page.documentHeight },
-      browserName: "Chrome",
-      browserVersion: navigator.userAgent.match(/Chrome\/([^ ]+)/u)?.[1] ?? "unknown",
+      browserName: this.browserName,
+      browserVersion: this.browserVersion,
       extensionVersion: clientVersion,
       captureProfileId: "WebPageSnapshot-v1",
       captureProfileVersion: 1,
@@ -250,7 +256,8 @@ export class ChromeCaptureHost implements CaptureHost {
             if (original.shadowRoot?.mode === "open") {
               const template = document.createElement("template");
               template.setAttribute("shadowrootmode", "open");
-              template.innerHTML = original.shadowRoot.innerHTML;
+              for (const child of original.shadowRoot.childNodes)
+                template.content.append(child.cloneNode(true));
               clone.prepend(template);
             }
           }
@@ -516,8 +523,8 @@ export class ChromeCaptureHost implements CaptureHost {
         width: collected.page.documentWidth,
         height: collected.page.documentHeight,
       },
-      browserName: "Chrome",
-      browserVersion: navigator.userAgent.match(/Chrome\/([^ ]+)/u)?.[1] ?? "unknown",
+      browserName: this.browserName,
+      browserVersion: this.browserVersion,
       extensionVersion: clientVersion,
       captureProfileId: "WebPageSnapshot-v1",
       captureProfileVersion: 1,
@@ -953,7 +960,7 @@ export class ChromeScreenshotHost implements ScreenshotHost {
   async stitch(
     plan: ScreenshotPlan,
     tiles: readonly CapturedTile[],
-  ): Promise<import("./screenshot").StitchedScreenshot> {
+  ): Promise<import("../shared/screenshot").StitchedScreenshot> {
     const contexts = await browser.runtime.getContexts({
       contextTypes: ["OFFSCREEN_DOCUMENT"],
     });

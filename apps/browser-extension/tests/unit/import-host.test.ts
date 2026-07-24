@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { streamImportSource } from "../../src/hosts/chrome/import";
+import { streamImportSource } from "../../src/hosts/shared/import";
 
 describe("Vault Import source streaming", () => {
   it("copies a multi-gigabyte logical source with one bounded chunk retained", async () => {

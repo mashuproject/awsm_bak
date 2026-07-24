@@ -296,7 +296,8 @@ Every successful payload is an independently encrypted Artifact Object reference
 Bundle Descriptor. Mandatory snapshot failure rejects Capture; optional Artifact failure remains
 visible through a typed warning.
 
-Browser Hosts produce the same self-contained snapshot representation. Firefox release work remains
+Browser Hosts produce the same self-contained snapshot representation. The Linux Firefox Host
+implements local Capture and portability parity; synchronization, signing, and release remain
 subject to the gates in Plan 13.
 
 ---
@@ -363,7 +364,9 @@ Implementation status: the Chrome extension and untrusted Coordination Server im
 email/password Account authentication, client-only Account-key enrollment, one Complete
 synchronized Vault, background convergence, synchronized Vacuum, manual heavy-Artifact storage
 relief with on-demand retrieval, and export-first stale-Replica discard.
-Device signing/revocation, Selective Replicas, and production deployment hardening remain future.
+The Linux Firefox Host provides the same optional synchronization after native data-collection and
+server-origin consent; its signed unlisted beta remains externally gated. Device signing/revocation,
+Selective Replicas, and production deployment hardening remain future.
 
 Synchronization shall:
 
@@ -489,8 +492,7 @@ Browser Extension
 
 - Capture current page
 - Full-page screenshot
-- MHTML (Chrome)
-- Self-contained HTML (Firefox)
+- Derived MHTML download
 - Metadata extraction
 - Local encrypted storage
 - Local search

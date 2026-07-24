@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { FIREFOX_SYNCHRONIZATION_DATA_CATEGORIES } from "../../src/hosts/firefox/synchronization-permission";
 import { createManifest, FIREFOX_EXTENSION_ID } from "../../wxt.config";
 
 describe("browser manifests", () => {
@@ -17,7 +18,7 @@ describe("browser manifests", () => {
     });
   });
 
-  it("emits the exact local-only Firefox MV3 metadata", () => {
+  it("emits the exact permission-safe Firefox MV3 metadata", () => {
     const manifest = createManifest("firefox");
 
     expect(manifest).toMatchObject({
@@ -29,11 +30,13 @@ describe("browser manifests", () => {
           strict_min_version: "140.0",
           data_collection_permissions: {
             required: ["none"],
+            optional: FIREFOX_SYNCHRONIZATION_DATA_CATEGORIES,
           },
         },
       },
     });
     expect(manifest).not.toHaveProperty("minimum_chrome_version");
+    expect(manifest).not.toHaveProperty("browser_specific_settings.gecko_android");
     expect(manifest.permissions).not.toContain("pageCapture");
     expect(manifest.permissions).not.toContain("offscreen");
   });

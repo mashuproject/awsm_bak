@@ -14,7 +14,7 @@ import {
 } from "../../domain/structured-content";
 import type { AtomicRegistrationV1, CommandOutcomeV1 } from "../../drivers/indexeddb";
 import type { CapturePreflight } from "../../hosts/chrome/capture";
-import type { ScreenshotResult } from "../../hosts/chrome/screenshot";
+import type { ScreenshotResult } from "../../hosts/shared/screenshot";
 import type { PreparedArtifact } from "../artifact";
 import { type CollectionTopologyEventV1, selectCollectionForCapture } from "../library/collections";
 import type {
