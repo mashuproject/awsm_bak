@@ -15,24 +15,65 @@ services:
     volumes:
       - postgres-proof-data:/var/lib/postgresql/data
 
-  coordination-proof:
+  redis-proof:
+    image: redis:8.2.8-alpine
+    command:
+      - redis-server
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+      - --maxmemory
+      - 64mb
+      - --maxmemory-policy
+      - noeviction
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+    tmpfs:
+      - /data
+
+  coordination-proof-prepare:
     build:
       context: .
       dockerfile: apps/coordination-server/Dockerfile.proof
-    command:
-      - bash
-      - -c
-      - >-
-        bin/rails db:prepare &&
-        exec bin/rails server --binding 0.0.0.0 --port 3000
+    command: ["bin/rails", "db:prepare"]
     depends_on:
       postgres-proof:
         condition: service_healthy
+      redis-proof:
+        condition: service_healthy
     environment:
-      AWSM_CABLE_ADAPTER: async
+      AWSM_CABLE_ADAPTER: redis
       AWSM_JOB_QUEUE_ADAPTER: async
       AWSM_OPENAPI_PATH: /docs/specifications/protocol/http-api.openapi.yaml
       AWSM_OPAQUE_STORAGE_PATH: /opaque-storage
+      AWSM_REDIS_NAMESPACE: awsm:sync-proof
+      AWSM_REDIS_URL: redis://redis-proof:6379/0
+      AWSM_SYNTHETIC_ACCOUNT_SECRET: awsm-proof-synthetic-account-parameter-secret
+      AWSM_SYNC_PROOF: "true"
+      RAILS_ENV: test
+      TEST_DATABASE_URL: postgresql://proof:proof-only@postgres-proof:5432/coordination_server_proof
+    volumes:
+      - opaque-proof-data:/opaque-storage
+
+  coordination-proof: &coordination-proof
+    build:
+      context: .
+      dockerfile: apps/coordination-server/Dockerfile.proof
+    command: ["bin/rails", "server", "--binding", "0.0.0.0", "--port", "3000"]
+    depends_on:
+      coordination-proof-prepare:
+        condition: service_completed_successfully
+    environment: &coordination-proof-environment
+      AWSM_CABLE_ADAPTER: redis
+      AWSM_JOB_QUEUE_ADAPTER: async
+      AWSM_OPENAPI_PATH: /docs/specifications/protocol/http-api.openapi.yaml
+      AWSM_OPAQUE_STORAGE_PATH: /opaque-storage
+      AWSM_REDIS_NAMESPACE: awsm:sync-proof
+      AWSM_REDIS_URL: redis://redis-proof:6379/0
       AWSM_SYNTHETIC_ACCOUNT_SECRET: awsm-proof-synthetic-account-parameter-secret
       AWSM_SYNC_PROOF: "true"
       RAILS_ENV: test
@@ -45,14 +86,27 @@ services:
     volumes:
       - opaque-proof-data:/opaque-storage
 
+  coordination-proof-peer:
+    <<: *coordination-proof
+    environment:
+      <<: *coordination-proof-environment
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:3000/ready"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
   replica-proof:
     image: node:24-bookworm-slim
     command: ["node", "/proof/sync-proof.mjs"]
     depends_on:
       coordination-proof:
         condition: service_healthy
+      coordination-proof-peer:
+        condition: service_healthy
     environment:
       AWSM_PROOF_BASE_URL: http://coordination-proof:3000
+      AWSM_PROOF_CABLE_URL: ws://coordination-proof-peer:3000/cable
     volumes:
       - ./apps/coordination-server/script:/proof:ro
 

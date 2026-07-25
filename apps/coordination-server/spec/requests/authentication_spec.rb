@@ -199,8 +199,7 @@ RSpec.describe "Account authentication", type: :request do
       headers: headers.merge("Idempotency-Key" => "01900000-0000-7000-8000-000000000099"))
     expect(response).to have_http_status(:bad_request)
 
-    exposed = [ io.string, response.body, account.inspect,
-      DeleteExpiredCableTicketsJob.new.serialize.inspect ].join("\n")
+    exposed = [ io.string, response.body, account.inspect ].join("\n")
     sentinels.values.each { |sentinel| expect(exposed).not_to include(sentinel) }
   ensure
     Rails.logger = prior_logger if prior_logger

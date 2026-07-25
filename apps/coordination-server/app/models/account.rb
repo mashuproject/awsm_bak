@@ -8,7 +8,6 @@ class Account < ApplicationRecord
 
   has_many :vault_replicas, dependent: :restrict_with_exception
   has_many :account_sessions, dependent: :destroy
-  has_many :cable_tickets, dependent: :destroy
   has_many :signup_registrations, dependent: :destroy
 
   normalizes :email, with: ->(email) { email.to_s.strip.downcase }

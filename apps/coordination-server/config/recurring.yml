@@ -10,10 +10,6 @@
 #     schedule: at 5am every day
 
 production:
-  delete_expired_cable_tickets:
-    class: DeleteExpiredCableTicketsJob
-    queue: default
-    schedule: every 5 minutes
   dispatch_expired_recoveries:
     class: DispatchExpiredPurgesJob
     queue: default

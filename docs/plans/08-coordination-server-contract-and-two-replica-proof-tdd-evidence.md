@@ -139,3 +139,8 @@ corepack pnpm test:sync-proof
 Result: two independent replicas converged through HTTP, Action Cable, polling, PostgreSQL, and
 Disk; the proof also exercised interrupted multipart upload, closure durability, concurrent late
 Event fencing, recovery, and verified purge.
+
+Current reconciliation: Plan 14 retained this journey while splitting Rails into primary and peer
+processes backed by one non-persistent Redis service. The current proof additionally verifies
+cross-process ticket consumption, replay rejection, Redis Pub/Sub delivery, and polling
+convergence.

@@ -8,6 +8,9 @@ import {
 import assert from "node:assert/strict";
 
 const baseUrl = process.env.AWSM_PROOF_BASE_URL;
+const cableUrl = process.env.AWSM_PROOF_CABLE_URL;
+assert(baseUrl, "AWSM_PROOF_BASE_URL is required");
+assert(cableUrl, "AWSM_PROOF_CABLE_URL is required");
 let credential;
 let requestSequence = 0;
 
@@ -23,9 +26,16 @@ function encryptArtifact(plaintext, key) {
 }
 
 function decryptArtifact(wrapper, key) {
-  const decipher = createDecipheriv("aes-256-gcm", key, wrapper.subarray(0, 12));
+  const decipher = createDecipheriv(
+    "aes-256-gcm",
+    key,
+    wrapper.subarray(0, 12),
+  );
   decipher.setAuthTag(wrapper.subarray(12, 28));
-  return Buffer.concat([decipher.update(wrapper.subarray(28)), decipher.final()]);
+  return Buffer.concat([
+    decipher.update(wrapper.subarray(28)),
+    decipher.final(),
+  ]);
 }
 
 function requestId() {
@@ -127,9 +137,7 @@ async function openCable(vaultId) {
   const issued = await control("POST", "/api/cable-tickets", undefined, {
     expected: [201],
   });
-  const socketUrl =
-    baseUrl.replace(/^http/, "ws") +
-    `/cable?ticket=${encodeURIComponent(issued.payload.ticket)}`;
+  const socketUrl = `${cableUrl}?ticket=${encodeURIComponent(issued.payload.ticket)}`;
   const socket = new WebSocket(socketUrl, [
     "actioncable-v1-json",
     "actioncable-unsupported",
@@ -161,7 +169,32 @@ async function openCable(vaultId) {
       setTimeout(() => reject(new Error("Cable subscription timeout")), 10_000),
     ),
   ]);
-  return { socket, messages };
+  return { socket, messages, ticket: issued.payload.ticket };
+}
+
+async function expectCableReplayRejected(rawTicket) {
+  const socket = new WebSocket(
+    `${cableUrl}?ticket=${encodeURIComponent(rawTicket)}`,
+    ["actioncable-v1-json", "actioncable-unsupported"],
+  );
+  await Promise.race([
+    new Promise((resolve, reject) => {
+      socket.addEventListener("message", (event) => {
+        const frame = JSON.parse(event.data);
+        if (frame.type === "welcome") {
+          reject(new Error("Consumed Cable ticket was accepted again"));
+        }
+      });
+      socket.addEventListener("close", resolve);
+      socket.addEventListener("error", resolve);
+    }),
+    new Promise((_, reject) =>
+      setTimeout(
+        () => reject(new Error("Cable replay rejection timeout")),
+        10_000,
+      ),
+    ),
+  ]);
 }
 
 async function waitFor(predicate, label, timeout = 15_000) {
@@ -260,6 +293,7 @@ await control(
 );
 
 const replicaTwo = await openCable(vaultId);
+await expectCableReplayRejected(replicaTwo.ticket);
 await control(
   "POST",
   `/api/vaults/${vaultId}/complete`,

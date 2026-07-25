@@ -146,9 +146,9 @@ against a real or synthetic digest and returns the same outcome. Cable tickets a
 digest-only, Account-bound, TTL-limited, scrubbed from retained request URL state, and channel tests
 reject another Account's Vault.
 
-**REFACTOR:** expired Cable-ticket cleanup is periodic rather than per-request persistence churn.
-Redis migration remains a Roadmap Candidate, together with evaluating the Redis Action Cable
-adapter once Redis is an approved dependency.
+**CURRENT CANONICAL RECONCILIATION:** Plan 14 replaced the original PostgreSQL Cable-ticket rows and
+cleanup with TTL-bound Redis digest keys plus atomic `GETDEL`, and replaced Solid Cable with Redis
+Pub/Sub. This historical RED/GREEN record does not describe the current persistence adapter.
 
 # Rendered Visual Inspection
 

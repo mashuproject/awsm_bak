@@ -87,6 +87,11 @@ The Coordination Server may store or observe:
 - upload, ticket-digest, idempotency, Delivery Cursor, and Purge Job state; and
 - safe operational counters and outcomes.
 
+The reference ephemeral-coordination adapter stores a namespaced Cable-ticket SHA-256 key, its
+Account UUID value, and a TTL in Redis. Redis also observes content-free Action Cable channel
+names and `{vaultId, latestCursor}` wake-up payloads. It receives no raw Cable ticket, Vault
+plaintext, ciphertext payload, key material, URL, title, or semantic metadata.
+
 Complete retained membership leaks encrypted graph shape and recovery size. This bounded leak is
 accepted to prevent unsafe remote deletion. Production promotion requires an explicit traffic-analysis
 and metadata-budget review.

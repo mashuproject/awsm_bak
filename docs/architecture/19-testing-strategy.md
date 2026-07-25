@@ -105,13 +105,23 @@ The following invariants are fundamental.
 - OpenAPI request and response validation rejects unknown fields and undocumented resources.
 - Independent clients converge through real HTTP, PostgreSQL, immutable byte storage, and Action
   Cable; a lost-notification variant converges through polling alone.
+- Real Redis tests prove the Cable-ticket key/value/TTL representation, atomic `GETDEL` under two
+  clients, replay rejection, sanitized outage mapping, and Redis-only degraded readiness. The
+  retained proof issues through one Rails process, consumes and subscribes through another, and
+  observes the primary broadcast across Redis Pub/Sub.
+- A separate black-box Coordination Server E2E suite SHALL exercise interactions through public
+  HTTP and WebSocket boundaries across two Rails processes, PostgreSQL, opaque byte storage, and
+  Redis. Its outage-recovery scenario SHALL stop disposable Redis while Rails remains live, verify
+  degraded HTTP 200 readiness, retryable Cable-ticket failure, and authoritative polling during the
+  outage, then restart Redis and verify recovered ticket issuance and cross-process Cable delivery.
+  This server suite SHALL remain distinct from packaged-extension browser E2E.
 - Delivery Cursor order is tested independently from canonical Event replay order, including late
   offline Events.
 - Generation tests cover paged reachability, dependency closure, predecessor/head races, explicit
   recovery, and stale-write rejection.
 - Account tests cover password-derived authentication/key separation, normalized email privacy,
-  rotating one-use refresh credentials, digest-only Cable tickets, logout erasure, and filtered
-  secret sentinels.
+  rotating one-use refresh credentials, opaque 256-bit one-use Cable tickets stored only under
+  digest keys, logout erasure, and filtered secret sentinels.
 - Trusted Runtime tests cover existing/new Vault enrollment, remote bootstrap, snapshot-bounded
   pull, canonical replay independent of cursor order, malicious metadata rejection, Artifact
   streaming beyond 4 GiB, and polling-only convergence.

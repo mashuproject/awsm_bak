@@ -46,16 +46,6 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_19_000000) do
     t.check_constraint "octet_length(key_envelope_nonce) = 24", name: "accounts_key_envelope_nonce"
   end
 
-  create_table "cable_tickets", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
-    t.uuid "account_id", null: false
-    t.datetime "created_at", null: false
-    t.datetime "expires_at", null: false
-    t.binary "secret_digest", null: false
-    t.datetime "updated_at", null: false
-    t.index ["account_id"], name: "index_cable_tickets_on_account_id"
-    t.check_constraint "octet_length(secret_digest) = 32", name: "cable_tickets_digest"
-  end
-
   create_table "delivery_changes", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
     t.datetime "accepted_at", null: false
     t.datetime "created_at", null: false
@@ -361,7 +351,6 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_19_000000) do
   end
 
   add_foreign_key "account_sessions", "accounts"
-  add_foreign_key "cable_tickets", "accounts"
   add_foreign_key "delivery_changes", "event_commits"
   add_foreign_key "delivery_changes", "vault_generations"
   add_foreign_key "delivery_changes", "vault_replicas"

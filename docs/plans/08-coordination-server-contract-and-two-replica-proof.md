@@ -246,9 +246,10 @@ and review work is approved and complete.
 
 ## 3.10 Scaffold baseline
 
-- Implement inside `apps/coordination-server`, which currently contains Rails 8.1.3 on Ruby 3.4.4,
-  PostgreSQL 17 development Compose, RSpec, `rspec-given`, Solid Queue, Solid Cable, and the generated
-  full-stack Rails shell.
+- At the start of this plan, `apps/coordination-server` contained Rails 8.1.3 on Ruby 3.4.4,
+  PostgreSQL 17 development Compose, RSpec, `rspec-given`, Solid Queue, Solid Cable, and the
+  generated full-stack Rails shell. Plan 14 later replaced the Cable adapter and ephemeral ticket
+  persistence with Redis.
 - Do not upgrade Rails, Ruby, PostgreSQL, the JavaScript strategy, or the test framework as part of
   this plan unless an implementation-blocking defect is demonstrated and separately approved.
 - The scaffold has no domain routes, models, migrations, or schema. Treat it as an empty reference
@@ -1038,15 +1039,16 @@ Services:
 
 1. `postgres-proof`
    - PostgreSQL with an isolated proof database and health check.
-2. `coordination-proof`
+2. `redis-proof`
+   - non-persistent Redis for shared one-use tickets and Action Cable Pub/Sub.
+3. `coordination-proof-prepare`
+   - prepares the isolated canonical database once before either Rails process starts.
+4. `coordination-proof` and `coordination-proof-peer`
    - Rails in test/proof mode;
-   - prepares the database and proof Account;
-   - uses the Disk adapter on an isolated named volume;
-   - uses Action Cable's in-process async adapter so the separately connected proof clients receive
-     broadcasts from the Rails process;
-   - exposes health/readiness only to the Compose network; and
-   - enables the proof authenticator explicitly.
-3. `replica-proof`
+   - share PostgreSQL, Redis, namespace, Disk proof volume, and ordinary Account authentication;
+   - prove primary issue/broadcast and peer consume/subscription boundaries; and
+   - expose health/readiness only to the Compose network.
+5. `replica-proof`
    - a pinned `node:24-bookworm-slim` container;
    - waits for Rails readiness;
    - runs one dependency-light `.mjs` black-box program using platform `fetch` and `WebSocket`;

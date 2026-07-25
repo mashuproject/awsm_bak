@@ -16,17 +16,32 @@ RSpec.describe "Cable tickets", type: :request do
     )
   end
 
-  it "issues a digest-only Account-bound credential that can be consumed exactly once" do
+  it "issues the canonical opaque one-use credential" do
     post "/api/cable-tickets", headers: headers
 
     expect(response).to have_http_status(:created)
     raw_ticket = response.parsed_body.fetch("ticket")
-    expect(raw_ticket).to match(/\A[0-9a-f-]{36}\.[A-Za-z0-9_-]{43}\z/)
+    expect(raw_ticket).to match(/\A[A-Za-z0-9_-]{43}\z/)
     expect(response.parsed_body.fetch("expiresAt")).to be_present
-    expect(CableTicket.last.secret_digest).not_to include(raw_ticket)
 
     expect(Coordination::CableTickets.consume(raw_ticket)).to eq(account)
     expect { Coordination::CableTickets.consume(raw_ticket) }
       .to raise_error(Coordination::OutcomeError, /AUTHENTICATION_FAILED/)
+  end
+
+  it "returns the stable retryable outcome when ephemeral coordination is unavailable" do
+    allow(Coordination::EphemeralCoordination).to receive(:with_redis)
+      .and_raise(Redis::CannotConnectError, "credential-sentinel")
+    allow(Rails.error).to receive(:report)
+
+    post "/api/cable-tickets", headers: headers
+
+    expect(response).to have_http_status(:service_unavailable)
+    expect(response.parsed_body).to eq(
+      "outcome" => "AUTHENTICATION_UNAVAILABLE",
+      "retryable" => true,
+      "requestId" => headers.fetch("Awsm-Request-ID")
+    )
+    expect(response.body).not_to include("credential-sentinel")
   end
 end

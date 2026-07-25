@@ -12,6 +12,7 @@
     "test:e2e:chrome": "corepack pnpm --filter @awsm/browser-extension test:e2e:chrome",
     "test:e2e:firefox": "corepack pnpm --filter @awsm/browser-extension test:e2e:firefox",
     "test:e2e:cross-browser": "corepack pnpm --filter @awsm/browser-extension test:e2e:cross-browser",
+    "test:e2e:coordination": "apps/coordination-server/script/run-coordination-e2e.sh",
     "test:sync-proof": "apps/coordination-server/script/run-sync-proof.sh",
     "typecheck": "corepack pnpm --filter @awsm/browser-extension typecheck",
     "zip": "corepack pnpm --filter @awsm/browser-extension zip"

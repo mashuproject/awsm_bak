@@ -13,16 +13,25 @@ numbered plan and reconciliation with the owning specifications.
 
 ---
 
-## Redis-Backed Ephemeral Coordination
+## Hosted Redis Coordination Rollout
 
 **Status:** Candidate
 
-Replace PostgreSQL-backed one-use Cable ticket rows with atomic, TTL-bound digest entries in Redis
-after Redis becomes an approved Coordination Server dependency. Evaluate using that same Redis
-deployment as the Action Cable adapter so multi-process hint delivery and ephemeral authentication
-share one operational dependency. The implementation plan must preserve 60-second expiry,
-Account binding, atomic one-use consumption, digest-only storage, and polling as the sufficient
-synchronization path when hints are lost.
+Reinspect the mutable hosted topology, provision private Redis networking and protected
+credentials, select exact application and Redis revisions, and define deployment and rollback
+order. Prove degraded mode and recovery, add basic capacity and failure monitoring, and confirm no
+Redis port or credential becomes public.
+
+---
+
+## Highly Available Ephemeral Coordination
+
+**Status:** Discovery
+
+Choose standalone replicas plus Sentinel or a managed service and define failover, split-brain,
+connection discovery, TLS, and acceptable ticket loss. Prove Action Cable resubscription,
+multi-host capacity and fault injection, alerting and incident response, and whether persistence
+remains disabled in the selected provider topology.
 
 ---
 
@@ -189,14 +198,48 @@ all-browser-loss guarantees, and proof that recovery does not weaken the zero-kn
 
 ---
 
+## S3-Backed Opaque Byte Storage
+
+**Status:** Candidate
+
+Replace the Coordination Server's Rails-local `DiskStore` with one provider-independent S3 Driver.
+Bundle Apache-2.0-licensed VersityGW as the ordinary single-host self-hosted Compose service, backed
+by a private persistent volume. Hosted production should use managed S3-compatible object storage
+instead of VersityGW. Rails, synchronization semantics, and tests must depend only on the shared
+S3 contract so changing deployments does not create different storage behavior or a compatibility
+path.
+
+The implementation plan must preserve bounded streaming, resumable and idempotent upload parts,
+complete-object length and SHA-256 verification before `DurableUncommitted`, immutable publication,
+full and ranged downloads, scoped authorization, verified deletion, and the existing zero-knowledge
+boundary. PostgreSQL remains authoritative for upload state, publication, Generation membership,
+Delivery Cursors, and Purge Job checkpoints; the S3 service stores only opaque encrypted bytes and
+must not become a semantic database. Define private bucket provisioning, least-privilege
+credentials, health/readiness behavior, incomplete-part cleanup, key layout, conditional-operation
+requirements, backup and restore coordination, corruption and omission handling, and fault
+evidence across process and service restarts.
+
+The bundled VersityGW topology is deliberately single-host and non-HA: its durability depends on
+the host volume and coordinated PostgreSQL/object-volume backups. Multi-host self-hosting requires
+an explicitly selected shared S3-compatible backend. Validate the exact AWSM operation subset
+against both VersityGW and managed S3, without relying on provider-specific notifications,
+versioning, lifecycle rules, metadata semantics, or direct filesystem access. SeaweedFS remains a
+possible advanced distributed self-hosted backend; RustFS requires a separate maturity evaluation.
+MinIO and Garage are excluded from the default stack because their strong-copyleft or current
+licensing terms conflict with the project's commercial-licensing flexibility absent a new explicit
+owner decision.
+
+---
+
 ## Production Coordination Server Hardening
 
 **Status:** Candidate
 
 Promote the pre-release Coordination Server boundary with production quotas, abuse controls,
-billing, shared immutable-byte storage, shared Cable and Job infrastructure, multi-process and
-multi-host deployment, operational backup and restore exercises, alerting, incident response, and
-independent security review.
+billing, shared immutable-byte storage and Job infrastructure, multi-host deployment, operational
+backup and restore exercises, alerting, incident response, and independent security review. Hosted
+Redis rollout, highly available ephemeral coordination, and the S3-backed opaque-byte boundary
+remain the separate initiatives above.
 
 The work must preserve opaque encrypted storage and bounded transfers. Before promotion, define
 quota accounting, rate and signup controls, final-copy deletion policy, metadata and traffic

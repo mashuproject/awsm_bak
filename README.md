@@ -174,8 +174,8 @@ compatible self-hosted Coordination Servers. The hosted origin is a synchronizat
 client: browsing, Capture, Search, Export, and Import remain trusted client behavior. The hosted
 service is not advertised as a production-ready public service.
 
-To run a self-hosted development server, start the Coordination Server and PostgreSQL with Docker
-Compose:
+To run a self-hosted development server, start the Coordination Server, PostgreSQL, and disposable
+Redis ephemeral coordination with Docker Compose:
 
 ```bash
 docker compose up --build

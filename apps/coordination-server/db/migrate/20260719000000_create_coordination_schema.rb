@@ -58,15 +58,6 @@ class CreateCoordinationSchema < ActiveRecord::Migration[8.1]
     add_check_constraint :signup_registrations, "octet_length(request_sha256) = 32",
       name: "signup_registrations_request_sha256"
 
-    create_table :cable_tickets, id: :uuid do |table|
-      table.references :account, null: false, type: :uuid, foreign_key: true
-      table.binary :secret_digest, null: false
-      table.datetime :expires_at, null: false
-      table.timestamps
-    end
-    add_check_constraint :cable_tickets, "octet_length(secret_digest) = 32",
-      name: "cable_tickets_digest"
-
     create_table :vault_replicas, id: :uuid do |table|
       table.references :account, null: false, type: :uuid, foreign_key: true,
         index: { unique: true }

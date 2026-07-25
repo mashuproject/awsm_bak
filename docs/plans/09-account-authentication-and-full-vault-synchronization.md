@@ -464,10 +464,10 @@ logout is harmless. Return `204`.
 ### `POST /api/cable-tickets`
 
 Issue a random one-use ticket valid for at most 60 seconds and bound to the authenticated Account.
-Persist only its digest. The client opens `/cable?ticket=...`; the connection consumes the ticket
-by atomically deleting its ephemeral PostgreSQL row and rejects reuse. Expired unconsumed rows are
-removed by routine cleanup. Never place an access or refresh token in a WebSocket URL. Redis-backed
-ticket storage and an optional Redis Action Cable adapter remain forward-looking Roadmap work.
+The canonical ticket is an unpadded base64url encoding of 32 random bytes. Redis stores only its
+namespaced SHA-256 key, Account UUID value, and TTL. The client opens `/cable?ticket=...`; the
+connection consumes the ticket with one atomic `GETDEL` and rejects reuse. Never place an access or
+refresh token in a WebSocket URL. Plan 14 owns the exact ephemeral-coordination implementation.
 
 ### `GET /api/vaults`
 
@@ -559,9 +559,9 @@ algorithm. The server treats ciphertext as opaque and never attempts unwrap.
 
 ## 7.4 Cable tickets
 
-Persist one-use Cable ticket digests, Account binding, and expiry in ephemeral PostgreSQL rows.
-Atomically delete a row on consumption and delete expired unconsumed rows through routine
-operational cleanup. Ticket lookup and consumption are atomic.
+Persist one-use Cable ticket digest keys, Account binding, and expiry in Redis. Consume with one
+atomic `GETDEL`; Redis TTL owns expiry and no cleanup Job or PostgreSQL row exists. Plan 14 owns the
+exact representation, failure mapping, and operational topology.
 
 ## 7.5 Controller/service boundaries
 

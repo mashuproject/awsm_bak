@@ -67,9 +67,12 @@ opaque wrappers for on-demand access, Complete Export, server switching, and sta
   idempotency, and Purge Job checkpoints. It never stores Object payload bytes.
 - `OpaqueByteStorage` provides immutable byte operations. The proof Disk Driver uses a private root,
   bounded streams, fsync, and same-filesystem atomic installation.
+- An ephemeral-coordination adapter stores only TTL-bound Cable-ticket digests and Account binding.
+  The reference implementation uses one non-persistent Redis service for this boundary and Action
+  Cable Pub/Sub.
 - Action Cable publishes `{vaultId, latestCursor}` only after a committed head change. Polling is
-  always sufficient. A 60-second, digest-only, Account-bound Cable ticket is atomically consumed
-  once and scrubbed from retained request URL state.
+  always sufficient. A 60-second, 256-bit opaque, Account-bound Cable ticket is stored under its
+  SHA-256-derived Redis key, atomically consumed once, and scrubbed from retained request URL state.
 - Solid Queue runs expiry and purge work. A domain Purge Job, not queue state, owns resumability and
   visible progress.
 
@@ -101,9 +104,9 @@ This does not make local availability server state and adds no server deletion A
 
 # Scaling and Remaining Production Gate
 
-The current deployment uses PostgreSQL, Disk storage, and process-local or database-backed adapters.
-Horizontal Rails replicas require a shared immutable-byte Driver and shared Cable/Job
-infrastructure. Production promotion still requires Device/recovery authorization, quotas and abuse
-controls, operational backup/restore, independent security review, and deployment-specific
-hardening. Redis-backed ephemeral Cable tickets and a Redis Action Cable adapter remain Roadmap
-candidates, not current dependencies.
+The repository topology uses PostgreSQL, Disk storage, Redis ephemeral coordination, and Solid
+Queue. Redis already supports cross-process Cable authentication and advisory hints, but
+multi-host Rails still requires an approved shared immutable-byte Driver and shared Job
+infrastructure. Production promotion still requires Device/recovery authorization, quotas and
+abuse controls, operational backup/restore, independent security review, hosted Redis rollout, and
+deployment-specific hardening.

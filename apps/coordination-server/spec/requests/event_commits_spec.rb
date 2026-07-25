@@ -110,6 +110,34 @@ RSpec.describe "One-Event closure commits", type: :request do
     expect(DeliveryChange.where(vault_replica: vault).count).to eq(1)
   end
 
+  it "keeps a committed Event pollable when Redis hint publication fails" do
+    event = durable_record(event_id, "Event")
+    allow(VaultChangesChannel).to receive(:broadcast_to)
+      .and_raise(Redis::CannotConnectError, "credential-sentinel")
+    expect(Rails.error).to receive(:report) do |error, handled:, context:|
+      expect(error.message).to eq("ephemeral_coordination_unavailable")
+      expect(handled).to be(true)
+      expect(context).to eq(component: "vault_change_hint")
+      expect([ error, context ].inspect).not_to include("credential-sentinel")
+    end
+
+    post "/api/vaults/#{vault_id}/commits", params: {
+      generationId: generation_id,
+      generationNumber: 0,
+      eventObjectId: event_id,
+      dependencyObjectIds: []
+    }.to_json, headers: headers
+
+    expect(response).to have_http_status(:ok)
+    expect(event.reload.state).to eq("Committed")
+
+    get "/api/vaults/#{vault_id}/changes?after=1&limit=100",
+      headers: headers.except("Idempotency-Key", "Content-Type")
+
+    expect(response).to have_http_status(:ok)
+    expect(response.parsed_body.fetch("changes").sole.dig("event", "objectId")).to eq(event_id)
+  end
+
   private
 
   def active_vault

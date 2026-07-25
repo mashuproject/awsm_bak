@@ -10,4 +10,7 @@ cleanup() {
 
 trap cleanup EXIT INT TERM
 cleanup
-docker compose -f "$compose_file" up --build --abort-on-container-exit --exit-code-from replica-proof
+docker compose -f "$compose_file" up --build coordination-proof-prepare
+docker compose -f "$compose_file" up --build --no-deps \
+  --abort-on-container-exit --exit-code-from replica-proof \
+  coordination-proof coordination-proof-peer replica-proof

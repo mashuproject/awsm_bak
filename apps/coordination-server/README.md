@@ -5,7 +5,7 @@ storage coordination. It must not receive or interpret plaintext Vault content.
 
 ## Development with Docker Compose
 
-From the repository root, build and start Rails and PostgreSQL for the first time:
+From the repository root, build and start Rails, PostgreSQL, and Redis for the first time:
 
 ```bash
 docker compose up --build
@@ -17,11 +17,13 @@ For normal development after the image has been built:
 docker compose up
 ```
 
-Rails is available at <http://localhost:3000>. PostgreSQL is reachable only by services on the
-Compose network and is not published to the host. The Rails source tree is bind-mounted into the
-container, and the application runs in the standard `development` environment, so changes to
-application constants, templates, and other watched files are reloaded without rebuilding the
-image or restarting the server.
+Rails is available at <http://localhost:3000>. PostgreSQL and Redis are reachable only by services
+on the Compose network and are not published to the host. Redis stores only short-lived Cable
+ticket entries and Action Cable Pub/Sub messages; it is memory-bounded, non-persistent, and
+deliberately disposable. The Rails source tree is bind-mounted into the container, and the
+application runs in the standard `development` environment, so changes to application constants,
+templates, and other watched files are reloaded without rebuilding the image or restarting the
+server.
 
 The server exposes strict `/api` Account and opaque synchronization endpoints. Account signup uses
 email and a client-derived authentication secret without email delivery; the raw password and
@@ -30,7 +32,14 @@ unwrapped Account/Vault keys must never reach Rails. Configure
 responses for unknown emails remain deterministic without disclosing Account existence.
 
 The server waits for PostgreSQL and runs `bin/rails db:prepare` each time it starts. PostgreSQL data
-is retained in a named Docker volume across container restarts.
+is retained in a named Docker volume across container restarts. Redis is started in dependency
+order but Rails may boot while Redis is unavailable so authenticated HTTP polling remains usable in
+degraded mode.
+
+Production requires `AWSM_REDIS_URL` with a protected `redis://` or `rediss://` endpoint on private
+infrastructure. `AWSM_REDIS_NAMESPACE` may override the validated environment namespace when
+multiple logical Coordination Servers share a service. Never publish Redis directly, include it in
+backups, or rely on its contents for synchronization correctness.
 
 Run Rails commands in the application container with:
 
@@ -38,6 +47,19 @@ Run Rails commands in the application container with:
 docker compose exec coordination-server bin/rails console
 docker compose exec coordination-server bundle exec rspec
 ```
+
+From the repository root, run the isolated operational resilience proof with:
+
+```bash
+CI=true corepack pnpm test:e2e:coordination
+```
+
+This Coordination Server E2E suite starts two Rails processes, stops its disposable Redis service, verifies
+degraded readiness and authoritative HTTP polling, restarts Redis, and verifies that Cable-ticket
+issuance and cross-process hint delivery recover. It uses its own Compose project, loopback ports,
+temporary PostgreSQL storage, and disposable opaque-byte volume; its cleanup removes all of that
+state. Its first scenario covers outage and recovery independently from packaged-extension browser
+E2E and from the broader synchronization proof.
 
 Stop the services while retaining development data:
 
@@ -97,7 +119,7 @@ Inspect service state and recent logs first:
 
 ```bash
 docker compose ps
-docker compose logs --tail=100 coordination-server postgres
+docker compose logs --tail=100 coordination-server postgres redis
 ```
 
 Validate the resolved Compose configuration:
@@ -111,7 +133,7 @@ without rebuilding:
 
 ```bash
 docker compose exec coordination-server bin/rails runner 'puts Rails.env'
-docker compose restart coordination-server
+docker compose restart coordination-server redis
 ```
 
 After adding or updating a gem, rebuild instead of running `bundle install` only in the existing
