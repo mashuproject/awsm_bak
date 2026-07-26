@@ -92,6 +92,14 @@ body {
   margin: 0;
 }
 
+.signed-in-banner--loading {
+  min-height: 108px;
+}
+
+.signed-in-banner--loading .signed-in-banner__inner {
+  visibility: hidden;
+}
+
 .hero,
 .story-section {
   padding-block: var(--awsm-space-16);
@@ -170,12 +178,8 @@ body {
   border: var(--awsm-border);
   border-radius: var(--awsm-radius-expressive);
   background:
-    radial-gradient(
-      circle at 90% 10%,
-      var(--awsm-yellow) 0 36px,
-      transparent 37px
-    ),
-    var(--awsm-lavender);
+    radial-gradient(circle at 90% 10%, var(--awsm-yellow) 0 36px, transparent 37px),
+    var(--awsm-sky-panel);
   box-shadow: var(--awsm-shadow-hard);
 }
 
@@ -186,8 +190,7 @@ body {
   bottom: 38px;
   width: min(58%, 260px);
   filter: drop-shadow(8px 10px 0 rgb(24 24 27 / 18%));
-  animation: keeper-arrive var(--awsm-duration-hero) var(--awsm-ease-expressive)
-    both;
+  animation: keeper-arrive var(--awsm-duration-hero) var(--awsm-ease-expressive) both;
 }
 
 .hero-art__browser {
@@ -312,7 +315,7 @@ body {
 
 .story-section--cobalt {
   color: var(--awsm-ink);
-  background: var(--awsm-cobalt-panel);
+  background: var(--awsm-sync-panel);
 }
 
 .story-section--green {
@@ -381,7 +384,7 @@ body {
 }
 
 .comparison__card--awsm {
-  background: var(--awsm-lavender);
+  background: var(--awsm-sky-panel);
   box-shadow: var(--awsm-shadow-hard);
 }
 
@@ -423,7 +426,7 @@ body {
   border-radius: var(--awsm-radius-compact);
   background: repeating-linear-gradient(
     135deg,
-    var(--awsm-cobalt-panel) 0 8px,
+    var(--awsm-sync-panel) 0 8px,
     var(--awsm-paper) 8px 16px
   );
 }
@@ -438,6 +441,21 @@ body {
   border: 2px solid var(--awsm-ink);
   border-radius: var(--awsm-radius-compact);
   background: var(--awsm-yellow);
+}
+
+.sync-setup {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--awsm-space-6);
+  margin-top: var(--awsm-space-8);
+  padding-top: var(--awsm-space-6);
+  border-top: var(--awsm-border);
+}
+
+.sync-setup p {
+  max-width: 62ch;
+  margin: 0;
 }
 
 .flow-node__courier::before {
@@ -689,7 +707,7 @@ body {
   justify-items: center;
   padding: var(--awsm-space-12);
   border-right: var(--awsm-border);
-  background: var(--awsm-lavender);
+  background: var(--awsm-sky-panel);
 }
 
 .account-story img {
@@ -876,6 +894,11 @@ body {
 
   .flow-diagram {
     grid-template-columns: 1fr;
+  }
+
+  .sync-setup {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .flow-node {

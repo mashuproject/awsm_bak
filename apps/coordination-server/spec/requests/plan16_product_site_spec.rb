@@ -27,12 +27,20 @@ RSpec.describe "Plan 16 product site", type: :request do
       "pricing",
       "waitlist"
     )
+    expect(response.body).to include('href="/glossary#capture"')
+
+    document = Nokogiri::HTML(response.body)
+    expect(document.css("#optional-sync .section-heading").map(&:text)).to eq(
+      [ "Synchronize across browsers. Keep control of the keys." ]
+    )
+    expect(document.at_css("#install-awsm").text).not_to match(/synchronization|another browser/i)
   end
 
   it "shows the server origin and registration state without creating a global signup conversion" do
     allow(Coordination::Registration).to receive(:enabled?).and_return(false)
+    allow(Coordination::Registration).to receive(:public_origin).and_return("http://sync.example.test")
 
-    get "/", headers: { "HOST" => "sync.example.test" }
+    get "/"
 
     expect(response.body).to include("http://sync.example.test")
     expect(response.body).to include("Account creation is currently closed")
@@ -64,7 +72,7 @@ RSpec.describe "Plan 16 product site", type: :request do
     )
   end
 
-  it "keeps the landing visible after browser authentication and adds a sync banner" do
+  it "keeps the landing cache-safe after browser authentication and exposes enhancement targets" do
     Account.create!(
       email: "reader@example.test",
       password: "test account password",
@@ -81,9 +89,10 @@ RSpec.describe "Plan 16 product site", type: :request do
     expect(response.body).to include(
       "Archive what should matter.",
       "Signed in as",
-      "reader@example.test",
-      "Set up sync"
+      "Set up sync",
+      'data-public-session-target="banner"'
     )
+    expect(response.body).not_to include("reader@example.test", "authenticity_token")
   end
 
   it "exposes the rendered design fixture in test" do

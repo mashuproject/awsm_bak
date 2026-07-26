@@ -8,8 +8,13 @@ test("renders the complete landing at desktop, narrow, and reduced motion", asyn
   browser,
   page,
 }) => {
+  let sessionStatusRequests = 0;
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/session/status") sessionStatusRequests += 1;
+  });
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto("/");
+  expect(sessionStatusRequests).toBe(0);
   await expect(
     page.getByRole("heading", {
       name: "Archive what should matter.",
@@ -98,6 +103,10 @@ test("keeps installation guidance complete with and without JavaScript", async (
 });
 
 test("renders trust, Account, validation, and design-reference surfaces", async ({ page }) => {
+  let sessionStatusRequests = 0;
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/session/status") sessionStatusRequests += 1;
+  });
   await page.setViewportSize({ width: 1280, height: 900 });
   for (const [path, heading, screenshot] of [
     ["/privacy", "What stays local. What a server can see.", "privacy.png"],
@@ -180,8 +189,142 @@ test("renders trust, Account, validation, and design-reference surfaces", async 
 
   await page.goto("/");
   await expect(page.getByText("Signed in as")).toBeVisible();
+  await expect(page.getByText("reader@example.test")).toBeVisible();
+  await expect(page.getByRole("link", { name: "Account for reader@example.test" })).toHaveCount(2);
+  await expect(page.getByRole("link", { name: "Set up sync" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
+  expect(sessionStatusRequests).toBe(1);
+
+  await page.getByRole("link", { name: "Privacy" }).first().click();
+  await expect(
+    page.getByRole("heading", {
+      name: "What stays local. What a server can see.",
+    }),
+  ).toBeVisible();
+  await expect(page.getByRole("link", { name: "Account for reader@example.test" })).toHaveCount(2);
+  expect(sessionStatusRequests).toBe(1);
+
+  await page.goto("/");
+  await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
   await expectReadableContrast(page);
   await expect(page).toHaveScreenshot("landing-signed-in.png", {
     fullPage: true,
   });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: "Menu" }).click();
+  await expect(page.getByRole("navigation", { name: "Main navigation" })).toContainText("Account");
+  await expectReadableContrast(page);
+  await expect(page).toHaveScreenshot("landing-signed-in-narrow-menu.png", {
+    fullPage: true,
+  });
+
+  await page.getByRole("button", { name: "Menu" }).click();
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await expect(page.getByRole("heading", { name: "Sign in", exact: true })).toBeVisible();
+  await page.goto("/");
+  await page.getByRole("button", { name: "Menu" }).click();
+  await expect(page.getByRole("link", { name: "Sign in" })).toHaveCount(2);
+  await expect(page.getByText("Signed in as")).toBeHidden();
+});
+
+test("renders a non-personal loading shell before private session status resolves", async ({
+  browser,
+}) => {
+  const context = await browser.newContext();
+  await context.addCookies([
+    {
+      name: "awsm_browser_session_hint",
+      value: "loading-shell-hint",
+      url: localOrigin,
+      sameSite: "Lax",
+    },
+  ]);
+  const page = await context.newPage();
+  let resolveStatus: (() => void) | undefined;
+  const statusReady = new Promise<void>((resolve) => {
+    resolveStatus = resolve;
+  });
+  await page.route("**/session/status", async (route) => {
+    await statusReady;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: '{"authenticated":false}',
+    });
+  });
+
+  await page.goto("/");
+  const banner = page.locator('[data-public-session-target="banner"]');
+  await expect(banner).toBeVisible();
+  await expect(banner).toHaveAttribute("aria-busy", "true");
+  await expect(page.getByText("Signed in as")).toBeHidden();
+  await expectReadableContrast(page);
+  await expect(page).toHaveScreenshot("landing-session-loading.png", {
+    fullPage: true,
+  });
+
+  resolveStatus?.();
+  await expect(banner).toBeHidden();
+  await context.close();
+});
+
+test("fails closed when the public session hint is stale or status is unavailable", async ({
+  browser,
+}) => {
+  for (const responseKind of ["unauthenticated", "server-error", "malformed"] as const) {
+    const context = await browser.newContext();
+    await context.addCookies([
+      {
+        name: "awsm_browser_session_hint",
+        value: `hint-${responseKind}`,
+        url: localOrigin,
+        sameSite: "Lax",
+      },
+    ]);
+    const page = await context.newPage();
+    const browserErrors: string[] = [];
+    page.on("pageerror", (error) => browserErrors.push(error.message));
+
+    if (responseKind === "server-error") {
+      await page.route("**/session/status", (route) =>
+        route.fulfill({
+          status: 500,
+          contentType: "application/json",
+          body: "{}",
+        }),
+      );
+    } else if (responseKind === "malformed") {
+      await page.route("**/session/status", (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: '{"authenticated":true,"account":{"email":"<img src=x>"}}',
+        }),
+      );
+    }
+
+    await page.goto("/");
+    await expect(page.getByRole("link", { name: "Sign in" })).toHaveCount(2);
+    await expect(page.getByText("Signed in as")).toBeHidden();
+    await expect.poll(() => browserErrors).toEqual([]);
+    if (responseKind === "server-error") {
+      await expectReadableContrast(page);
+      await expect(page).toHaveScreenshot("landing-session-failure.png", {
+        fullPage: true,
+      });
+    }
+
+    if (responseKind === "unauthenticated") {
+      await expect
+        .poll(async () => {
+          return (await context.cookies()).some(
+            (cookie) => cookie.name === "awsm_browser_session_hint",
+          );
+        })
+        .toBe(false);
+    }
+
+    await context.close();
+  }
 });

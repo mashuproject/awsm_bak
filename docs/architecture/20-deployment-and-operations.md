@@ -34,15 +34,33 @@ corepack pnpm test:sync-proof
 # Public Product Surface
 
 Every hosted or self-hosted Coordination Server serves the same public-preview AWSM landing page at
-`/`, plus factual `/privacy` and `/security` pages and separate Rails Account routes. The page
-identifies its current origin and registration availability without claiming that an arbitrary
-self-hosted deployment is the official hosted service. Browser authentication adds an Account and
-synchronization banner but does not replace the landing or imply Vault access.
+`/`, plus factual `/privacy` and `/security` pages, a `/glossary`, and separate Rails Account
+routes. The public pages identify the configured canonical origin and registration availability
+without claiming that an arbitrary self-hosted deployment is the official hosted service.
 
 The product surface loads no remote font, script, image, analytics, tracking pixel, or marketing
 cookie. Production images copy `/design-system` from the shared workspace before asset precompile;
 development mounts that package read-only. `/design-system` is a development/test-only visual
 fixture and has no production route.
+
+The four public pages render one Account-independent ERB representation with no CSRF metadata,
+session cookie, or `Set-Cookie` response. They advertise five-minute browser freshness and 24-hour
+shared-CDN freshness with bounded stale revalidation and origin-error windows. A deployment may
+use any compatible CDN or reverse-proxy cache with an exact host/path/method allowlist; a deployment
+without one continues to serve the pages through Rails.
+
+Browser authentication writes a random readable functional hint beside the authoritative signed
+HttpOnly session cookie. Only browsers carrying the hint request private, no-store
+`GET /session/status`; the client then adds Account navigation and the synchronization banner
+without implying Vault access. The hint is not authentication and contains no Account data.
+Signup, session, Account, API, Cable, transfer, health, readiness, error, redirect, and non-GET/HEAD
+responses remain dynamic and outside the shared public-page cache.
+
+Operators purge only the four canonical public URLs after a relevant application deployment,
+rollback, configured-origin change, or registration-state change. Deploy and health-check the
+origin before purging, then warm and verify cache hits. Staging and production require isolated
+origins, processes, configuration, PostgreSQL, Redis, queues, opaque storage, logs, runtime state,
+health checks, and cache entries even when colocated.
 
 The isolated client creates and authenticates an ordinary test Account through the public API.
 `AWSM_SYNC_PROOF=true` selects proof-only origin and request-forgery behavior; both Rails processes

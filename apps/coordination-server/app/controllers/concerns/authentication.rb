@@ -1,6 +1,9 @@
 module Authentication
   extend ActiveSupport::Concern
 
+  BROWSER_SESSION_COOKIE = :browser_session_id
+  BROWSER_SESSION_HINT_COOKIE = :awsm_browser_session_hint
+
   included do
     before_action :require_authentication
     helper_method :authenticated?
@@ -27,7 +30,7 @@ module Authentication
   end
 
   def find_browser_session
-    BrowserSession.includes(:account).find_by(id: cookies.signed[:browser_session_id])
+    BrowserSession.includes(:account).find_by(id: cookies.signed[BROWSER_SESSION_COOKIE])
   end
 
   def request_authentication
@@ -45,11 +48,15 @@ module Authentication
       ip_address: request.remote_ip
     ).tap do |browser_session|
       Current.browser_session = browser_session
-      cookies.signed.permanent[:browser_session_id] = {
+      cookies.signed.permanent[BROWSER_SESSION_COOKIE] = {
         value: browser_session.id,
         httponly: true,
-        same_site: :lax,
-        secure: Rails.env.production?
+        **browser_cookie_options
+      }
+      cookies.permanent[BROWSER_SESSION_HINT_COOKIE] = {
+        value: SecureRandom.urlsafe_base64(32),
+        httponly: false,
+        **browser_cookie_options
       }
     end
   end
@@ -57,6 +64,23 @@ module Authentication
   def terminate_session
     Current.browser_session&.destroy
     Current.browser_session = nil
-    cookies.delete(:browser_session_id)
+    clear_browser_session_cookies
+  end
+
+  def clear_browser_session_cookies
+    cookies.delete(BROWSER_SESSION_COOKIE, **browser_cookie_options)
+    cookies.delete(BROWSER_SESSION_HINT_COOKIE, **browser_cookie_options)
+  end
+
+  def browser_session_hint_present?
+    cookies[BROWSER_SESSION_HINT_COOKIE].present?
+  end
+
+  def browser_cookie_options
+    {
+      path: "/",
+      same_site: :lax,
+      secure: Rails.env.production?
+    }
   end
 end

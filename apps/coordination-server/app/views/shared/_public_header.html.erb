@@ -24,11 +24,7 @@
         <%= link_to "How it works", "#{root_path}#how-it-works" %>
         <%= link_to "Privacy", privacy_path %>
         <%= link_to "Open source", "#{root_path}#open-source" %>
-        <% if @current_account %>
-          <%= link_to "Account", account_path, aria: { label: "Account for #{@current_account.email}" } %>
-        <% else %>
-          <%= link_to "Sign in", new_session_path %>
-        <% end %>
+        <%= link_to "Sign in", new_session_path, data: { public_session_target: "headerAccountLink" } %>
         <%= link_to "Get AWSM", "#{root_path}#install-awsm", class: "awsm-button awsm-button--cta" %>
       </div>
     </nav>

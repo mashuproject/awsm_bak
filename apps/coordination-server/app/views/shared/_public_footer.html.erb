@@ -10,7 +10,7 @@
       <%= link_to "Source", public_product_links[:source] %>
       <%= link_to "Documentation", public_product_links[:documentation] %>
       <%= link_to "AGPL license", public_product_links[:license] %>
-      <%= link_to(@current_account ? "Account" : "Sign in", @current_account ? account_path : new_session_path) %>
+      <%= link_to "Sign in", new_session_path, data: { public_session_target: "footerAccountLink" } %>
     </nav>
     <p><strong>AWSM</strong> lets you Archive What Should Matter. Keep it yours.</p>
   </div>

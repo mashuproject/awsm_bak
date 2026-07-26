@@ -88,7 +88,7 @@ The system is a **bright utility kit**, not nostalgic archival styling and not g
 minimalism.
 
 - Most visual area uses cream, paper, and ink.
-- Saturated coral, yellow, cobalt, lavender, and green appear as deliberate accent blocks.
+- Saturated coral, yellow, cobalt, powder blue, and green appear as deliberate accent blocks.
 - Marketing display type is bold, quirky, and typography-led.
 - Working surfaces retain balanced information density and highly readable system UI text.
 - Components use chunky medium-rounded geometry, heavy ink outlines, and hard offset shadows.
@@ -117,7 +117,8 @@ minimalism.
 - a development/test-only rendered design-system gallery;
 - a public Rails landing page at `/`;
 - factual non-legal `/privacy` and `/security` pages;
-- deployment-aware, registration-aware, and authenticated landing states;
+- deployment-aware and registration-aware shared landing state plus private authenticated
+  enhancement;
 - responsive Rails navigation and full Account surface redesign;
 - Hotwire enhancement for the Rails website;
 - extension popup UX and visual redesign;
@@ -214,16 +215,16 @@ updating `DESIGN.md` and the generated shared output.
 
 Define these base tokens:
 
-| Token      | Value     | Role                                                    |
-| ---------- | --------- | ------------------------------------------------------- |
-| `ink`      | `#18181B` | Primary foreground, outline, hard shadow, default icon  |
-| `cream`    | `#FFF7E6` | Primary page background                                 |
-| `paper`    | `#FFFFFF` | Raised working surface                                  |
-| `coral`    | `#FF6B57` | Primary conversion and expressive action                |
-| `yellow`   | `#FFD84D` | preservation, saved, keeper-bookmark, and focus moments |
-| `cobalt`   | `#4E6BFF` | informational and technical accent                      |
-| `lavender` | `#C8B8FF` | secondary expressive panel                              |
-| `green`    | `#2E9B72` | local ownership and success accent                      |
+| Token       | Value     | Role                                                    |
+| ----------- | --------- | ------------------------------------------------------- |
+| `ink`       | `#18181B` | Primary foreground, outline, hard shadow, default icon  |
+| `cream`     | `#FFF7E6` | Primary page background                                 |
+| `paper`     | `#FFFFFF` | Raised working surface                                  |
+| `coral`     | `#FF6B57` | Primary conversion and expressive action                |
+| `yellow`    | `#FFD84D` | preservation, saved, keeper-bookmark, and focus moments |
+| `cobalt`    | `#4E6BFF` | informational and technical accent                      |
+| `sky-panel` | `#B8DFF5` | secondary expressive panel                              |
+| `green`     | `#2E9B72` | local ownership and success accent                      |
 
 Generate accessible pale and strong semantic variants for:
 
@@ -239,7 +240,7 @@ Generate accessible pale and strong semantic variants for:
 - selected navigation.
 
 Ink is the default foreground on bright accent backgrounds. Do not assume white text passes on
-coral, yellow, cobalt, lavender, or green. Every component foreground/background pair must be
+coral, yellow, cobalt, powder blue, or green. Every component foreground/background pair must be
 checked at WCAG AA by the design validator or a repository-owned test.
 
 Color never communicates state alone. Pair semantic colors with text and, when useful, an icon.
@@ -380,19 +381,17 @@ Keep all existing API and Account routes. Add:
 - `GET /security` → `HomeController#security`;
 - development/test-only `GET /design-system`.
 
-Change `HomeController#show` to render the landing page for both authenticated and
-unauthenticated visitors. It no longer redirects.
+`HomeController#show` renders one cache-safe landing representation for authenticated and
+unauthenticated visitors. It does not redirect or resolve browser-session state.
 
 The home view receives:
 
-- current request origin;
+- validated configured public origin;
 - registration enabled/disabled state from `Coordination::Registration`;
-- current Account presence;
-- Account email only when needed for an accessible Account action label;
 - latest-Release, install-guide, source, documentation, and license links from one Rails helper or
   immutable configuration object.
 
-Do not add an API endpoint for marketing state. Do not expose credentials or Vault facts in the
+Do not expose credentials, Account data, session state, CSRF tokens, or Vault facts in the shared
 view model.
 
 ## 4.2 Universal and self-hosted presentation
@@ -406,11 +405,12 @@ Show a compact deployment-aware strip which:
 - never claims an arbitrary self-hosted deployment is the official hosted service;
 - does not send the origin to analytics or another host.
 
-When authenticated, add a static, non-dismissible synchronization-focused banner:
+When a readable non-authoritative session hint is present, a private no-store status request
+progressively adds a non-dismissible synchronization-focused banner:
 
 - state that the Account is signed in on the displayed server;
 - link to Account management;
-- provide a server-side sign-out action;
+- provide a CSRF-protected sign-out action;
 - link or scroll to the optional synchronization setup explanation;
 - do not imply that browser login alone unlocks a Vault.
 
@@ -422,7 +422,7 @@ The sticky header contains:
 
 - keeper mark and AWSM wordmark linking to `/`;
 - **How it works**, **Privacy**, and **Open source** anchors;
-- **Sign in** or **Account** according to browser session;
+- cache-safe **Sign in**, enhanced privately to **Account** for a valid hinted browser session;
 - **Install AWSM**, scrolling to `#install-awsm`;
 - an accessible mobile-menu button below the navigation breakpoint.
 
@@ -663,7 +663,7 @@ Controllers SHALL:
 - clean up observers, listeners, and animations on disconnect;
 - tolerate Turbo cache and reconnection;
 - never inject trusted HTML strings;
-- preserve the complete server-rendered default state;
+- preserve the complete cache-safe server-rendered anonymous state;
 - avoid layout thrashing and continuous scroll handlers.
 
 ## 6.3 Motion
@@ -1104,12 +1104,16 @@ Prove:
 Cover:
 
 - signed-out `/` renders landing and Sign in;
-- signed-in `/` still renders landing and the synchronization-focused banner;
-- Account and sign-out actions are correct;
-- deployment origin is escaped and displayed;
+- signed-in `/` returns the same shared HTML and privately enhances to the synchronization-focused
+  banner;
+- Account and CSRF-protected sign-out actions are correct;
+- configured deployment origin is escaped and displayed independently of request Host;
 - registration enabled shows contextual Create Account;
 - registration disabled shows no signup action;
 - `/privacy` and `/security` render factual content;
+- the four public responses have the shared-cache contract and contain no Account, CSRF, or cookie
+  state;
+- anonymous public visits make no session-status request and status failures remain anonymous;
 - public pages emit no third-party asset URLs or telemetry code;
 - existing signup, login, logout, Account, and password behavior remains unchanged;
 - invalid forms return 422 and contain error summary/field associations;
@@ -1377,7 +1381,7 @@ Plan 16 is complete only when all of the following are true:
 - keeper/icon family is coherent at every size;
 - production does not expose the design gallery;
 - Rails root is a public-preview landing page on hosted and self-hosted deployments;
-- signed-in users see the landing plus synchronization-focused banner;
+- signed-in users see the shared landing plus a privately enhanced synchronization-focused banner;
 - installation is the primary conversion and local-only setup comes first;
 - signup appears only in synchronization context when enabled;
 - landing claims only implemented behavior;

@@ -18,7 +18,7 @@ class AccountPasswordsController < ApplicationController
       account.revoke_all_sessions!
     end
     Current.browser_session = nil
-    cookies.delete(:browser_session_id)
+    clear_browser_session_cookies
     redirect_to new_session_path, notice: "Password changed. Log in again on every device."
   rescue ActiveRecord::RecordInvalid
     flash.now[:alert] = "The new password and confirmation must match."

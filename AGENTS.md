@@ -181,6 +181,32 @@ Discover current build, test, lint, and development commands from repository man
 
 Invoke the repository-pinned pnpm through Corepack: use `corepack pnpm`, not a bare `pnpm` command.
 
+The repository uses a shared 100-column code-formatting style in root Biome and Prettier
+configuration; Markdown retains its 80-column prose style. The browser-extension package owns its
+JavaScript, TypeScript, JSON, and CSS formatting through Biome. Run
+`corepack pnpm --filter @awsm/browser-extension lint` and use Biome's formatter for those files. Do
+not pass them to Prettier even though the configured code output is aligned. The root
+`.prettierignore` enforces this ownership boundary while leaving Markdown and other Prettier-owned
+repository files available to explicit Prettier checks.
+
+For Cloudflare inspection and operations, prefer Cloudflare's official unified CLI through an
+exactly pinned `npx --yes cf@<version>` invocation. The CLI is a technical preview whose generated
+commands may not all appear in top-level help, so inspect `cf schema --list`, command-specific
+`--help`, and current official documentation before concluding that a resource requires Wrangler,
+a third-party CLI, or raw API calls. Do not use the unrelated Cloud Foundry `cf`, the third-party
+`cloudflare-cli`/`cfcli`, or Wrangler as a default for account-wide Cloudflare configuration.
+
+Treat Cloudflare authentication and output as confidential operational state:
+
+- begin with read-only commands and use `--dry-run` before an authorized mutation;
+- use CLI-managed OAuth profiles for interactive work or a narrowly scoped environment-provided
+  token for automation;
+- never print, copy into chat, commit, or retain authentication material, profile bindings,
+  account/zone/ruleset identifiers, full rulesets, DNS inventories, or other non-public
+  configuration; and
+- summarize only the minimum allowlisted, non-sensitive facts needed to explain or verify an
+  operation.
+
 Useful documentation checks:
 
 ```bash

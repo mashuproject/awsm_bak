@@ -7,8 +7,8 @@
   --awsm-coral: #FF6B57;
   --awsm-yellow: #FFD84D;
   --awsm-cobalt: #4E6BFF;
-  --awsm-cobalt-panel: #91A2FF;
-  --awsm-lavender: #C8B8FF;
+  --awsm-sync-panel: #7FC9F4;
+  --awsm-sky-panel: #B8DFF5;
   --awsm-green: #2E9B72;
   --awsm-green-panel: #98D8BE;
   --awsm-text-muted: #56535B;
@@ -21,7 +21,7 @@
   --awsm-danger: #A92E22;
   --awsm-danger-pale: #FFE5E0;
   --awsm-disabled: #D7D0C3;
-  --awsm-selected: #E7E0FF;
+  --awsm-selected: #DCEFFD;
   --awsm-focus: #18181B;
   --awsm-accent-foreground: #000000;
   --awsm-space-1: 4px;

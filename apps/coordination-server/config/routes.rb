@@ -56,6 +56,7 @@ Rails.application.routes.draw do
   get "sign_up", to: "registrations#new"
   post "sign_up", to: "registrations#create"
   get "session/new", to: "sessions#new", as: :new_session
+  get "session/status", to: "sessions#show"
   post "session", to: "sessions#create"
   delete "session", to: "sessions#destroy"
   get "account", to: "accounts#show"

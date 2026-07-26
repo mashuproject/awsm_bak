@@ -10,8 +10,8 @@ colors:
   coral: "#FF6B57"
   yellow: "#FFD84D"
   cobalt: "#4E6BFF"
-  cobalt-panel: "#91A2FF"
-  lavender: "#C8B8FF"
+  sync-panel: "#7FC9F4"
+  sky-panel: "#B8DFF5"
   green: "#2E9B72"
   green-panel: "#98D8BE"
   text-muted: "#56535B"
@@ -24,7 +24,7 @@ colors:
   danger: "#A92E22"
   danger-pale: "#FFE5E0"
   disabled: "#D7D0C3"
-  selected: "#E7E0FF"
+  selected: "#DCEFFD"
   focus: "#18181B"
   accent-foreground: "#000000"
 typography:
@@ -153,7 +153,7 @@ components:
     rounded: "{rounded.control}"
     padding: "{spacing.4}"
   information:
-    backgroundColor: "{colors.cobalt-panel}"
+    backgroundColor: "{colors.sync-panel}"
     textColor: "{colors.accent-foreground}"
     rounded: "{rounded.control}"
   selection:
@@ -161,7 +161,7 @@ components:
     textColor: "{colors.ink}"
     rounded: "{rounded.compact}"
   expressive-panel:
-    backgroundColor: "{colors.lavender}"
+    backgroundColor: "{colors.sky-panel}"
     textColor: "{colors.ink}"
     rounded: "{rounded.expressive}"
     padding: "{spacing.8}"
@@ -217,11 +217,11 @@ contrast:
       minimum: 7
       use: Working surfaces
     - foreground: ink
-      background: lavender
+      background: sky-panel
       minimum: 7
       use: Expressive reading panels
     - foreground: ink
-      background: cobalt-panel
+      background: sync-panel
       minimum: 7
       use: Informational reading panels
     - foreground: ink

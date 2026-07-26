@@ -26,10 +26,22 @@ templates, and other watched files are reloaded without rebuilding the image or 
 server.
 
 The Rails root renders the AWSM public-preview landing page on every deployment. `/privacy` and
-`/security` provide factual trust-boundary explanations, while `/design-system` is a rendered
-development/test fixture and is not routed in production. The landing, trust, installation, and
-Account pages use the repository-root `DESIGN.md` contract and the bind-mounted
-`apps/design-system` package; they load the display font and visual assets locally.
+`/security` provide factual trust-boundary explanations, `/glossary` defines product terms, and
+`/design-system` is a rendered development/test fixture that is not routed in production. The four
+public pages use a cache-safe layout and publish separate five-minute browser and 24-hour shared-CDN
+freshness. They contain no Account state, CSRF token, or session cookie. Operators may place a
+compatible CDN or reverse-proxy cache in front of those four exact paths; without one, Rails serves
+them normally. All other routes remain dynamic and must be bypassed by shared caches.
+
+A readable, random `awsm_browser_session_hint` functional cookie is set beside the authoritative
+signed HttpOnly browser-session cookie after signup or sign-in. Only a browser carrying that hint
+requests private, no-store `GET /session/status`; Stimulus then restores Account navigation and the
+signed-in synchronization banner. The hint contains no credential or Account data and cannot
+authenticate a request.
+
+The landing, trust, installation, and Account pages use the repository-root `DESIGN.md` contract
+and the bind-mounted `apps/design-system` package; they load the display font and visual assets
+locally.
 
 The server exposes Rails signup, Account management, strict `/api` Account and VaultDevice sessions,
 and opaque synchronization endpoints. Account signup and password change happen on the Rails web
@@ -51,7 +63,7 @@ Run Rails commands in the application container with:
 
 ```bash
 docker compose exec coordination-server bin/rails console
-docker compose exec coordination-server bundle exec rspec
+docker compose exec -e RAILS_ENV=test coordination-server bundle exec rspec
 ```
 
 From the repository root, run the isolated operational resilience proof with:

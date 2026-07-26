@@ -1,0 +1,8 @@
+# The browser-extension package is formatted and linted by Biome.
+apps/browser-extension/**/*.css
+apps/browser-extension/**/*.js
+apps/browser-extension/**/*.json
+apps/browser-extension/**/*.jsonc
+apps/browser-extension/**/*.jsx
+apps/browser-extension/**/*.ts
+apps/browser-extension/**/*.tsx

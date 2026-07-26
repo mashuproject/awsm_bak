@@ -81,7 +81,11 @@ The Coordination Server root is the public AWSM product and installation guide o
 self-hosted deployments. Its privacy, security, setup, and Account pages are evergreen product
 documentation. They contain no analytics, third-party scripts, remote fonts, pricing, or waitlist
 collection. Account signup remains a separate optional-synchronization page and is shown only when
-the current server permits registration.
+the current server permits registration. The public landing, privacy, security, and glossary
+responses are safe for a shared CDN cache. They render one anonymous representation without
+Account data, session cookies, or CSRF tokens. A signed-in browser privately restores its Account
+presentation through a no-store session-status request; anonymous browsers do not make that
+request.
 
 ## Quick start: local-only Chrome extension
 

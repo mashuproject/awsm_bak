@@ -300,7 +300,7 @@ input[type="email"] {
 body {
   min-width: 280px;
   background:
-    linear-gradient(135deg, var(--awsm-lavender) 0 24%, transparent 24%), var(--awsm-cream);
+    linear-gradient(135deg, var(--awsm-sky-panel) 0 24%, transparent 24%), var(--awsm-cream);
 }
 
 main {

@@ -1,5 +1,5 @@
 class SessionsController < ApplicationController
-  allow_unauthenticated_access only: %i[new create]
+  allow_unauthenticated_access only: %i[new create show]
 
   def new
   end
@@ -14,6 +14,21 @@ class SessionsController < ApplicationController
   rescue Coordination::OutcomeError, ActionController::ParameterMissing
     flash.now[:alert] = "That email or password is incorrect."
     render :new, status: :unprocessable_content
+  end
+
+  def show
+    response.headers["Cache-Control"] = "private, no-store"
+
+    if resume_session
+      render json: {
+        authenticated: true,
+        account: { email: Current.browser_session.account.email },
+        csrfToken: form_authenticity_token
+      }
+    else
+      clear_browser_session_cookies if browser_session_hint_present?
+      render json: { authenticated: false }
+    end
   end
 
   def destroy

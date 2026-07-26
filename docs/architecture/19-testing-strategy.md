@@ -71,7 +71,13 @@ travel, looping, stagger, parallax, or delayed access.
 Public Rails tests prove a complete no-JavaScript landing, installation guide, trust pages, and
 Account forms; Hotwire tests cover enhancement and cache restoration separately. Public pages must
 make no remote font, script, image, analytics, or telemetry request. Production routing must not
-recognize the development design gallery.
+recognize the development design gallery. Request tests compare anonymous and authenticated public
+HTML, prove the exact public cache directives and absence of CSRF/session output, and prove every
+dynamic route bypasses the shared-page policy. Browser tests prove anonymous visits make no
+session-status request, hinted visits restore Account presentation through a private no-store
+response, Turbo visits reuse status by exact hint, logout and stale hints clear private state, and
+failed or malformed status responses remain safely anonymous. Production-image verification checks
+fingerprinted assets and real response headers.
 
 ---
 

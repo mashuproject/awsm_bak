@@ -3,22 +3,27 @@
 
 <%= render "shared/public_header" %>
 
-<% if @current_account %>
-  <aside class="signed-in-banner">
-    <div class="site-container signed-in-banner__inner">
-      <p>
-        Signed in as <strong><%= @current_account.email %></strong> on
-        <strong><%= @server_origin %></strong>. Account login identifies this browser to the
-        Coordination Server; it does not unlock a Vault.
-      </p>
-      <div class="button-row">
-        <%= link_to "Account", account_path, class: "awsm-button awsm-button--secondary" %>
-        <%= link_to "Set up sync", "#optional-sync", class: "awsm-button awsm-button--quiet" %>
-        <%= button_to "Sign out", session_path, method: :delete, class: "awsm-button awsm-button--quiet" %>
-      </div>
+<aside class="signed-in-banner"
+       hidden
+       aria-hidden="true"
+       data-public-session-target="banner">
+  <div class="site-container signed-in-banner__inner">
+    <p>
+      Signed in as <strong data-public-session-target="email"></strong> on
+      <strong><%= @server_origin %></strong>. Account login identifies this browser to the
+      Coordination Server; it does not unlock a Vault.
+    </p>
+    <div class="button-row">
+      <%= link_to "Account", account_path,
+                  class: "awsm-button awsm-button--secondary",
+                  data: { public_session_target: "accountLink" } %>
+      <%= link_to "Set up sync", "#optional-sync",
+                  class: "awsm-button awsm-button--quiet",
+                  data: { public_session_target: "setupSyncLink" } %>
+      <span data-public-session-target="signOutForm"></span>
     </div>
-  </aside>
-<% end %>
+  </div>
+</aside>
 
 <main>
   <section class="hero">
@@ -36,7 +41,7 @@
         <ul class="hero__assurances" aria-label="AWSM preservation features">
           <li>Freedom through <%= link_to "Complete Export", glossary_path(anchor: "complete-export"), class: "term-link", data: { turbo: false } %></li>
           <li>Ownership through your encrypted <%= link_to "Vault", glossary_path(anchor: "vault"), class: "term-link", data: { turbo: false } %></li>
-          <li>Offline access to local Captures</li>
+          <li>Offline access to local <%= link_to "Captures", glossary_path(anchor: "capture"), class: "term-link", data: { turbo: false } %></li>
         </ul>
       </div>
       <div class="hero-art" aria-hidden="true">
@@ -131,6 +136,17 @@
         <div class="flow-node flow-node--server"><span class="flow-node__courier" aria-hidden="true"></span><strong>Coordination Server</strong><span>routes sealed encrypted packages; cannot open them</span></div>
         <div class="flow-node"><%= keeper_image variant: "keeper-protected" %><strong>Another browser</strong><span>Account + Recovery Phrase</span></div>
       </div>
+      <div class="sync-setup">
+        <p>
+          To add another browser, choose the hosted Coordination Server or one you self-host. Save
+          and confirm the Recovery Phrase before using it with the Account on another browser.
+        </p>
+        <% if @registration_enabled %>
+          <%= link_to "Create an Account on this server", sign_up_path, class: "awsm-button awsm-button--secondary" %>
+        <% else %>
+          <p>Account creation is unavailable on this server. An operator must enable it before a new Account can be created.</p>
+        <% end %>
+      </div>
     </div>
   </section>
 
@@ -165,8 +181,7 @@
       <p class="eyebrow">Start local</p>
       <h2 class="section-heading">Get the public preview.</h2>
       <p class="section-lede">
-        Create a local Vault first. You can add encrypted synchronization later if you want the
-        same Vault on another browser.
+        Install the preview, create a local Vault, and archive your first useful page.
       </p>
       <div class="install-tabs" data-install-selector-target="root">
         <div class="install-tabs__nav" role="tablist" aria-label="Browser installation">
@@ -204,21 +219,6 @@
         </div>
       </div>
 
-      <div class="story-section">
-        <p class="eyebrow">Optional next step</p>
-        <h3 class="section-heading">Synchronize when you need another browser.</h3>
-        <div class="card-grid">
-          <article class="awsm-card step-card"><h3>1. Choose a server</h3><p>Select the hosted Coordination Server or one you self-host.</p></article>
-          <article class="awsm-card step-card"><h3>2. Identify the client</h3><p>
-            <% if @registration_enabled %>
-              <%= link_to "Create an Account on this server", sign_up_path %>, then sign in through the extension.
-            <% else %>
-              Account creation is unavailable on this server. An operator must enable it before a new Account can be created.
-            <% end %>
-          </p></article>
-          <article class="awsm-card step-card"><h3>3. Protect the Vault</h3><p>Save and confirm the Recovery Phrase, then use it with the Account to enroll another browser.</p></article>
-        </div>
-      </div>
     </div>
   </section>
 

@@ -1,5 +1,7 @@
 class HomeController < ApplicationController
   allow_unauthenticated_access
+  layout "public", only: %i[show privacy security glossary]
+  after_action :set_public_page_cache_policy, only: %i[show privacy security glossary]
 
   def show
     assign_public_context
@@ -26,8 +28,15 @@ class HomeController < ApplicationController
   private
 
   def assign_public_context
-    @server_origin = request.base_url
+    @server_origin = Coordination::Registration.public_origin
     @registration_enabled = Coordination::Registration.enabled?
-    @current_account = authenticated? ? Current.browser_session.account : nil
+  end
+
+  def set_public_page_cache_policy
+    return unless response.successful?
+
+    response.headers["Cache-Control"] = "public, max-age=300"
+    response.headers["CDN-Cache-Control"] =
+      "public, max-age=86400, stale-while-revalidate=86400, stale-if-error=604800"
   end
 end
