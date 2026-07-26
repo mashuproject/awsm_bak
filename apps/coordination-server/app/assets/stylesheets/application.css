@@ -14,6 +14,10 @@ body {
   margin-inline: auto;
 }
 
+.story-section[id] {
+  scroll-margin-top: calc(72px + var(--awsm-space-4));
+}
+
 .deployment-strip {
   padding: var(--awsm-space-2) var(--awsm-space-4);
   border-bottom: var(--awsm-border);

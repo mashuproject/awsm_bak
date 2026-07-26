@@ -35,6 +35,19 @@ test("renders the complete landing at desktop, narrow, and reduced motion", asyn
   await getAwsm.focus();
   await expect(getAwsm).toHaveCSS("outline-width", "3px");
   await expect(getAwsm).toHaveScreenshot("get-awsm-focus.png");
+  await page.locator('a[href="#how-it-works"]').click();
+  await expect
+    .poll(async () => {
+      const stickyHeaderBottom = await page.locator(".site-header").evaluate((element) => {
+        return element.getBoundingClientRect().bottom;
+      });
+      const sectionTop = await page.locator("#how-it-works").evaluate((element) => {
+        return element.getBoundingClientRect().top;
+      });
+      return sectionTop >= stickyHeaderBottom && sectionTop < stickyHeaderBottom + 32;
+    })
+    .toBe(true);
+  await page.evaluate(() => window.scrollTo(0, 0));
   await page.locator("h1").hover();
   await expectReadableContrast(page);
   await expect(page).toHaveScreenshot("landing-desktop.png", {

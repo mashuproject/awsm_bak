@@ -6,5 +6,11 @@ playwright-report/
 test-results/
 blob-report/
 *.log
+.env
+.env.*
+!.env.example
+!.env.*.example
+!.env.template
+!.env.*.template
 .omo/
 AGENTS.override.md

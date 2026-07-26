@@ -86,7 +86,10 @@ The AWSM reference deployment assigns:
 | production  | `https://awsm.foo`           | `awsm.foo`      |
 
 The reference staging and production processes may run on the same physical server, but retain all
-of the isolation above. No host-local path, address, credential, opaque resource identifier,
+of the isolation above. The reference host uses one remotely managed Cloudflare Tunnel connector
+for the machine, with separate exact-hostname ingress rules selecting the isolated staging and
+production origins. Sharing the connector and tunnel transport does not permit shared application
+processes or mutable state. No host-local path, address, credential, opaque resource identifier,
 container name, or private topology belongs in tracked project documentation.
 
 Plan 17 implements and validates staging. Production promotion is a later, separately authorized
@@ -119,6 +122,12 @@ configured shared CDN cache
       environment-specific Thruster / Rails
 ```
 
+The AWSM reference origin route is a hostname-specific rule on one remotely managed Cloudflare
+Tunnel connector. Cloudflare permits one tunnel to proxy multiple services and recommends only one
+service-managed `cloudflared` instance per host. The staging rule maps only
+`awsm.parasquid.dev` to the isolated staging listener; the existing `awsm.foo` rule and production
+listener remain unchanged. Self-hosted operators may use an equivalent isolated routing layer.
+
 The only new shared page-cache layer is the configured CDN. The AWSM reference deployment uses
 Cloudflare. Self-hosted operators may use another compatible CDN or reverse-proxy cache that honors
 the application headers and route allowlist. Running without a CDN remains supported: Rails then
@@ -147,8 +156,11 @@ Only successful `GET` and `HEAD` responses for these exact paths are public-page
 | `/security` | `HomeController#security` |
 | `/glossary` | `HomeController#glossary` |
 
-The cache key retains the request scheme and hostname and ignores the query string. None of these
-four actions may vary its response by query parameter.
+The application contract proves that none of these four actions varies by query parameter. The
+reference staging zone is not entitled to custom cache-key overrides, so it uses Cloudflare's
+default query-sensitive cache key. Canonical URLs share normally, while distinct query strings may
+create separate safe cache entries and origin misses. Operators with an entitled custom-key feature
+may ignore the entire query string for these four exact actions after preserving scheme and host.
 
 The development/test-only `/design-system` action is not cacheable and is not routed in production.
 
@@ -717,8 +729,10 @@ Before creating or enabling the reference staging rule, verify read-only:
 
 - `parasquid.dev` is active in the authenticated Cloudflare account;
 - the intended `awsm.parasquid.dev` DNS record is proxied through Cloudflare;
-- no staging command targets the production `awsm.foo` zone, hostname, rulesets, cache, DNS, or
-  settings;
+- no staging command targets the production `awsm.foo` zone, hostname, cache, DNS, application
+  process, or mutable state;
+- the shared tunnel's existing production ingress rule is captured only as an in-memory
+  comparison and remains byte-equivalent after the staging rule is added;
 - all four deployed paths return `200`;
 - responses contain the expected current product content;
 - the origin revision contains this plan's cache-safe implementation;
@@ -743,19 +757,23 @@ Filter the returned JSON locally. Do not retain or reproduce the full ruleset or
 Confirm that any existing zone-level rules matching other `parasquid.dev` hostnames remain
 unchanged.
 
-Create only the proxied `awsm.parasquid.dev` DNS record in the `parasquid.dev` zone. Resolve the
-reference staging origin address from confidential operator-managed deployment state without
-printing or recording it. Inspect `cf dns records create --help` and its schema, construct the
-smallest record body in process memory, run the create command with `--dry-run`, and then perform
-the separately authorized mutation. Do not copy, edit, replace, disable, or delete an existing DNS
-record. If `awsm.parasquid.dev` already exists, stop and inspect it rather than overwriting it.
+Create only the proxied `awsm.parasquid.dev` CNAME record in the `parasquid.dev` zone, pointing to
+the existing reference tunnel hostname. Resolve the tunnel target ephemerally from confidential
+operator-managed state without printing or recording its opaque identifier. Inspect
+`cf dns records create --help` and its schema, construct the smallest record body in process
+memory, run the create command with `--dry-run`, and then perform the separately authorized
+mutation. Do not copy, edit, replace, disable, or delete an existing DNS record. If
+`awsm.parasquid.dev` already exists, stop and inspect it rather than overwriting it.
 
-The DNS record and origin route are separate operations:
+The DNS record and tunnel ingress rule are separate operations:
 
-- Cloudflare DNS sends only `awsm.parasquid.dev` traffic to the existing physical server.
-- The server's host router sends only that Host value to the isolated staging process.
+- Cloudflare DNS sends only `awsm.parasquid.dev` traffic to the existing reference tunnel.
+- The remotely managed tunnel maps only that hostname to the isolated staging process.
 - Any request with `Host: awsm.foo` continues to use the unchanged production route and process.
 - Requests with an unexpected Host fail closed and never select staging.
+- Updating remotely managed ingress should propagate without restarting the shared connector. If
+  the verified deployment mode requires a connector restart or reload, stop and obtain separate
+  authorization rather than interrupting production.
 
 ## 6.3 Cache Rule expression
 
@@ -778,8 +796,7 @@ Configure:
 - cache eligibility: eligible for cache;
 - Edge TTL: use the cache-control header if present, bypass cache if it is absent;
 - Browser TTL: respect origin;
-- cache key: retain original scheme and host, ignore the entire query string, and do not add
-  cookies, user agent, language, device, geography, or custom headers;
+- cache key: use Cloudflare's default query-sensitive key and do not add any custom key dimensions;
 - origin cache control: respect the origin headers;
 - stale serving: allow the origin's `stale-while-revalidate` and `stale-if-error` directives; and
 - origin error pages: preserve the existing deployed behavior.
@@ -942,7 +959,8 @@ Before GREEN completion, explicitly verify:
 - sign-out remains a CSRF-protected state-changing request;
 - email insertion uses `textContent`;
 - a forged status payload cannot inject markup;
-- the CDN ignores query strings only for actions proven not to vary on query;
+- query variants remain representation-equivalent and, on reference staging, use distinct default
+  cache keys rather than an unsupported custom override;
 - the validated configured public origin, not an attacker-controlled Host, is rendered;
 - no cache or hint value enters application logs;
 - no new analytics, tracking, third-party script, remote font, or marketing cookie exists; and
@@ -1031,28 +1049,32 @@ the production origin.
 
 Implementation is complete only when all of the following are true:
 
-- [ ] ERB remains the authored source of all four public pages.
-- [ ] The four public responses are safe, shared, and publicly cacheable.
-- [ ] Anonymous cached visits perform no Rails session-status request.
-- [ ] Signed-in display state is restored privately through `/session/status`.
-- [ ] The hint is non-authoritative, random, correctly scoped, and cleared on every revocation path.
-- [ ] Sign-out remains CSRF-protected.
-- [ ] No dynamic route receives the public caching contract.
-- [ ] The portable CDN contract and reference Cloudflare adapter are documented exactly and exclude
+- [x] ERB remains the authored source of all four public pages.
+- [x] The four public responses are safe, shared, and publicly cacheable.
+- [x] Anonymous cached visits perform no Rails session-status request.
+- [x] Signed-in display state is restored privately through `/session/status`.
+- [x] The hint is non-authoritative, random, correctly scoped, and cleared on every revocation path.
+- [x] Sign-out remains CSRF-protected.
+- [x] No dynamic route receives the public caching contract.
+- [x] The portable CDN contract and reference Cloudflare adapter are documented exactly and exclude
       errors.
-- [ ] No reference hostname, zone, provider credential, or server topology is an application
+- [x] No reference hostname, zone, provider credential, or server topology is an application
       default or runtime dependency.
-- [ ] Purge and rollback ordering are documented and tested without secrets.
-- [ ] Reference staging is reachable only at `awsm.parasquid.dev`.
-- [ ] Staging and production processes and mutable state are isolated, including when colocated.
-- [ ] Smart Tiered Cache state was inspected but no shared zone-wide setting was changed.
-- [ ] Request, browser, visual, production-image, formatting, and lint checks pass.
-- [ ] Every affected rendered state has been visually inspected.
-- [ ] README, architecture, testing, privacy/security copy, Plan 16, and Roadmap are reconciled.
-- [ ] The Plan 17 TDD evidence ledger contains contemporaneous evidence.
-- [ ] No Caddy, Varnish, static HTML, new dependency, tracking, or remote asset was introduced.
-- [ ] Production remains unchanged throughout staging implementation and validation.
-- [ ] Only separately authorized staging infrastructure was created or changed.
+- [x] Purge and rollback ordering are documented and tested without secrets.
+- [x] Reference staging is reachable only at `awsm.parasquid.dev`.
+- [x] Staging and production processes and mutable state are isolated, including when colocated.
+- [x] Smart Tiered Cache state was inspected but no shared zone-wide setting was changed.
+- [x] Request, browser, visual, production-image, formatting, and lint checks pass.
+- [x] Every affected rendered state has been visually inspected.
+- [x] README, architecture, testing, privacy/security copy, Plan 16, and Roadmap are reconciled.
+- [x] The Plan 17 TDD evidence ledger contains contemporaneous evidence.
+- [x] No Caddy, Varnish, static HTML, new dependency, tracking, or remote asset was introduced.
+- [x] Production application processes, mutable state, hostname mapping, cache, and content remain
+      unchanged throughout staging implementation and validation.
+- [x] The shared tunnel change adds only the staging hostname-to-origin rule and preserves the
+      production ingress rule exactly.
+- [x] Only separately authorized staging infrastructure and the narrow shared-tunnel staging route
+      were created or changed.
 
 # 12. Implementation Handoff
 
@@ -1089,6 +1111,12 @@ rollout:
   <https://developers.cloudflare.com/agent-setup/claude-code/>
 - Cloudflare DNS record management:
   <https://developers.cloudflare.com/dns/manage-dns-records/how-to/create-dns-records/>
+- Cloudflare Tunnel service-per-host guidance:
+  <https://developers.cloudflare.com/cloudflare-one/troubleshooting/tunnel/>
+- Cloudflare Tunnel terms and multiple-service routing:
+  <https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/get-started/tunnel-useful-terms/>
+- Cloudflare Tunnel remotely managed configuration:
+  <https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/get-started/create-remote-tunnel-api/>
 - Cache Rules: <https://developers.cloudflare.com/cache/how-to/cache-rules/>
 - Cache Rule settings and header-present/bypass behavior:
   <https://developers.cloudflare.com/cache/how-to/cache-rules/settings/>
