@@ -49,6 +49,30 @@ Tests SHALL NOT be weakened, deleted, skipped, or rewritten merely to make a bui
 
 The first Chrome extension slice follows the task-level TDD gates in `docs/plans/02-chrome-extension-capture-vertical-slice.md`.
 
+## Product design evidence
+
+The root `DESIGN.md` and generated `@awsm/design-system` output form one tested contract. CI and
+local linting validate its structure, accessibility contrast pairs, token references, deterministic
+generation, licensed local font assets, and shared Rails/extension consumption.
+
+Every text-bearing token and component SHALL meet WCAG 2.2 contrast. Normal text and control labels
+have a hard `4.5:1` minimum. Paragraphs, explanatory copy, repeated metadata, notices, dialogs,
+sidebars, and other extended-reading surfaces have a `7:1` minimum. Saturated graphic accents SHALL
+NOT be used as text backgrounds unless an audited semantic text-bearing variant satisfies the
+applicable threshold. Token generation SHALL reject invalid declared pairs, and rendered design E2E
+tests SHALL inspect effective computed foreground and composited background colors on visible text.
+
+Every visible Rails or extension change requires rendered evidence at representative primary and
+narrow widths, including relevant resting, focus, validation, loading, disabled, success, error,
+offline, locked, authentication-required, and destructive states. Automated DOM assertions do not
+replace viewing captured screenshots. Reduced-motion runs must prove final-state equivalence without
+travel, looping, stagger, parallax, or delayed access.
+
+Public Rails tests prove a complete no-JavaScript landing, installation guide, trust pages, and
+Account forms; Hotwire tests cover enhancement and cache restoration separately. Public pages must
+make no remote font, script, image, analytics, or telemetry request. Production routing must not
+recognize the development design gallery.
+
 ---
 
 # Architectural Invariants

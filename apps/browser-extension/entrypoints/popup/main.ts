@@ -22,6 +22,7 @@ let visibleRecentCaptureJobId: string | undefined;
 let renderedState: AppState | undefined;
 let suggestedVaultName: string | undefined;
 let captureRequestPending = false;
+let activePageContext: { readonly title: string; readonly host: string } | undefined;
 let recentTimerInterval: number | undefined;
 let recentTimerState:
   | {
@@ -73,7 +74,13 @@ function errorText(error: unknown): string {
 
 function heading(subtitle: string): DocumentFragment {
   const fragment = document.createDocumentFragment();
-  fragment.append(element("p", "AWSM", "eyebrow"), element("h1", subtitle));
+  const brand = element("div", undefined, "popup-brand");
+  const mark = element("img") as HTMLImageElement;
+  mark.src = browser.runtime.getURL("/icon-48.png");
+  mark.alt = "";
+  mark.setAttribute("aria-hidden", "true");
+  brand.append(mark, element("p", "AWSM", "eyebrow"));
+  fragment.append(brand, element("h1", subtitle));
   return fragment;
 }
 
@@ -150,7 +157,21 @@ function createVaultForm(state: AppState, secondary: boolean): HTMLFormElement {
 
 async function refresh(error?: string): Promise<void> {
   try {
-    render(await request("GetState"), error);
+    const [state, tabs] = await Promise.all([
+      request("GetState"),
+      browser.tabs.query({ active: true, currentWindow: true }).catch(() => []),
+    ]);
+    const tab = tabs[0];
+    try {
+      const url = tab?.url === undefined ? undefined : new URL(tab.url);
+      activePageContext =
+        tab?.title !== undefined && url !== undefined && ["http:", "https:"].includes(url.protocol)
+          ? { title: tab.title, host: url.host }
+          : undefined;
+    } catch {
+      activePageContext = undefined;
+    }
+    render(state, error);
   } catch (cause) {
     app.replaceChildren(heading("Local archive"), status(errorText(cause), "error"));
     app.setAttribute("aria-busy", "false");
@@ -189,13 +210,21 @@ function render(state: AppState, transientError?: string): void {
   const activeVault = state.workspace.vaults.find((vault) => vault.active);
   if (activeVault !== undefined)
     content.append(element("p", `Vault · ${activeVault.name}`, "vault-context"));
+  if (view.screen === "ready" && activePageContext !== undefined) {
+    const pageContext = element("div", undefined, "page-context");
+    pageContext.append(
+      element("strong", activePageContext.title),
+      element("span", activePageContext.host),
+    );
+    content.append(pageContext);
+  }
   if (transientError !== undefined) content.append(status(transientError, "error"));
 
   if (view.screen === "server-choice") {
     content.append(
       element(
         "p",
-        "Start with a local archive on this device. You can add encrypted synchronization later.",
+        "Start with a local archive on this device. Synchronization is optional; if you enable it, Vault content stays end-to-end encrypted.",
       ),
     );
     const localOnly = element("button", "Continue without sync", "primary");
@@ -353,7 +382,7 @@ function render(state: AppState, transientError?: string): void {
       card.href = `${browser.runtime.getURL("/library.html")}?vaultId=${encodeURIComponent(recentCapture.vaultId)}&bundleId=${encodeURIComponent(recentCapture.bundleId)}`;
       card.target = "_blank";
       card.rel = "noopener noreferrer";
-      card.setAttribute("aria-label", `Open archived capture: ${recentCapture.title}`);
+      card.setAttribute("aria-label", `Open in library: ${recentCapture.title}`);
       card.addEventListener("click", (event) => {
         event.preventDefault();
         navigateFromPopup({
@@ -363,6 +392,7 @@ function render(state: AppState, transientError?: string): void {
       });
       const title = element("p", undefined, "recent-capture__title");
       title.append(document.createTextNode("Archived: "), element("strong", recentCapture.title));
+      const action = element("span", "Open in library", "recent-capture__action");
       const progress = element("div", undefined, "recent-capture__progress");
       progress.setAttribute("role", "progressbar");
       progress.setAttribute("aria-label", "Time until recent capture preview closes");
@@ -378,6 +408,7 @@ function render(state: AppState, transientError?: string): void {
       if (recentCapture.warnings.length > 0) {
         card.append(status("The full-page screenshot was unavailable.", "warning"));
       }
+      card.append(action);
       cardGroup.append(card, progress);
       content.append(
         cardGroup,
@@ -501,8 +532,17 @@ function render(state: AppState, transientError?: string): void {
         dismiss: () => dismissSeenCapture(jobId),
       });
     });
+    const settings = element("a", "Settings");
+    settings.href = `${browser.runtime.getURL("/library.html")}?settings=1`;
+    settings.target = "_blank";
+    settings.addEventListener("click", (event) => {
+      event.preventDefault();
+      void browser.tabs.create({ url: settings.href });
+    });
     const actions = element("div", undefined, "actions");
-    actions.append(capture, library);
+    const secondary = element("div", undefined, "popup-secondary-actions");
+    secondary.append(library, settings);
+    actions.append(capture, secondary);
     content.append(actions);
   }
   app.replaceChildren(content);

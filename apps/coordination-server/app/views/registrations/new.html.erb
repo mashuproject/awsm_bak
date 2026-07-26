@@ -1,22 +1,45 @@
 <% content_for :title, "Create AWSM Account" %>
 
-<h1>Create your Account</h1>
-<p>Your Account identifies you to this Coordination Server. Its password cannot decrypt your Vault.</p>
+<%= render layout: "shared/account_shell",
+           locals: {
+             keeper: "keeper-open",
+             story_heading: "Synchronization is optional. Encryption is not.",
+             story_copy: "Start locally without an Account. If you enable synchronization, Vault content stays end-to-end encrypted and this Coordination Server coordinates only opaque copies."
+           } do %>
+  <p class="eyebrow">Optional synchronization</p>
+  <h1>Create your Account</h1>
+  <p>Your Account identifies you to this Coordination Server. Its password cannot decrypt your Vault.</p>
 
-<%= form_with model: @account, url: sign_up_path do |form| %>
-  <div class="field">
-    <%= form.label :email %>
-    <%= form.email_field :email, required: true, autocomplete: "email" %>
-  </div>
-  <div class="field">
-    <%= form.label :password %>
-    <%= form.password_field :password, required: true, autocomplete: "new-password", maxlength: 72 %>
-  </div>
-  <div class="field">
-    <%= form.label :password_confirmation, "Confirm password" %>
-    <%= form.password_field :password_confirmation, required: true, autocomplete: "new-password", maxlength: 72 %>
-  </div>
-  <div class="actions"><%= form.submit "Create Account" %></div>
+  <% if @account.errors.any? %>
+    <div class="awsm-notice awsm-notice--danger" role="alert" tabindex="-1" data-controller="form-errors">
+      <strong>Check the highlighted details.</strong>
+      <ul>
+        <% @account.errors.each do |error| %>
+          <li><%= link_to error.full_message, "#account_#{error.attribute}" %></li>
+        <% end %>
+      </ul>
+    </div>
+  <% end %>
+
+  <%= form_with model: @account, url: sign_up_path, class: "account-form" do |form| %>
+    <div class="field">
+      <%= form.label :email %>
+      <%= form.email_field :email, required: true, autocomplete: "email", aria: { invalid: @account.errors[:email].any?, describedby: (@account.errors[:email].any? ? "account_email_error" : nil) } %>
+      <% if @account.errors[:email].any? %><p class="field-error" id="account_email_error"><%= @account.errors.full_messages_for(:email).join(". ") %></p><% end %>
+    </div>
+    <div class="field">
+      <%= form.label :password %>
+      <%= form.password_field :password, required: true, autocomplete: "new-password", maxlength: 72, aria: { invalid: @account.errors[:password].any?, describedby: (@account.errors[:password].any? ? "account_password_error" : nil) } %>
+      <% if @account.errors[:password].any? %><p class="field-error" id="account_password_error"><%= @account.errors.full_messages_for(:password).join(". ") %></p><% end %>
+    </div>
+    <div class="field">
+      <%= form.label :password_confirmation, "Confirm password" %>
+      <%= form.password_field :password_confirmation, required: true, autocomplete: "new-password", maxlength: 72, aria: { invalid: @account.errors[:password_confirmation].any?, describedby: (@account.errors[:password_confirmation].any? ? "account_password_confirmation_error" : nil) } %>
+      <% if @account.errors[:password_confirmation].any? %><p class="field-error" id="account_password_confirmation_error"><%= @account.errors.full_messages_for(:password_confirmation).join(". ") %></p><% end %>
+    </div>
+    <div class="actions"><%= form.submit "Create Account" %></div>
+  <% end %>
+
+  <p><%= link_to "Already have an Account? Sign in", new_session_path %></p>
+  <p><%= link_to "Return to AWSM", root_path %></p>
 <% end %>
-
-<p><%= link_to "Already have an Account? Sign in", new_session_path %></p>

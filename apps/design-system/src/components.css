@@ -1,0 +1,156 @@
+@import url("base.css");
+
+.awsm-button {
+  display: inline-flex;
+  min-width: 44px;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: var(--awsm-space-2);
+  border: var(--awsm-border);
+  border-radius: var(--awsm-radius-control);
+  padding: var(--awsm-space-2) var(--awsm-space-4);
+  color: var(--awsm-ink);
+  background: var(--awsm-coral);
+  box-shadow: var(--awsm-shadow-hard);
+  cursor: pointer;
+  font-weight: 750;
+  line-height: 1.2;
+  text-align: center;
+  text-decoration: none;
+  transition:
+    translate var(--awsm-duration-press) var(--awsm-ease-out),
+    box-shadow var(--awsm-duration-press) var(--awsm-ease-out),
+    background var(--awsm-duration-component) var(--awsm-ease-out);
+}
+
+.awsm-button:hover {
+  background: var(--awsm-yellow);
+}
+
+.awsm-button:active {
+  translate: 2px 2px;
+  box-shadow: 2px 2px 0 var(--awsm-ink);
+}
+
+.awsm-button--secondary {
+  background: var(--awsm-paper);
+}
+
+.awsm-button--quiet {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+.awsm-button--danger {
+  color: var(--awsm-paper);
+  background: var(--awsm-danger);
+}
+
+.awsm-button:disabled,
+.awsm-button[aria-disabled="true"] {
+  color: var(--awsm-text-muted);
+  border-color: var(--awsm-border-subtle);
+  background: var(--awsm-disabled);
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+.awsm-field {
+  display: grid;
+  gap: var(--awsm-space-2);
+}
+
+.awsm-field > label,
+.awsm-label {
+  font-size: 0.875rem;
+  font-weight: 750;
+}
+
+.awsm-input {
+  min-height: 44px;
+  width: 100%;
+  border: var(--awsm-border);
+  border-radius: var(--awsm-radius-compact);
+  padding: var(--awsm-space-2) var(--awsm-space-3);
+  color: var(--awsm-ink);
+  background: var(--awsm-paper);
+}
+
+.awsm-card,
+.awsm-notice {
+  border: var(--awsm-border);
+  border-radius: var(--awsm-radius-control);
+  padding: var(--awsm-space-6);
+  color: var(--awsm-ink);
+  background: var(--awsm-paper);
+}
+
+.awsm-card--expressive {
+  border-radius: var(--awsm-radius-expressive);
+  box-shadow: var(--awsm-shadow-hard);
+}
+
+.awsm-notice {
+  background: var(--awsm-info-pale);
+}
+
+.awsm-notice--success {
+  border-color: var(--awsm-green);
+  background: var(--awsm-success-pale);
+}
+
+.awsm-notice--warning {
+  background: var(--awsm-warning-pale);
+}
+
+.awsm-notice--danger {
+  color: var(--awsm-ink);
+  border-color: var(--awsm-danger);
+  background: var(--awsm-danger-pale);
+}
+
+.awsm-badge {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  border: var(--awsm-border);
+  border-radius: var(--awsm-radius-full);
+  padding: 2px var(--awsm-space-3);
+  background: var(--awsm-yellow);
+  font-size: 0.8125rem;
+  font-weight: 800;
+}
+
+.awsm-dialog {
+  max-width: min(620px, calc(100% - 32px));
+  border: var(--awsm-border);
+  border-radius: var(--awsm-radius-expressive);
+  padding: var(--awsm-space-8);
+  color: var(--awsm-ink);
+  background: var(--awsm-paper);
+  box-shadow: var(--awsm-shadow-hard);
+}
+
+.awsm-dialog::backdrop {
+  background: rgb(24 24 27 / 55%);
+}
+
+.awsm-progress {
+  overflow: hidden;
+  height: 14px;
+  border: var(--awsm-border);
+  border-radius: var(--awsm-radius-full);
+  background: var(--awsm-paper);
+}
+
+.awsm-empty {
+  display: grid;
+  justify-items: start;
+  gap: var(--awsm-space-4);
+  padding: var(--awsm-space-8);
+  border: 2px dashed var(--awsm-ink);
+  border-radius: var(--awsm-radius-expressive);
+  background: var(--awsm-surface-subtle);
+}

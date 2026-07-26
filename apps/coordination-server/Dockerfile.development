@@ -20,7 +20,7 @@ RUN apt-get update -qq && \
 ENV BUNDLE_PATH=/usr/local/bundle \
     RAILS_ENV=development
 
-COPY Gemfile Gemfile.lock ./
+COPY apps/coordination-server/Gemfile apps/coordination-server/Gemfile.lock ./
 RUN bundle install
 
 EXPOSE 3000

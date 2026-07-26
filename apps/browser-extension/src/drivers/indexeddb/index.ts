@@ -57,6 +57,7 @@ export {
   IndexedDbServerSwitchRepository,
 } from "./server-switch-repository";
 export { IndexedDbStorageReliefRepository } from "./storage-relief-repository";
+export { UiPreferencesRepository } from "./ui-preferences-repository";
 export {
   decodeVaultReplacementJob,
   IndexedDbVaultReplacementRepository,

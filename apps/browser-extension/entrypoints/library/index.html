@@ -7,8 +7,37 @@
     <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
-    <header><p class="eyebrow">AWSM</p><div id="library-title"></div><button id="account-settings" type="button">Settings</button></header>
-    <main id="app" aria-busy="true"></main>
+    <div class="library-shell">
+      <aside class="library-sidebar" id="library-sidebar" aria-label="Library sections">
+        <div class="library-sidebar__header">
+          <p class="library-wordmark">AWSM</p>
+          <button id="sidebar-close" type="button">Close menu</button>
+        </div>
+        <section class="library-sidebar__section" aria-labelledby="active-vault-label">
+          <p id="active-vault-label" class="library-sidebar__label">Active Vault</p>
+          <p id="sidebar-vault-name" class="library-sidebar__value">Loading…</p>
+          <button id="manage-vaults" type="button">Manage or switch Vault</button>
+        </section>
+        <nav aria-label="Library">
+          <button id="show-archive" type="button" aria-current="page">Library</button>
+          <p class="library-sidebar__label">Collections</p>
+          <span class="library-sidebar__hint">Active Collections appear in the workspace.</span>
+          <button id="show-deleted" type="button">Deleted</button>
+        </nav>
+        <div class="library-sidebar__utilities">
+          <button id="storage-settings" type="button">Storage &amp; maintenance</button>
+          <button id="account-settings" type="button">Account &amp; synchronization</button>
+        </div>
+      </aside>
+      <div class="library-workspace" id="library-workspace">
+        <header>
+          <button id="sidebar-toggle" type="button" aria-expanded="false" aria-controls="library-sidebar">Menu</button>
+          <div><p class="eyebrow">Private archive</p><div id="library-title"></div></div>
+          <button id="header-settings" type="button">Settings</button>
+        </header>
+        <main id="app" aria-busy="true"></main>
+      </div>
+    </div>
     <p id="announcer" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
     <script type="module" src="./main.ts"></script>
   </body>

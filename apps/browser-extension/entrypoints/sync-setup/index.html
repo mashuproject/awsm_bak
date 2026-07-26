@@ -10,6 +10,13 @@
     <main>
       <p class="eyebrow">AWSM</p>
       <h1>Set up synchronization</h1>
+      <ol class="setup-steps" id="setup-steps" aria-label="Synchronization setup progress">
+        <li data-step="0" aria-current="step"><span>1</span>Server</li>
+        <li data-step="1"><span>2</span>Account</li>
+        <li data-step="2"><span>3</span>Vault</li>
+        <li data-step="3"><span>4</span>Recovery</li>
+        <li data-step="4"><span>5</span>Complete</li>
+      </ol>
       <section id="server-choice" hidden>
         <p>Choose where encrypted Vault data may synchronize.</p>
         <button id="hosted-server" type="button">Use hosted AWSM · https://awsm.foo</button>
@@ -114,7 +121,14 @@
         </form>
       </section>
       <section id="device-section" hidden>
-        <h2>Devices</h2>
+        <p class="eyebrow">Synchronization dashboard</p>
+        <h2>Your Devices</h2>
+        <dl class="sync-summary">
+          <div><dt>Server</dt><dd id="dashboard-server"></dd></div>
+          <div><dt>Account</dt><dd id="dashboard-account"></dd></div>
+          <div><dt>Vault</dt><dd id="dashboard-vault"></dd></div>
+          <div><dt>Synchronization</dt><dd id="dashboard-sync"></dd></div>
+        </dl>
         <p>
           Remove stops server access only. Protect future content also changes the Recovery Phrase
           and encryption key for new content.

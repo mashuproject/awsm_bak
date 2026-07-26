@@ -5,7 +5,10 @@
   "packageManager": "pnpm@11.13.1",
   "scripts": {
     "build": "corepack pnpm --filter @awsm/browser-extension build",
-    "lint": "corepack pnpm --filter @awsm/browser-extension lint",
+    "design:generate": "node apps/design-system/scripts/generate.mjs",
+    "design:icons": "node apps/design-system/scripts/generate-icons.mjs",
+    "design:check": "designmd lint DESIGN.md && node apps/design-system/scripts/generate.mjs --check",
+    "lint": "corepack pnpm design:check && corepack pnpm --filter @awsm/browser-extension lint",
     "test": "corepack pnpm --filter @awsm/browser-extension test",
     "test:integration": "corepack pnpm --filter @awsm/browser-extension test:integration",
     "test:e2e": "corepack pnpm --filter @awsm/browser-extension test:e2e",
@@ -13,11 +16,15 @@
     "test:e2e:firefox": "corepack pnpm --filter @awsm/browser-extension test:e2e:firefox",
     "test:e2e:cross-browser": "corepack pnpm --filter @awsm/browser-extension test:e2e:cross-browser",
     "test:e2e:coordination": "apps/coordination-server/script/run-coordination-e2e.sh",
+    "test:e2e:design": "corepack pnpm --filter @awsm/browser-extension test:e2e:design",
     "test:sync-proof": "apps/coordination-server/script/run-sync-proof.sh",
     "typecheck": "corepack pnpm --filter @awsm/browser-extension typecheck",
     "zip": "corepack pnpm --filter @awsm/browser-extension zip"
   },
   "devDependencies": {
-    "prettier": "3.9.5"
+    "@fontsource-variable/bricolage-grotesque": "5.3.0",
+    "@google/design.md": "0.3.0",
+    "prettier": "3.9.5",
+    "yaml": "2.9.0"
   }
 }

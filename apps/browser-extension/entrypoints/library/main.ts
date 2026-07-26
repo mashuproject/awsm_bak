@@ -12,8 +12,11 @@ import type {
 } from "../../src/app/protocol";
 import type { ArtifactRole } from "../../src/domain/artifact-graph";
 import { decodeStructuredContentSequence } from "../../src/domain/structured-content";
+import type { StoredLibraryPreferencesV1 } from "../../src/drivers/indexeddb/schema";
+import { UiPreferencesRepository } from "../../src/drivers/indexeddb/ui-preferences-repository";
 import { VaultImportHost } from "../../src/hosts/shared/import";
 import { validateServerOrigin } from "../../src/runtime/account/server";
+import { DEFAULT_LIBRARY_PREFERENCES, sortLibraryGroups } from "../../src/ui/library-preferences";
 import {
   artifactPresentation,
   captureDropRequest,
@@ -45,6 +48,20 @@ const announcer = requiredElement("#announcer");
 const pageHeader = requiredElement("header");
 const libraryTitle = requiredElement("#library-title");
 const accountSettings = requiredElement("#account-settings") as HTMLButtonElement;
+const manageVaults = requiredElement("#manage-vaults") as HTMLButtonElement;
+const storageSettings = requiredElement("#storage-settings") as HTMLButtonElement;
+const sidebarVaultName = requiredElement("#sidebar-vault-name");
+const showArchive = requiredElement("#show-archive") as HTMLButtonElement;
+const showDeleted = requiredElement("#show-deleted") as HTMLButtonElement;
+const sidebarToggle = requiredElement("#sidebar-toggle") as HTMLButtonElement;
+const sidebarClose = requiredElement("#sidebar-close") as HTMLButtonElement;
+const headerSettings = requiredElement("#header-settings") as HTMLButtonElement;
+const librarySidebar = requiredElement("#library-sidebar");
+const libraryWorkspace = requiredElement("#library-workspace");
+const narrowSidebar = window.matchMedia("(max-width: 768px)");
+const preferencesRepository = new UiPreferencesRepository();
+let libraryPreferences: StoredLibraryPreferencesV1 = DEFAULT_LIBRARY_PREFERENCES;
+let preferencesLoaded = false;
 let screenshotUrl: string | undefined;
 let detailController: AbortController | undefined;
 const artifactActionControllers = new Set<AbortController>();
@@ -58,6 +75,7 @@ let vaultMutationDisabled = false;
 let expandedLibrarySection: "Active" | "Deleted" = "Active";
 const importHost = new VaultImportHost();
 let importRouteOpened = false;
+let settingsRouteOpened = false;
 let cancelPageOwnedImport: (() => void) | undefined;
 let pageOwnedImportJobId: string | undefined;
 let abortPageOwnedImport: (() => void) | undefined;
@@ -652,6 +670,73 @@ function showResetDeviceDialog(returnFocus: HTMLElement): void {
 }
 
 accountSettings.addEventListener("click", showAccountSettings);
+manageVaults.addEventListener("click", showAccountSettings);
+storageSettings.addEventListener("click", showAccountSettings);
+headerSettings.addEventListener("click", showAccountSettings);
+showArchive.addEventListener("click", () => {
+  expandedLibrarySection = "Active";
+  showArchive.setAttribute("aria-current", "page");
+  showDeleted.removeAttribute("aria-current");
+  void loadList("Active");
+});
+showDeleted.addEventListener("click", () => {
+  expandedLibrarySection = "Deleted";
+  showDeleted.setAttribute("aria-current", "page");
+  showArchive.removeAttribute("aria-current");
+  void loadList("Deleted");
+});
+function closeSidebar(restoreFocus = true): void {
+  librarySidebar.dataset.open = "false";
+  librarySidebar.inert = narrowSidebar.matches;
+  if (narrowSidebar.matches) librarySidebar.setAttribute("aria-hidden", "true");
+  else librarySidebar.removeAttribute("aria-hidden");
+  sidebarToggle.setAttribute("aria-expanded", "false");
+  libraryWorkspace.inert = false;
+  document.body.classList.remove("library-drawer-open");
+  if (restoreFocus) sidebarToggle.focus();
+}
+
+function openSidebar(): void {
+  librarySidebar.dataset.open = "true";
+  librarySidebar.inert = false;
+  librarySidebar.removeAttribute("aria-hidden");
+  sidebarToggle.setAttribute("aria-expanded", "true");
+  libraryWorkspace.inert = true;
+  document.body.classList.add("library-drawer-open");
+  sidebarClose.focus();
+}
+
+sidebarToggle.addEventListener("click", () => {
+  if (librarySidebar.dataset.open === "true") closeSidebar();
+  else openSidebar();
+});
+sidebarClose.addEventListener("click", () => closeSidebar());
+narrowSidebar.addEventListener("change", () => closeSidebar(false));
+closeSidebar(false);
+librarySidebar.addEventListener("keydown", (event) => {
+  if (librarySidebar.dataset.open !== "true") return;
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeSidebar();
+    return;
+  }
+  if (event.key !== "Tab") return;
+  const focusable = [
+    ...librarySidebar.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ),
+  ].filter((node) => node.getClientRects().length > 0);
+  const first = focusable.at(0);
+  const last = focusable.at(-1);
+  if (first === undefined || last === undefined) return;
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+});
 
 async function showCreateVaultDialog(restoreFocus: HTMLElement): Promise<void> {
   const suggestion = await sendRequest<{ readonly name: string }>({
@@ -1252,6 +1337,7 @@ function renderLibraryTitle(state: AppState): void {
   const heading = element("h1");
   heading.textContent = active?.name ?? "Your local library";
   libraryTitle.replaceChildren(heading);
+  sidebarVaultName.textContent = active?.name ?? "No active Vault";
 }
 
 function appendImportJobStatus(bar: HTMLElement, state: AppState, currentVaultId?: string): void {
@@ -1719,36 +1805,44 @@ function groupGrid(
   groups: readonly LibraryPageGroupMessage[],
   status: "Active" | "Deleted",
 ): HTMLElement {
-  const grid = element("div", undefined, "grid");
-  for (const group of groups) {
-    const wrapper = element("article", undefined, "library-card");
+  const listView = libraryPreferences.view === "List";
+  const grid = document.createElement(listView ? "ul" : "div");
+  grid.className = `grid grid--${libraryPreferences.view.toLowerCase()}`;
+  for (const group of sortLibraryGroups(groups, libraryPreferences.sort)) {
+    const wrapper = document.createElement(listView ? "li" : "article");
+    wrapper.className = listView ? "library-card library-row" : "library-card";
     if (status === "Active" && !vaultMutationDisabled) {
       wrapper.draggable = true;
       wrapper.addEventListener("dragstart", (event) => {
+        const dragEvent = event as DragEvent;
         draggedCollectionId = group.collectionId;
-        useTiltedDragPreview(event, wrapper);
-        event.dataTransfer?.setData("application/x-awsm-collection", group.collectionId);
-        if (event.dataTransfer !== null) event.dataTransfer.effectAllowed = "move";
+        useTiltedDragPreview(dragEvent, wrapper);
+        dragEvent.dataTransfer?.setData("application/x-awsm-collection", group.collectionId);
+        if (dragEvent.dataTransfer !== null) dragEvent.dataTransfer.effectAllowed = "move";
         announcer.textContent = `Dragging ${group.title} collection`;
       });
       wrapper.addEventListener("dragover", (event) => {
+        const dragEvent = event as DragEvent;
         if (draggedCollectionId === undefined || draggedCollectionId === group.collectionId) return;
-        event.preventDefault();
-        if (event.dataTransfer !== null) event.dataTransfer.dropEffect = "move";
+        dragEvent.preventDefault();
+        if (dragEvent.dataTransfer !== null) dragEvent.dataTransfer.dropEffect = "move";
         clearMergeDropTargets();
         wrapper.classList.add("library-card--merge-target");
       });
       wrapper.addEventListener("dragleave", (event) => {
-        if (event.relatedTarget instanceof Node && wrapper.contains(event.relatedTarget)) return;
+        const dragEvent = event as DragEvent;
+        if (dragEvent.relatedTarget instanceof Node && wrapper.contains(dragEvent.relatedTarget))
+          return;
         wrapper.classList.remove("library-card--merge-target");
       });
       wrapper.addEventListener("drop", (event) => {
+        const dragEvent = event as DragEvent;
         clearMergeDropTargets();
-        const source = event.dataTransfer?.getData("application/x-awsm-collection");
+        const source = dragEvent.dataTransfer?.getData("application/x-awsm-collection");
         if (source === undefined || source === "") return;
         const request = mergeDropRequest(source, group.collectionId);
         if (request === undefined) return;
-        event.preventDefault();
+        dragEvent.preventDefault();
         void applyManagement(
           { ...request, expectedVaultId: expectedVaultId() },
           `Merged a collection into ${group.title}`,
@@ -1809,6 +1903,57 @@ function groupGrid(
     grid.append(wrapper);
   }
   return grid;
+}
+
+function libraryPresentationControls(): HTMLElement {
+  const controls = element("div", undefined, "library-presentation");
+  const sortLabel = element("label", "Sort");
+  const sort = element("select") as HTMLSelectElement;
+  sort.setAttribute("aria-label", "Sort archive");
+  for (const [value, label] of [
+    ["CapturedNewest", "Newest"],
+    ["CapturedOldest", "Oldest"],
+    ["TitleAscending", "Title"],
+  ] as const) {
+    const option = element("option", label) as HTMLOptionElement;
+    option.value = value;
+    option.selected = libraryPreferences.sort === value;
+    sort.append(option);
+  }
+  sort.addEventListener("change", () => {
+    libraryPreferences = {
+      ...libraryPreferences,
+      sort: sort.value as StoredLibraryPreferencesV1["sort"],
+    };
+    void preferencesRepository.replaceLibraryPreferences(libraryPreferences).catch(() => {
+      announcer.textContent = "The sort choice is in use for this session but could not be saved.";
+    });
+    void loadList(expandedLibrarySection);
+  });
+  sortLabel.append(sort);
+
+  const view = element("div", undefined, "view-choice");
+  view.setAttribute("role", "group");
+  view.setAttribute("aria-label", "Archive view");
+  for (const [value, label] of [
+    ["Grid", "Grid"],
+    ["List", "Compact list"],
+  ] as const) {
+    const button = element("button", label);
+    button.type = "button";
+    button.setAttribute("aria-pressed", String(libraryPreferences.view === value));
+    button.addEventListener("click", () => {
+      libraryPreferences = { ...libraryPreferences, view: value };
+      void preferencesRepository.replaceLibraryPreferences(libraryPreferences).catch(() => {
+        announcer.textContent =
+          "The view choice is in use for this session but could not be saved.";
+      });
+      void loadList(expandedLibrarySection);
+    });
+    view.append(button);
+  }
+  controls.append(sortLabel, view);
+  return controls;
 }
 
 function vacuumControl(captureCount: number, reclaimableBytes: number): HTMLButtonElement {
@@ -1920,6 +2065,7 @@ function storageMaintenance(
   section.setAttribute("aria-labelledby", "storage-maintenance-title");
   const title = element("h2", "Device storage");
   title.id = "storage-maintenance-title";
+  title.tabIndex = -1;
   section.append(title);
   const mode = state.account.configuration.mode;
   if (mode !== "Configured") {
@@ -2049,6 +2195,7 @@ async function loadList(expandedSection?: "Active" | "Deleted"): Promise<void> {
     activeGroups = loadedActiveGroups;
     deletedGroups = loadedDeletedGroups;
     const content = document.createDocumentFragment();
+    content.append(libraryPresentationControls());
     if (loadedActiveGroups.length === 0) {
       content.append(
         element("p", "No captures yet. Use the toolbar popup to archive a page.", "notice"),
@@ -2070,6 +2217,9 @@ async function loadList(expandedSection?: "Active" | "Deleted"): Promise<void> {
       `Deleted (${String(deletedCount)})`,
       "deleted-section__summary",
     );
+    deletedSummary.addEventListener("click", () => {
+      expandedLibrarySection = deletedSection.open ? "Active" : "Deleted";
+    });
     const deletedContent = element("div", undefined, "deleted-section__content");
     if (loadedDeletedGroups.length === 0) {
       deletedContent.append(element("p", "Deleted is empty.", "notice"));
@@ -2298,6 +2448,13 @@ async function showUnlock(): Promise<void> {
   try {
     const state = await sendRequest<AppState>({ type: "GetState" });
     renderVaultBar(state);
+    if (
+      !settingsRouteOpened &&
+      new URLSearchParams(window.location.search).get("settings") === "1"
+    ) {
+      settingsRouteOpened = true;
+      showAccountSettings();
+    }
     const active = state.workspace.vaults.find((vault) => vault.active);
     if (active?.unlocked === true) {
       renderError("A library record could not be authenticated.");
@@ -2712,6 +2869,12 @@ async function loadDetail(bundleId: string, abortArtifactActions = true): Promis
 window.addEventListener("pagehide", () => releaseScreenshot());
 window.addEventListener("pagehide", () => cancelPageOwnedImport?.());
 async function initialize(): Promise<void> {
+  if (!preferencesLoaded) {
+    preferencesLoaded = true;
+    libraryPreferences = await preferencesRepository
+      .getLibraryPreferences()
+      .catch(() => DEFAULT_LIBRARY_PREFERENCES);
+  }
   try {
     const state = await sendRequest<AppState>({ type: "GetState" });
     const reliefAnnouncement = storageReliefAnnouncement(

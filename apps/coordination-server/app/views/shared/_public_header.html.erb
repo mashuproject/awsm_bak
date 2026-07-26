@@ -1,0 +1,36 @@
+<div class="deployment-strip">
+  Public preview served by <strong><%= @server_origin %></strong>.
+  <% if @registration_enabled %>
+    This server currently permits Account creation.
+  <% else %>
+    Account creation is currently closed on this server.
+  <% end %>
+</div>
+<header class="site-header" data-controller="navigation">
+  <div class="site-container site-header__inner">
+    <%= link_to root_path, class: "brand", aria: { label: "AWSM home" } do %>
+      <%= keeper_image %><span>AWSM</span>
+    <% end %>
+    <nav class="site-nav" aria-label="Main navigation">
+      <button class="awsm-button awsm-button--secondary nav-toggle"
+              type="button"
+              aria-expanded="false"
+              aria-controls="site-navigation"
+              data-navigation-target="toggle"
+              data-action="navigation#toggle">
+        Menu
+      </button>
+      <div id="site-navigation" class="site-nav__links" data-navigation-target="menu">
+        <%= link_to "How it works", "#{root_path}#how-it-works" %>
+        <%= link_to "Privacy", privacy_path %>
+        <%= link_to "Open source", "#{root_path}#open-source" %>
+        <% if @current_account %>
+          <%= link_to "Account", account_path, aria: { label: "Account for #{@current_account.email}" } %>
+        <% else %>
+          <%= link_to "Sign in", new_session_path %>
+        <% end %>
+        <%= link_to "Install AWSM", "#{root_path}#install-awsm", class: "awsm-button" %>
+      </div>
+    </nav>
+  </div>
+</header>

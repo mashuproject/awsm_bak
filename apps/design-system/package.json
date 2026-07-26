@@ -1,0 +1,25 @@
+{
+  "name": "@awsm/design-system",
+  "version": "0.1.0",
+  "private": true,
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "exports": {
+    "./tokens.css": "./src/tokens.css",
+    "./base.css": "./src/base.css",
+    "./components.css": "./src/components.css",
+    "./motion.css": "./src/motion.css",
+    "./assets/*": "./assets/*"
+  },
+  "files": [
+    "assets",
+    "src"
+  ],
+  "scripts": {
+    "generate": "node scripts/generate.mjs",
+    "check": "node scripts/generate.mjs --check"
+  },
+  "devDependencies": {
+    "yaml": "2.9.0"
+  }
+}

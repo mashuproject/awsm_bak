@@ -1,0 +1,90 @@
+/* Generated from DESIGN.md. Do not edit directly. */
+:root {
+  --awsm-primary: #FF6B57;
+  --awsm-ink: #18181B;
+  --awsm-cream: #FFF7E6;
+  --awsm-paper: #FFFFFF;
+  --awsm-coral: #FF6B57;
+  --awsm-yellow: #FFD84D;
+  --awsm-cobalt: #4E6BFF;
+  --awsm-cobalt-panel: #91A2FF;
+  --awsm-lavender: #C8B8FF;
+  --awsm-green: #2E9B72;
+  --awsm-green-panel: #98D8BE;
+  --awsm-text-muted: #56535B;
+  --awsm-link: #263CBE;
+  --awsm-border-subtle: #B9B2A7;
+  --awsm-surface-subtle: #F4EBD8;
+  --awsm-info-pale: #E8ECFF;
+  --awsm-success-pale: #E0F4EB;
+  --awsm-warning-pale: #FFF0B8;
+  --awsm-danger: #A92E22;
+  --awsm-danger-pale: #FFE5E0;
+  --awsm-disabled: #D7D0C3;
+  --awsm-selected: #E7E0FF;
+  --awsm-focus: #18181B;
+  --awsm-accent-foreground: #000000;
+  --awsm-space-1: 4px;
+  --awsm-space-2: 8px;
+  --awsm-space-3: 12px;
+  --awsm-space-4: 16px;
+  --awsm-space-6: 24px;
+  --awsm-space-8: 32px;
+  --awsm-space-12: 48px;
+  --awsm-space-16: 64px;
+  --awsm-space-24: 96px;
+  --awsm-radius-compact: 8px;
+  --awsm-radius-control: 12px;
+  --awsm-radius-expressive: 20px;
+  --awsm-radius-full: 999px;
+  --awsm-border: 2px solid var(--awsm-ink);
+  --awsm-shadow-hard: 4px 4px 0 var(--awsm-ink);
+  --awsm-duration-press: 80ms;
+  --awsm-duration-component: 180ms;
+  --awsm-duration-reveal: 420ms;
+  --awsm-duration-hero: 900ms;
+  --awsm-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --awsm-ease-expressive: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.awsm-type-display {
+  font-family: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
+  font-size: 4rem;
+  font-weight: 750;
+  line-height: 0.95;
+  letter-spacing: -0.04em;
+}
+.awsm-type-product-heading {
+  font-family: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
+  font-size: 2.5rem;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.025em;
+}
+.awsm-type-section-heading {
+  font-family: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
+  font-size: 1.75rem;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.015em;
+}
+.awsm-type-body {
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 1rem;
+  font-weight: 400;
+  line-height: 1.55;
+  letter-spacing: 0em;
+}
+.awsm-type-label {
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 0.875rem;
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: 0.02em;
+}
+.awsm-type-mono {
+  font-family: ui-monospace, SFMono-Regular, Consolas, 'Liberation Mono', monospace;
+  font-size: 0.9375rem;
+  font-weight: 500;
+  line-height: 1.5;
+  letter-spacing: 0em;
+}

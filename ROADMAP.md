@@ -264,3 +264,40 @@ The work must preserve opaque encrypted storage and bounded transfers. Before pr
 quota accounting, rate and signup controls, final-copy deletion policy, metadata and traffic
 analysis, provider-independent shared storage requirements, recovery objectives, and production
 evidence for failure, corruption, omission, and restore scenarios.
+
+---
+
+## Hosted Plans, Billing, and Preview Waitlist
+
+**Status:** Discovery
+
+Define hosted service plans, quota presentation, billing provider boundaries, subscription
+lifecycle, abuse controls, and whether a waitlist is useful before collecting any visitor data.
+Resolve legal copy, consent, retention, support expectations, self-hosted differentiation, and
+failure behavior without weakening local-only use or granting billing systems access to Vault
+content. Until approved and implemented, the public website must not display pricing, plan teasers,
+or collect waitlist email.
+
+---
+
+## Authentic Product Screenshot Marketing
+
+**Status:** Candidate
+
+Replace public abstract product diagrams with, or supplement them using, deterministic screenshots
+only after the redesigned extension UI and fixture states are stable. Capture real rendered
+fixture-backed states at supported primary and narrow viewports, define a reproducible refresh
+workflow, exclude user data and secrets, and prevent screenshots from promising unavailable
+features. Website screenshot updates must remain coupled to material product-surface changes.
+
+---
+
+## Public Repository Repointing
+
+**Status:** Candidate
+
+After hackathon judging is complete and the active fork is fast-forwarded back into the canonical
+repository, repoint public website, installation, Release, documentation, license, and source links
+from `mashuproject/awsm_bak` to `parasquid/awsm`. Verify every destination and downloadable artifact
+before changing the links; do not introduce redirects or dual-link compatibility into the product
+surface.

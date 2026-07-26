@@ -2511,7 +2511,7 @@ test("captures a page snapshot and full-page screenshot, then derives MHTML offl
       }),
     ).toBeVisible();
     const capturePreview = completedPopup.getByRole("link", {
-      name: "Open archived capture: AWSM tall fixture",
+      name: "Open in library: AWSM tall fixture",
     });
     await expect(capturePreview).toHaveAttribute("href", /library\.html\?vaultId=[^&]+&bundleId=/u);
     const captureHref = await capturePreview.getAttribute("href");
@@ -2958,7 +2958,10 @@ test("captures a page snapshot and full-page screenshot, then derives MHTML offl
     await expect(library.getByRole("navigation", { name: "Breadcrumb" })).toContainText(
       "AWSM tall fixture",
     );
-    await library.getByRole("button", { name: "Library", exact: true }).click();
+    await library
+      .getByRole("complementary", { name: "Library sections" })
+      .getByRole("button", { name: "Library", exact: true })
+      .click();
     await expect(library.locator(".deleted-section")).not.toHaveAttribute("open", "");
     library.once("dialog", async (dialog) => dialog.dismiss());
     await library.getByRole("button", { name: "Delete AWSM tall fixture collection" }).click();
@@ -4631,7 +4634,7 @@ test("creates, captures, switches, locks, renames, and deep-links across isolate
 
     await activateFixture();
     await popup.getByRole("button", { name: "Archive this page" }).click();
-    await expect(popup.getByRole("link", { name: /Open archived capture/u })).toBeVisible({
+    await expect(popup.getByRole("link", { name: /Open in library:/u })).toBeVisible({
       timeout: 30_000,
     });
 
@@ -4654,7 +4657,7 @@ test("creates, captures, switches, locks, renames, and deep-links across isolate
 
     await activateFixture();
     await popup.getByRole("button", { name: "Archive this page" }).click();
-    await expect(popup.getByRole("link", { name: /Open archived capture/u })).toBeVisible({
+    await expect(popup.getByRole("link", { name: /Open in library:/u })).toBeVisible({
       timeout: 30_000,
     });
     await expect(liveLibraryB.getByText("AWSM tall fixture", { exact: true })).toBeVisible();

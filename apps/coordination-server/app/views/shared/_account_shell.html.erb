@@ -1,0 +1,15 @@
+<div class="account-page">
+  <main class="account-main">
+    <section class="account-card">
+      <%= yield %>
+    </section>
+  </main>
+  <aside class="account-story">
+    <%= keeper_image variant: local_assigns.fetch(:keeper, "keeper-protected") %>
+    <div class="account-story__copy">
+      <%= link_to "AWSM", root_path, class: "brand" %>
+      <h2><%= local_assigns.fetch(:story_heading, "Your Account identifies you. Your Vault stays yours.") %></h2>
+      <p><%= local_assigns.fetch(:story_copy, "The Coordination Server can authenticate this Account, but it cannot decrypt your Vault.") %></p>
+    </div>
+  </aside>
+</div>

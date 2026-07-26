@@ -41,7 +41,10 @@ async function startFixture() {
             accountPassword: true,
             accountVaultLimit: 1,
             completeReplicaSynchronization: true,
+            deviceEnrollment: "RecoveryPhrase",
+            deviceRevocation: true,
           },
+          registration: { enabled: false },
         }),
       );
       return;
@@ -131,9 +134,9 @@ async function answerPermissionPrompt(driver, accept) {
   }
 }
 
-async function requestServerFromSignup(driver, origin, accept) {
-  const signupUrl = await driver.executeScript('return browser.runtime.getURL("/signup.html");');
-  await driver.get(signupUrl);
+async function requestServerFromSetup(driver, origin, accept) {
+  const setupUrl = await driver.executeScript('return browser.runtime.getURL("/sync-setup.html");');
+  await driver.get(setupUrl);
   const details = await driver.findElement(By.css("#server-choice details"));
   await details.click();
   const originInput = await driver.findElement(By.css('input[name="server-origin"]'));
@@ -241,7 +244,7 @@ for (const lane of lanes) {
       await driver.setContext(firefox.Context.CONTENT);
       await driver.get(popupUrl);
 
-      await requestServerFromSignup(driver, fixture.origin, false);
+      await requestServerFromSetup(driver, fixture.origin, false);
       await driver.wait(
         async () => driver.findElement(By.css('#server-form button[type="submit"]')).isEnabled(),
         10_000,
@@ -254,11 +257,17 @@ for (const lane of lanes) {
       const submit = await driver.findElement(By.css('#server-form button[type="submit"]'));
       await submit.click();
       await answerPermissionPrompt(driver, true);
-      await driver.wait(async () => fixture.informationRequests() === 1, 10_000);
+      await driver.wait(
+        async () =>
+          (await send(driver, { type: "GetState" })).account.configuration.mode === "Configured",
+        10_000,
+      );
+      expect(fixture.informationRequests()).toBe(1);
       const configured = await send(driver, { type: "GetState" });
       expect(configured.account.configuration).toEqual({
         mode: "Configured",
         serverOrigin: fixture.origin,
+        registration: { enabled: false },
       });
       expect(configured.account.vaultSyncState).toBe("AuthenticationRequired");
 

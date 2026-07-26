@@ -16,6 +16,7 @@ COPY apps/coordination-server/Gemfile apps/coordination-server/Gemfile.lock ./
 RUN bundle install
 
 COPY apps/coordination-server/ /rails/
+COPY apps/design-system/ /design-system/
 COPY docs/ /docs/
 
 EXPOSE 3000

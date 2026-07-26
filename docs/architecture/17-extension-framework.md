@@ -49,6 +49,17 @@ Extensions contribute functionality.
 
 Extensions never bypass validation.
 
+The shipped browser extension UI follows the normative repository-root `DESIGN.md`. Generated
+tokens, locally hosted typography, motion rules, and reusable primitives come from the
+`@awsm/design-system` workspace package. Popup, Library, and synchronization surfaces may compose
+those primitives but do not own a parallel palette or type system.
+
+Library sort and Grid/Compact List choices are non-authoritative device-local UI preferences. They
+are strictly decoded from the `ui_preferences` store under the `library` key, are replaceable
+without affecting a Vault, and are excluded from synchronization, Export, and Import. Their absence
+selects Newest plus Grid; corrupt optional preference data may fall back for the current session
+without changing authoritative state.
+
 ---
 
 # Architecture

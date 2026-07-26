@@ -1,0 +1,63 @@
+@import url("tokens.css");
+
+@font-face {
+  font-family: "Bricolage Grotesque";
+  src: url("../assets/fonts/bricolage-grotesque-latin-wght-normal.woff2")
+    format("woff2");
+  font-display: swap;
+  font-style: normal;
+  font-weight: 200 800;
+}
+
+:where(*, *::before, *::after) {
+  box-sizing: border-box;
+}
+
+:where(html) {
+  color-scheme: light;
+  color: var(--awsm-ink);
+  background: var(--awsm-cream);
+  font:
+    1rem/1.55 ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  text-rendering: optimizeLegibility;
+}
+
+:where(body) {
+  margin: 0;
+}
+
+:where(button, input, select, textarea) {
+  font: inherit;
+}
+
+:where(img, svg) {
+  max-width: 100%;
+}
+
+:where(a) {
+  color: var(--awsm-link);
+  text-underline-offset: 0.18em;
+}
+
+:where(:focus-visible) {
+  outline: 3px solid var(--awsm-focus);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 6px var(--awsm-yellow);
+}
+
+.awsm-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

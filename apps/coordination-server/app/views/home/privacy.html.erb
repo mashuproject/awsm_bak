@@ -1,0 +1,18 @@
+<% content_for :title, "Privacy — AWSM" %>
+<% content_for :body_class, "public-site" %>
+<%= render "shared/public_header" %>
+<main class="site-container trust-page">
+  <header class="trust-page__header">
+    <p class="eyebrow">Factual product explanation · not a legal policy</p>
+    <h1>What stays local. What a server can see.</h1>
+    <p>This page describes AWSM's current technical behavior. An operator of a self-hosted server controls that deployment and its logs.</p>
+  </header>
+  <div class="prose-stack">
+    <section><h2>Local Capture and Vault content</h2><p>Captured page content, local projections, decryption keys, and the Recovery Phrase belong to the client environment. A local-only Vault does not require an Account or Coordination Server.</p></section>
+    <section><h2>Account and session records</h2><p>A Coordination Server stores the Account email, a password digest, browser and API session records, Device certificates, and encrypted key envelopes. The Account password is received by the server for authentication; it is not a Vault decryption password.</p></section>
+    <section><h2>Synchronization data</h2><p>The server stores opaque encrypted Vault records and Artifact bytes. It also sees necessary operational metadata such as identifiers, byte counts, request timing, traffic patterns, and IP or access logs. It cannot decrypt Vault content from the stored records.</p></section>
+    <section><h2>Public website</h2><p>The AWSM landing and Account pages include no analytics, tracking pixels, marketing cookies, third-party scripts, or remote fonts. Ordinary server access logs may still record visits.</p></section>
+    <section><h2>Export and deletion boundaries</h2><p>Complete Export creates a portable client-held copy. Removing local data affects that browser installation; it cannot erase copies already exported, downloaded to other Devices, or retained under a server's documented deletion process.</p></section>
+  </div>
+</main>
+<%= render "shared/public_footer" %>

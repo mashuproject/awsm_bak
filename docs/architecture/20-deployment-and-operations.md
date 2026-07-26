@@ -31,6 +31,19 @@ execution:
 corepack pnpm test:sync-proof
 ```
 
+# Public Product Surface
+
+Every hosted or self-hosted Coordination Server serves the same public-preview AWSM landing page at
+`/`, plus factual `/privacy` and `/security` pages and separate Rails Account routes. The page
+identifies its current origin and registration availability without claiming that an arbitrary
+self-hosted deployment is the official hosted service. Browser authentication adds an Account and
+synchronization banner but does not replace the landing or imply Vault access.
+
+The product surface loads no remote font, script, image, analytics, tracking pixel, or marketing
+cookie. Production images copy `/design-system` from the shared workspace before asset precompile;
+development mounts that package read-only. `/design-system` is a development/test-only visual
+fixture and has no production route.
+
 The isolated client creates and authenticates an ordinary test Account through the public API.
 `AWSM_SYNC_PROOF=true` selects proof-only origin and request-forgery behavior; both Rails processes
 use the production Redis Action Cable adapter contract and no alternate authenticator.

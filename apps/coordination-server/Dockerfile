@@ -46,14 +46,16 @@ RUN bundle install && \
 
 # Copy application code
 COPY apps/coordination-server/ /rails/
+COPY apps/design-system/ /design-system/
 COPY docs/ /docs/
 
 # Precompile bootsnap code for faster boot times.
 # -j 1 disable parallel compilation to avoid a QEMU bug: https://github.com/rails/bootsnap/issues/495
 RUN bundle exec bootsnap precompile -j 1 app/ lib/
 
-# Precompiling assets for production without requiring secret RAILS_MASTER_KEY
-RUN SECRET_KEY_BASE_DUMMY=1 ./bin/rails assets:precompile
+# Precompile without runtime credentials. The reserved origin exists only while initializers load;
+# deployments must still supply their real AWSM_PUBLIC_ORIGIN when the final image starts.
+RUN AWSM_PUBLIC_ORIGIN=https://assets.invalid SECRET_KEY_BASE_DUMMY=1 ./bin/rails assets:precompile
 
 
 
@@ -69,6 +71,7 @@ USER 1000:1000
 # Copy built artifacts: gems, application
 COPY --chown=rails:rails --from=build "${BUNDLE_PATH}" "${BUNDLE_PATH}"
 COPY --chown=rails:rails --from=build /rails /rails
+COPY --chown=rails:rails --from=build /design-system /design-system
 COPY --chown=rails:rails --from=build /docs /docs
 
 # Entrypoint prepares the database.

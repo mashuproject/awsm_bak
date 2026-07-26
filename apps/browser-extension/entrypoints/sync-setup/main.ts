@@ -30,6 +30,10 @@ const recoveryEntrySection = required<HTMLElement>("#recovery-entry-section");
 const recoveryEntryForm = required<HTMLFormElement>("#recovery-entry-form");
 const deviceSection = required<HTMLElement>("#device-section");
 const deviceList = required<HTMLElement>("#device-list");
+const dashboardServer = required<HTMLElement>("#dashboard-server");
+const dashboardAccount = required<HTMLElement>("#dashboard-account");
+const dashboardVault = required<HTMLElement>("#dashboard-vault");
+const dashboardSync = required<HTMLElement>("#dashboard-sync");
 const futureProtectionSection = required<HTMLElement>("#future-protection-section");
 const futureRecoveryPhrase = required<HTMLOutputElement>("#future-recovery-phrase");
 const downloadFutureRecovery = required<HTMLButtonElement>("#download-future-recovery");
@@ -51,6 +55,9 @@ const replacementProgress = required<HTMLProgressElement>("#replacement-progress
 const retryVaultReplacement = required<HTMLButtonElement>("#retry-vault-replacement");
 const cancelInterruptedReplacement = required<HTMLButtonElement>("#cancel-interrupted-replacement");
 const status = required<HTMLElement>("#status");
+const setupSteps = [
+  ...required<HTMLOListElement>("#setup-steps").querySelectorAll<HTMLElement>("[data-step]"),
+];
 let prepared:
   | {
       readonly setupId: string;
@@ -81,6 +88,15 @@ function showStatus(message: string, alert = false): void {
   status.setAttribute("role", alert ? "alert" : "status");
   status.dataset.tone = alert ? "error" : "neutral";
   status.textContent = message;
+}
+
+function showStep(activeStep: number): void {
+  for (const step of setupSteps) {
+    const index = Number(step.dataset.step);
+    step.toggleAttribute("data-complete", index < activeStep);
+    if (index === activeStep) step.setAttribute("aria-current", "step");
+    else step.removeAttribute("aria-current");
+  }
 }
 
 function choice(value: string, labelText: string, checked = false): HTMLLabelElement {
@@ -270,9 +286,11 @@ async function initialize(): Promise<void> {
       preparedReplacement?.replacementId === state.vaultReplacement.jobId
     ) {
       replacementRevealSection.hidden = false;
+      showStep(4);
       return;
     }
     replacementProgressSection.hidden = false;
+    showStep(4);
     const total =
       state.vaultReplacement.totalBytes > 0
         ? state.vaultReplacement.totalBytes
@@ -293,12 +311,22 @@ async function initialize(): Promise<void> {
     showStatus("The synchronized Vault is locked for replacement.");
     return;
   }
-  if (state.account.configuration.mode === "Unconfigured") return;
+  if (prepared !== undefined) {
+    recoveryRevealSection.hidden = false;
+    showStep(3);
+    return;
+  }
+  if (state.account.configuration.mode === "Unconfigured") {
+    showStep(0);
+    return;
+  }
   if (state.account.configuration.mode === "LocalOnly") {
+    showStep(0);
     showStatus("This installation is configured for local-only use.");
     return;
   }
   if (state.account.accountState !== "Authenticated") {
+    showStep(1);
     loginSection.hidden = false;
     const registration = state.account.configuration.registration;
     createAccount.hidden = !registration.enabled;
@@ -310,6 +338,7 @@ async function initialize(): Promise<void> {
     state.account.vaultSyncState === "RecoveryRequired" ||
     state.account.vaultSyncState === "DeviceRevoked"
   ) {
+    showStep(3);
     recoveryEntrySection.hidden = false;
     showStatus(
       state.account.vaultSyncState === "DeviceRevoked"
@@ -321,7 +350,17 @@ async function initialize(): Promise<void> {
   }
   if (state.account.vaultSyncState !== "SetupRequired") {
     if (state.workspace.activeVaultId !== undefined) {
+      showStep(4);
       deviceSection.hidden = false;
+      const activeVault = state.workspace.vaults.find((vault) => vault.active);
+      dashboardServer.textContent =
+        state.account.configuration.mode === "Configured"
+          ? state.account.configuration.serverOrigin
+          : "Not configured";
+      dashboardAccount.textContent = state.account.email ?? "Not signed in";
+      dashboardVault.textContent = activeVault?.name ?? "Unavailable";
+      dashboardSync.textContent =
+        state.account.vaultSyncState === "UpToDate" ? "Up to date" : state.account.vaultSyncState;
       await loadDevices(state.workspace.activeVaultId);
       if (generation !== initializeGeneration) return;
       showStatus(
@@ -335,6 +374,7 @@ async function initialize(): Promise<void> {
     return;
   }
   vaultSection.hidden = false;
+  showStep(2);
   choices.replaceChildren(required<HTMLLegendElement>("#vault-choice legend"));
   choices.append(choice("new", "Create a new Vault", true));
   for (const vault of state.workspace.vaults)
@@ -414,6 +454,7 @@ vaultForm.addEventListener("submit", (event) => {
       };
       vaultSection.hidden = true;
       recoveryRevealSection.hidden = false;
+      showStep(3);
       recoveryPhrase.textContent = result.recoveryPhrase;
       showStatus("Save the phrase and recovery file, then enter all 12 words again.");
     },

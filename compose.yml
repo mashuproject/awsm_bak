@@ -3,8 +3,8 @@ name: awsm-development
 services:
   coordination-server:
     build:
-      context: ./apps/coordination-server
-      dockerfile: Dockerfile.development
+      context: .
+      dockerfile: apps/coordination-server/Dockerfile.development
     command:
       - bash
       - -c
@@ -23,11 +23,12 @@ services:
       RAILS_ENV: development
     init: true
     ports:
-      - "127.0.0.1:3000:3000"
+      - "0.0.0.0:3000:3000"
     stdin_open: true
     tty: true
     volumes:
       - ./apps/coordination-server:/rails
+      - ./apps/design-system:/design-system:ro
       - ./docs:/docs:ro
       - coordination-server-tmp:/rails/tmp
 

@@ -63,6 +63,14 @@ Explicitly approved plans supersede stale Draft documentation; reconcile every a
   changed files, along with any broader formatting or lint checks required by the affected package.
   Format the affected files, resolve every introduced warning or error, and report the exact checks
   run. Do not treat unformatted or lint-failing work as complete.
+- Treat the public landing, trust, installation, and Account pages as evergreen product
+  documentation. Whenever a feature, browser capability, distribution status, trust boundary,
+  setup step, or public limitation changes, audit and update the corresponding website copy,
+  diagrams, links, and visible states in the same change.
+- Product marketing must claim only behavior proven by current code and tests. Keep local-only use,
+  optional synchronization, Account versus Recovery Phrase boundaries, best-effort Capture
+  representations, browser distribution status, and server-visible metadata aligned with the
+  canonical documentation.
 
 ## PRE-RELEASE FORMAT POLICY
 
@@ -108,6 +116,14 @@ Explicitly approved plans supersede stale Draft documentation; reconcile every a
 
 ## VISUAL CHANGE POLICY
 
+- WCAG 2.2 contrast checks are mandatory for every design change. Normal-sized text and control
+  labels must reach at least `4.5:1`; paragraphs, explanatory copy, repeated metadata, notices,
+  dialogs, sidebars, and other extended-reading surfaces must reach at least `7:1`. Do not use the
+  `3:1` large-text exception to introduce a text-bearing component below `4.5:1`.
+- Use the semantic text-bearing panel tokens from `DESIGN.md`; saturated graphic accents are not
+  automatically valid text backgrounds. Update the design contract first when a needed color pair
+  does not exist. Run `corepack pnpm design:check` and the rendered design E2E lane, and resolve
+  every contrast failure before reporting visual work complete.
 - Every user-visible change requires a rendered visual inspection before completion. Behavioral tests and DOM assertions alone are not proof that an interface is visible, usable, or visually correct.
 - Inspect every affected state needed to understand the interaction, including its resting state and relevant focus, editing, loading, disabled, error, and success states. Check both the primary viewport and any materially different supported narrow layout.
 - Compare affected states for alignment, padding, margins, spacing cadence, typography, wrapping, clipping, overflow, control prominence, and unintended layout movement. Replacement states such as inline editing should preserve the surrounding visual hierarchy and position unless a change is intentional.

@@ -1,0 +1,31 @@
+@import url("tokens.css");
+
+.awsm-reveal {
+  animation: awsm-reveal var(--awsm-duration-reveal) var(--awsm-ease-expressive)
+    both;
+}
+
+@keyframes awsm-reveal {
+  from {
+    opacity: 0;
+    translate: 0 16px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --awsm-duration-press: 0ms;
+    --awsm-duration-component: 0ms;
+    --awsm-duration-reveal: 0ms;
+    --awsm-duration-hero: 0ms;
+  }
+
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0ms !important;
+    animation-delay: 0ms !important;
+    transition-duration: 0ms !important;
+  }
+}

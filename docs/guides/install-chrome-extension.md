@@ -15,7 +15,7 @@ not plaintext Vault content.
 
 ## Download a Release
 
-1. Open the applicable [AWSM GitHub Release](https://github.com/parasquid/awsm/releases).
+1. Open the applicable [AWSM GitHub Release](https://github.com/mashuproject/awsm_bak/releases).
 2. In **Assets**, download the matching `.zip` and `.zip.sha256` files. For example, download both
    `awsm-chrome-v0.1.0.zip` and `awsm-chrome-v0.1.0.zip.sha256` for version 0.1.0.
 
@@ -83,8 +83,8 @@ Chrome-managed storage.
 ## First Launch
 
 Open AWSM from its toolbar icon. Choose a compatible self-hosted Coordination Server if you want
-encrypted synchronization, or continue without synchronization. AWSM does not currently advertise
-a hosted service.
+synchronization while keeping Vault content end-to-end encrypted, or continue without
+synchronization. AWSM does not currently advertise a hosted service.
 
 ## Upgrade Safely
 

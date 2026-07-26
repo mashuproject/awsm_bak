@@ -42,7 +42,14 @@ export const STORES = {
   vacuumJobs: "vacuum_jobs",
   exportJobs: "export_jobs",
   importJobs: "import_jobs",
+  uiPreferences: "ui_preferences",
 } as const;
+
+export interface StoredLibraryPreferencesV1 {
+  readonly version: 1;
+  readonly sort: "CapturedNewest" | "CapturedOldest" | "TitleAscending";
+  readonly view: "Grid" | "List";
+}
 
 export type AccountConfigurationV1 =
   | { readonly version: 1; readonly mode: "Unconfigured" }

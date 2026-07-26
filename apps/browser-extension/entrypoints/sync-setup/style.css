@@ -1,3 +1,6 @@
+@import "@awsm/design-system/components.css";
+@import "@awsm/design-system/motion.css";
+
 :root {
   color-scheme: light;
   font:
@@ -7,15 +10,15 @@
     BlinkMacSystemFont,
     "Segoe UI",
     sans-serif;
-  color: #171a1f;
-  background: #f6f7f9;
-  --surface: #fff;
-  --surface-subtle: #eef1f4;
-  --muted: #66707a;
-  --border: #d9dee5;
-  --primary: #2563eb;
-  --primary-hover: #1d4ed8;
-  --danger: #b42318;
+  color: var(--awsm-ink);
+  background: var(--awsm-cream);
+  --surface: var(--awsm-paper);
+  --surface-subtle: var(--awsm-surface-subtle);
+  --muted: var(--awsm-text-muted);
+  --border: var(--awsm-border-subtle);
+  --primary: var(--awsm-cobalt);
+  --primary-hover: var(--awsm-cobalt);
+  --danger: var(--awsm-danger);
 }
 
 * {
@@ -103,7 +106,7 @@ input[type="text"],
 input[type="url"],
 textarea {
   min-height: 44px;
-  border: 1px solid #aeb6c1;
+  border: 1px solid var(--awsm-border-subtle);
   border-radius: 8px;
   padding: 10px 12px;
   color: inherit;
@@ -138,6 +141,34 @@ textarea {
   gap: 12px;
 }
 
+.sync-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--awsm-space-3);
+  margin: 0 0 var(--awsm-space-6);
+}
+
+.sync-summary div {
+  border: var(--awsm-border);
+  border-radius: var(--awsm-radius-control);
+  padding: var(--awsm-space-3);
+  background: var(--awsm-cream);
+}
+
+.sync-summary dt {
+  color: var(--awsm-text-muted);
+  font-size: var(--awsm-font-size-label);
+  font-weight: var(--awsm-font-weight-bold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.sync-summary dd {
+  margin: var(--awsm-space-1) 0 0;
+  overflow-wrap: anywhere;
+  font-weight: var(--awsm-font-weight-bold);
+}
+
 .device-card {
   display: grid;
   gap: 10px;
@@ -156,7 +187,7 @@ button {
   border: 1px solid var(--primary);
   border-radius: 8px;
   padding: 10px 16px;
-  color: #fff;
+  color: var(--awsm-paper);
   background: var(--primary);
   font: inherit;
   font-weight: 700;
@@ -181,7 +212,7 @@ button:disabled {
 .device-card button:hover:not(:disabled),
 #cancel-future-protection:hover:not(:disabled),
 .danger-action:hover:not(:disabled) {
-  color: #fff;
+  color: var(--awsm-paper);
   background: var(--danger);
 }
 
@@ -237,12 +268,12 @@ fieldset input[type="radio"] {
 }
 
 #status[data-tone="success"] {
-  border-left-color: #15803d;
+  border-left-color: var(--awsm-green);
 }
 
 #status[data-tone="error"] {
   border-left-color: var(--danger);
-  background: #fff8f6;
+  background: var(--awsm-danger-pale);
 }
 
 input[type="email"] {
@@ -263,5 +294,127 @@ input[type="email"] {
     border-radius: 0;
     padding: 24px 18px;
     box-shadow: none;
+  }
+}
+
+body {
+  min-width: 280px;
+  background:
+    linear-gradient(135deg, var(--awsm-lavender) 0 24%, transparent 24%), var(--awsm-cream);
+}
+
+main {
+  width: min(52rem, calc(100% - 32px));
+  border: var(--awsm-border);
+  border-radius: var(--awsm-radius-expressive);
+  background: var(--awsm-paper);
+  box-shadow: var(--awsm-shadow-hard);
+}
+
+h1,
+h2 {
+  font-family: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: -0.035em;
+}
+
+.setup-steps {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--awsm-space-2);
+  margin: 0 0 var(--awsm-space-8);
+  padding: 0;
+  list-style: none;
+}
+
+.setup-steps li {
+  display: grid;
+  justify-items: center;
+  gap: var(--awsm-space-1);
+  color: var(--awsm-text-muted);
+  font-size: 0.75rem;
+  font-weight: 750;
+  text-align: center;
+}
+
+.setup-steps span {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border: var(--awsm-border);
+  border-radius: var(--awsm-radius-full);
+  background: var(--awsm-paper);
+}
+
+.setup-steps [aria-current="step"] {
+  color: var(--awsm-ink);
+}
+
+.setup-steps [aria-current="step"] span {
+  background: var(--awsm-yellow);
+  box-shadow: 3px 3px 0 var(--awsm-ink);
+}
+
+.setup-steps [data-complete] span {
+  color: var(--awsm-ink);
+  background: var(--awsm-green-panel);
+}
+
+button {
+  border: var(--awsm-border);
+  border-radius: var(--awsm-radius-control);
+  color: var(--awsm-ink);
+  background: var(--awsm-coral);
+  box-shadow: var(--awsm-shadow-hard);
+}
+
+button:hover:not(:disabled) {
+  color: var(--awsm-ink);
+  background: var(--awsm-yellow);
+}
+
+button:disabled {
+  color: var(--awsm-text-muted);
+  background: var(--awsm-disabled);
+  box-shadow: none;
+  opacity: 1;
+}
+
+details,
+fieldset,
+.device-card,
+#recovery-phrase,
+#future-recovery-phrase,
+#replacement-recovery-phrase {
+  border: var(--awsm-border);
+}
+
+.device-card {
+  background: var(--awsm-surface-subtle);
+}
+
+@media (max-width: 36rem) {
+  body {
+    background: var(--awsm-cream);
+  }
+
+  main {
+    width: 100%;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .setup-steps li {
+    font-size: 0.625rem;
+  }
+
+  .setup-steps span {
+    width: 30px;
+    height: 30px;
+  }
+
+  .sync-summary {
+    grid-template-columns: 1fr;
   }
 }

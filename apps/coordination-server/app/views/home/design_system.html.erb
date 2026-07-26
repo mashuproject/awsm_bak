@@ -1,0 +1,53 @@
+<% content_for :title, "AWSM Design System" %>
+<main class="site-container gallery">
+  <p class="eyebrow">Development and test fixture</p>
+  <h1>AWSM Bright Utility Kit</h1>
+  <section class="gallery-section">
+    <h2>Palette</h2>
+    <div class="swatch-grid">
+      <% %w[ink cream paper coral yellow cobalt cobalt-panel lavender green green-panel info-pale success-pale warning-pale danger-pale].each do |token| %>
+        <div class="swatch" style="background: var(--awsm-<%= token %>)"><strong><%= token %></strong></div>
+      <% end %>
+    </div>
+  </section>
+  <section class="gallery-section">
+    <h2>Typography</h2>
+    <p class="awsm-type-display">Keep what matters.</p>
+    <p class="awsm-type-product-heading">A private archive you control.</p>
+    <p class="awsm-type-body">Body copy stays calm, readable, and useful even when a localized-style string becomes unexpectedly long.</p>
+    <p class="awsm-type-mono">vault_01JZQ5F7Y8C6D3K2M1N0</p>
+  </section>
+  <section class="gallery-section">
+    <h2>Controls and states</h2>
+    <div class="button-row">
+      <button class="awsm-button">Primary</button>
+      <button class="awsm-button awsm-button--secondary">Secondary</button>
+      <button class="awsm-button awsm-button--quiet">Quiet</button>
+      <button class="awsm-button awsm-button--danger">Danger</button>
+      <button class="awsm-button" disabled>Disabled</button>
+    </div>
+  </section>
+  <section class="gallery-section card-grid">
+    <div class="awsm-notice">Informational notice with a direct explanation.</div>
+    <div class="awsm-notice awsm-notice--success">Success: the Capture is preserved.</div>
+    <div class="awsm-notice awsm-notice--warning">Warning: synchronization is offline.</div>
+    <div class="awsm-notice awsm-notice--danger">Error: the requested operation was not committed.</div>
+  </section>
+  <section class="gallery-section">
+    <h2>Fields</h2>
+    <div class="awsm-card" style="max-width: 520px">
+      <label class="awsm-field">Vault name <input class="awsm-input" value="Research archive"></label>
+      <label class="awsm-field">Invalid value <input class="awsm-input" aria-invalid="true" aria-describedby="field-error"></label>
+      <p id="field-error" class="awsm-notice awsm-notice--danger">Enter a value that can be saved.</p>
+      <label class="awsm-field">Disabled field <input class="awsm-input" value="Unavailable" disabled></label>
+    </div>
+  </section>
+  <section class="gallery-section">
+    <h2>Keeper states</h2>
+    <div class="card-grid">
+      <div class="awsm-card"><%= keeper_image %><strong>Preserving</strong></div>
+      <div class="awsm-card"><%= keeper_image variant: "keeper-open" %><strong>Ready to catch a page</strong></div>
+      <div class="awsm-card"><%= keeper_image variant: "keeper-protected" %><strong>Vault protected</strong></div>
+    </div>
+  </section>
+</main>

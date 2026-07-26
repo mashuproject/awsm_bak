@@ -61,5 +61,8 @@ Rails.application.routes.draw do
   get "account", to: "accounts#show"
   get "account/password", to: "account_passwords#edit", as: :edit_account_password
   patch "account/password", to: "account_passwords#update"
+  get "privacy", to: "home#privacy"
+  get "security", to: "home#security"
+  get "design-system", to: "home#design_system" unless Rails.env.production?
   root "home#show"
 end

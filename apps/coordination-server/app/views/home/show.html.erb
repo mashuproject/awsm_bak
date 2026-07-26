@@ -1,0 +1,220 @@
+<% content_for :title, "AWSM — Keep what matters" %>
+<% content_for :body_class, "public-site" %>
+
+<%= render "shared/public_header" %>
+
+<% if @current_account %>
+  <aside class="signed-in-banner">
+    <div class="site-container signed-in-banner__inner">
+      <p>
+        Signed in as <strong><%= @current_account.email %></strong> on
+        <strong><%= @server_origin %></strong>. Account login identifies this browser to the
+        Coordination Server; it does not unlock a Vault.
+      </p>
+      <div class="button-row">
+        <%= link_to "Account", account_path, class: "awsm-button awsm-button--secondary" %>
+        <%= link_to "Set up sync", "#optional-sync", class: "awsm-button awsm-button--quiet" %>
+        <%= button_to "Sign out", session_path, method: :delete, class: "awsm-button awsm-button--quiet" %>
+      </div>
+    </div>
+  </aside>
+<% end %>
+
+<main>
+  <section class="hero">
+    <div class="site-container hero__grid">
+      <div>
+        <p class="eyebrow"><span class="awsm-badge">Public preview</span></p>
+        <h1>Keep what matters. Even when the web moves on.</h1>
+        <p class="hero__lede">
+          AWSM saves the page—not just the link—into a private archive on your device. Keep it
+          available offline, export it, and optionally synchronize encrypted copies across
+          browsers.
+        </p>
+        <div class="button-row">
+          <%= link_to "Install AWSM", "#install-awsm", class: "awsm-button" %>
+          <%= link_to "How it works", "#how-it-works", class: "awsm-button awsm-button--secondary" %>
+        </div>
+      </div>
+      <div class="hero-art" aria-hidden="true">
+        <span class="hero-art__page hero-art__page--one"></span>
+        <span class="hero-art__page hero-art__page--two"></span>
+        <%= keeper_image variant: "keeper-open", class: "hero-art__keeper" %>
+      </div>
+    </div>
+  </section>
+
+  <section class="story-section story-section--paper" id="how-it-works">
+    <div class="site-container">
+      <p class="eyebrow">A bookmark remembers where</p>
+      <h2 class="section-heading">AWSM remembers what was there.</h2>
+      <div class="comparison">
+        <article class="awsm-card comparison__card comparison__card--faded">
+          <p class="eyebrow">Ordinary bookmark</p>
+          <h3>A pointer back to the web</h3>
+          <p>If the page changes, disappears, or becomes unavailable, the address may be all that remains.</p>
+        </article>
+        <article class="awsm-card awsm-card--expressive comparison__card">
+          <p class="eyebrow">AWSM Capture</p>
+          <h3>A private copy in your Vault</h3>
+          <p>
+            AWSM preserves an authoritative browser-independent page snapshot and, when capture
+            succeeds, useful representations such as a full-page screenshot and extracted content.
+          </p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section class="story-section">
+    <div class="site-container">
+      <p class="eyebrow">Proof, not promises</p>
+      <h2 class="section-heading">A working archive on your device.</h2>
+      <p class="section-lede">
+        Capture useful HTTP(S) pages, return to them offline, organize them into Collections, and
+        move a complete Vault with verified Export and Import.
+      </p>
+      <div class="card-grid">
+        <article class="awsm-card story-card"><h3>Save the page</h3><p>The authoritative page snapshot stays with the Capture, not with a fragile address.</p></article>
+        <article class="awsm-card story-card"><h3>Use it offline</h3><p>Your local encrypted Vault remains useful without a network connection or Account.</p></article>
+        <article class="awsm-card story-card"><h3>Keep your way out</h3><p>Complete Export and Import let you preserve the Vault beyond one browser installation.</p></article>
+      </div>
+    </div>
+  </section>
+
+  <section class="story-section story-section--cobalt" id="optional-sync">
+    <div class="site-container">
+      <p class="eyebrow">Synchronization is optional. Encryption is not.</p>
+      <h2 class="section-heading">Across browsers without handing over the keys.</h2>
+      <p class="section-lede">
+        If you enable synchronization, Vault content stays end-to-end encrypted. The Account
+        identifies a client for synchronization, quotas, and future billing. The Recovery Phrase
+        remains client-held and enrolls another certified browser into the same encrypted Vault.
+        The Coordination Server cannot decrypt Vault content.
+      </p>
+      <div class="flow-diagram" aria-label="AWSM synchronization trust flow">
+        <div class="flow-node"><strong>Web page</strong><span>captured locally</span></div>
+        <div class="flow-node"><%= keeper_image %><strong>Local Vault</strong><span>encrypted and usable offline</span></div>
+        <div class="flow-node"><span class="flow-node__opaque"></span><strong>Opaque package</strong><span>no readable title or page content</span></div>
+        <div class="flow-node flow-node--server"><span class="flow-node__opaque"></span><strong>Coordination Server</strong><span>cannot decrypt Vault content</span></div>
+        <div class="flow-node"><%= keeper_image variant: "keeper-protected" %><strong>Another browser</strong><span>Account + Recovery Phrase</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="story-section story-section--green" id="open-source">
+    <div class="site-container split-section">
+      <div>
+        <p class="eyebrow">Ownership is part of the product</p>
+        <h2 class="section-heading">Your device is the primary application environment.</h2>
+      </div>
+      <div>
+        <p>
+          Local use requires no Account. Synchronization is optional. The server stores opaque
+          encrypted records and necessary operational metadata, while Complete Export avoids
+          provider lock-in.
+        </p>
+        <p>
+          AWSM source is available under the AGPL, and the Coordination Server can be self-hosted.
+          A self-hosted operator still controls its deployment and can observe its own traffic and
+          access logs.
+        </p>
+        <div class="button-row">
+          <%= link_to "View source", public_product_links[:source], class: "awsm-button awsm-button--secondary" %>
+          <%= link_to "Self-hosting guide", public_product_links[:self_hosting], class: "awsm-button awsm-button--quiet" %>
+          <%= link_to "Security model", public_product_links[:security_model], class: "awsm-button awsm-button--quiet" %>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="story-section" id="install-awsm" data-controller="install-selector">
+    <div class="site-container">
+      <p class="eyebrow">Start local</p>
+      <h2 class="section-heading">Install the public preview.</h2>
+      <p class="section-lede">
+        Create a local Vault first. You can add encrypted synchronization later if you want the
+        same Vault on another browser.
+      </p>
+      <div class="install-tabs" data-install-selector-target="root">
+        <div class="install-tabs__nav" role="tablist" aria-label="Browser installation">
+          <button type="button" role="tab" aria-selected="true" aria-controls="chrome-install"
+                  data-install-selector-target="tab" data-panel="chrome-install"
+                  data-action="install-selector#select">Chrome</button>
+          <button type="button" role="tab" aria-selected="false" aria-controls="firefox-install"
+                  data-install-selector-target="tab" data-panel="firefox-install"
+                  data-action="install-selector#select">Firefox</button>
+        </div>
+        <div class="install-static">
+          <article id="chrome-install" class="install-panel" role="tabpanel" data-install-selector-target="panel">
+            <p class="awsm-badge">Downloadable preview</p>
+            <h3>Chrome and Chromium browsers</h3>
+            <ol>
+              <li>Download the latest Release and verify its published checksum.</li>
+              <li>Load the unpacked extension using the browser's extension developer mode.</li>
+              <li>Choose <strong>Continue without sync</strong> and create a local Vault.</li>
+              <li>Open an HTTP(S) page and archive it from the AWSM popup.</li>
+            </ol>
+            <div class="button-row">
+              <%= link_to "Latest Release", public_product_links[:releases], class: "awsm-button" %>
+              <%= link_to "Chrome installation guide", public_product_links[:chrome_guide], class: "awsm-button awsm-button--secondary" %>
+            </div>
+          </article>
+          <article id="firefox-install" class="install-panel" role="tabpanel" data-install-selector-target="panel">
+            <p class="awsm-badge">Tested · development-only</p>
+            <h3>Firefox</h3>
+            <p>
+              Firefox support is tested but currently unsigned. Temporary development installation
+              ends when Firefox restarts; there is no ordinary AMO installation yet.
+            </p>
+            <%= link_to "Firefox development installation guide", public_product_links[:firefox_guide], class: "awsm-button awsm-button--secondary" %>
+          </article>
+        </div>
+      </div>
+
+      <div class="story-section">
+        <p class="eyebrow">Optional next step</p>
+        <h3 class="section-heading">Synchronize when you need another browser.</h3>
+        <div class="card-grid">
+          <article class="awsm-card step-card"><h3>1. Choose a server</h3><p>Select the hosted Coordination Server or one you self-host.</p></article>
+          <article class="awsm-card step-card"><h3>2. Identify the client</h3><p>
+            <% if @registration_enabled %>
+              <%= link_to "Create an Account on this server", sign_up_path %>, then sign in through the extension.
+            <% else %>
+              Account creation is unavailable on this server. An operator must enable it before a new Account can be created.
+            <% end %>
+          </p></article>
+          <article class="awsm-card step-card"><h3>3. Protect the Vault</h3><p>Save and confirm the Recovery Phrase, then use it with the Account to enroll another browser.</p></article>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="story-section story-section--paper">
+    <div class="site-container">
+      <p class="eyebrow">Questions, answered plainly</p>
+      <h2 class="section-heading">Know what AWSM does—and what it doesn't.</h2>
+      <div class="faq-list">
+        <details><summary>Does AWSM save the page or only the link?</summary><p>AWSM saves an authoritative browser-independent page snapshot, not only its address. Other useful representations are best-effort.</p></details>
+        <details><summary>Does AWSM require an Account?</summary><p>No. Capture, Library, local encrypted Vaults, and Export/Import work locally. An Account is needed only for optional synchronization.</p></details>
+        <details><summary>Can the Coordination Server read a Vault?</summary><p>No. It stores encrypted opaque records and operational metadata, but does not receive the Vault decryption keys.</p></details>
+        <details><summary>Account password or Recovery Phrase?</summary><p>The Account password proves identity to one Coordination Server. The Recovery Phrase is client-held Vault recovery material. They are separate secrets.</p></details>
+        <details><summary>Does AWSM work offline?</summary><p>The local Library and locally available Capture content remain usable offline. Synchronization waits for connectivity.</p></details>
+        <details><summary>Which browsers are supported today?</summary><p>Chrome has a downloadable unpacked preview. Firefox is tested but unsigned and development-only, with temporary installation ending on restart.</p></details>
+        <details><summary>Can AWSM be self-hosted?</summary><p>Yes. A self-hosted Coordination Server still sees operational metadata and controls its own access logs.</p></details>
+        <details><summary>Can data be exported?</summary><p>Yes. Complete Export and verified Import provide a portable preservation path outside one browser installation.</p></details>
+        <details><summary>Is Search or AI available today?</summary><p>No. AWSM does not present Search or AI as a shipped feature in this public preview.</p></details>
+      </div>
+    </div>
+  </section>
+
+  <section class="story-section">
+    <div class="site-container final-cta">
+      <h2 class="section-heading">Keep the useful web in reach.</h2>
+      <p class="section-lede">Start with a local Vault. Add encrypted synchronization only when it serves you.</p>
+      <%= link_to "Install AWSM", "#install-awsm", class: "awsm-button" %>
+    </div>
+  </section>
+</main>
+
+<%= render "shared/public_footer" %>

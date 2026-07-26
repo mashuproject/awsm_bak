@@ -25,6 +25,12 @@ application runs in the standard `development` environment, so changes to applic
 templates, and other watched files are reloaded without rebuilding the image or restarting the
 server.
 
+The Rails root renders the AWSM public-preview landing page on every deployment. `/privacy` and
+`/security` provide factual trust-boundary explanations, while `/design-system` is a rendered
+development/test fixture and is not routed in production. The landing, trust, installation, and
+Account pages use the repository-root `DESIGN.md` contract and the bind-mounted
+`apps/design-system` package; they load the display font and visual assets locally.
+
 The server exposes Rails signup, Account management, strict `/api` Account and VaultDevice sessions,
 and opaque synchronization endpoints. Account signup and password change happen on the Rails web
 surface. Rails receives passwords over TLS and stores only password digests. The extension only
@@ -81,15 +87,15 @@ code. Rails development reloading makes those changes available directly.
 Rebuild the `coordination-server` image when a change affects the image rather than the mounted
 source tree:
 
-| Change                                             | Action                                                                         |
-| -------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `Gemfile` or `Gemfile.lock`                        | Rebuild so Bundler installs the changed gems                                   |
-| `Dockerfile.development`                           | Rebuild so its changed instructions run                                        |
-| `.ruby-version` or the Dockerfile's `RUBY_VERSION` | Update both to match, then rebuild                                             |
-| Native or operating-system libraries               | Add or change the package in `Dockerfile.development`, then rebuild            |
-| Application source, tests, or Rails configuration  | No rebuild; restart Rails only if the specific configuration is not reloadable |
-| Database migration                                 | No rebuild; run `bin/rails db:migrate` in the existing container               |
-| `compose.yml` service configuration                | Run `docker compose up`; Compose recreates affected containers as needed       |
+| Change                                               | Action                                                                         |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `Gemfile` or `Gemfile.lock`                          | Rebuild so Bundler installs the changed gems                                   |
+| `Dockerfile.development`                             | Rebuild so its changed instructions run                                        |
+| `.ruby-version` or the Dockerfile's `RUBY_VERSION`   | Update both to match, then rebuild                                             |
+| Native or operating-system libraries                 | Add or change the package in `Dockerfile.development`, then rebuild            |
+| Application or shared design-system source and tests | No rebuild; restart Rails only if the specific configuration is not reloadable |
+| Database migration                                   | No rebuild; run `bin/rails db:migrate` in the existing container               |
+| `compose.yml` service configuration                  | Run `docker compose up`; Compose recreates affected containers as needed       |
 
 Use this normal rebuild command:
 

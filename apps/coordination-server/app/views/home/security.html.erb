@@ -1,0 +1,19 @@
+<% content_for :title, "Security — AWSM" %>
+<% content_for :body_class, "public-site" %>
+<%= render "shared/public_header" %>
+<main class="site-container trust-page">
+  <header class="trust-page__header">
+    <p class="eyebrow">Trust boundaries in plain language</p>
+    <h1>The server coordinates. The client holds the keys.</h1>
+    <p>AWSM separates Account authentication from Vault decryption so optional synchronization does not turn the server into a trusted Vault client.</p>
+  </header>
+  <div class="prose-stack">
+    <section><h2>Account password</h2><p>The server receives the Account password over the protected connection and verifies it against a password digest. It identifies the Account for sessions, quotas, and future billing. It cannot decrypt a Vault.</p></section>
+    <section><h2>Recovery Phrase</h2><p>The 12-word Recovery Phrase remains client-held. A certified client uses it to recover Vault key material and enroll another Device. AWSM cannot recover it for you.</p></section>
+    <section><h2>Encrypted synchronization</h2><p>Clients upload opaque encrypted Objects and Artifacts. The server enforces protocol and operational rules without interpreting captured titles, page text, screenshots, or Vault keys.</p></section>
+    <section><h2>Device removal and future protection</h2><p>Removing a Device stops future server access but cannot erase plaintext or keys already present on it. Protect future content rotates client-held recovery and encryption material; destructive ceremonies state their limits before confirmation.</p></section>
+    <section><h2>Backups and portability</h2><p>Synchronization is not a substitute for a Complete Export. Keep a verified Export and the Recovery Phrase in appropriate, separate safe places.</p></section>
+    <section><h2>Technical detail</h2><p><%= link_to "Read the current security model", public_product_links[:security_model] %> for the formal trust assumptions and known boundaries.</p></section>
+  </div>
+</main>
+<%= render "shared/public_footer" %>

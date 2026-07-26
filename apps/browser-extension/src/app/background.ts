@@ -1145,9 +1145,11 @@ async function resetLocalDevice(): Promise<void> {
     await contexts.shutdown();
     await Promise.all([
       accountRepository.close(),
+      deviceRepository.close(),
       serverSwitchRepository.close(),
       storageReliefRepository.close(),
       importRepository.close(),
+      vaultReplacementRepository.close(),
       workspaceRepository.close(),
     ]);
     await vaultRepository.deleteDatabase();

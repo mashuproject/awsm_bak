@@ -9,17 +9,18 @@ services: an archive should not become inaccessible because a provider shuts dow
 direction, or restricts access, and sensitive captures should not require giving a service provider
 plaintext content.
 
-The implementation is pre-release software. It is not currently available from the Chrome Web
-Store, and the hosted service is not advertised as a public service.
+The implementation is a public preview. It is not currently available from the Chrome Web Store.
+Every Coordination Server serves the same product landing and Account pages; availability of new
+Account registration remains deployment-specific.
 
 ## Download and try AWSM
 
 ### Download AWSM for Chrome
 
-> **[Download the ready-to-install Chrome ZIP (v0.1.5)](https://github.com/parasquid/awsm/releases/download/v0.1.5/awsm-chrome-v0.1.5.zip)**
+> **[Download the ready-to-install Chrome ZIP (v0.1.5)](https://github.com/mashuproject/awsm_bak/releases/download/v0.1.5/awsm-chrome-v0.1.5.zip)**
 >
-> [Download its SHA-256 checksum](https://github.com/parasquid/awsm/releases/download/v0.1.5/awsm-chrome-v0.1.5.zip.sha256) ·
-> [View the latest Release](https://github.com/parasquid/awsm/releases/latest) ·
+> [Download its SHA-256 checksum](https://github.com/mashuproject/awsm_bak/releases/download/v0.1.5/awsm-chrome-v0.1.5.zip.sha256) ·
+> [View the latest Release](https://github.com/mashuproject/awsm_bak/releases/latest) ·
 > [Installation guide](docs/guides/install-chrome-extension.md)
 
 The latest Release contains a ready-to-install Chrome ZIP and its SHA-256 checksum. No source build,
@@ -53,6 +54,8 @@ The browser extension currently supports:
 - offline Library browsing, screenshot viewing, text and structure inspection, and MHTML download;
 - multiple local Vaults, Vault locking and renaming, Collections, deletion, restoration, and Vault
   Vacuum;
+- a responsive Library with Archive and Deleted navigation, Newest/Oldest/Title sorting, and
+  device-local Grid or Compact List presentation preferences;
 - passphrase-protected Complete Vault Export and Import; and
 - optional Account authentication and synchronization of an encrypted Vault Replica through a
   compatible self-hosted Coordination Server in Chrome and Firefox.
@@ -74,6 +77,12 @@ not implemented user-facing features. AWSM already preserves normalized text and
 as architectural groundwork for future client-side search and derived Artifacts; it does not
 present those future capabilities as current behavior.
 
+The Coordination Server root is the public AWSM product and installation guide on hosted and
+self-hosted deployments. Its privacy, security, setup, and Account pages are evergreen product
+documentation. They contain no analytics, third-party scripts, remote fonts, pricing, or waitlist
+collection. Account signup remains a separate optional-synchronization page and is shown only when
+the current server permits registration.
+
 ## Quick start: local-only Chrome extension
 
 ### Requirements
@@ -88,8 +97,8 @@ supported storage or capture environment.
 Clone the repository, install the pinned dependencies, and build the extension:
 
 ```bash
-git clone https://github.com/parasquid/awsm.git
-cd awsm
+git clone https://github.com/mashuproject/awsm_bak.git
+cd awsm_bak
 corepack pnpm install --frozen-lockfile
 corepack pnpm build
 ```
@@ -105,7 +114,7 @@ Load the build in Chrome:
 7. Name and create a local Vault.
 
 AWSM is now ready to capture without an Account or Coordination Server. For installation from a
-[GitHub Release](https://github.com/parasquid/awsm/releases/latest), download the latest Chrome ZIP
+[GitHub Release](https://github.com/mashuproject/awsm_bak/releases/latest), download the latest Chrome ZIP
 and its SHA-256 checksum. See the
 [Chrome extension installation guide](docs/guides/install-chrome-extension.md) for checksum
 verification, unpacked installation, upgrades, and troubleshooting.
