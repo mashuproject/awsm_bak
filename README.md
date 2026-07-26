@@ -17,9 +17,9 @@ Account registration remains deployment-specific.
 
 ### Download AWSM for Chrome
 
-> **[Download the ready-to-install Chrome ZIP (v0.1.5)](https://github.com/mashuproject/awsm_bak/releases/download/v0.1.5/awsm-chrome-v0.1.5.zip)**
+> **[Download the ready-to-install Chrome ZIP (v0.1.6)](https://github.com/mashuproject/awsm_bak/releases/download/v0.1.6/awsm-chrome-v0.1.6.zip)**
 >
-> [Download its SHA-256 checksum](https://github.com/mashuproject/awsm_bak/releases/download/v0.1.5/awsm-chrome-v0.1.5.zip.sha256) ·
+> [Download its SHA-256 checksum](https://github.com/mashuproject/awsm_bak/releases/download/v0.1.6/awsm-chrome-v0.1.6.zip.sha256) ·
 > [View the latest Release](https://github.com/mashuproject/awsm_bak/releases/latest) ·
 > [Installation guide](docs/guides/install-chrome-extension.md)
 

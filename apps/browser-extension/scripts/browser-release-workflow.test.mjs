@@ -35,3 +35,18 @@ test("runs Firefox parity on main and nightly without entering release jobs", ()
     /build:[\s\S]*?if: github\.event_name == 'workflow_dispatch' \|\| \(github\.event_name == 'push' && startsWith\(github\.ref, 'refs\/tags\/v'\)\)/u,
   );
 });
+
+test("provisions exact browsers before release and parity gates", () => {
+  assert.match(
+    workflow,
+    /build:[\s\S]*?playwright install-deps chromium firefox[\s\S]*?playwright install chromium[\s\S]*?install:firefox:test -- stable[\s\S]*?test:e2e:cross-browser/u,
+  );
+  assert.match(
+    workflow,
+    /firefox-nightly:[\s\S]*?install:firefox:test -- \$\{\{ matrix\.lane \}\}[\s\S]*?Run production smoke/u,
+  );
+  assert.match(
+    workflow,
+    /sign-firefox:[\s\S]*?playwright install-deps chromium firefox[\s\S]*?playwright install chromium[\s\S]*?install:firefox:test[\s\S]*?Reproduce and verify/u,
+  );
+});
