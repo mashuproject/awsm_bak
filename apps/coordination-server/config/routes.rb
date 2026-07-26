@@ -3,16 +3,27 @@ Rails.application.routes.draw do
 
   namespace :api do
     resource :server_information, only: :show, path: "server-information"
-    resources :accounts, only: :create
-    resources :authentication_parameters, only: :create, path: "authentication-parameters"
     resources :sessions, only: :create
     post "session/refresh", to: "sessions#refresh"
     delete "session", to: "session#destroy"
+    resources :device_session_challenges, only: :create, path: "device-session-challenges"
+    resources :device_sessions, only: :create, path: "device-sessions"
+    namespace :account do
+      resource :vault_enrollment, only: :show, path: "vault-enrollment"
+    end
     resources :cable_tickets, only: :create, path: "cable-tickets"
     resource :service_policy, only: :show, path: "service-policy"
     resources :vaults, only: [ :index, :create, :show ], param: :vault_id do
       post :complete, on: :member
     end
+    get "vaults/:vault_id/devices", to: "vault_devices#index"
+    post "vaults/:vault_id/devices", to: "vault_devices#create"
+    delete "vaults/:vault_id/devices/:device_id", to: "vault_devices#destroy"
+    get "vaults/:vault_id/device-authority", to: "vault_devices#authority"
+    post "vaults/:vault_id/future-protections", to: "vault_devices#future_protection"
+    post "vaults/:vault_id/replacement-candidates", to: "replacement_candidates#create"
+    post "vaults/:vault_id/replacement-candidates/:replacement_vault_id/activate",
+      to: "replacement_candidates#activate"
     post "vaults/:vault_id/uploads", to: "uploads#create"
     get "vaults/:vault_id/uploads/:upload_id", to: "uploads#show"
     post "vaults/:vault_id/uploads/:upload_id/ticket", to: "uploads#ticket"
@@ -42,10 +53,13 @@ Rails.application.routes.draw do
   get "up" => "rails/health#show", as: :rails_health_check
   get "ready" => "readiness#show", as: :readiness
 
-  # Render dynamic PWA files from app/views/pwa/* (remember to link manifest in application.html.erb)
-  # get "manifest" => "rails/pwa#manifest", as: :pwa_manifest
-  # get "service-worker" => "rails/pwa#service_worker", as: :pwa_service_worker
-
-  # Defines the root path route ("/")
-  # root "posts#index"
+  get "sign_up", to: "registrations#new"
+  post "sign_up", to: "registrations#create"
+  get "session/new", to: "sessions#new", as: :new_session
+  post "session", to: "sessions#create"
+  delete "session", to: "sessions#destroy"
+  get "account", to: "accounts#show"
+  get "account/password", to: "account_passwords#edit", as: :edit_account_password
+  patch "account/password", to: "account_passwords#update"
+  root "home#show"
 end

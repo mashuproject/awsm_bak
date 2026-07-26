@@ -15,6 +15,7 @@ import type {
   StoredEvent,
   StoredProjectionV1,
 } from "../../drivers/indexeddb";
+import type { VaultKeyring } from "../vault/keyring";
 import {
   type CollectionsMergedTopologyEventV1,
   type CollectionTopologyEventV1,
@@ -167,21 +168,31 @@ async function encryptedBytes(
   objectId: string,
   plaintext: Uint8Array,
 ): Promise<Uint8Array> {
-  const key = await deriveContextKeyFromCryptoKey(input.rootKey, {
+  const epoch = input.keyring.active();
+  const key = await deriveContextKeyFromCryptoKey(epoch.rootKey, {
     vaultId: input.vaultId,
+    keyEpochId: epoch.keyEpochId,
     domain,
     contextId,
     keyVersion: 1,
   });
   try {
-    return encodeEncryptedEnvelope(await encryptEnvelope({ objectType, objectId, plaintext, key }));
+    return encodeEncryptedEnvelope(
+      await encryptEnvelope({
+        objectType,
+        objectId,
+        keyEpochId: epoch.keyEpochId,
+        plaintext,
+        key,
+      }),
+    );
   } finally {
     await wipe(key);
   }
 }
 
 export interface PrepareCollectionOperationInput {
-  readonly rootKey: CryptoKey;
+  readonly keyring: VaultKeyring;
   readonly vaultId: string;
   readonly deviceId: string;
   readonly eventId: string;
@@ -302,7 +313,7 @@ export async function prepareCollectionOperation(
 
 export async function decodeCollectionOperationEvent(
   event: StoredEvent,
-  rootKey: CryptoKey,
+  keyring: VaultKeyring,
   vaultId: string,
 ): Promise<
   | {
@@ -312,19 +323,21 @@ export async function decodeCollectionOperationEvent(
     }
   | { readonly eventType: "CapturesMoved"; readonly moves: readonly CaptureCollectionMoveV1[] }
 > {
-  const key = await deriveContextKeyFromCryptoKey(rootKey, {
+  const envelope = decodeEncryptedEnvelopeBytes(event.envelopeBytes);
+  const epoch = keyring.require(envelope.keyEpochId);
+  const key = await deriveContextKeyFromCryptoKey(epoch.rootKey, {
     vaultId,
+    keyEpochId: epoch.keyEpochId,
     domain: "vault:event:v1",
     contextId: event.eventId,
     keyVersion: 1,
   });
   try {
-    const envelope = decodeEncryptedEnvelopeBytes(event.envelopeBytes);
     if (envelope.objectId !== event.eventId || envelope.objectType !== "Event") {
       throw new DomainValidationError("collectionEvent", "has a mismatched envelope");
     }
     const payload = record(
-      decodeCanonicalCbor(await decryptEnvelope(envelope, key)),
+      decodeCanonicalCbor(await decryptEnvelope(envelope, key, epoch.keyEpochId)),
       "collectionEvent",
     );
     const eventType = string(payload.eventType, "collectionEvent.eventType");

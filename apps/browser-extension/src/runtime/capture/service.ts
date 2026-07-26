@@ -23,6 +23,7 @@ import type {
   SnapshotOmissionV1,
   SnapshotResourceSource,
 } from "../page-snapshot";
+import type { VaultKeyring } from "../vault/keyring";
 import { type PrepareCaptureRegistrationInput, prepareCaptureRegistration } from "./registration";
 
 export class CaptureRuntimeError extends Error {
@@ -40,7 +41,7 @@ export interface CaptureRuntimePorts {
   readonly deviceId: string;
   readonly clientVersion: string;
   isVaultUnlocked(): boolean;
-  rootKey(): CryptoKey;
+  keyring(): VaultKeyring;
   findOutcome(commandId: string): Promise<CommandOutcomeV1 | undefined>;
   saveJob(job: CaptureJob): Promise<void>;
   commitRegistration(input: AtomicRegistrationV1): Promise<CommandOutcomeV1>;
@@ -285,7 +286,7 @@ export class CaptureRuntime {
       const warnings: readonly CaptureWarningId[] = [...warningSet].toSorted();
       await saveRunning("Commit");
       registration = await this.ports.prepareRegistration({
-        rootKey: this.ports.rootKey(),
+        keyring: this.ports.keyring(),
         vaultId: this.ports.vaultId,
         deviceId: this.ports.deviceId,
         commandId: command.commandId,

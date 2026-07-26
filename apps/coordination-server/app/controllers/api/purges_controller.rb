@@ -36,7 +36,13 @@ module Api
     end
 
     def show
-      purge = account_vault!.purge_jobs.find(params[:purge_id])
+      vault = purge_status_vault!
+      purge = vault.purge_jobs.find(params[:purge_id])
+      device_vault = current_principal.session&.vault_device&.vault_replica
+      unless vault == device_vault ||
+          (vault.state == "Replaced" && purge.reason == "VaultReplacement")
+        raise Coordination::OutcomeError.new("VAULT_NOT_FOUND", status: :not_found)
+      end
       render json: purge_json(purge)
     rescue ActiveRecord::RecordNotFound
       raise Coordination::OutcomeError.new("VAULT_NOT_FOUND", status: :not_found)
@@ -45,9 +51,11 @@ module Api
     private
 
     def account_vault!
+      bound_vault!
+    end
+
+    def purge_status_vault!
       current_account.vault_replicas.find_by!(vault_id: params[:vault_id])
-    rescue ActiveRecord::RecordNotFound
-      raise Coordination::OutcomeError.new("VAULT_NOT_FOUND", status: :not_found)
     end
 
     def purge_json(purge)

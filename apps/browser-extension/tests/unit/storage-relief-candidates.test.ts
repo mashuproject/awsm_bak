@@ -4,6 +4,7 @@ import type { ArtifactReferenceV1, CaptureMetadataV1 } from "../../src/domain/ar
 import type { StoredArtifactObjectV1, StoredObjectV1 } from "../../src/drivers/indexeddb";
 import { prepareCaptureRegistration } from "../../src/runtime/capture/registration";
 import { StorageReliefCandidateEnumerator } from "../../src/runtime/storage-relief/candidates";
+import { testKeyring } from "../helpers/keyring";
 
 const id = (value: number): string => `00000000-0000-4000-8000-${String(value).padStart(12, "0")}`;
 const capturedAt = "2026-07-21T00:00:00.000Z";
@@ -24,6 +25,7 @@ function artifact(
       version: 1,
       objectId,
       objectType: "Artifact",
+      keyEpochId: "00000000-0000-4000-8000-000000000009",
       envelopeFormat: "artifact:xchacha20poly1305-chunked:v1",
       envelopeByteLength,
       envelopeChecksumAlgorithm: "hash:sha256:v1",
@@ -71,7 +73,7 @@ describe("StorageReliefCandidateEnumerator", () => {
       captureProfileVersion: 1,
     };
     const registration = await prepareCaptureRegistration({
-      rootKey,
+      keyring: testKeyring(rootKey),
       vaultId: id(1),
       deviceId: id(2),
       commandId: id(3),
@@ -97,7 +99,7 @@ describe("StorageReliefCandidateEnumerator", () => {
       {
         isArtifactRemoteOnly: async (_vaultId, objectId) => objectId === screenshot.object.objectId,
       },
-    ).enumerate(id(1), rootKey);
+    ).enumerate(id(1), testKeyring(rootKey));
 
     expect(result).toEqual({
       candidateArtifacts: 1,

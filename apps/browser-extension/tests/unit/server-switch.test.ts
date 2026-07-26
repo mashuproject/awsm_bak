@@ -47,6 +47,7 @@ async function begun() {
   await value.service.begin({
     sourceOrigin: "https://source.example",
     candidateOrigin: "https://candidate.example",
+    candidateRegistration: { enabled: false },
     vaultId: head.vaultId,
     expectedLocalHead: head,
   });
@@ -60,6 +61,7 @@ describe("ServerSwitchService lifecycle", () => {
     expect(value.current()).toMatchObject({
       sourceOrigin: "https://source.example",
       candidateOrigin: "https://candidate.example",
+      candidateRegistration: { enabled: false },
       state: "AuthenticationRequired",
       stage: "AuthenticateCandidate",
       expectedLocalHead: head,
@@ -73,6 +75,7 @@ describe("ServerSwitchService lifecycle", () => {
       value.service.begin({
         sourceOrigin: "https://source.example",
         candidateOrigin: "https://source.example",
+        candidateRegistration: { enabled: false },
         vaultId: head.vaultId,
         expectedLocalHead: head,
       }),
@@ -81,6 +84,7 @@ describe("ServerSwitchService lifecycle", () => {
       value.service.begin({
         sourceOrigin: "https://source.example",
         candidateOrigin: "https://candidate.example",
+        candidateRegistration: { enabled: false },
         vaultId: "01900000-0000-7000-8000-000000000099",
         expectedLocalHead: head,
       }),

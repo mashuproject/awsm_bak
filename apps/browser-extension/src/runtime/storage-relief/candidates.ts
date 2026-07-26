@@ -10,6 +10,7 @@ import type {
   StoredObjectV1,
 } from "../../drivers/indexeddb/schema";
 import { decodeBundleRegisteredPayload, validateArtifactWarnings } from "../capture/contracts";
+import type { VaultKeyring } from "../vault/keyring";
 import { storageReliefError } from "./contracts";
 
 interface CandidateRepository {
@@ -41,19 +42,24 @@ export interface StorageReliefEstimate {
 async function decryptEvent(
   event: StoredEvent,
   vaultId: string,
-  rootKey: CryptoKey,
+  keyring: VaultKeyring,
 ): Promise<Record<string, unknown>> {
-  const key = await deriveContextKeyFromCryptoKey(rootKey, {
+  const envelope = decodeEncryptedEnvelopeBytes(event.envelopeBytes);
+  const epoch = keyring.require(envelope.keyEpochId);
+  const key = await deriveContextKeyFromCryptoKey(epoch.rootKey, {
     vaultId,
+    keyEpochId: epoch.keyEpochId,
     domain: "vault:event:v1",
     contextId: event.eventId,
     keyVersion: 1,
   });
   try {
-    const envelope = decodeEncryptedEnvelopeBytes(event.envelopeBytes);
     if (envelope.objectId !== event.eventId || envelope.objectType !== "Event")
       throw new Error("Event envelope identity differs.");
-    return record(decodeCanonicalCbor(await decryptEnvelope(envelope, key)), "event");
+    return record(
+      decodeCanonicalCbor(await decryptEnvelope(envelope, key, epoch.keyEpochId)),
+      "event",
+    );
   } finally {
     await wipe(key);
   }
@@ -63,19 +69,21 @@ async function decryptDescriptor(
   object: Extract<StoredObjectV1, { objectType: "BundleDescriptor" }>,
   bundleId: string,
   vaultId: string,
-  rootKey: CryptoKey,
+  keyring: VaultKeyring,
 ): Promise<BundleDescriptorV1> {
-  const key = await deriveContextKeyFromCryptoKey(rootKey, {
+  const envelope = decodeEncryptedEnvelopeBytes(object.envelopeBytes);
+  const epoch = keyring.require(envelope.keyEpochId);
+  const key = await deriveContextKeyFromCryptoKey(epoch.rootKey, {
     vaultId,
+    keyEpochId: epoch.keyEpochId,
     domain: "vault:bundle-descriptor:v1",
     contextId: bundleId,
     keyVersion: 1,
   });
   try {
-    const envelope = decodeEncryptedEnvelopeBytes(object.envelopeBytes);
     if (envelope.objectId !== object.objectId || envelope.objectType !== "BundleDescriptor")
       throw new Error("Bundle Descriptor envelope identity differs.");
-    return decodeBundleDescriptor(await decryptEnvelope(envelope, key));
+    return decodeBundleDescriptor(await decryptEnvelope(envelope, key, epoch.keyEpochId));
   } finally {
     await wipe(key);
   }
@@ -95,13 +103,13 @@ export class StorageReliefCandidateEnumerator {
     private readonly availability: CandidateAvailability,
   ) {}
 
-  async enumerate(vaultId: string, rootKey: CryptoKey): Promise<StorageReliefEstimate> {
+  async enumerate(vaultId: string, keyring: VaultKeyring): Promise<StorageReliefEstimate> {
     try {
       const candidates: StorageReliefCandidate[] = [];
       let candidateBytes = 0;
       for (const event of await this.repository.listStoredEvents()) {
         if (event.vaultId !== vaultId) throw new Error("Event belongs to another Vault.");
-        const payload = await decryptEvent(event, vaultId, rootKey);
+        const payload = await decryptEvent(event, vaultId, keyring);
         if (payload.eventType !== "BundleRegistered") continue;
         const registration = decodeBundleRegisteredPayload(payload, event.referencedObjectIds);
         if (registration.vaultId !== vaultId) throw new Error("Registration belongs elsewhere.");
@@ -114,7 +122,7 @@ export class StorageReliefCandidateEnumerator {
           storedDescriptor,
           registration.bundleId,
           vaultId,
-          rootKey,
+          keyring,
         );
         if (
           descriptor.bundleId !== registration.bundleId ||

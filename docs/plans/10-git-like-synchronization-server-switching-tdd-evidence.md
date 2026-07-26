@@ -1,5 +1,10 @@
 # Git-Like Synchronization Server Switching TDD Evidence
 
+> **Historical notice:** Plan 15 supersedes the Account-key and candidate-signup assumptions
+> evidenced here. See
+> [Plan 15](15-rails-account-recovery-phrase-device-sync.md) and its evidence for the canonical
+> implementation.
+
 **Document:** `docs/plans/10-git-like-synchronization-server-switching-tdd-evidence.md`
 
 **Status:** Implementation evidence

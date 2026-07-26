@@ -19,6 +19,7 @@ describe("ActiveGenerationStorageReliefProver", () => {
             {
               objectId: id(1),
               objectType: "VaultGeneration",
+              keyEpochId: "00000000-0000-4000-8000-000000000009",
               state: "Committed",
               byteLength: 300,
               sha256: checksum,
@@ -26,6 +27,7 @@ describe("ActiveGenerationStorageReliefProver", () => {
             {
               objectId: id(10),
               objectType: "Artifact",
+              keyEpochId: "00000000-0000-4000-8000-000000000009",
               state: "Committed",
               byteLength: 500,
               sha256: checksum,
@@ -44,6 +46,7 @@ describe("ActiveGenerationStorageReliefProver", () => {
             {
               objectId: id(11),
               objectType: "BundleDescriptor",
+              keyEpochId: "00000000-0000-4000-8000-000000000009",
               state: "Committed",
               byteLength: 100,
               sha256: checksum,
@@ -51,6 +54,7 @@ describe("ActiveGenerationStorageReliefProver", () => {
             {
               objectId: id(12),
               objectType: "Event",
+              keyEpochId: "00000000-0000-4000-8000-000000000009",
               state: "Committed",
               byteLength: 200,
               sha256: checksum,
@@ -82,6 +86,7 @@ describe("ActiveGenerationStorageReliefProver", () => {
             version: 1,
             objectId: id(10),
             objectType: "Artifact",
+            keyEpochId: "00000000-0000-4000-8000-000000000009",
             envelopeFormat: "artifact:xchacha20poly1305-chunked:v1",
             envelopeByteLength: 500,
             envelopeChecksumAlgorithm: "hash:sha256:v1",

@@ -6,12 +6,14 @@ import {
   randomUUID,
 } from "node:crypto";
 import assert from "node:assert/strict";
+import { createInitialVaultAuthority } from "./plan15-proof-authority.mjs";
 
 const baseUrl = process.env.AWSM_PROOF_BASE_URL;
 const cableUrl = process.env.AWSM_PROOF_CABLE_URL;
 assert(baseUrl, "AWSM_PROOF_BASE_URL is required");
 assert(cableUrl, "AWSM_PROOF_CABLE_URL is required");
 let credential;
+let activeKeyEpochId;
 let requestSequence = 0;
 
 function sha256(bytes) {
@@ -99,6 +101,7 @@ async function beginUpload(
   const body = {
     objectId,
     objectType,
+    keyEpochId: activeKeyEpochId,
     byteLength: bytes.byteLength,
     sha256: sha256(bytes),
     targetGenerationId: generationId,
@@ -207,28 +210,20 @@ async function waitFor(predicate, label, timeout = 15_000) {
   throw new Error(`Timed out waiting for ${label}`);
 }
 
-const authenticationSecret = randomBytes(32).toString("base64url");
-const accountKeyId = randomUUID();
-const signup = await control(
-  "POST",
-  "/api/accounts",
-  {
-    email: `proof-${randomUUID()}@example.test`,
-    authenticationSecret,
-    accountKeyEnvelope: {
-      version: 1,
-      accountKeyId,
-      kdfAlgorithm: "kdf:argon2id13:account:v1",
-      kdfSalt: randomBytes(16).toString("base64url"),
-      kdfOperations: 3,
-      kdfMemoryBytes: 67_108_864,
-      wrappingAlgorithm: "wrap:xchacha20poly1305:account-password:v1",
-      nonce: randomBytes(24).toString("base64url"),
-      ciphertext: randomBytes(48).toString("base64url"),
-    },
-  },
-  { idempotencyKey: randomUUID(), expected: [201] },
-);
+const email = `proof-${randomUUID()}@example.test`;
+const password = `coordination proof ${randomUUID()}`;
+const signupResponse = await fetch(`${baseUrl}/sign_up`, {
+  method: "POST",
+  headers: { "Content-Type": "application/x-www-form-urlencoded" },
+  body: new URLSearchParams({
+    "account[email]": email,
+    "account[password]": password,
+    "account[password_confirmation]": password,
+  }),
+  redirect: "manual",
+});
+assert.equal(signupResponse.status, 302);
+const signup = await control("POST", "/api/sessions", { email, password });
 credential = signup.payload.accessToken;
 const refreshed = await control(
   "POST",
@@ -242,7 +237,7 @@ credential = undefined;
 const login = await control(
   "POST",
   "/api/sessions",
-  { email: signup.payload.account.email, authenticationSecret },
+  { email, password },
   { expected: [200] },
 );
 credential = login.payload.accessToken;
@@ -251,37 +246,21 @@ const policy = (await control("GET", "/api/service-policy")).payload;
 assert.equal(policy.recoveryRetentionDays, 90);
 assert.equal(policy.uploadPartSizeBytes, 8_388_608);
 
-const vaultId = randomUUID();
-const generationZeroId = randomUUID();
 const generationZeroBytes = Buffer.from("opaque-generation-zero");
+const authority = createInitialVaultAuthority(
+  login.payload.sessionId,
+  generationZeroBytes,
+);
+const { vaultId, generationId: generationZeroId, keyEpochId } = authority;
+activeKeyEpochId = keyEpochId;
 const attachKey = randomUUID();
 const attached = (
-  await control(
-    "POST",
-    "/api/vaults",
-    {
-      vaultId,
-      generationId: generationZeroId,
-      generationNumber: 0,
-      accountSlot: {
-        version: 1,
-        slotId: randomUUID(),
-        vaultId,
-        accountKeyId,
-        algorithm: "wrap:xchacha20poly1305:account:v1",
-        nonce: randomBytes(24).toString("base64url"),
-        ciphertext: randomBytes(48).toString("base64url"),
-      },
-      generationObject: {
-        objectId: generationZeroId,
-        objectType: "VaultGeneration",
-        byteLength: generationZeroBytes.byteLength,
-        sha256: sha256(generationZeroBytes),
-      },
-    },
-    { idempotencyKey: attachKey, expected: [201] },
-  )
+  await control("POST", "/api/vaults", authority.body, {
+    idempotencyKey: attachKey,
+    expected: [201],
+  })
 ).payload;
+credential = attached.session.accessToken;
 await putPart(attached.ticket.url, 0, generationZeroBytes);
 await control(
   "POST",
@@ -468,6 +447,7 @@ const staleCandidate = (
       generationObject: {
         objectId: staleSuccessorId,
         objectType: "VaultGeneration",
+        keyEpochId: activeKeyEpochId,
         byteLength: staleGenerationBytes.byteLength,
         sha256: sha256(staleGenerationBytes),
       },
@@ -545,6 +525,7 @@ const successor = (
       generationObject: {
         objectId: successorId,
         objectType: "VaultGeneration",
+        keyEpochId: activeKeyEpochId,
         byteLength: successorBytes.byteLength,
         sha256: sha256(successorBytes),
       },

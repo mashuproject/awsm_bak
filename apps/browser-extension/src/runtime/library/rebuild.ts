@@ -8,6 +8,7 @@ import { deriveContextKeyFromCryptoKey } from "../../crypto/hkdf";
 import { wipe } from "../../crypto/sodium";
 import { type BundleDescriptorV1, decodeBundleDescriptor } from "../../domain/artifact-graph";
 import { decodeCanonicalCbor, encodeCanonicalCbor } from "../../domain/cbor";
+import type { LibraryItemV1 } from "../../domain/contracts";
 import { DomainValidationError } from "../../domain/errors";
 import { record, string, uuid } from "../../domain/validation";
 import type {
@@ -19,6 +20,7 @@ import type {
 } from "../../drivers/indexeddb";
 import type { ArtifactStore } from "../artifact";
 import { decodeBundleRegisteredPayload, validateArtifactWarnings } from "../capture/contracts";
+import type { VaultKeyring } from "../vault/keyring";
 import { decodeVaultNameEvent, encryptVaultNameProjection } from "../vault/name-crypto";
 import { reduceVaultNameProjection, type VaultNameEventV1 } from "../vault/name-projection";
 import type { CollectionTopologyEventV1 } from "./collections";
@@ -39,25 +41,35 @@ export interface PreparedLibraryProjections {
   readonly itemProjections: readonly StoredProjectionV1[];
   readonly collectionProjection: StoredCollectionProjectionV1;
   readonly vaultNameProjection: StoredVaultNameProjectionV1;
+  readonly model: {
+    readonly items: readonly LibraryItemV1[];
+    readonly topologyEvents: readonly CollectionTopologyEventV1[];
+    readonly vaultName: ReturnType<typeof reduceVaultNameProjection>;
+  };
 }
 
 async function decryptEvent(
   event: StoredEvent,
-  rootKey: CryptoKey,
+  keyring: VaultKeyring,
   vaultId: string,
 ): Promise<Record<string, unknown>> {
-  const key = await deriveContextKeyFromCryptoKey(rootKey, {
+  const envelope = decodeEncryptedEnvelopeBytes(event.envelopeBytes);
+  const epoch = keyring.require(envelope.keyEpochId);
+  const key = await deriveContextKeyFromCryptoKey(epoch.rootKey, {
     vaultId,
+    keyEpochId: epoch.keyEpochId,
     domain: "vault:event:v1",
     contextId: event.eventId,
     keyVersion: 1,
   });
   try {
-    const envelope = decodeEncryptedEnvelopeBytes(event.envelopeBytes);
     if (envelope.objectId !== event.eventId || envelope.objectType !== "Event") {
       throw new DomainValidationError("event", "has a mismatched envelope");
     }
-    return record(decodeCanonicalCbor(await decryptEnvelope(envelope, key)), "event");
+    return record(
+      decodeCanonicalCbor(await decryptEnvelope(envelope, key, epoch.keyEpochId)),
+      "event",
+    );
   } finally {
     await wipe(key);
   }
@@ -67,11 +79,13 @@ async function projectionBytes(
   plaintext: unknown,
   objectId: string,
   contextId: string,
-  rootKey: CryptoKey,
+  keyring: VaultKeyring,
   vaultId: string,
 ): Promise<Uint8Array> {
-  const key = await deriveContextKeyFromCryptoKey(rootKey, {
+  const epoch = keyring.active();
+  const key = await deriveContextKeyFromCryptoKey(epoch.rootKey, {
     vaultId,
+    keyEpochId: epoch.keyEpochId,
     domain: "vault:projection:v1",
     contextId,
     keyVersion: 1,
@@ -81,6 +95,7 @@ async function projectionBytes(
       await encryptEnvelope({
         objectType: "Projection",
         objectId,
+        keyEpochId: epoch.keyEpochId,
         plaintext: encodeCanonicalCbor(plaintext),
         key,
       }),
@@ -93,9 +108,9 @@ async function projectionBytes(
 export class LibraryProjectionRebuilder {
   constructor(
     readonly repository: LibraryProjectionRebuildRepository,
-    readonly rootKey: CryptoKey,
+    readonly keyring: VaultKeyring,
     readonly vaultId: string,
-    readonly artifactStore: ArtifactStore,
+    readonly artifactStore: Pick<ArtifactStore, "openPlaintext">,
   ) {}
 
   async prepare(signal?: AbortSignal): Promise<PreparedLibraryProjections> {
@@ -110,11 +125,11 @@ export class LibraryProjectionRebuilder {
     const vaultNameEvents: VaultNameEventV1[] = [];
     for (const event of events) {
       signal?.throwIfAborted();
-      const payload = await decryptEvent(event, this.rootKey, this.vaultId);
+      const payload = await decryptEvent(event, this.keyring, this.vaultId);
       const eventType = string(payload.eventType, "event.eventType");
       assertCanonicalEventFields(payload, eventType);
       if (eventType === "VaultCreated" || eventType === "VaultRenamed") {
-        vaultNameEvents.push(await decodeVaultNameEvent(this.rootKey, event));
+        vaultNameEvents.push(await decodeVaultNameEvent(this.keyring, event));
         continue;
       }
       if (eventType === "BundleRegistered") {
@@ -124,21 +139,25 @@ export class LibraryProjectionRebuilder {
         );
         if (storedDescriptor?.objectType !== "BundleDescriptor")
           throw new DomainValidationError("event.descriptorObjectId", "does not resolve");
-        const descriptorKey = await deriveContextKeyFromCryptoKey(this.rootKey, {
+        const envelope = decodeEncryptedEnvelopeBytes(storedDescriptor.envelopeBytes);
+        const descriptorEpoch = this.keyring.require(envelope.keyEpochId);
+        const descriptorKey = await deriveContextKeyFromCryptoKey(descriptorEpoch.rootKey, {
           vaultId: this.vaultId,
+          keyEpochId: descriptorEpoch.keyEpochId,
           domain: "vault:bundle-descriptor:v1",
           contextId: registration.bundleId,
           keyVersion: 1,
         });
         let descriptor: BundleDescriptorV1;
         try {
-          const envelope = decodeEncryptedEnvelopeBytes(storedDescriptor.envelopeBytes);
           if (
             envelope.objectId !== storedDescriptor.objectId ||
             envelope.objectType !== "BundleDescriptor"
           )
             throw new DomainValidationError("descriptor", "has a mismatched envelope");
-          descriptor = decodeBundleDescriptor(await decryptEnvelope(envelope, descriptorKey));
+          descriptor = decodeBundleDescriptor(
+            await decryptEnvelope(envelope, descriptorKey, descriptorEpoch.keyEpochId),
+          );
         } finally {
           await wipe(descriptorKey);
         }
@@ -162,7 +181,7 @@ export class LibraryProjectionRebuilder {
             vaultId: this.vaultId,
             object,
             reference: thumbnail,
-            rootKey: this.rootKey,
+            keyring: this.keyring,
             ...(signal === undefined ? {} : { signal }),
           });
           thumbnailWebp = new Uint8Array(await new Response(stream).arrayBuffer());
@@ -258,7 +277,7 @@ export class LibraryProjectionRebuilder {
             item,
             item.bundleId,
             `LibraryItem-v1:${item.bundleId}`,
-            this.rootKey,
+            this.keyring,
             this.vaultId,
           ),
         }),
@@ -272,16 +291,19 @@ export class LibraryProjectionRebuilder {
         { version: 1, topologyEvents },
         this.vaultId,
         `LibraryCollections-v1:${this.vaultId}`,
-        this.rootKey,
+        this.keyring,
         this.vaultId,
       ),
     };
-    const vaultNameProjection = await encryptVaultNameProjection(
-      this.rootKey,
-      reduceVaultNameProjection(vaultNameEvents),
-    );
+    const vaultName = reduceVaultNameProjection(vaultNameEvents);
+    const vaultNameProjection = await encryptVaultNameProjection(this.keyring, vaultName);
     signal?.throwIfAborted();
-    return { itemProjections, collectionProjection, vaultNameProjection };
+    return {
+      itemProjections,
+      collectionProjection,
+      vaultNameProjection,
+      model: { items, topologyEvents, vaultName },
+    };
   }
 
   async execute(): Promise<void> {

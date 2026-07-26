@@ -70,6 +70,7 @@ export class UploadTransfer {
     kind: "Object" | "Event",
     entityId: string,
     objectType: "BundleDescriptor" | "Artifact" | "Event",
+    keyEpochId: string,
     byteLength: number,
     sha256: string,
     bytes: AsyncIterable<Uint8Array>,
@@ -100,6 +101,7 @@ export class UploadTransfer {
           {
             objectId: entityId,
             objectType,
+            keyEpochId,
             byteLength,
             sha256,
             targetGenerationId: job.generationId,

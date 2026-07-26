@@ -19,7 +19,7 @@ RSpec.describe "Recovery purge safety", type: :request do
 
   before do
     allow(Coordination::AccountAuthenticator).to receive(:authenticate).and_return(
-      Coordination::AccountPrincipal.new(account:, confirmed_at: Time.current)
+      create_vault_device_principal(account:, vault:)
     )
   end
 
@@ -44,7 +44,14 @@ RSpec.describe "Recovery purge safety", type: :request do
 
   it "requires recent authentication before beginning irreversible deletion" do
     allow(Coordination::AccountAuthenticator).to receive(:authenticate).and_return(
-      Coordination::AccountPrincipal.new(account:, confirmed_at: 1.hour.ago)
+      create_vault_device_principal(account:, vault:).then do |principal|
+        Coordination::AccountPrincipal.new(
+          account: principal.account,
+          confirmed_at: 1.hour.ago,
+          session: principal.session,
+          scope: principal.scope
+        )
+      end
     )
 
     post "/api/vaults/#{vault_id}/purges", headers: headers
@@ -82,6 +89,7 @@ RSpec.describe "Recovery purge safety", type: :request do
     replica = account.vault_replicas.create!(vault_id:, **vault_slot_attributes(account:, vault_id:),
       state: "Active", head_cursor: 3,
       active_generation_number: 1)
+    create_vault_device_principal(account:, vault: replica)
     old_generation = replica.vault_generations.create!(generation_id: old_generation_id,
       generation_number: 0, state: "Superseded", activated_at: 2.days.ago,
       superseded_at: 1.day.ago, purge_after: 89.days.from_now)
@@ -104,6 +112,7 @@ RSpec.describe "Recovery purge safety", type: :request do
     replica.opaque_records.create!(object_id:, object_type: "Artifact", byte_length: object_id.bytesize,
       sha256: Digest::SHA256.digest(object_id), state: "Committed",
       target_generation_id: old_generation_id, storage_key: key,
-      durable_at: Time.current, committed_at: Time.current)
+      durable_at: Time.current, committed_at: Time.current,
+      vault_key_epoch_id: replica.active_key_epoch_id)
   end
 end

@@ -1,5 +1,7 @@
 services:
   coordination-proof:
+    environment:
+      AWSM_PUBLIC_ORIGIN: http://127.0.0.1:3300
     ports:
       - "127.0.0.1:3300:3000"
 
@@ -36,6 +38,7 @@ services:
       AWSM_JOB_QUEUE_ADAPTER: async
       AWSM_OPENAPI_PATH: /docs/specifications/protocol/http-api.openapi.yaml
       AWSM_OPAQUE_STORAGE_PATH: /opaque-storage-two
+      AWSM_PUBLIC_ORIGIN: http://127.0.0.1:3301
       AWSM_REDIS_NAMESPACE: awsm:browser-proof:secondary
       AWSM_REDIS_URL: redis://redis-proof:6379/0
       AWSM_SYNTHETIC_ACCOUNT_SECRET: awsm-proof-two-synthetic-account-parameter-secret

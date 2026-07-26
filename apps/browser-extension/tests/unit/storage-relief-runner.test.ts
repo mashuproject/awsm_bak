@@ -60,6 +60,7 @@ function candidate(): StorageReliefCheckpointV1 {
     vaultId: IDS.vault,
     jobId: IDS.job,
     artifactObjectId: IDS.artifact,
+    keyEpochId: "00000000-0000-4000-8000-000000000009",
     envelopeByteLength: 123,
     envelopeChecksum: checksum,
     state: "Candidate",
@@ -71,12 +72,29 @@ function proof(overrides: Partial<StorageReliefProof> = {}): StorageReliefProof 
     generationId: IDS.generation,
     generationNumber: 3,
     records: new Map([
-      [IDS.artifact, { objectType: "Artifact", byteLength: 123, sha256: checksum }],
-      [IDS.descriptor, { objectType: "BundleDescriptor", byteLength: 50, sha256: checksum }],
+      [
+        IDS.artifact,
+        {
+          objectType: "Artifact",
+          keyEpochId: "00000000-0000-4000-8000-000000000009",
+          byteLength: 123,
+          sha256: checksum,
+        },
+      ],
+      [
+        IDS.descriptor,
+        {
+          objectType: "BundleDescriptor",
+          keyEpochId: "00000000-0000-4000-8000-000000000009",
+          byteLength: 50,
+          sha256: checksum,
+        },
+      ],
       [
         IDS.event,
         {
           objectType: "Event",
+          keyEpochId: "00000000-0000-4000-8000-000000000009",
           byteLength: 60,
           sha256: checksum,
           dependencyObjectIds: [IDS.artifact, IDS.descriptor].toSorted(),
@@ -214,7 +232,15 @@ describe("StorageReliefJobRunner", () => {
   it("retains a local wrapper when the active server metadata differs", async () => {
     const mismatched = proof({
       records: new Map([
-        [IDS.artifact, { objectType: "Artifact", byteLength: 124, sha256: checksum }],
+        [
+          IDS.artifact,
+          {
+            objectType: "Artifact",
+            keyEpochId: "00000000-0000-4000-8000-000000000009",
+            byteLength: 124,
+            sha256: checksum,
+          },
+        ],
       ]),
     });
     const test = fixture({ proof: mismatched });

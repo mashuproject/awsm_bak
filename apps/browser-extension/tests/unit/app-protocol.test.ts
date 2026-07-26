@@ -61,7 +61,7 @@ describe("application request routing", () => {
         email: "reader@example.test",
         password: "secret",
       }),
-    ).toBe(true);
+    ).toBe(false);
     expect(isAppRequest({ type: "CancelServerSwitch", jobId: "job" })).toBe(true);
     expect(isAppRequest({ type: "RetryServerSwitch", jobId: "job" })).toBe(true);
     expect(
@@ -101,6 +101,49 @@ describe("application request routing", () => {
         jobId: "job",
       }),
     ).toBe(true);
+  });
+
+  it("routes only explicit maximum-security replacement Commands", () => {
+    expect(
+      isAppRequest({
+        type: "PrepareVaultReplacement",
+        expectedVaultId: "vault",
+        safelyStoredConfirmed: true,
+      }),
+    ).toBe(true);
+    expect(
+      isAppRequest({
+        type: "PrepareVaultReplacement",
+        expectedVaultId: "vault",
+      }),
+    ).toBe(false);
+    expect(
+      isAppRequest({
+        type: "ConfirmVaultReplacement",
+        replacementId: "replacement",
+        recoveryPhrase: "twelve words",
+      }),
+    ).toBe(true);
+    expect(
+      isAppRequest({
+        type: "CancelVaultReplacement",
+        replacementId: "replacement",
+      }),
+    ).toBe(true);
+    expect(
+      isAppRequest({
+        type: "RetryVaultReplacement",
+        expectedVaultId: "vault",
+      }),
+    ).toBe(true);
+    expect(
+      isAppRequest({
+        type: "ConfirmVaultReplacement",
+        replacementId: "replacement",
+        recoveryPhrase: "twelve words",
+        entropy: "must-not-cross-the-boundary",
+      }),
+    ).toBe(false);
   });
 
   it("requires an explicit stale Replica recovery decision", () => {

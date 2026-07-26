@@ -19,8 +19,11 @@ gem "jbuilder"
 # Enforce the committed OpenAPI control-plane contract at the HTTP boundary.
 gem "committee", "~> 5.6"
 
-# Hash the client-derived Account authentication credential at rest.
+# Hash the conventional Account password at rest.
 gem "bcrypt", "~> 3.1.7"
+
+# Strictly decode the canonical CBOR signed by recovery and Device keys.
+gem "cbor", "0.5.10.3"
 
 # Short-lived Cable credentials and cross-process Action Cable delivery.
 gem "connection_pool", "~> 3.0"

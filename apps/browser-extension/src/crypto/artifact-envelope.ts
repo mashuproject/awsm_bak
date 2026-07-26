@@ -70,6 +70,7 @@ function nonce(prefix: Uint8Array, index: bigint): Uint8Array {
 
 function aad(
   objectId: string,
+  keyEpochId: string,
   prefix: Uint8Array,
   index: bigint,
   final: boolean,
@@ -79,6 +80,7 @@ function aad(
   return encodeCanonicalCbor([
     1,
     objectId,
+    keyEpochId,
     ALGORITHM,
     ARTIFACT_CHUNK_PLAINTEXT_BYTES,
     prefix,
@@ -126,6 +128,7 @@ async function* fixedChunks(source: AsyncIterable<Uint8Array>): AsyncGenerator<U
 
 export async function writeArtifactEnvelope(input: {
   readonly objectId: string;
+  readonly keyEpochId: string;
   readonly key: Uint8Array;
   readonly noncePrefix?: Uint8Array;
   readonly plaintext: AsyncIterable<Uint8Array>;
@@ -133,6 +136,7 @@ export async function writeArtifactEnvelope(input: {
   readonly signal?: AbortSignal;
 }): Promise<ArtifactEnvelopeSummary> {
   const objectId = uuid(input.objectId, "artifact.objectId");
+  const keyEpochId = uuid(input.keyEpochId, "artifact.keyEpochId");
   if (input.key.byteLength !== 32) throw new ArtifactEnvelopeError();
   const noncePrefix =
     input.noncePrefix === undefined
@@ -142,6 +146,7 @@ export async function writeArtifactEnvelope(input: {
   const header = encodeCanonicalCbor({
     artifactEnvelopeVersion: 1,
     objectId,
+    keyEpochId,
     algorithm: ALGORITHM,
     chunkPlaintextBytes: ARTIFACT_CHUNK_PLAINTEXT_BYTES,
     noncePrefix,
@@ -175,7 +180,7 @@ export async function writeArtifactEnvelope(input: {
     if (!Number.isSafeInteger(plaintextByteLength)) throw new ArtifactEnvelopeError();
     const ciphertext = await xchachaEncrypt({
       plaintext,
-      aad: aad(objectId, noncePrefix, index, final, plaintext.byteLength),
+      aad: aad(objectId, keyEpochId, noncePrefix, index, final, plaintext.byteLength),
       nonce: nonce(noncePrefix, index),
       key: input.key,
     });
@@ -249,6 +254,7 @@ class AsyncByteReader {
 
 export async function readArtifactEnvelope(input: {
   readonly expectedObjectId: string;
+  readonly expectedKeyEpochId: string;
   readonly key: Uint8Array;
   readonly encrypted: AsyncIterable<Uint8Array>;
   readonly write: (bytes: Uint8Array) => void | Promise<void>;
@@ -256,6 +262,7 @@ export async function readArtifactEnvelope(input: {
 }): Promise<ArtifactEnvelopeSummary> {
   try {
     const expectedObjectId = uuid(input.expectedObjectId, "artifact.objectId");
+    const expectedKeyEpochId = uuid(input.expectedKeyEpochId, "artifact.keyEpochId");
     if (input.key.byteLength !== 32) throw new ArtifactEnvelopeError();
     const reader = new AsyncByteReader(input.encrypted);
     if (!bytesEqual(await reader.exact(MAGIC.byteLength), MAGIC)) throw new ArtifactEnvelopeError();
@@ -268,12 +275,15 @@ export async function readArtifactEnvelope(input: {
     const header = canonicalRecord(headerValue, "artifact.header", [
       "artifactEnvelopeVersion",
       "objectId",
+      "keyEpochId",
       "algorithm",
       "chunkPlaintextBytes",
       "noncePrefix",
     ]);
     literal(header.artifactEnvelopeVersion, 1, "artifact.header.version");
     if (uuid(header.objectId, "artifact.header.objectId") !== expectedObjectId)
+      throw new ArtifactEnvelopeError();
+    if (uuid(header.keyEpochId, "artifact.header.keyEpochId") !== expectedKeyEpochId)
       throw new ArtifactEnvelopeError();
     literal(header.algorithm, ALGORITHM, "artifact.header.algorithm");
     if (
@@ -304,7 +314,7 @@ export async function readArtifactEnvelope(input: {
       const ciphertext = await reader.exact(length + 16);
       const plaintext = await xchachaDecrypt({
         ciphertext,
-        aad: aad(expectedObjectId, noncePrefix, index, final, length),
+        aad: aad(expectedObjectId, expectedKeyEpochId, noncePrefix, index, final, length),
         nonce: nonce(noncePrefix, index),
         key: input.key,
       });

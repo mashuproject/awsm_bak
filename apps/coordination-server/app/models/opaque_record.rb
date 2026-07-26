@@ -3,6 +3,7 @@ class OpaqueRecord < ApplicationRecord
   STATES = %w[Uploading DurableUncommitted Committed Purged].freeze
 
   belongs_to :vault_replica
+  belongs_to :vault_key_epoch
   belongs_to :target_generation, class_name: "VaultGeneration", foreign_key: :target_generation_id,
     primary_key: :generation_id
   has_many :record_dependencies, foreign_key: :event_record_id, dependent: :destroy,

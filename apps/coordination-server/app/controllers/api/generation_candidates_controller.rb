@@ -15,7 +15,8 @@ module Api
       valid = body.fetch("generationNumber") == vault.active_generation.generation_number + 1 &&
         body.fetch("predecessorGenerationId") == vault.active_generation.generation_id &&
         body.fetch("headCursor") == vault.head_cursor && body.fetch("generationId") == object.fetch("objectId") &&
-        object.fetch("objectType") == "VaultGeneration"
+        object.fetch("objectType") == "VaultGeneration" &&
+        object.fetch("keyEpochId") == vault.active_key_epoch_id
       raise Coordination::OutcomeError.new("VAULT_HEAD_CHANGED", status: :conflict) unless valid
       candidate = nil
       VaultGeneration.transaction do
@@ -25,7 +26,8 @@ module Api
         record = vault.opaque_records.create!(object_id: object.fetch("objectId"),
           object_type: "VaultGeneration", byte_length: object.fetch("byteLength"),
           sha256: Coordination::ProtocolEncoding.decode_sha256(object.fetch("sha256")),
-          state: "Uploading", target_generation_id: candidate.generation_id)
+          state: "Uploading", target_generation_id: candidate.generation_id,
+          vault_key_epoch_id: vault.active_key_epoch_id)
         policy = Coordination::ServicePolicy.current
         part_size = [ policy.upload_part_size_bytes, record.byte_length ].min
         record.create_upload!(state: "Open", part_size:,
@@ -169,11 +171,9 @@ module Api
     private
 
     def active_vault!
-      vault = current_account.vault_replicas.find_by!(vault_id: params[:vault_id])
+      vault = bound_vault!
       return vault if vault.state == "Active" && vault.active_generation
       raise Coordination::OutcomeError.new("VAULT_NOT_READY", status: :conflict)
-    rescue ActiveRecord::RecordNotFound
-      raise Coordination::OutcomeError.new("VAULT_NOT_FOUND", status: :not_found)
     end
 
     def candidate!

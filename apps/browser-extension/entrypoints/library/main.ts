@@ -105,6 +105,8 @@ const synchronizationLabels = {
   Conflict: "Needs attention",
   Failed: "Failed",
   SetupRequired: "Setup required",
+  RecoveryRequired: "Recovery Phrase required",
+  DeviceRevoked: "Device removed",
 } as const satisfies Record<AppState["account"]["vaultSyncState"], string>;
 
 function summaryRow(term: string, value: string): HTMLDivElement {
@@ -324,13 +326,10 @@ function showAccountSettings(): void {
       const candidateActions = element("div", undefined, "actions");
       const login = element("button", "Sign in");
       login.type = "button";
-      const signup = element("button", "Create account");
-      signup.type = "button";
-      const authenticate = (type: "LoginServerSwitchCandidate" | "SignupServerSwitchCandidate") => {
+      const authenticate = () => {
         login.disabled = true;
-        signup.disabled = true;
         void sendRequest<AppState>({
-          type,
+          type: "LoginServerSwitchCandidate",
           email: email.value,
           password: password.value,
         }).then(
@@ -340,7 +339,6 @@ function showAccountSettings(): void {
           },
           (error) => {
             login.disabled = false;
-            signup.disabled = false;
             form.querySelector(".error")?.remove();
             form.append(
               element(
@@ -354,9 +352,8 @@ function showAccountSettings(): void {
           },
         );
       };
-      login.addEventListener("click", () => authenticate("LoginServerSwitchCandidate"));
-      signup.addEventListener("click", () => authenticate("SignupServerSwitchCandidate"));
-      candidateActions.append(login, signup);
+      login.addEventListener("click", authenticate);
+      candidateActions.append(login);
       form.append(candidateActions);
     }
     if (serverSwitch.state === "Failed") {
@@ -416,7 +413,7 @@ function showAccountSettings(): void {
     const finish = element("button", "Finish setup");
     finish.type = "button";
     finish.addEventListener("click", () => {
-      void browser.tabs.create({ url: browser.runtime.getURL("/signup.html") });
+      void browser.tabs.create({ url: browser.runtime.getURL("/sync-setup.html") });
       dialog.close();
     });
     actions.append(finish);

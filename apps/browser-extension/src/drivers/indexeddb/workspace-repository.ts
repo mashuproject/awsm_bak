@@ -7,6 +7,7 @@ import {
   timestamp,
   uuid,
 } from "../../domain/validation";
+import type { InitialDeviceAuthority } from "../../runtime/recovery/initial-attachment";
 import type { VaultRecordsV1 } from "../../runtime/vault/contracts";
 import { decodeVaultMetadata, decodeVaultRecords } from "../../runtime/vault/decode";
 import {
@@ -15,11 +16,18 @@ import {
 } from "../../runtime/vault/workspace-name-cache";
 import { createWorkspaceNameCacheKey } from "../../runtime/vault/workspace-name-key";
 import { deleteDatabase, openDatabase, requestValue, transactionDone } from "./database";
-import { decodeExportJob, decodeImportJob, decodeStoredVaultNameProjection } from "./decode";
+import {
+  decodeExportJob,
+  decodeImportJob,
+  decodeStoredObject,
+  decodeStoredVaultNameProjection,
+} from "./decode";
+import { prepareDeviceAuthorityStorage } from "./device-repository";
 import { storageError } from "./errors";
 import { assertNoActiveImport } from "./import-repository";
 import { vaultKey, vaultKeyRange, vaultSingletonKey } from "./keys";
 import {
+  DATABASE_NAME,
   type ImportJobV1,
   STORES,
   type StoredCollectionProjectionV1,
@@ -30,6 +38,7 @@ import {
   type StoredVaultNameProjectionV1,
   type SynchronizationJobV1,
   type VaultDirectoryEntryV1,
+  type VaultReplacementJobV1,
   type WorkspaceMetadataV1,
   type WorkspaceRecordsV1,
 } from "./schema";
@@ -64,6 +73,7 @@ export interface ReplaceVaultNameCache {
 export interface AtomicVaultImport {
   readonly job: ImportJobV1;
   readonly records: VaultRecordsV1;
+  readonly epochStorage: import("../../runtime/vault/contracts").PreparedVaultEpochStorage;
   readonly events: readonly StoredEvent[];
   readonly objects: readonly StoredObjectV1[];
   readonly libraryProjections: readonly StoredProjectionV1[];
@@ -83,6 +93,29 @@ export interface AtomicRemoteBootstrap {
   readonly vaultNameProjection: StoredVaultNameProjectionV1;
   readonly nameCache: WorkspaceVaultNameCacheV1;
   readonly preparedArtifactObjectIds: readonly string[];
+}
+
+export interface AtomicVaultReplacementStage {
+  readonly job: VaultReplacementJobV1;
+  readonly records: VaultRecordsV1;
+  readonly events: readonly StoredEvent[];
+  readonly objects: readonly StoredObjectV1[];
+  readonly libraryProjections: readonly StoredProjectionV1[];
+  readonly collectionProjection: StoredCollectionProjectionV1;
+  readonly vaultNameProjection: StoredVaultNameProjectionV1;
+  readonly preparedArtifactObjectIds: readonly string[];
+}
+
+export interface AtomicVaultReplacementPromotion {
+  readonly job: VaultReplacementJobV1;
+  readonly authority: InitialDeviceAuthority;
+  readonly nameCache: WorkspaceVaultNameCacheV1;
+  readonly promotedAt: string;
+}
+
+export interface VaultReplacementPromotionResult {
+  readonly job: VaultReplacementJobV1;
+  readonly removedSourceArtifactObjectIds: readonly string[];
 }
 
 export interface AtomicRemoteReconciliation {
@@ -228,7 +261,7 @@ export class IndexedDbWorkspaceRepository {
   private readonly databasePromise: Promise<IDBDatabase>;
   readonly databaseName: string;
 
-  constructor(databaseName = "awsm-vault") {
+  constructor(databaseName = DATABASE_NAME) {
     this.databaseName = databaseName;
     this.databasePromise = openDatabase(databaseName);
   }
@@ -793,6 +826,16 @@ export class IndexedDbWorkspaceRepository {
       input.nameCache.vaultId !== vaultId ||
       input.nameCache.sourceEventId !== input.vaultNameProjection.sourceEventId ||
       !eventIds.includes(input.vaultNameProjection.sourceEventId) ||
+      input.epochStorage.epochs.length === 0 ||
+      input.epochStorage.epochs.some(
+        (epoch, ordinal) =>
+          epoch.vaultId !== vaultId ||
+          epoch.ordinal !== ordinal ||
+          !(epoch.wrappedRootKey instanceof Uint8Array),
+      ) ||
+      new Set(input.epochStorage.epochs.map((epoch) => epoch.keyEpochId)).size !==
+        input.epochStorage.epochs.length ||
+      input.epochStorage.epochs.at(-1)?.keyEpochId !== records.metadata.activeKeyEpochId ||
       new Set(input.libraryProjections.map((projection) => projection.bundleId)).size !==
         input.libraryProjections.length
     ) {
@@ -807,6 +850,8 @@ export class IndexedDbWorkspaceRepository {
       STORES.vaultMetadata,
       STORES.keySlots,
       STORES.deviceKeys,
+      STORES.deviceLocalKeys,
+      STORES.epochKeys,
       STORES.objects,
       STORES.events,
       STORES.libraryProjection,
@@ -839,6 +884,8 @@ export class IndexedDbWorkspaceRepository {
           requestValue(
             transaction.objectStore(STORES.deviceKeys).count(vaultSingletonKey(vaultId, "device")),
           ),
+          requestValue(transaction.objectStore(STORES.deviceLocalKeys).count(`${vaultId}:wrap`)),
+          requestValue(transaction.objectStore(STORES.epochKeys).count(vaultKeyRange(vaultId))),
           requestValue(transaction.objectStore(STORES.objects).count(vaultKeyRange(vaultId))),
           requestValue(transaction.objectStore(STORES.events).count(vaultKeyRange(vaultId))),
           requestValue(
@@ -887,6 +934,15 @@ export class IndexedDbWorkspaceRepository {
       transaction
         .objectStore(STORES.deviceKeys)
         .add(records.deviceKey, vaultSingletonKey(vaultId, "device"));
+      transaction
+        .objectStore(STORES.deviceLocalKeys)
+        .add(input.epochStorage.wrappingKey, `${vaultId}:wrap`);
+      for (const epoch of input.epochStorage.epochs) {
+        if (epoch.vaultId !== vaultId) {
+          throw new Error("Imported Vault epoch storage has mismatched ownership.");
+        }
+        transaction.objectStore(STORES.epochKeys).add(epoch, [vaultId, epoch.keyEpochId]);
+      }
       transaction
         .objectStore(STORES.vaultGenerations)
         .add(records.generation, vaultKey(vaultId, records.generation.generationId));
@@ -1063,6 +1119,545 @@ export class IndexedDbWorkspaceRepository {
     }
   }
 
+  async stageVaultReplacement(input: AtomicVaultReplacementStage): Promise<void> {
+    const records = decodeVaultRecords({
+      metadata: input.records.metadata,
+      deviceSlot: input.records.deviceSlot,
+      deviceKey: input.records.deviceKey,
+      generations: [input.records.generation],
+      head: input.records.head,
+    });
+    const job = input.job;
+    const vaultId = records.metadata.vaultId;
+    const eventIds = input.events.map((event) => event.eventId).toSorted();
+    const objectIds = input.objects.map((object) => object.objectId).toSorted();
+    const artifactIds = input.objects
+      .filter((object) => object.objectType === "Artifact")
+      .map((object) => object.objectId)
+      .toSorted();
+    if (
+      job.state !== "Running" ||
+      job.stage !== "StageRemote" ||
+      job.targetVaultId !== vaultId ||
+      job.targetDeviceId !== records.metadata.deviceId ||
+      job.targetKeyEpochId !== records.metadata.activeKeyEpochId ||
+      job.targetGenerationId !== records.generation.generationId ||
+      job.targetGenerationNumber !== records.generation.generationNumber ||
+      job.sourceVaultId === vaultId ||
+      records.head.vaultId !== vaultId ||
+      records.head.generationId !== records.generation.generationId ||
+      records.head.generationNumber !== records.generation.generationNumber ||
+      input.events.some((event) => event.vaultId !== vaultId) ||
+      eventIds.join("\n") !== records.head.appendedEventIds.join("\n") ||
+      objectIds.join("\n") !== records.head.appendedObjectIds.join("\n") ||
+      new Set(eventIds).size !== eventIds.length ||
+      new Set(objectIds).size !== objectIds.length ||
+      artifactIds.join("\n") !== [...input.preparedArtifactObjectIds].toSorted().join("\n") ||
+      input.collectionProjection.projectionId !== vaultId ||
+      input.vaultNameProjection.vaultId !== vaultId ||
+      !eventIds.includes(input.vaultNameProjection.sourceEventId) ||
+      new Set(input.libraryProjections.map((projection) => projection.bundleId)).size !==
+        input.libraryProjections.length
+    )
+      throw storageError(new Error("Staged Vault replacement records are inconsistent."));
+
+    const stores = [
+      STORES.workspaceMetadata,
+      STORES.vaultDirectory,
+      STORES.vaultReplacementJobs,
+      STORES.vaultMetadata,
+      STORES.keySlots,
+      STORES.deviceKeys,
+      STORES.objects,
+      STORES.events,
+      STORES.libraryProjection,
+      STORES.collectionProjection,
+      STORES.vaultNameProjection,
+      STORES.vaultGenerations,
+      STORES.vaultHead,
+      STORES.synchronizationCheckpoints,
+    ];
+    const database = await this.databasePromise;
+    const transaction = database.transaction(stores, "readwrite");
+    try {
+      const [workspaceValue, storedJobValue, directoryCount] = await Promise.all([
+        requestValue(transaction.objectStore(STORES.workspaceMetadata).get("local")),
+        requestValue(
+          transaction
+            .objectStore(STORES.vaultReplacementJobs)
+            .get(vaultKey(job.sourceVaultId, job.jobId)),
+        ),
+        requestValue(transaction.objectStore(STORES.vaultDirectory).count(vaultId)),
+      ]);
+      if (workspaceValue === undefined || storedJobValue === undefined)
+        throw Object.assign(new Error("Vault replacement staging ownership changed."), {
+          id: "VAULT_CONTEXT_CHANGED",
+        });
+      const workspace = decodeWorkspaceMetadata(workspaceValue);
+      const storedJob = storedJobValue as VaultReplacementJobV1;
+      if (
+        workspace.activeVaultId !== job.sourceVaultId ||
+        storedJob.jobId !== job.jobId ||
+        storedJob.updatedAt !== job.updatedAt ||
+        storedJob.stage !== "StageRemote" ||
+        storedJob.targetVaultId !== vaultId ||
+        directoryCount !== 0
+      )
+        throw Object.assign(new Error("Vault replacement staging ownership changed."), {
+          id: "VAULT_CONTEXT_CHANGED",
+        });
+      const collisionCounts = await Promise.all([
+        requestValue(transaction.objectStore(STORES.vaultMetadata).count(vaultKeyRange(vaultId))),
+        requestValue(transaction.objectStore(STORES.keySlots).count(vaultKeyRange(vaultId))),
+        requestValue(transaction.objectStore(STORES.deviceKeys).count(vaultKeyRange(vaultId))),
+        requestValue(transaction.objectStore(STORES.objects).count(vaultKeyRange(vaultId))),
+        requestValue(transaction.objectStore(STORES.events).count(vaultKeyRange(vaultId))),
+        requestValue(
+          transaction.objectStore(STORES.libraryProjection).count(vaultKeyRange(vaultId)),
+        ),
+        requestValue(
+          transaction.objectStore(STORES.collectionProjection).count(vaultKeyRange(vaultId)),
+        ),
+        requestValue(
+          transaction.objectStore(STORES.vaultNameProjection).count(vaultKeyRange(vaultId)),
+        ),
+        requestValue(
+          transaction.objectStore(STORES.vaultGenerations).count(vaultKeyRange(vaultId)),
+        ),
+        requestValue(transaction.objectStore(STORES.vaultHead).count(vaultKeyRange(vaultId))),
+      ]);
+      if (collisionCounts.some((count) => count !== 0))
+        throw Object.assign(new Error("The replacement Vault identity is already in use."), {
+          id: "VAULT_ALREADY_EXISTS",
+        });
+      transaction
+        .objectStore(STORES.vaultMetadata)
+        .add(records.metadata, vaultSingletonKey(vaultId, "metadata"));
+      transaction
+        .objectStore(STORES.keySlots)
+        .add(records.deviceSlot, vaultSingletonKey(vaultId, "device"));
+      transaction
+        .objectStore(STORES.deviceKeys)
+        .add(records.deviceKey, vaultSingletonKey(vaultId, "device"));
+      transaction
+        .objectStore(STORES.vaultGenerations)
+        .add(records.generation, vaultKey(vaultId, records.generation.generationId));
+      transaction
+        .objectStore(STORES.vaultHead)
+        .add(records.head, vaultSingletonKey(vaultId, "active"));
+      for (const event of input.events)
+        transaction.objectStore(STORES.events).add(event, vaultKey(vaultId, event.eventId));
+      for (const object of input.objects)
+        transaction.objectStore(STORES.objects).add(object, vaultKey(vaultId, object.objectId));
+      for (const projection of input.libraryProjections)
+        transaction
+          .objectStore(STORES.libraryProjection)
+          .add(projection, vaultKey(vaultId, projection.bundleId));
+      transaction
+        .objectStore(STORES.collectionProjection)
+        .add(input.collectionProjection, vaultSingletonKey(vaultId, "active"));
+      transaction
+        .objectStore(STORES.vaultNameProjection)
+        .add(input.vaultNameProjection, vaultSingletonKey(vaultId, "active"));
+      await transactionDone(transaction);
+    } catch (error) {
+      try {
+        transaction.abort();
+      } catch {}
+      throw storageError(error);
+    }
+  }
+
+  async hasStagedVaultReplacement(input: {
+    readonly sourceVaultId: string;
+    readonly targetVaultId: string;
+    readonly jobId: string;
+  }): Promise<boolean> {
+    const database = await this.databasePromise;
+    const transaction = database.transaction(
+      [
+        STORES.workspaceMetadata,
+        STORES.vaultDirectory,
+        STORES.vaultReplacementJobs,
+        STORES.vaultMetadata,
+        STORES.vaultHead,
+      ],
+      "readonly",
+    );
+    const [workspaceValue, directoryCount, jobValue, metadataCount, headCount] = await Promise.all([
+      requestValue(transaction.objectStore(STORES.workspaceMetadata).get("local")),
+      requestValue(transaction.objectStore(STORES.vaultDirectory).count(input.targetVaultId)),
+      requestValue(
+        transaction
+          .objectStore(STORES.vaultReplacementJobs)
+          .get(vaultKey(input.sourceVaultId, input.jobId)),
+      ),
+      requestValue(
+        transaction.objectStore(STORES.vaultMetadata).count(vaultKeyRange(input.targetVaultId)),
+      ),
+      requestValue(
+        transaction.objectStore(STORES.vaultHead).count(vaultKeyRange(input.targetVaultId)),
+      ),
+    ]);
+    await transactionDone(transaction);
+    if (workspaceValue === undefined || jobValue === undefined) return false;
+    const workspace = decodeWorkspaceMetadata(workspaceValue);
+    const job = jobValue as VaultReplacementJobV1;
+    return (
+      workspace.activeVaultId === input.sourceVaultId &&
+      job.jobId === input.jobId &&
+      job.sourceVaultId === input.sourceVaultId &&
+      job.targetVaultId === input.targetVaultId &&
+      directoryCount === 0 &&
+      metadataCount === 1 &&
+      headCount === 1
+    );
+  }
+
+  async discardStagedVaultReplacement(job: VaultReplacementJobV1): Promise<void> {
+    const targetVaultId = job.targetVaultId;
+    if (
+      targetVaultId === undefined ||
+      !["StageRemote", "Upload", "CompleteRemote"].includes(job.stage)
+    )
+      throw storageError(new Error("Vault replacement is not safely discardable."));
+    const stores = [
+      STORES.workspaceMetadata,
+      STORES.vaultDirectory,
+      STORES.vaultReplacementJobs,
+      STORES.vaultMetadata,
+      STORES.keySlots,
+      STORES.deviceKeys,
+      STORES.objects,
+      STORES.events,
+      STORES.libraryProjection,
+      STORES.collectionProjection,
+      STORES.vaultNameProjection,
+      STORES.vaultGenerations,
+      STORES.vaultHead,
+      STORES.synchronizationCheckpoints,
+    ];
+    const database = await this.databasePromise;
+    const transaction = database.transaction(stores, "readwrite");
+    try {
+      const [workspaceValue, directoryCount, storedJobValue] = await Promise.all([
+        requestValue(transaction.objectStore(STORES.workspaceMetadata).get("local")),
+        requestValue(transaction.objectStore(STORES.vaultDirectory).count(targetVaultId)),
+        requestValue(
+          transaction
+            .objectStore(STORES.vaultReplacementJobs)
+            .get(vaultKey(job.sourceVaultId, job.jobId)),
+        ),
+      ]);
+      const workspace =
+        workspaceValue === undefined ? undefined : decodeWorkspaceMetadata(workspaceValue);
+      const storedJob = storedJobValue as VaultReplacementJobV1 | undefined;
+      if (
+        workspace?.activeVaultId !== job.sourceVaultId ||
+        directoryCount !== 0 ||
+        storedJob?.updatedAt !== job.updatedAt ||
+        storedJob.targetVaultId !== targetVaultId ||
+        !["StageRemote", "Upload", "CompleteRemote"].includes(storedJob.stage)
+      )
+        throw Object.assign(new Error("Vault replacement discard ownership changed."), {
+          id: "VAULT_CONTEXT_CHANGED",
+        });
+      for (const storeName of [
+        STORES.vaultMetadata,
+        STORES.keySlots,
+        STORES.deviceKeys,
+        STORES.objects,
+        STORES.events,
+        STORES.libraryProjection,
+        STORES.collectionProjection,
+        STORES.vaultNameProjection,
+        STORES.vaultGenerations,
+        STORES.vaultHead,
+        STORES.synchronizationCheckpoints,
+      ])
+        transaction.objectStore(storeName).delete(vaultKeyRange(targetVaultId));
+      await transactionDone(transaction);
+    } catch (error) {
+      try {
+        transaction.abort();
+      } catch {}
+      throw storageError(error);
+    }
+  }
+
+  async commitVaultReplacement(
+    input: AtomicVaultReplacementPromotion,
+  ): Promise<VaultReplacementPromotionResult> {
+    const job = input.job;
+    const targetVaultId = job.targetVaultId;
+    if (
+      job.state !== "Running" ||
+      job.stage !== "PromoteLocal" ||
+      targetVaultId === undefined ||
+      job.targetDeviceId === undefined ||
+      job.targetRecoveryGenerationId === undefined ||
+      job.targetKeyEpochId === undefined ||
+      job.targetGenerationId === undefined ||
+      job.targetGenerationNumber === undefined ||
+      job.targetHeadCursor === undefined ||
+      job.purgeId === undefined ||
+      input.authority.accountId !== job.accountId ||
+      input.authority.vaultId !== targetVaultId ||
+      input.authority.recoveryGenerationId !== job.targetRecoveryGenerationId ||
+      input.authority.identity.deviceId !== job.targetDeviceId ||
+      input.authority.remoteGenerationId !== job.targetGenerationId ||
+      input.authority.remoteGenerationNumber !== job.targetGenerationNumber ||
+      input.nameCache.vaultId !== targetVaultId
+    )
+      throw storageError(new Error("Vault replacement promotion authority is incomplete."));
+    timestamp(input.promotedAt, "vaultReplacement.promotedAt");
+    const preparedAuthority = await prepareDeviceAuthorityStorage(
+      input.authority,
+      job.targetHeadCursor,
+    );
+    if (
+      preparedAuthority.registration.activeKeyEpochId !== job.targetKeyEpochId ||
+      preparedAuthority.identity.deviceId !== job.targetDeviceId
+    )
+      throw storageError(new Error("Vault replacement Device authority changed."));
+
+    const stores = [
+      STORES.workspaceMetadata,
+      STORES.vaultDirectory,
+      STORES.vaultNameCache,
+      STORES.vaultNameProjection,
+      STORES.vaultMetadata,
+      STORES.keySlots,
+      STORES.deviceKeys,
+      STORES.objects,
+      STORES.events,
+      STORES.libraryProjection,
+      STORES.collectionProjection,
+      STORES.vaultGenerations,
+      STORES.vaultHead,
+      STORES.captureJobs,
+      STORES.commandOutcomes,
+      STORES.vacuumJobs,
+      STORES.exportJobs,
+      STORES.importJobs,
+      STORES.artifactAvailability,
+      STORES.storageReliefJobs,
+      STORES.storageReliefCheckpoints,
+      STORES.synchronizationJobs,
+      STORES.synchronizationCheckpoints,
+      STORES.serverSwitchJobs,
+      STORES.serverSwitchCheckpoints,
+      STORES.deviceEnrollmentJobs,
+      STORES.futureProtectionJobs,
+      STORES.deviceIdentities,
+      STORES.deviceLocalKeys,
+      STORES.epochKeys,
+      STORES.deviceSessions,
+      STORES.recoveryKits,
+      STORES.vaultSyncState,
+      STORES.vaultReplacementJobs,
+    ];
+    const database = await this.databasePromise;
+    const transaction = database.transaction(stores, "readwrite");
+    try {
+      const [
+        workspaceValue,
+        storedJobValue,
+        sourceHeadValue,
+        targetHeadValue,
+        targetMetadataValue,
+        targetNameValue,
+        sourceObjectValues,
+        sourceDirectoryCount,
+        targetDirectoryCount,
+      ] = await Promise.all([
+        requestValue(transaction.objectStore(STORES.workspaceMetadata).get("local")),
+        requestValue(
+          transaction
+            .objectStore(STORES.vaultReplacementJobs)
+            .get(vaultKey(job.sourceVaultId, job.jobId)),
+        ),
+        requestValue(
+          transaction
+            .objectStore(STORES.vaultHead)
+            .get(vaultSingletonKey(job.sourceVaultId, "active")),
+        ),
+        requestValue(
+          transaction.objectStore(STORES.vaultHead).get(vaultSingletonKey(targetVaultId, "active")),
+        ),
+        requestValue(
+          transaction
+            .objectStore(STORES.vaultMetadata)
+            .get(vaultSingletonKey(targetVaultId, "metadata")),
+        ),
+        requestValue(
+          transaction
+            .objectStore(STORES.vaultNameProjection)
+            .get(vaultSingletonKey(targetVaultId, "active")),
+        ),
+        requestValue(
+          transaction.objectStore(STORES.objects).getAll(vaultKeyRange(job.sourceVaultId)),
+        ),
+        requestValue(transaction.objectStore(STORES.vaultDirectory).count(job.sourceVaultId)),
+        requestValue(transaction.objectStore(STORES.vaultDirectory).count(targetVaultId)),
+      ]);
+      const workspace =
+        workspaceValue === undefined ? undefined : decodeWorkspaceMetadata(workspaceValue);
+      const storedJob = storedJobValue as VaultReplacementJobV1 | undefined;
+      const sourceHead =
+        sourceHeadValue === undefined ? undefined : decodeVaultHead(sourceHeadValue);
+      const targetHead =
+        targetHeadValue === undefined ? undefined : decodeVaultHead(targetHeadValue);
+      const targetMetadata =
+        targetMetadataValue === undefined ? undefined : decodeVaultMetadata(targetMetadataValue);
+      const targetName =
+        targetNameValue === undefined
+          ? undefined
+          : decodeStoredVaultNameProjection(targetNameValue);
+      const sourceArtifactObjectIds = sourceObjectValues
+        .map(decodeStoredObject)
+        .filter((object) => object.objectType === "Artifact")
+        .map((object) => object.objectId)
+        .toSorted();
+      if (
+        workspace?.activeVaultId !== job.sourceVaultId ||
+        storedJob?.updatedAt !== job.updatedAt ||
+        storedJob.stage !== "PromoteLocal" ||
+        storedJob.purgeId !== job.purgeId ||
+        sourceDirectoryCount !== 1 ||
+        targetDirectoryCount !== 0 ||
+        sourceHead?.generationId !== job.sourceHead.generationId ||
+        sourceHead.generationNumber !== job.sourceHead.generationNumber ||
+        sourceHead.appendedObjectIds.join("\n") !== job.sourceHead.appendedObjectIds.join("\n") ||
+        sourceHead.appendedEventIds.join("\n") !== job.sourceHead.appendedEventIds.join("\n") ||
+        targetHead?.vaultId !== targetVaultId ||
+        targetHead.generationId !== job.targetGenerationId ||
+        targetHead.generationNumber !== job.targetGenerationNumber ||
+        targetMetadata?.deviceId !== job.targetDeviceId ||
+        targetMetadata.activeKeyEpochId !== job.targetKeyEpochId ||
+        targetName?.sourceEventId !== input.nameCache.sourceEventId ||
+        job.targetHeadCursor !== 1 + targetHead.appendedEventIds.length
+      )
+        throw Object.assign(new Error("Vault replacement promotion ownership changed."), {
+          id: "VAULT_CONTEXT_CHANGED",
+        });
+      const targetCheckpoints = await Promise.all([
+        ...targetHead.appendedObjectIds.map((objectId) =>
+          requestValue(
+            transaction
+              .objectStore(STORES.synchronizationCheckpoints)
+              .get([targetVaultId, "Object", objectId]),
+          ),
+        ),
+        ...targetHead.appendedEventIds.map((eventId) =>
+          requestValue(
+            transaction
+              .objectStore(STORES.synchronizationCheckpoints)
+              .get([targetVaultId, "Event", eventId]),
+          ),
+        ),
+      ]);
+      if (
+        targetCheckpoints.some((checkpoint, index) => {
+          const value = checkpoint as import("./schema").SynchronizationCheckpointV1 | undefined;
+          return index < targetHead.appendedObjectIds.length
+            ? value?.state !== "Durable"
+            : value?.state !== "Committed";
+        })
+      )
+        throw Object.assign(new Error("Vault replacement upload is incomplete."), {
+          id: "SYNCHRONIZATION_INTEGRITY_FAILED",
+        });
+
+      const clearSourceRange = (storeName: string): void => {
+        transaction.objectStore(storeName).delete(vaultKeyRange(job.sourceVaultId));
+      };
+      for (const storeName of [
+        STORES.vaultMetadata,
+        STORES.keySlots,
+        STORES.deviceKeys,
+        STORES.objects,
+        STORES.events,
+        STORES.libraryProjection,
+        STORES.collectionProjection,
+        STORES.vaultNameProjection,
+        STORES.vaultGenerations,
+        STORES.vaultHead,
+        STORES.captureJobs,
+        STORES.commandOutcomes,
+        STORES.vacuumJobs,
+        STORES.exportJobs,
+        STORES.artifactAvailability,
+        STORES.storageReliefJobs,
+        STORES.storageReliefCheckpoints,
+        STORES.synchronizationCheckpoints,
+        STORES.epochKeys,
+      ])
+        clearSourceRange(storeName);
+      transaction.objectStore(STORES.vaultDirectory).delete(job.sourceVaultId);
+      transaction.objectStore(STORES.vaultNameCache).delete(job.sourceVaultId);
+      transaction.objectStore(STORES.deviceIdentities).delete(job.sourceVaultId);
+      transaction.objectStore(STORES.deviceSessions).delete(job.sourceVaultId);
+      transaction.objectStore(STORES.recoveryKits).delete(job.sourceVaultId);
+      transaction.objectStore(STORES.deviceLocalKeys).delete(`${job.sourceVaultId}:wrap`);
+      transaction.objectStore(STORES.deviceLocalKeys).delete(`${job.sourceVaultId}:session`);
+      transaction.objectStore(STORES.synchronizationJobs).clear();
+      transaction.objectStore(STORES.serverSwitchJobs).clear();
+      transaction.objectStore(STORES.serverSwitchCheckpoints).clear();
+      transaction.objectStore(STORES.deviceEnrollmentJobs).clear();
+      transaction.objectStore(STORES.futureProtectionJobs).clear();
+      transaction.objectStore(STORES.importJobs).clear();
+
+      transaction
+        .objectStore(STORES.deviceIdentities)
+        .put(preparedAuthority.identity, targetVaultId);
+      transaction
+        .objectStore(STORES.deviceLocalKeys)
+        .put(preparedAuthority.wrappingKey, `${targetVaultId}:wrap`);
+      transaction
+        .objectStore(STORES.deviceLocalKeys)
+        .put(preparedAuthority.sessionKey, `${targetVaultId}:session`);
+      for (const epoch of preparedAuthority.epochs)
+        transaction.objectStore(STORES.epochKeys).put(epoch, [targetVaultId, epoch.keyEpochId]);
+      transaction.objectStore(STORES.deviceSessions).put(preparedAuthority.session, targetVaultId);
+      transaction
+        .objectStore(STORES.recoveryKits)
+        .put(preparedAuthority.recoveryKit, targetVaultId);
+      transaction.objectStore(STORES.vaultSyncState).put(preparedAuthority.registration, "active");
+      transaction.objectStore(STORES.vaultNameCache).add(input.nameCache, targetVaultId);
+      transaction.objectStore(STORES.vaultDirectory).add(
+        {
+          version: 1,
+          vaultId: targetVaultId,
+          createdAt: targetMetadata.createdAt,
+        } satisfies VaultDirectoryEntryV1,
+        targetVaultId,
+      );
+      transaction
+        .objectStore(STORES.workspaceMetadata)
+        .put({ ...workspace, activeVaultId: targetVaultId }, "local");
+      const promoted: VaultReplacementJobV1 = {
+        ...storedJob,
+        state: "Running",
+        stage: "PurgeSource",
+        updatedAt: input.promotedAt,
+      };
+      transaction
+        .objectStore(STORES.vaultReplacementJobs)
+        .put(promoted, vaultKey(job.sourceVaultId, job.jobId));
+      await transactionDone(transaction);
+      return {
+        job: promoted,
+        removedSourceArtifactObjectIds: sourceArtifactObjectIds,
+      };
+    } catch (error) {
+      try {
+        transaction.abort();
+      } catch {}
+      throw storageError(error);
+    }
+  }
+
   async commitRemoteReconciliation(input: AtomicRemoteReconciliation): Promise<void> {
     const vaultId = input.registration.vaultId;
     if (
@@ -1081,7 +1676,7 @@ export class IndexedDbWorkspaceRepository {
     const database = await this.databasePromise;
     const transaction = database.transaction(
       [
-        STORES.accountVault,
+        STORES.vaultSyncState,
         STORES.synchronizationJobs,
         STORES.vaultHead,
         STORES.objects,
@@ -1096,7 +1691,7 @@ export class IndexedDbWorkspaceRepository {
     );
     try {
       const [storedRegistrationValue, storedJobValue, storedHeadValue] = await Promise.all([
-        requestValue(transaction.objectStore(STORES.accountVault).get("active")),
+        requestValue(transaction.objectStore(STORES.vaultSyncState).get("active")),
         requestValue(transaction.objectStore(STORES.synchronizationJobs).get("active")),
         requestValue(
           transaction.objectStore(STORES.vaultHead).get(vaultSingletonKey(vaultId, "active")),
@@ -1149,7 +1744,7 @@ export class IndexedDbWorkspaceRepository {
       transaction
         .objectStore(STORES.vaultHead)
         .put(input.head, vaultSingletonKey(vaultId, "active"));
-      transaction.objectStore(STORES.accountVault).put(input.registration, "active");
+      transaction.objectStore(STORES.vaultSyncState).put(input.registration, "active");
       const { preparedArtifactObjectIds: _preparedArtifactObjectIds, ...completedJob } = input.job;
       transaction
         .objectStore(STORES.synchronizationJobs)
@@ -1179,7 +1774,7 @@ export class IndexedDbWorkspaceRepository {
       throw storageError(new Error("Stale discard records are inconsistent."));
     const stores = [
       STORES.workspaceMetadata,
-      STORES.accountVault,
+      STORES.vaultSyncState,
       STORES.synchronizationJobs,
       STORES.vaultDirectory,
       STORES.vaultNameCache,
@@ -1275,7 +1870,7 @@ export class IndexedDbWorkspaceRepository {
       transaction.objectStore(STORES.artifactAvailability).delete(vaultKeyRange(vaultId));
       transaction.objectStore(STORES.storageReliefJobs).delete(vaultKeyRange(vaultId));
       transaction.objectStore(STORES.storageReliefCheckpoints).delete(vaultKeyRange(vaultId));
-      transaction.objectStore(STORES.accountVault).put(input.registration, "active");
+      transaction.objectStore(STORES.vaultSyncState).put(input.registration, "active");
       const { preparedArtifactObjectIds: _preparedArtifactObjectIds, ...completedJob } = input.job;
       transaction
         .objectStore(STORES.synchronizationJobs)

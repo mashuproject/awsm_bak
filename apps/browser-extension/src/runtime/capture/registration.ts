@@ -12,6 +12,7 @@ import { encodeCanonicalCbor } from "../../domain/cbor";
 import type { CaptureWarningId } from "../../domain/contracts";
 import type { AtomicRegistrationV1, StoredArtifactObjectV1 } from "../../drivers/indexeddb";
 import { reduceLibraryProjection } from "../library/projection";
+import type { VaultKeyring } from "../vault/keyring";
 import { decodeBundleRegisteredPayload, validateArtifactWarnings } from "./contracts";
 
 export interface PreparedCaptureArtifact {
@@ -20,7 +21,7 @@ export interface PreparedCaptureArtifact {
 }
 
 export interface PrepareCaptureRegistrationInput {
-  readonly rootKey: CryptoKey;
+  readonly keyring: VaultKeyring;
   readonly vaultId: string;
   readonly deviceId: string;
   readonly commandId: string;
@@ -44,14 +45,24 @@ async function encryptedBytes(
   objectId: string,
   plaintext: Uint8Array,
 ): Promise<Uint8Array> {
-  const key = await deriveContextKeyFromCryptoKey(input.rootKey, {
+  const epoch = input.keyring.active();
+  const key = await deriveContextKeyFromCryptoKey(epoch.rootKey, {
     vaultId: input.vaultId,
+    keyEpochId: epoch.keyEpochId,
     domain,
     contextId,
     keyVersion: 1,
   });
   try {
-    return encodeEncryptedEnvelope(await encryptEnvelope({ objectType, objectId, plaintext, key }));
+    return encodeEncryptedEnvelope(
+      await encryptEnvelope({
+        objectType,
+        objectId,
+        keyEpochId: epoch.keyEpochId,
+        plaintext,
+        key,
+      }),
+    );
   } finally {
     await wipe(key);
   }

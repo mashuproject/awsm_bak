@@ -43,7 +43,16 @@ export const RUNTIME_ERROR_IDS = [
   "ACCOUNT_INPUT_INVALID",
   "ACCOUNT_UNAVAILABLE",
   "AUTHENTICATION_FAILED",
+  "AUTHORIZATION_FAILED",
+  "REGISTRATION_DISABLED",
   "SESSION_EXPIRED",
+  "RECOVERY_PHRASE_INVALID",
+  "RECOVERY_GENERATION_CHANGED",
+  "KEY_EPOCH_CHANGED",
+  "DEVICE_REVOKED",
+  "DEVICE_ENROLLMENT_INVALID",
+  "VAULT_REPLACEMENT_CONFLICT",
+  "VAULT_REPLACEMENT_EXPORT_REQUIRED",
   "SERVER_INCOMPATIBLE",
   "SERVER_PERMISSION_DENIED",
   "SERVER_SWITCH_CONFLICT",
@@ -90,6 +99,7 @@ export interface EncryptedEnvelopeV1 {
     | "WrappedKey"
     | "VaultGeneration";
   readonly algorithm: "enc:xchacha20poly1305:v1";
+  readonly keyEpochId: string;
   readonly objectId: string;
   readonly payloadLength: number;
   readonly nonce: Uint8Array;

@@ -3,6 +3,7 @@ require "redis"
 
 RSpec.describe Coordination::CableTickets do
   let(:account) { create_account }
+  let(:principal) { principal_for(account) }
   let(:namespace) { "awsm:coordination:test:#{SecureRandom.hex(8)}" }
   let(:redis) do
     Redis.new(
@@ -33,8 +34,17 @@ RSpec.describe Coordination::CableTickets do
       end
   end
 
-  it "stores only a TTL-bound digest key and Account UUID for a 256-bit opaque ticket" do
-    raw_ticket, expires_at = described_class.issue(account)
+  def principal_for(target_account)
+    vault = target_account.vault_replicas.create!(
+      vault_id: SecureRandom.uuid,
+      state: "Active",
+      head_cursor: 0
+    )
+    create_vault_device_principal(account: target_account, vault:)
+  end
+
+  it "stores only a TTL-bound digest key and bound Device-session authority" do
+    raw_ticket, expires_at = described_class.issue(principal)
 
     expect(raw_ticket).to match(/\A[A-Za-z0-9_-]{43}\z/)
     expect(Coordination::ProtocolEncoding.decode_base64url(raw_ticket, bytes: 32).bytesize).to eq(32)
@@ -43,13 +53,18 @@ RSpec.describe Coordination::CableTickets do
     keys = redis.scan_each(match: "#{namespace}:*").to_a
     expect(keys).to contain_exactly(Coordination::EphemeralCoordination.ticket_key(raw_ticket))
     expect(keys.first).not_to include(raw_ticket)
-    expect(redis.get(keys.first)).to eq(account.id)
-    expect(redis.get(keys.first)).not_to include(raw_ticket)
+    stored = JSON.parse(redis.get(keys.first))
+    expect(stored).to eq(
+      "accountId" => account.id,
+      "sessionId" => principal.session.id,
+      "deviceId" => principal.session.vault_device_id
+    )
+    expect(stored.to_json).not_to include(raw_ticket)
     expect(redis.ttl(keys.first)).to be_between(1, 60)
   end
 
   it "atomically consumes a valid ticket exactly once" do
-    raw_ticket, = described_class.issue(account)
+    raw_ticket, = described_class.issue(principal)
 
     expect(described_class.consume(raw_ticket)).to eq(account)
     expect(redis.exists?(Coordination::EphemeralCoordination.ticket_key(raw_ticket))).to be(false)
@@ -58,29 +73,29 @@ RSpec.describe Coordination::CableTickets do
 
   it "keeps tickets bound to their issuing Accounts" do
     another_account = create_account(email: "another-#{SecureRandom.hex(4)}@example.test")
-    first_ticket, = described_class.issue(account)
-    second_ticket, = described_class.issue(another_account)
+    first_ticket, = described_class.issue(principal)
+    second_ticket, = described_class.issue(principal_for(another_account))
 
     expect(described_class.consume(first_ticket)).to eq(account)
     expect(described_class.consume(second_ticket)).to eq(another_account)
   end
 
-  it "rejects malformed, expired, and deleted-Account tickets identically" do
+  it "rejects malformed, expired, revoked-session, and malformed-authority tickets identically" do
     before_keys = redis.scan_each(match: "#{namespace}:*").to_a
     [ "", "a" * 42, "a" * 44, "+" * 43, "_" * 43 ].each do |candidate|
       expect_authentication_failed(candidate)
     end
     expect(redis.scan_each(match: "#{namespace}:*").to_a).to eq(before_keys)
 
-    expired, = described_class.issue(account)
+    expired, = described_class.issue(principal)
     redis.expire(Coordination::EphemeralCoordination.ticket_key(expired), 0)
     expect_authentication_failed(expired)
 
-    deleted_account_ticket, = described_class.issue(account)
-    account.destroy!
-    expect_authentication_failed(deleted_account_ticket)
+    revoked_session_ticket, = described_class.issue(principal)
+    principal.session.revoke!
+    expect_authentication_failed(revoked_session_ticket)
     expect(redis.exists?(
-      Coordination::EphemeralCoordination.ticket_key(deleted_account_ticket)
+      Coordination::EphemeralCoordination.ticket_key(revoked_session_ticket)
     )).to be(false)
 
     invalid_value_ticket = Coordination::ProtocolEncoding.encode_base64url("z" * 32)
@@ -90,9 +105,10 @@ RSpec.describe Coordination::CableTickets do
     expect(redis.exists?(invalid_value_key)).to be(false)
   end
 
-  it "allows exactly one concurrent Redis consumer to receive the stored Account UUID" do
-    raw_ticket, = described_class.issue(account)
+  it "allows exactly one concurrent Redis consumer to receive the stored authority" do
+    raw_ticket, = described_class.issue(principal)
     key = Coordination::EphemeralCoordination.ticket_key(raw_ticket)
+    authority = redis.get(key)
     clients = 2.times.map do
       Redis.new(url: Coordination::EphemeralCoordination.url, reconnect_attempts: 0)
     end
@@ -105,7 +121,7 @@ RSpec.describe Coordination::CableTickets do
     end
     2.times { gate << true }
 
-    expect(results.map(&:value)).to contain_exactly(account.id, nil)
+    expect(results.map(&:value)).to contain_exactly(authority, nil)
   ensure
     clients&.each(&:close)
   end
@@ -132,7 +148,7 @@ RSpec.describe Coordination::CableTickets do
   end
 
   it "retries collisions three times then reports a credential-free outage" do
-    issuing_account = account
+    issuing_principal = principal
     allow(SecureRandom).to receive(:random_bytes).with(32)
       .and_return("a" * 32, "b" * 32, "c" * 32)
     client = instance_double(Redis, set: false)
@@ -146,7 +162,7 @@ RSpec.describe Coordination::CableTickets do
       expect(context.inspect).not_to match(/[A-Za-z0-9_-]{43}/)
     end
 
-    expect { described_class.issue(issuing_account) }
+    expect { described_class.issue(issuing_principal) }
       .to raise_error(Coordination::OutcomeError) do |error|
         expect(error.outcome).to eq("AUTHENTICATION_UNAVAILABLE")
         expect(error.retryable).to be(true)

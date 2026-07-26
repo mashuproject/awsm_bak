@@ -21,7 +21,13 @@ export type WorkspaceBusyState =
   | { readonly operation: "Import" }
   | {
       readonly vaultId: string;
-      readonly operation: "Capture" | "Vacuum" | "Export" | "Server Switch" | "Storage relief";
+      readonly operation:
+        | "Capture"
+        | "Vacuum"
+        | "Export"
+        | "Server Switch"
+        | "Storage relief"
+        | "Vault replacement";
     };
 
 export interface WorkspaceState {

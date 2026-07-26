@@ -1,10 +1,105 @@
-/*
- * This is a manifest file that'll be compiled into application.css.
- *
- * With Propshaft, assets are served efficiently without preprocessing steps. You can still include
- * application-wide styles in this file, but keep in mind that CSS precedence will follow the standard
- * cascading order, meaning styles declared later in the document or manifest will override earlier ones,
- * depending on specificity.
- *
- * Consider organizing styles into separate files for maintainability.
- */
+:root {
+  color-scheme: light;
+  color: #171a1f;
+  background: #f5f7fa;
+  font: 16px/1.5 ui-sans-serif, system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+.account-shell {
+  width: min(100% - 32px, 480px);
+  margin: 64px auto;
+  border: 1px solid #d8dee8;
+  border-radius: 14px;
+  padding: 32px;
+  background: #fff;
+  box-shadow: 0 18px 50px rgb(30 50 80 / 8%);
+}
+
+h1 {
+  margin: 0 0 8px;
+  font-size: 1.75rem;
+}
+
+p {
+  margin: 0 0 16px;
+}
+
+form,
+.field,
+.actions {
+  display: grid;
+  gap: 12px;
+}
+
+.field {
+  gap: 6px;
+}
+
+input,
+button,
+.button {
+  min-height: 44px;
+  border-radius: 8px;
+  font: inherit;
+}
+
+input {
+  border: 1px solid #9ca7b7;
+  padding: 9px 11px;
+}
+
+button,
+.button {
+  display: grid;
+  place-items: center;
+  border: 1px solid #2356c4;
+  padding: 9px 14px;
+  color: #fff;
+  background: #2563eb;
+  cursor: pointer;
+  font-weight: 650;
+  text-decoration: none;
+}
+
+a {
+  color: #1748ae;
+}
+
+.flash {
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.flash.error {
+  color: #8f1f17;
+  background: #fff0ee;
+}
+
+.flash.success {
+  color: #17612c;
+  background: #edf9f0;
+}
+
+.metadata {
+  padding: 0;
+  list-style: none;
+}
+
+@media (max-width: 520px) {
+  .account-shell {
+    width: 100%;
+    min-height: 100vh;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+    padding: 24px;
+  }
+}

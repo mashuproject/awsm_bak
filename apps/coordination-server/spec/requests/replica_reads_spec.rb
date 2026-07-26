@@ -17,7 +17,7 @@ RSpec.describe "Active replica reads", type: :request do
 
   before do
     allow(Coordination::AccountAuthenticator).to receive(:authenticate).and_return(
-      Coordination::AccountPrincipal.new(account:, confirmed_at: Time.current)
+      create_vault_device_principal(account:, vault:)
     )
   end
 
@@ -91,6 +91,7 @@ RSpec.describe "Active replica reads", type: :request do
     replica = account.vault_replicas.create!(vault_id:, **vault_slot_attributes(account:, vault_id:),
       state: "Active", head_cursor: 2,
       active_generation_number: 0)
+    create_vault_device_principal(account:, vault: replica)
     generation = replica.vault_generations.create!(generation_id:, generation_number: 0,
       state: "Active", activated_at: Time.current)
     replica.update!(active_generation: generation)
@@ -100,7 +101,8 @@ RSpec.describe "Active replica reads", type: :request do
     event = replica.opaque_records.create!(object_id: event_id, object_type: "Event",
       byte_length: bytes.bytesize, sha256: Digest::SHA256.digest(bytes), state: "Committed",
       target_generation_id: generation_id, event_ordering_timestamp: Time.utc(2026, 7, 19, 12),
-      durable_at: Time.current, committed_at: Time.current, storage_key: key)
+      durable_at: Time.current, committed_at: Time.current, storage_key: key,
+      vault_key_epoch_id: replica.active_key_epoch_id)
     generation.generation_memberships.create!(opaque_record: event)
     commit = EventCommit.create!(vault_replica: replica, vault_generation: generation,
       event_record: event, cursor: 2, request_sha256: Digest::SHA256.digest("commit"),

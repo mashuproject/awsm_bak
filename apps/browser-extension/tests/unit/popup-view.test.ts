@@ -48,6 +48,7 @@ describe("popup state model", () => {
           configuration: {
             mode: "Configured",
             serverOrigin: "https://sync.example.test",
+            registration: { enabled: false },
           },
           accountState: "SignedOut",
           vaultSyncState: "AuthenticationRequired",
@@ -63,6 +64,7 @@ describe("popup state model", () => {
           configuration: {
             mode: "Configured",
             serverOrigin: "https://sync.example.test",
+            registration: { enabled: false },
           },
           accountState: "Authenticated",
           vaultSyncState: "PermissionRequired",

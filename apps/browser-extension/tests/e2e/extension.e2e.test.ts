@@ -77,6 +77,7 @@ declare const chrome: {
 
 import {
   prepareVaultNameChange,
+  type VaultKeyring,
   type VaultRecordsV1,
   type VaultRepository,
   VaultService,
@@ -86,7 +87,7 @@ const extensionBuildPath = resolve(process.env.AWSM_EXTENSION_BUILD ?? ".output/
 
 async function preparePortableArtifact(
   encrypted: Map<string, Uint8Array>,
-  rootKey: CryptoKey,
+  keyring: VaultKeyring,
   vaultId: string,
   plaintext: Uint8Array,
   role: ArtifactReferenceV1["role"],
@@ -95,8 +96,10 @@ async function preparePortableArtifact(
   acquiredAt: string,
 ): Promise<PreparedCaptureArtifact> {
   const objectId = crypto.randomUUID();
-  const key = await deriveContextKeyFromCryptoKey(rootKey, {
+  const epoch = keyring.active();
+  const key = await deriveContextKeyFromCryptoKey(epoch.rootKey, {
     vaultId,
+    keyEpochId: epoch.keyEpochId,
     domain: "vault:artifact:v1",
     contextId: objectId,
     keyVersion: 1,
@@ -104,6 +107,7 @@ async function preparePortableArtifact(
   const chunks: Uint8Array[] = [];
   const summary = await writeArtifactEnvelope({
     objectId,
+    keyEpochId: epoch.keyEpochId,
     key,
     noncePrefix: crypto.getRandomValues(new Uint8Array(16)),
     plaintext: (async function* () {
@@ -124,6 +128,7 @@ async function preparePortableArtifact(
     version: 1,
     objectId,
     objectType: "Artifact",
+    keyEpochId: epoch.keyEpochId,
     envelopeFormat: "artifact:xchacha20poly1305-chunked:v1",
     envelopeByteLength: summary.envelopeByteLength,
     envelopeChecksumAlgorithm: "hash:sha256:v1",
@@ -242,7 +247,7 @@ async function artifactStorageSnapshot(
 }> {
   return page.evaluate(async (expectedVaultId) => {
     const database = await new Promise<IDBDatabase>((resolveDatabase, reject) => {
-      const request = indexedDB.open("awsm-vault");
+      const request = indexedDB.open("awsm-client");
       request.addEventListener("success", () => resolveDatabase(request.result), { once: true });
       request.addEventListener("error", () => reject(request.error), {
         once: true,
@@ -637,7 +642,7 @@ async function synchronizationJob(
 ): Promise<{ jobId: string; state: string; stage?: string; errorId?: string } | undefined> {
   return page.evaluate(async () => {
     const database = await new Promise<IDBDatabase>((resolveDatabase, reject) => {
-      const request = indexedDB.open("awsm-vault");
+      const request = indexedDB.open("awsm-client");
       request.addEventListener("success", () => resolveDatabase(request.result), { once: true });
       request.addEventListener("error", () => reject(request.error), {
         once: true,
@@ -690,6 +695,15 @@ async function waitForSynchronizedState(page: Page, serverOrigin: string): Promi
           workspace: { activeVaultId?: string };
         }>(page, { type: "GetState" });
         vaultId = state.workspace.activeVaultId;
+        if (state.account.vaultSyncState === "Failed") {
+          const [job, faults] = await Promise.all([
+            synchronizationJob(page),
+            faultControl(page, "status"),
+          ]);
+          throw new Error(
+            `Synchronization failed: ${JSON.stringify({ errorId: state.account.errorId, job, faults })}`,
+          );
+        }
         return {
           serverOrigin: state.account.configuration.serverOrigin,
           synchronization:
@@ -706,6 +720,27 @@ async function waitForSynchronizedState(page: Page, serverOrigin: string): Promi
   return vaultId;
 }
 
+async function createRailsAccount(
+  context: BrowserContext,
+  serverOrigin: string,
+  email: string,
+  password: string,
+): Promise<void> {
+  const signup = await context.newPage();
+  try {
+    await signup.goto(`${serverOrigin}/sign_up`);
+    await signup.getByLabel("Email").fill(email);
+    await signup.getByLabel("Password", { exact: true }).fill(password);
+    await signup.getByLabel("Confirm password").fill(password);
+    await Promise.all([
+      signup.waitForURL(`${serverOrigin}/account`),
+      signup.getByRole("button", { name: "Create Account" }).click(),
+    ]);
+  } finally {
+    await signup.close();
+  }
+}
+
 async function createSynchronizedClient(
   testInfo: TestInfo,
   name: string,
@@ -715,20 +750,29 @@ async function createSynchronizedClient(
 ): Promise<
   Awaited<ReturnType<typeof packagedAccountContext>> & {
     readonly vaultId: string;
+    readonly recoveryPhrase: string;
   }
 > {
   const client = await packagedAccountContext(testInfo, name);
+  await createRailsAccount(client.context, serverOrigin, email, password);
   await appRequest(client.popup, { type: "ConfigureSyncServer", serverOrigin });
-  await appRequest(client.popup, {
-    type: "SignupAccount",
-    email,
-    password,
-    recoveryAcknowledged: true,
+  await appRequest(client.popup, { type: "LoginAccount", email, password });
+  const prepared = await appRequest<{
+    readonly setupId: string;
+    readonly recoveryPhrase: string;
+  }>(client.popup, {
+    type: "PrepareAccountVault",
     newVaultName: name,
+  });
+  await appRequest(client.popup, {
+    type: "ConfirmInitialVault",
+    setupId: prepared.setupId,
+    recoveryPhrase: prepared.recoveryPhrase,
   });
   return {
     ...client,
     vaultId: await waitForSynchronizedState(client.popup, serverOrigin),
+    recoveryPhrase: prepared.recoveryPhrase,
   };
 }
 
@@ -738,6 +782,7 @@ async function loginSynchronizedClient(
   serverOrigin: string,
   email: string,
   password: string,
+  recoveryPhrase: string,
 ): Promise<
   Awaited<ReturnType<typeof packagedAccountContext>> & {
     readonly vaultId: string;
@@ -746,6 +791,11 @@ async function loginSynchronizedClient(
   const client = await packagedAccountContext(testInfo, name);
   await appRequest(client.popup, { type: "ConfigureSyncServer", serverOrigin });
   await appRequest(client.popup, { type: "LoginAccount", email, password });
+  await appRequest(client.popup, {
+    type: "RecoverAccountVault",
+    recoveryPhrase,
+    confirmationPhrase: recoveryPhrase,
+  });
   return {
     ...client,
     vaultId: await waitForSynchronizedState(client.popup, serverOrigin),
@@ -756,7 +806,6 @@ async function switchPackagedClient(
   page: Page,
   vaultId: string,
   candidateOrigin: string,
-  mode: "Login" | "Signup",
   email: string,
   password: string,
 ): Promise<void> {
@@ -765,11 +814,15 @@ async function switchPackagedClient(
     candidateOrigin,
     expectedVaultId: vaultId,
   });
-  await appRequest(page, {
-    type: mode === "Login" ? "LoginServerSwitchCandidate" : "SignupServerSwitchCandidate",
-    email,
-    password,
-  });
+  try {
+    await appRequest(page, {
+      type: "LoginServerSwitchCandidate",
+      email,
+      password,
+    });
+  } catch (error) {
+    throw new Error(JSON.stringify(await faultControl(page, "status")), { cause: error });
+  }
   await waitForSynchronizedState(page, candidateOrigin);
 }
 
@@ -887,7 +940,7 @@ async function activeGeneration(page: Page): Promise<{
 }> {
   return page.evaluate(async () => {
     const database = await new Promise<IDBDatabase>((resolveDatabase, reject) => {
-      const request = indexedDB.open("awsm-vault");
+      const request = indexedDB.open("awsm-client");
       request.addEventListener("success", () => resolveDatabase(request.result), { once: true });
       request.addEventListener("error", () => reject(request.error), {
         once: true,
@@ -948,7 +1001,11 @@ async function extractNewestCapture(page: Page, vaultId: string): Promise<void> 
 }
 
 async function vacuumDeleted(page: Page, vaultId: string): Promise<void> {
-  await appRequest(page, { type: "VacuumVault", expectedVaultId: vaultId });
+  try {
+    await appRequest(page, { type: "VacuumVault", expectedVaultId: vaultId });
+  } catch (error) {
+    throw new Error(JSON.stringify(await faultControl(page, "status")), { cause: error });
+  }
   const state = await appRequest<{
     account: { configuration: { serverOrigin?: string } };
   }>(page, {
@@ -1003,11 +1060,11 @@ async function sharedDeletedBase(testInfo: TestInfo, name: string) {
     bundleIds: [baselineBundleIds[1]],
   });
   await waitForSynchronizedState(page, "http://127.0.0.1:3300");
+  await createRailsAccount(client.context, "http://127.0.0.1:3301", candidateEmail, password);
   await switchPackagedClient(
     page,
     client.vaultId,
     "http://127.0.0.1:3301",
-    "Signup",
     candidateEmail,
     password,
   );
@@ -1033,79 +1090,29 @@ test("takes a first-time self-hosted user through capture, sync, Vacuum, and sta
   let second: Awaited<ReturnType<typeof packagedAccountContext>> | undefined;
   let disconnectedSecondGeneration: Awaited<ReturnType<typeof activeGeneration>> | undefined;
   let vaultId: string | undefined;
+  let recoveryPhrase: string | undefined;
   try {
-    await test.step("choose the self-hosted server and create the Account", async () => {
-      await first.popup.close();
-      const setupTab = await first.context.newPage();
-      const setupPopup = await toolbarPopup(first);
-      const signupOpened = first.context.waitForEvent("page");
-      await setupPopup.getByRole("link", { name: "Set up synchronization" }).click();
-      const signup = await signupOpened;
-      await signup.waitForLoadState("domcontentloaded");
-      await expect(signup.getByRole("heading", { name: "Choose synchronization" })).toBeVisible();
-      await signup.setViewportSize({ width: 1280, height: 900 });
-      await signup.screenshot({
-        path: testInfo.outputPath("signup-server-choice-wide.png"),
+    await test.step("create the Rails Account and attach the first synchronized Vault", async () => {
+      await createRailsAccount(first.context, "http://127.0.0.1:3300", email, password);
+      await appRequest(first.popup, {
+        type: "ConfigureSyncServer",
+        serverOrigin: "http://127.0.0.1:3300",
       });
-      await signup.setViewportSize({ width: 390, height: 844 });
-      await signup.screenshot({
-        path: testInfo.outputPath("signup-server-choice-narrow.png"),
+      await appRequest(first.popup, { type: "LoginAccount", email, password });
+      const prepared = await appRequest<{
+        readonly setupId: string;
+        readonly recoveryPhrase: string;
+      }>(first.popup, {
+        type: "PrepareAccountVault",
+        newVaultName: "First Journey Archive",
       });
-      await signup.getByText("Use a self-hosted server", { exact: true }).click();
-      await signup
-        .getByRole("textbox", { name: "Self-hosted server origin" })
-        .fill("http://127.0.0.1:3300");
-      await signup.getByRole("button", { name: "Use self-hosted server" }).click();
-      await expect(signup.getByRole("heading", { name: "Create your Account" })).toBeVisible();
-      await signup.setViewportSize({ width: 1280, height: 900 });
-      await signup.screenshot({
-        path: testInfo.outputPath("signup-account-wide.png"),
+      recoveryPhrase = prepared.recoveryPhrase;
+      await appRequest(first.popup, {
+        type: "ConfirmInitialVault",
+        setupId: prepared.setupId,
+        recoveryPhrase: prepared.recoveryPhrase,
       });
-      await signup.setViewportSize({ width: 390, height: 844 });
-      await signup.screenshot({
-        path: testInfo.outputPath("signup-account-narrow.png"),
-      });
-      await signup.getByRole("textbox", { name: "Email" }).fill(email);
-      await signup.getByLabel("Password", { exact: true }).fill(password);
-      await signup.getByLabel("Confirm password").fill(password);
-      await signup.getByLabel(/no password recovery/u).check();
-      await signup.getByLabel("Vault name").fill("First Journey Archive");
-      await signup.getByRole("button", { name: "Create Account" }).click();
-      await expect(signup.getByRole("status")).toHaveText(
-        "Account created. Returning to your page…",
-        { timeout: 120_000 },
-      );
-      await signup.waitForEvent("close");
-      await setupTab.goto(`chrome-extension://${first.extensionId}/library.html`);
-      const state = await appRequest<{
-        account: {
-          accountState: string;
-          vaultSyncState: string;
-          configuration: { mode: string; serverOrigin?: string };
-        };
-        workspace: { activeVaultId?: string };
-      }>(setupTab, { type: "GetState" });
-      expect(state.account).toMatchObject({
-        accountState: "Authenticated",
-        configuration: {
-          mode: "Configured",
-          serverOrigin: "http://127.0.0.1:3300",
-        },
-      });
-      vaultId = state.workspace.activeVaultId;
-      expect(vaultId).toBeTruthy();
-      await expect
-        .poll(
-          async () =>
-            (
-              await appRequest<{ account: { vaultSyncState: string } }>(setupTab, {
-                type: "GetState",
-              })
-            ).account.vaultSyncState,
-          { timeout: 120_000 },
-        )
-        .toBe("UpToDate");
-      await setupTab.close();
+      vaultId = await waitForSynchronizedState(first.popup, "http://127.0.0.1:3300");
     });
 
     const firstFixture = await first.context.newPage();
@@ -1147,10 +1154,19 @@ test("takes a first-time self-hosted user through capture, sync, Vacuum, and sta
         type: "ConfigureSyncServer",
         serverOrigin: "http://127.0.0.1:3300",
       });
-      await setupPopup.reload();
-      await setupPopup.getByRole("textbox", { name: "Email" }).fill(email);
-      await setupPopup.getByLabel("Password").fill(password);
-      await setupPopup.getByRole("button", { name: "Sign in" }).click();
+      await appRequest(setupPopup, { type: "LoginAccount", email, password });
+      if (recoveryPhrase === undefined) throw new Error("The Recovery Phrase is unavailable.");
+      try {
+        await appRequest(setupPopup, {
+          type: "RecoverAccountVault",
+          recoveryPhrase,
+          confirmationPhrase: recoveryPhrase,
+        });
+      } catch (error) {
+        throw new Error(JSON.stringify(await faultControl(setupPopup, "status")), {
+          cause: error,
+        });
+      }
       await expect
         .poll(
           async () => {
@@ -1254,9 +1270,7 @@ test("takes a first-time self-hosted user through capture, sync, Vacuum, and sta
       await firstLibrary.keyboard.press("Escape");
       await faultControl(firstLibrary, "release");
       const login = await toolbarPopup(first);
-      await login.getByRole("textbox", { name: "Email" }).fill(email);
-      await login.getByLabel("Password").fill(password);
-      await login.getByRole("button", { name: "Sign in" }).click();
+      await appRequest(login, { type: "LoginAccount", email, password });
       await expect
         .poll(
           async () =>
@@ -1478,9 +1492,17 @@ test("takes a first-time self-hosted user through capture, sync, Vacuum, and sta
           })
           .click();
         await expect
-          .poll(async () => (await faultControl(staleLibrary, "status")).reached, {
-            timeout: 120_000,
-          })
+          .poll(
+            async () => {
+              const diagnostic = await faultControl(staleLibrary, "status");
+              if (diagnostic.lastFailure !== undefined)
+                throw new Error(
+                  `Stale discard failed before ${checkpoint}: ${JSON.stringify(diagnostic.lastFailure)}`,
+                );
+              return diagnostic.reached;
+            },
+            { timeout: 120_000 },
+          )
           .toBe(true);
         await stopExtensionWorker(secondClient.context, staleLibrary, secondClient.extensionId);
         await staleLibrary.reload();
@@ -1523,6 +1545,8 @@ test("takes a first-time self-hosted user through capture, sync, Vacuum, and sta
 
     await test.step("publish the Vault to an empty second self-hosted server", async () => {
       if (vaultId === undefined) throw new Error("The first Journey Vault is unavailable.");
+      const candidateEmail = "switch@example.test";
+      await createRailsAccount(first.context, "http://127.0.0.1:3301", candidateEmail, password);
       await firstLibrary.bringToFront();
       const reliefEstimate = await appRequest<{
         readonly candidateArtifacts: number;
@@ -1579,10 +1603,10 @@ test("takes a first-time self-hosted user through capture, sync, Vacuum, and sta
         path: testInfo.outputPath("server-switch-login-narrow.png"),
       });
       await firstLibrary.setViewportSize({ width: 1280, height: 900 });
-      await candidate.getByRole("textbox", { name: "Email" }).fill("switch@example.test");
+      await candidate.getByRole("textbox", { name: "Email" }).fill(candidateEmail);
       await candidate.getByLabel("Password").fill(password);
       await faultControl(firstLibrary, "arm", "server-switch:after-classification");
-      await candidate.getByRole("button", { name: "Create account" }).click();
+      await candidate.getByRole("button", { name: "Sign in" }).click();
       await expect
         .poll(async () => (await faultControl(firstLibrary, "status")).reached, {
           timeout: 120_000,
@@ -1739,6 +1763,7 @@ test("fast-forwards a stale local Replica from a candidate successor", async ({
       "http://127.0.0.1:3300",
       setup.sourceEmail,
       setup.password,
+      setup.client.recoveryPhrase,
     );
     const stalePage = await stale.context.newPage();
     await stalePage.goto(`chrome-extension://${stale.extensionId}/library.html`);
@@ -1794,7 +1819,7 @@ test("fast-forwards a stale local Replica from a candidate successor", async ({
     expect(localAfter.remoteOnlyArtifactIds).toEqual([]);
     const authoritativeArtifactIds = await stalePage.evaluate(async () => {
       const database = await new Promise<IDBDatabase>((resolveDatabase, reject) => {
-        const request = indexedDB.open("awsm-vault");
+        const request = indexedDB.open("awsm-client");
         request.addEventListener("success", () => resolveDatabase(request.result), { once: true });
         request.addEventListener("error", () => reject(request.error), {
           once: true,
@@ -1860,6 +1885,7 @@ test("unions independent append-only Events in the same Generation", async ({
       "http://127.0.0.1:3300",
       setup.sourceEmail,
       setup.password,
+      setup.client.recoveryPhrase,
     );
     const sourcePage = await source.context.newPage();
     await sourcePage.goto(`chrome-extension://${source.extensionId}/library.html`);
@@ -1924,6 +1950,7 @@ test("unions independent append-only Events in the same Generation", async ({
       "http://127.0.0.1:3301",
       setup.candidateEmail,
       setup.password,
+      setup.client.recoveryPhrase,
     );
     const freshPage = await freshCandidate.context.newPage();
     await freshPage.goto(`chrome-extension://${freshCandidate.extensionId}/library.html`);
@@ -1959,6 +1986,7 @@ test("reports sibling successor Generations as a conflict without changing serve
       "http://127.0.0.1:3300",
       setup.sourceEmail,
       setup.password,
+      setup.client.recoveryPhrase,
     );
     const siblingPage = await sibling.context.newPage();
     await siblingPage.goto(`chrome-extension://${sibling.extensionId}/library.html`);
@@ -2107,6 +2135,12 @@ test("reauthenticates a candidate switch before and after remote application", a
   try {
     const beforePage = await before.context.newPage();
     await beforePage.goto(`chrome-extension://${before.extensionId}/library.html`);
+    await createRailsAccount(
+      before.context,
+      "http://127.0.0.1:3301",
+      beforeCandidateEmail,
+      password,
+    );
     await appRequest(beforePage, {
       type: "BeginServerSwitch",
       candidateOrigin: "http://127.0.0.1:3301",
@@ -2121,7 +2155,7 @@ test("reauthenticates a candidate switch before and after remote application", a
       account: { configuration: { serverOrigin?: string } };
       serverSwitch?: { jobId: string; state: string };
     }>(beforePage, {
-      type: "SignupServerSwitchCandidate",
+      type: "LoginServerSwitchCandidate",
       email: beforeCandidateEmail,
       password,
     });
@@ -2185,256 +2219,6 @@ test("reauthenticates a candidate switch before and after remote application", a
   }
 });
 
-test("renders Account onboarding, signup, progress, success, and settings states", async ({
-  browserName,
-}, testInfo) => {
-  test.setTimeout(240_000);
-  expect(browserName).toBe("chromium");
-  const client = await packagedAccountContext(testInfo, "account-visual");
-  try {
-    await client.popup.setViewportSize({ width: 420, height: 760 });
-    await expect(
-      client.popup.getByRole("heading", { name: "Choose how AWSM starts" }),
-    ).toBeVisible();
-    const localOnly = client.popup.getByRole("button", {
-      name: "Continue without sync",
-    });
-    const synchronization = client.popup.getByRole("link", {
-      name: "Set up synchronization",
-    });
-    await expect(localOnly).toHaveClass(/\bprimary\b/u);
-    await expect(synchronization).not.toHaveClass(/\bprimary\b/u);
-    expect(
-      await localOnly.evaluate(
-        (primary, secondary) =>
-          Boolean(
-            primary.compareDocumentPosition(secondary as Node) & Node.DOCUMENT_POSITION_FOLLOWING,
-          ),
-        await synchronization.elementHandle(),
-      ),
-    ).toBe(true);
-    await client.popup.screenshot({
-      path: testInfo.outputPath("account-server-choice-desktop.png"),
-    });
-    await client.popup.setViewportSize({ width: 340, height: 700 });
-    const [localOnlyBox, synchronizationBox] = await Promise.all([
-      localOnly.boundingBox(),
-      synchronization.boundingBox(),
-    ]);
-    expect(localOnlyBox?.width).toBe(synchronizationBox?.width);
-    await client.popup.screenshot({
-      path: testInfo.outputPath("account-server-choice-narrow.png"),
-    });
-    await client.popup.setViewportSize({ width: 420, height: 760 });
-    const signupOpened = client.context.waitForEvent("page");
-    await client.popup.getByRole("link", { name: "Set up synchronization" }).click();
-    const signup = await signupOpened;
-    await signup.waitForLoadState("domcontentloaded");
-    await signup.getByText("Use a self-hosted server", { exact: true }).click();
-    await signup
-      .getByRole("textbox", { name: "Self-hosted server origin" })
-      .fill("http://127.0.0.1:3300");
-    await signup.getByRole("button", { name: "Use self-hosted server" }).click();
-    await expect(client.popup.getByRole("heading", { name: "Sign in" })).toBeVisible();
-    await client.popup.getByRole("textbox", { name: "Email" }).focus();
-    await client.popup.screenshot({
-      path: testInfo.outputPath("account-login-focus.png"),
-    });
-
-    await signup.setViewportSize({ width: 720, height: 900 });
-    await expect(signup.getByRole("heading", { name: "Create your Account" })).toBeVisible();
-    await signup.getByRole("textbox", { name: "Email" }).focus();
-    await signup.screenshot({
-      path: testInfo.outputPath("account-signup-focus.png"),
-    });
-    await signup.setViewportSize({ width: 360, height: 760 });
-    await signup.screenshot({
-      path: testInfo.outputPath("account-signup-narrow.png"),
-    });
-    await signup.setViewportSize({ width: 720, height: 900 });
-    await signup
-      .getByRole("textbox", { name: "Email" })
-      .fill(`visual-${crypto.randomUUID()}@example.test`);
-    await signup.getByLabel("Password", { exact: true }).fill("correct horse archive battery");
-    await signup.getByLabel("Confirm password").fill("incorrect horse archive battery");
-    await signup.getByLabel(/no password recovery/u).check();
-    await signup.getByRole("button", { name: "Create Account" }).click();
-    await expect(signup.getByRole("alert")).toHaveText("Passwords do not match.");
-    await signup.screenshot({
-      path: testInfo.outputPath("account-signup-validation.png"),
-    });
-    await signup.getByLabel("Confirm password").fill("correct horse archive battery");
-    await signup.getByRole("button", { name: "Create Account" }).click();
-    await expect(signup.getByRole("status")).toContainText("Creating Account");
-    await expect(signup.getByRole("button", { name: "Create Account" })).toBeDisabled();
-    await signup.screenshot({
-      path: testInfo.outputPath("account-signup-progress.png"),
-    });
-    await expect(signup.getByRole("status")).toHaveText(
-      "Account created. Returning to your page…",
-      {
-        timeout: 90_000,
-      },
-    );
-    await expect(signup.locator("#signup-form")).toBeHidden();
-    await expect.poll(() => signup.evaluate(() => window.scrollY)).toBe(0);
-    await signup.screenshot({
-      path: testInfo.outputPath("account-signup-success.png"),
-    });
-
-    const library = await client.context.newPage();
-    await library.goto(`chrome-extension://${client.extensionId}/library.html`);
-    await expect(library.getByRole("button", { name: "Settings" })).toBeVisible();
-    await library.getByRole("button", { name: "Settings" }).click();
-    const settingsDialog = library.getByRole("dialog", { name: "Settings" });
-    await expect(settingsDialog).toBeVisible();
-    await expect(
-      settingsDialog.getByRole("button", {
-        name: "Close Settings",
-        exact: true,
-      }),
-    ).toBeVisible();
-    await expect(settingsDialog.getByText("Up to date", { exact: true })).toBeVisible();
-    await library.screenshot({
-      path: testInfo.outputPath("account-settings.png"),
-    });
-    await library.setViewportSize({ width: 360, height: 760 });
-    expect(await settingsDialog.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(
-      true,
-    );
-    await library.screenshot({
-      path: testInfo.outputPath("account-settings-narrow.png"),
-    });
-    await library
-      .getByRole("textbox", { name: "Change synchronization server" })
-      .fill("http://127.0.0.1:3300");
-    await library.getByLabel(/verify and reconcile the candidate/u).check();
-    await library.getByRole("button", { name: "Change server" }).click();
-    await expect(
-      library.getByText("Enter a different synchronization server. This server is already active."),
-    ).toBeVisible();
-    await library.getByRole("button", { name: "Reset this device" }).click();
-    const resetDialog = library.getByRole("dialog", {
-      name: "Reset this device?",
-    });
-    await expect(resetDialog).toBeVisible();
-    await expect(
-      resetDialog.getByRole("button", { name: "Close Reset this device?" }),
-    ).toBeVisible();
-    await library.screenshot({
-      path: testInfo.outputPath("account-reset-narrow.png"),
-    });
-    await library.setViewportSize({ width: 900, height: 760 });
-    await library.screenshot({
-      path: testInfo.outputPath("account-reset-wide.png"),
-    });
-    const resetConfirmation = resetDialog.getByRole("textbox", {
-      name: 'Type "RESET" to continue',
-    });
-    const resetButton = resetDialog.getByRole("button", {
-      name: "Permanently reset this device",
-    });
-    await expect(resetButton).toBeDisabled();
-    await resetConfirmation.fill("RESET");
-    await expect(resetButton).toBeEnabled();
-    await resetButton.click();
-    await expect(resetDialog.getByRole("status")).toContainText("Local data deleted", {
-      timeout: 60_000,
-    });
-    await expect
-      .poll(() =>
-        library.evaluate(async () => ({
-          databases: (await indexedDB.databases()).map((database) => database.name),
-          files: await (async () => {
-            const names: string[] = [];
-            for await (const [name] of (await navigator.storage.getDirectory()).entries())
-              names.push(name);
-            return names;
-          })(),
-        })),
-      )
-      .toEqual({ databases: [], files: [] });
-  } finally {
-    await client.context.close();
-  }
-});
-
-test("offers in-tab sign in when signup cannot create the Account", async ({
-  browserName,
-}, testInfo) => {
-  test.setTimeout(180_000);
-  expect(browserName).toBe("chromium");
-  const email = `existing-${crypto.randomUUID()}@example.test`;
-  const password = "x";
-  const first = await packagedAccountContext(testInfo, "existing-account-first");
-  let second: Awaited<ReturnType<typeof packagedAccountContext>> | undefined;
-  try {
-    const firstOpened = first.context.waitForEvent("page");
-    await first.popup.getByRole("link", { name: "Set up synchronization" }).click();
-    const firstSignup = await firstOpened;
-    await firstSignup.getByText("Use a self-hosted server", { exact: true }).click();
-    await firstSignup
-      .getByRole("textbox", { name: "Self-hosted server origin" })
-      .fill("http://127.0.0.1:3300");
-    await firstSignup.getByRole("button", { name: "Use self-hosted server" }).click();
-    await firstSignup.getByRole("textbox", { name: "Email" }).fill(email);
-    await firstSignup.getByLabel("Password", { exact: true }).fill(password);
-    await firstSignup.getByLabel("Confirm password").fill(password);
-    await firstSignup.getByLabel(/no password recovery/u).check();
-    await firstSignup.getByLabel("Vault name").fill("Existing Account Archive");
-    await firstSignup.getByRole("button", { name: "Create Account" }).click();
-    await expect.poll(() => firstSignup.isClosed()).toBe(true);
-
-    second = await packagedAccountContext(testInfo, "existing-account-second");
-    const secondOpened = second.context.waitForEvent("page");
-    await second.popup.getByRole("link", { name: "Set up synchronization" }).click();
-    const signup = await secondOpened;
-    await signup.getByText("Use a self-hosted server", { exact: true }).click();
-    await signup
-      .getByRole("textbox", { name: "Self-hosted server origin" })
-      .fill("http://127.0.0.1:3300");
-    await signup.getByRole("button", { name: "Use self-hosted server" }).click();
-    await signup.getByRole("textbox", { name: "Email" }).fill(email);
-    await signup.getByLabel("Password", { exact: true }).fill(password);
-    await signup.getByLabel("Confirm password").fill(password);
-    await signup.getByLabel(/no password recovery/u).check();
-    await signup.getByRole("button", { name: "Create Account" }).click();
-    await expect(signup.getByRole("alert")).toContainText("may already exist");
-    await expect(signup.getByRole("button", { name: "Create Account" })).toBeHidden();
-    await expect(signup.getByRole("button", { name: "Sign in instead" })).toBeVisible();
-    await signup.setViewportSize({ width: 720, height: 900 });
-    await signup.screenshot({
-      path: testInfo.outputPath("existing-account-wide.png"),
-    });
-    await signup.setViewportSize({ width: 360, height: 760 });
-    await signup.screenshot({
-      path: testInfo.outputPath("existing-account-narrow.png"),
-    });
-
-    await signup.getByRole("button", { name: "Sign in instead" }).click();
-    await expect(signup.getByRole("heading", { name: "Sign in" })).toBeVisible();
-    await expect(signup.getByRole("textbox", { name: "Email" })).toHaveValue(email);
-    await expect(signup.getByLabel("Confirm password")).toBeHidden();
-    await signup.setViewportSize({ width: 720, height: 900 });
-    await signup.screenshot({
-      path: testInfo.outputPath("existing-account-signin-wide.png"),
-    });
-    await signup.setViewportSize({ width: 360, height: 760 });
-    await signup.screenshot({
-      path: testInfo.outputPath("existing-account-signin-narrow.png"),
-    });
-    await signup.getByLabel("Password", { exact: true }).fill(password);
-    await signup.getByRole("button", { name: "Sign in", exact: true }).click();
-    await expect.poll(() => signup.isClosed()).toBe(true);
-    await expect(second.popup.getByRole("button", { name: "Archive this page" })).toBeVisible({
-      timeout: 60_000,
-    });
-  } finally {
-    await second?.context.close();
-    await first.context.close();
-  }
-});
-
 async function chooseLocalOnlyOnFirstLaunch(popup: Page): Promise<void> {
   const decision = popup.getByRole("button", { name: "Continue without sync" });
   const vaultName = popup.getByRole("textbox", { name: "Vault name" });
@@ -2449,7 +2233,7 @@ async function setLatestImportJobForVisual(
 ): Promise<void> {
   await page.evaluate(async (next) => {
     const database = await new Promise<IDBDatabase>((resolveDatabase, reject) => {
-      const request = indexedDB.open("awsm-vault");
+      const request = indexedDB.open("awsm-client");
       request.addEventListener("success", () => resolveDatabase(request.result), { once: true });
       request.addEventListener("error", () => reject(request.error), {
         once: true,
@@ -2495,7 +2279,7 @@ async function setLatestImportJobForVisual(
 async function seedStaleAccountVisual(page: Page, vaultId: string): Promise<void> {
   await page.evaluate(async (activeVaultId) => {
     const database = await new Promise<IDBDatabase>((resolveDatabase, reject) => {
-      const request = indexedDB.open("awsm-vault");
+      const request = indexedDB.open("awsm-client");
       request.addEventListener("success", () => resolveDatabase(request.result), { once: true });
       request.addEventListener("error", () => reject(request.error), {
         once: true,
@@ -2503,64 +2287,59 @@ async function seedStaleAccountVisual(page: Page, vaultId: string): Promise<void
     });
     const stores = [
       "account_configuration",
-      "account_metadata",
-      "account_keys",
-      "account_secrets",
-      "account_vault",
+      "api_sessions",
+      "session_keys",
+      "protected_credentials",
+      "vault_sync_state",
       "synchronization_jobs",
     ];
     const transaction = database.transaction(stores, "readwrite");
     const accountId = "01900000-0000-7000-8000-000000000801";
     const sessionId = "01900000-0000-7000-8000-000000000802";
-    const accountKeyId = "01900000-0000-7000-8000-000000000803";
+    const recoveryGenerationId = "01900000-0000-7000-8000-000000000803";
+    const keyEpochId = "01900000-0000-7000-8000-000000000807";
     const remoteGenerationId = "01900000-0000-7000-8000-000000000804";
     transaction.objectStore("account_configuration").put(
       {
         version: 1,
         mode: "Configured",
         serverOrigin: "https://awsm.invalid",
+        registration: { enabled: false },
       },
       "active",
     );
-    transaction.objectStore("account_metadata").put(
+    transaction.objectStore("api_sessions").put(
       {
         version: 1,
         accountId,
         sessionId,
         email: "archive@example.test",
-        accountKeyId,
-        accountKeyEnvelope: {},
+        scope: "VaultDevice",
       },
       "active",
     );
-    const wrappingKey = await crypto.subtle.generateKey({ name: "AES-KW", length: 256 }, false, [
-      "wrapKey",
-      "unwrapKey",
-    ]);
     const sessionKey = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, [
       "encrypt",
       "decrypt",
     ]);
-    transaction.objectStore("account_keys").put(wrappingKey, "account-wrapping");
-    transaction.objectStore("account_keys").put(sessionKey, "session-storage");
-    transaction.objectStore("account_secrets").put(
+    transaction.objectStore("session_keys").put(sessionKey, "session-storage");
+    transaction.objectStore("protected_credentials").put(
       {
         version: 1,
         accountId,
         sessionId,
-        wrappedAccountEncryptionKey: new Uint8Array(40),
         refreshNonce: new Uint8Array(12),
         refreshCiphertext: new Uint8Array(16),
       },
       "active",
     );
-    transaction.objectStore("account_vault").put(
+    transaction.objectStore("vault_sync_state").put(
       {
         version: 1,
         accountId,
         vaultId: activeVaultId,
-        accountKeyId,
-        accountSlot: {},
+        activeRecoveryGenerationId: recoveryGenerationId,
+        activeKeyEpochId: keyEpochId,
         remoteGenerationId,
         remoteGenerationNumber: 2,
         deliveryCursor: 8,
@@ -3030,7 +2809,7 @@ test("captures a page snapshot and full-page screenshot, then derives MHTML offl
 
     const storageAudit = await library.evaluate(async () => {
       const database = await new Promise<IDBDatabase>((resolveDatabase, reject) => {
-        const request = indexedDB.open("awsm-vault");
+        const request = indexedDB.open("awsm-client");
         request.addEventListener("success", () => resolveDatabase(request.result), { once: true });
         request.addEventListener("error", () => reject(request.error), {
           once: true,
@@ -3239,7 +3018,7 @@ test("captures a page snapshot and full-page screenshot, then derives MHTML offl
     await expect(library.getByText("Deleted (1)", { exact: true })).toBeVisible();
     const objectsBeforeVacuum = await library.evaluate(async () => {
       const database = await new Promise<IDBDatabase>((resolveDatabase, reject) => {
-        const request = indexedDB.open("awsm-vault");
+        const request = indexedDB.open("awsm-client");
         request.addEventListener("success", () => resolveDatabase(request.result), { once: true });
         request.addEventListener("error", () => reject(request.error), {
           once: true,
@@ -3276,7 +3055,7 @@ test("captures a page snapshot and full-page screenshot, then derives MHTML offl
     await expect(library.getByRole("img", { name: /Full-page screenshot/u })).toBeVisible();
     const vacuumStorage = await library.evaluate(async () => {
       const database = await new Promise<IDBDatabase>((resolveDatabase, reject) => {
-        const request = indexedDB.open("awsm-vault");
+        const request = indexedDB.open("awsm-client");
         request.addEventListener("success", () => resolveDatabase(request.result), { once: true });
         request.addEventListener("error", () => reject(request.error), {
           once: true,
@@ -3717,7 +3496,8 @@ test("frees synchronized browser storage and restores remote Artifacts on demand
       await dialog.accept();
     });
     await narrow.getByRole("button", { name: "Sign out" }).click();
-    expect(signOutWarning).toMatch(/remote-only Artifacts? depends? on this Account/u);
+    expect(signOutWarning).toMatch(/Sign out and lock this Vault/u);
+    expect(signOutWarning).toMatch(/Device can retrieve them after you unlock/u);
     await expect
       .poll(
         async () =>
@@ -3734,15 +3514,26 @@ test("frees synchronized browser storage and restores remote Artifacts on demand
     await desktop.goto(
       `chrome-extension://${client.extensionId}/library.html?bundleId=${bundleId}`,
     );
-    await expect(desktop.getByText("Sign in to retrieve this screenshot.")).toBeVisible();
-    const compactArtifact = desktop.locator(".artifact-row").filter({
-      has: desktop.locator("strong", { hasText: /^Extracted text$/u }),
+    await expect(desktop.getByRole("heading", { name: "Unlock your Vault" })).toBeVisible();
+    const signedOut = await appRequest<{
+      readonly workspace: {
+        readonly vaults: readonly {
+          readonly vaultId: string;
+          readonly unlocked: boolean;
+          readonly manuallyLocked: boolean;
+        }[];
+      };
+    }>(desktop, { type: "GetState" });
+    expect(
+      signedOut.workspace.vaults.find((vault) => vault.vaultId === client.vaultId),
+    ).toMatchObject({
+      unlocked: false,
+      manuallyLocked: true,
     });
-    await compactArtifact.getByRole("button", { name: "Inspect" }).click();
-    await expect(desktop.locator(".artifact-inspection:visible")).toBeVisible();
 
     await desktop.goto(`chrome-extension://${client.extensionId}/library.html`);
     await appRequest(desktop, { type: "LoginAccount", email, password });
+    await appRequest(desktop, { type: "UnlockDevice", expectedVaultId: client.vaultId });
     await waitForSynchronizedState(desktop, "http://127.0.0.1:3300");
     await setCoordinationServerUnavailable(client, true);
     await desktop.goto(
@@ -4266,7 +4057,7 @@ test("exports a Vault and imports it into a fresh Workspace", async ({ browserNa
   const vault = new VaultService(repository, prepared.records.metadata.vaultId);
   vault.activatePrepared(prepared);
   const created = await prepareVaultNameChange({
-    rootKey: prepared.rootKey,
+    keyring: prepared.keyring,
     eventType: "VaultCreated",
     vaultId: prepared.records.metadata.vaultId,
     deviceId: prepared.records.metadata.deviceId,
@@ -4336,7 +4127,7 @@ test("exports a Vault and imports it into a fresh Workspace", async ({ browserNa
   const artifacts = await Promise.all([
     preparePortableArtifact(
       encryptedArtifacts,
-      prepared.rootKey,
+      prepared.keyring,
       prepared.records.metadata.vaultId,
       primary,
       "PRIMARY",
@@ -4346,7 +4137,7 @@ test("exports a Vault and imports it into a fresh Workspace", async ({ browserNa
     ),
     preparePortableArtifact(
       encryptedArtifacts,
-      prepared.rootKey,
+      prepared.keyring,
       prepared.records.metadata.vaultId,
       normalizedTextFromBlocks(blocks),
       "TEXT_EXTRACTED",
@@ -4356,7 +4147,7 @@ test("exports a Vault and imports it into a fresh Workspace", async ({ browserNa
     ),
     preparePortableArtifact(
       encryptedArtifacts,
-      prepared.rootKey,
+      prepared.keyring,
       prepared.records.metadata.vaultId,
       encodeStructuredContentSequence(blocks),
       "CONTENT_STRUCTURED",
@@ -4366,7 +4157,7 @@ test("exports a Vault and imports it into a fresh Workspace", async ({ browserNa
     ),
   ]);
   const registration = await prepareCaptureRegistration({
-    rootKey: prepared.rootKey,
+    keyring: prepared.keyring,
     vaultId: prepared.records.metadata.vaultId,
     deviceId: prepared.records.metadata.deviceId,
     commandId: crypto.randomUUID(),
@@ -4896,7 +4687,7 @@ test("creates, captures, switches, locks, renames, and deep-links across isolate
 
     const scopedObjectCounts = await popup.evaluate(async () => {
       const database = await new Promise<IDBDatabase>((resolveDatabase, reject) => {
-        const request = indexedDB.open("awsm-vault");
+        const request = indexedDB.open("awsm-client");
         request.addEventListener("success", () => resolveDatabase(request.result), { once: true });
         request.addEventListener("error", () => reject(request.error), {
           once: true,
@@ -5070,7 +4861,7 @@ test("worker termination during acquisition leaves no partial authoritative capt
       .poll(() =>
         popup.evaluate(async () => {
           const database = await new Promise<IDBDatabase>((resolveDatabase, reject) => {
-            const request = indexedDB.open("awsm-vault");
+            const request = indexedDB.open("awsm-client");
             request.addEventListener("success", () => resolveDatabase(request.result), {
               once: true,
             });
@@ -5101,7 +4892,7 @@ test("worker termination during acquisition leaves no partial authoritative capt
     });
     const counts = await restartedPopup.evaluate(async () => {
       const database = await new Promise<IDBDatabase>((resolveDatabase, reject) => {
-        const request = indexedDB.open("awsm-vault");
+        const request = indexedDB.open("awsm-client");
         request.addEventListener("success", () => resolveDatabase(request.result), { once: true });
         request.addEventListener("error", () => reject(request.error), {
           once: true,

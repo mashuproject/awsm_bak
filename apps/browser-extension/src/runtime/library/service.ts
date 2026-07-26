@@ -17,6 +17,7 @@ import type {
   StoredProjectionV1,
 } from "../../drivers/indexeddb";
 import type { OpenPlaintextArtifactInput } from "../artifact";
+import type { VaultKeyring } from "../vault/keyring";
 import {
   decodeLibraryCollectionState,
   groupCollectionItems,
@@ -58,7 +59,7 @@ export interface LibraryArtifactReader {
   openPlaintext(
     input: Pick<
       OpenPlaintextArtifactInput,
-      "vaultId" | "object" | "reference" | "rootKey" | "signal"
+      "vaultId" | "object" | "reference" | "keyring" | "signal"
     >,
   ): Promise<ReadableStream<Uint8Array>>;
 }
@@ -115,20 +116,20 @@ export class LibraryError extends Error {
 
 export class LibraryService {
   readonly repository: LibraryRepository;
-  readonly rootKey: CryptoKey;
+  readonly keyring: VaultKeyring;
   readonly vaultId: string;
   readonly artifactStore: LibraryArtifactReader;
   readonly availability: LibraryArtifactAvailability;
 
   constructor(
     repository: LibraryRepository,
-    rootKey: CryptoKey,
+    keyring: VaultKeyring,
     vaultId: string,
     artifactStore: LibraryArtifactReader,
     availability: LibraryArtifactAvailability,
   ) {
     this.repository = repository;
-    this.rootKey = rootKey;
+    this.keyring = keyring;
     this.vaultId = vaultId;
     this.artifactStore = artifactStore;
     this.availability = availability;
@@ -165,19 +166,22 @@ export class LibraryService {
   async topology() {
     const record = await this.repository.getCollectionProjection();
     if (record === undefined) return [];
-    const key = await deriveContextKeyFromCryptoKey(this.rootKey, {
+    const envelope = decodeEncryptedEnvelopeBytes(record.envelopeBytes);
+    const epoch = this.keyring.require(envelope.keyEpochId);
+    const key = await deriveContextKeyFromCryptoKey(epoch.rootKey, {
       vaultId: this.vaultId,
+      keyEpochId: epoch.keyEpochId,
       domain: "vault:projection:v1",
       contextId: `LibraryCollections-v1:${this.vaultId}`,
       keyVersion: 1,
     });
     try {
-      const envelope = decodeEncryptedEnvelopeBytes(record.envelopeBytes);
       if (envelope.objectId !== record.projectionId || envelope.objectType !== "Projection") {
         throw new Error("Collection Projection envelope mismatch");
       }
-      return decodeLibraryCollectionState(decodeCanonicalCbor(await decryptEnvelope(envelope, key)))
-        .topologyEvents;
+      return decodeLibraryCollectionState(
+        decodeCanonicalCbor(await decryptEnvelope(envelope, key, epoch.keyEpochId)),
+      ).topologyEvents;
     } finally {
       await wipe(key);
     }
@@ -254,7 +258,7 @@ export class LibraryService {
           vaultId: this.vaultId,
           object,
           reference,
-          rootKey: this.rootKey,
+          keyring: this.keyring,
         }),
       };
     } catch (error) {
@@ -270,17 +274,21 @@ export class LibraryService {
     if (item === undefined) throw new Error("Missing Projection");
     const record = await this.repository.getStoredObject(item.descriptorObjectId);
     if (record?.objectType !== "BundleDescriptor") throw new Error("Missing descriptor");
-    const key = await deriveContextKeyFromCryptoKey(this.rootKey, {
+    const envelope = decodeEncryptedEnvelopeBytes(record.envelopeBytes);
+    const epoch = this.keyring.require(envelope.keyEpochId);
+    const key = await deriveContextKeyFromCryptoKey(epoch.rootKey, {
       vaultId: this.vaultId,
+      keyEpochId: epoch.keyEpochId,
       domain: "vault:bundle-descriptor:v1",
       contextId: item.bundleId,
       keyVersion: 1,
     });
     try {
-      const envelope = decodeEncryptedEnvelopeBytes(record.envelopeBytes);
       if (envelope.objectId !== record.objectId || envelope.objectType !== "BundleDescriptor")
         throw new Error("Descriptor envelope mismatch");
-      const descriptor = decodeBundleDescriptor(await decryptEnvelope(envelope, key));
+      const descriptor = decodeBundleDescriptor(
+        await decryptEnvelope(envelope, key, epoch.keyEpochId),
+      );
       if (descriptor.bundleId !== bundleId) throw new Error("Descriptor Bundle mismatch");
       return { item, descriptor };
     } finally {
@@ -289,18 +297,22 @@ export class LibraryService {
   }
 
   private async decryptProjection(record: StoredProjectionV1): Promise<LibraryItemV1> {
-    const key = await deriveContextKeyFromCryptoKey(this.rootKey, {
+    const envelope = decodeEncryptedEnvelopeBytes(record.envelopeBytes);
+    const epoch = this.keyring.require(envelope.keyEpochId);
+    const key = await deriveContextKeyFromCryptoKey(epoch.rootKey, {
       vaultId: this.vaultId,
+      keyEpochId: epoch.keyEpochId,
       domain: "vault:projection:v1",
       contextId: `LibraryItem-v1:${record.bundleId}`,
       keyVersion: 1,
     });
     try {
-      const envelope = decodeEncryptedEnvelopeBytes(record.envelopeBytes);
       if (envelope.objectId !== record.bundleId || envelope.objectType !== "Projection") {
         throw new Error("Projection envelope mismatch");
       }
-      return decodeLibraryItem(decodeCanonicalCbor(await decryptEnvelope(envelope, key)));
+      return decodeLibraryItem(
+        decodeCanonicalCbor(await decryptEnvelope(envelope, key, epoch.keyEpochId)),
+      );
     } finally {
       await wipe(key);
     }

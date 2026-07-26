@@ -9,11 +9,12 @@ import { wipe } from "../../crypto/sodium";
 import { decodeCanonicalCbor, encodeCanonicalCbor } from "../../domain/cbor";
 import { canonicalRecord, literal, timestamp, uuid } from "../../domain/validation";
 import type { StoredEvent, StoredVaultNameProjectionV1 } from "../../drivers/indexeddb/schema";
+import type { VaultKeyring } from "./keyring";
 import { InvalidVaultNameError, normalizeVaultName } from "./name";
 import type { VaultNameEventV1, VaultNameProjectionV1 } from "./name-projection";
 
 export interface PrepareVaultNameChangeInput {
-  readonly rootKey: CryptoKey;
+  readonly keyring: VaultKeyring;
   readonly eventType: "VaultCreated" | "VaultRenamed";
   readonly vaultId: string;
   readonly deviceId: string;
@@ -23,7 +24,7 @@ export interface PrepareVaultNameChangeInput {
 }
 
 async function crypt(
-  rootKey: CryptoKey,
+  keyring: VaultKeyring,
   vaultId: string,
   domain: "vault:event:v1" | "vault:projection:v1",
   contextId: string,
@@ -31,14 +32,24 @@ async function crypt(
   objectId: string,
   plaintext: Uint8Array,
 ): Promise<Uint8Array> {
-  const key = await deriveContextKeyFromCryptoKey(rootKey, {
+  const epoch = keyring.active();
+  const key = await deriveContextKeyFromCryptoKey(epoch.rootKey, {
     vaultId,
+    keyEpochId: epoch.keyEpochId,
     domain,
     contextId,
     keyVersion: 1,
   });
   try {
-    return encodeEncryptedEnvelope(await encryptEnvelope({ objectType, objectId, plaintext, key }));
+    return encodeEncryptedEnvelope(
+      await encryptEnvelope({
+        objectType,
+        objectId,
+        keyEpochId: epoch.keyEpochId,
+        plaintext,
+        key,
+      }),
+    );
   } finally {
     await wipe(key);
   }
@@ -76,7 +87,7 @@ export async function prepareVaultNameChange(input: PrepareVaultNameChangeInput)
   });
   const [eventEnvelopeBytes, projectionEnvelopeBytes] = await Promise.all([
     crypt(
-      input.rootKey,
+      input.keyring,
       input.vaultId,
       "vault:event:v1",
       input.eventId,
@@ -85,7 +96,7 @@ export async function prepareVaultNameChange(input: PrepareVaultNameChangeInput)
       eventPlaintext,
     ),
     crypt(
-      input.rootKey,
+      input.keyring,
       input.vaultId,
       "vault:projection:v1",
       `VaultName-v1:${input.vaultId}`,
@@ -113,7 +124,7 @@ export async function prepareVaultNameChange(input: PrepareVaultNameChangeInput)
 }
 
 export async function encryptVaultNameProjection(
-  rootKey: CryptoKey,
+  keyring: VaultKeyring,
   projection: VaultNameProjectionV1,
 ): Promise<StoredVaultNameProjectionV1> {
   const name = normalizeVaultName(projection.name);
@@ -128,7 +139,7 @@ export async function encryptVaultNameProjection(
     vaultId: projection.vaultId,
     sourceEventId: projection.sourceEventId,
     envelopeBytes: await crypt(
-      rootKey,
+      keyring,
       projection.vaultId,
       "vault:projection:v1",
       `VaultName-v1:${projection.vaultId}`,
@@ -140,21 +151,23 @@ export async function encryptVaultNameProjection(
 }
 
 export async function decodeVaultNameEvent(
-  rootKey: CryptoKey,
+  keyring: VaultKeyring,
   stored: StoredEvent,
 ): Promise<VaultNameEventV1> {
-  const key = await deriveContextKeyFromCryptoKey(rootKey, {
+  const envelope = decodeEncryptedEnvelopeBytes(stored.envelopeBytes);
+  const epoch = keyring.require(envelope.keyEpochId);
+  const key = await deriveContextKeyFromCryptoKey(epoch.rootKey, {
     vaultId: stored.vaultId,
+    keyEpochId: epoch.keyEpochId,
     domain: "vault:event:v1",
     contextId: stored.eventId,
     keyVersion: 1,
   });
   try {
-    const envelope = decodeEncryptedEnvelopeBytes(stored.envelopeBytes);
     if (envelope.objectType !== "Event" || envelope.objectId !== stored.eventId)
       throw new Error("Vault name Event envelope mismatch.");
     const input = canonicalRecord(
-      decodeCanonicalCbor(await decryptEnvelope(envelope, key)),
+      decodeCanonicalCbor(await decryptEnvelope(envelope, key, epoch.keyEpochId)),
       "vaultNameEvent",
       [
         "version",
@@ -198,21 +211,23 @@ export async function decodeVaultNameEvent(
 }
 
 export async function decryptVaultNameProjection(
-  rootKey: CryptoKey,
+  keyring: VaultKeyring,
   stored: StoredVaultNameProjectionV1,
 ): Promise<VaultNameProjectionV1> {
-  const key = await deriveContextKeyFromCryptoKey(rootKey, {
+  const envelope = decodeEncryptedEnvelopeBytes(stored.envelopeBytes);
+  const epoch = keyring.require(envelope.keyEpochId);
+  const key = await deriveContextKeyFromCryptoKey(epoch.rootKey, {
     vaultId: stored.vaultId,
+    keyEpochId: epoch.keyEpochId,
     domain: "vault:projection:v1",
     contextId: `VaultName-v1:${stored.vaultId}`,
     keyVersion: 1,
   });
   try {
-    const envelope = decodeEncryptedEnvelopeBytes(stored.envelopeBytes);
     if (envelope.objectType !== "Projection" || envelope.objectId !== stored.vaultId)
       throw new Error("Vault Name Projection envelope mismatch.");
     const input = canonicalRecord(
-      decodeCanonicalCbor(await decryptEnvelope(envelope, key)),
+      decodeCanonicalCbor(await decryptEnvelope(envelope, key, epoch.keyEpochId)),
       "vaultNameProjection",
       ["version", "vaultId", "name", "sourceEventId", "updatedAt"],
     );

@@ -7,6 +7,7 @@ import { storageError } from "./errors";
 import { vaultKey, vaultKeyRange, vaultSingletonKey } from "./keys";
 import {
   type AccountConfigurationV1,
+  DATABASE_NAME,
   type ServerSwitchJobV1,
   STORES,
   type StoredAccountMetadataV1,
@@ -16,6 +17,7 @@ import {
   type StoredEvent,
   type StoredObjectV1,
   type StoredProjectionV1,
+  type StoredRecoveryKitV1,
   type StoredVaultGenerationV1,
   type StoredVaultHeadV1,
   type StoredVaultNameProjectionV1,
@@ -43,7 +45,6 @@ export type AccountCredentialScope = "active" | "server-switch-candidate" | "ser
 function credentialKeys(scope: AccountCredentialScope): {
   readonly metadata: string;
   readonly secrets: string;
-  readonly wrapping: string;
   readonly session: string;
 } {
   switch (scope) {
@@ -51,21 +52,18 @@ function credentialKeys(scope: AccountCredentialScope): {
       return {
         metadata: "active",
         secrets: "active",
-        wrapping: "account-wrapping",
         session: "session-storage",
       };
     case "server-switch-candidate":
       return {
         metadata: "server-switch-candidate",
         secrets: "server-switch-candidate",
-        wrapping: "server-switch-candidate-wrapping",
         session: "server-switch-candidate-session",
       };
     case "server-switch-prior":
       return {
         metadata: "server-switch-prior",
         secrets: "server-switch-prior",
-        wrapping: "server-switch-prior-wrapping",
         session: "server-switch-prior-session",
       };
   }
@@ -77,19 +75,6 @@ function accountAad(
   sessionId: string,
 ): Uint8Array {
   return encodeCanonicalCbor(["account:session-storage:v1", scope, accountId, sessionId]);
-}
-
-function accountWrappingKey(value: unknown): CryptoKey {
-  if (
-    !(value instanceof CryptoKey) ||
-    value.extractable ||
-    value.algorithm.name !== "AES-KW" ||
-    !value.usages.includes("wrapKey") ||
-    !value.usages.includes("unwrapKey")
-  ) {
-    throw new DomainValidationError("accountWrappingKey", "must be a non-exportable AES-KW key");
-  }
-  return value;
 }
 
 function sessionStorageKey(value: unknown): CryptoKey {
@@ -111,10 +96,12 @@ function metadata(value: unknown): StoredAccountMetadataV1 {
     "accountId",
     "sessionId",
     "email",
-    "accountKeyId",
-    "accountKeyEnvelope",
+    "scope",
   ]);
-  if (typeof input.email !== "string" || typeof input.accountKeyEnvelope !== "object") {
+  if (
+    typeof input.email !== "string" ||
+    (input.scope !== "Account" && input.scope !== "VaultDevice")
+  ) {
     throw new DomainValidationError("accountMetadata", "contains invalid Account metadata");
   }
   return {
@@ -122,8 +109,7 @@ function metadata(value: unknown): StoredAccountMetadataV1 {
     accountId: uuid(input.accountId, "accountMetadata.accountId"),
     sessionId: uuid(input.sessionId, "accountMetadata.sessionId"),
     email: input.email,
-    accountKeyId: uuid(input.accountKeyId, "accountMetadata.accountKeyId"),
-    accountKeyEnvelope: input.accountKeyEnvelope,
+    scope: input.scope,
   };
 }
 
@@ -132,7 +118,6 @@ function secrets(value: unknown): StoredAccountSecretsV1 {
     "version",
     "accountId",
     "sessionId",
-    "wrappedAccountEncryptionKey",
     "refreshNonce",
     "refreshCiphertext",
   ]);
@@ -148,11 +133,6 @@ function secrets(value: unknown): StoredAccountSecretsV1 {
     version: literal(input.version, 1, "accountSecrets.version"),
     accountId: uuid(input.accountId, "accountSecrets.accountId"),
     sessionId: uuid(input.sessionId, "accountSecrets.sessionId"),
-    wrappedAccountEncryptionKey: bytes(
-      input.wrappedAccountEncryptionKey,
-      "accountSecrets.wrappedAccountEncryptionKey",
-      40,
-    ),
     refreshNonce: bytes(input.refreshNonce, "accountSecrets.refreshNonce", 12),
     refreshCiphertext: bytes(input.refreshCiphertext, "accountSecrets.refreshCiphertext"),
   };
@@ -160,13 +140,11 @@ function secrets(value: unknown): StoredAccountSecretsV1 {
 
 interface AuthenticatedInput {
   readonly metadata: StoredAccountMetadataV1;
-  readonly accountEncryptionKey: Uint8Array;
   readonly refreshToken: string;
 }
 
 interface PreparedAuthenticated {
   readonly metadata: StoredAccountMetadataV1;
-  readonly wrappingKey: CryptoKey;
   readonly sessionKey: CryptoKey;
   readonly secrets: StoredAccountSecretsV1;
 }
@@ -175,26 +153,10 @@ async function prepareAuthenticated(
   input: AuthenticatedInput,
   scope: AccountCredentialScope,
 ): Promise<PreparedAuthenticated> {
-  if (input.accountEncryptionKey.byteLength !== 32)
-    throw new DomainValidationError("accountEncryptionKey", "must contain 32 bytes");
-  const wrappingKey = await crypto.subtle.generateKey({ name: "AES-KW", length: 256 }, false, [
-    "wrapKey",
-    "unwrapKey",
-  ]);
   const sessionKey = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, [
     "encrypt",
     "decrypt",
   ]);
-  const carrier = await crypto.subtle.importKey(
-    "raw",
-    Uint8Array.from(input.accountEncryptionKey),
-    { name: "HMAC", hash: "SHA-256" },
-    true,
-    ["sign"],
-  );
-  const wrappedAccountEncryptionKey = new Uint8Array(
-    await crypto.subtle.wrapKey("raw", carrier, wrappingKey, "AES-KW"),
-  );
   const refreshNonce = crypto.getRandomValues(new Uint8Array(12));
   const refreshCiphertext = new Uint8Array(
     await crypto.subtle.encrypt(
@@ -211,13 +173,11 @@ async function prepareAuthenticated(
   );
   return {
     metadata: input.metadata,
-    wrappingKey,
     sessionKey,
     secrets: {
       version: 1,
       accountId: input.metadata.accountId,
       sessionId: input.metadata.sessionId,
-      wrappedAccountEncryptionKey,
       refreshNonce,
       refreshCiphertext,
     },
@@ -230,16 +190,15 @@ function putPrepared(
   prepared: PreparedAuthenticated,
 ): void {
   const keys = credentialKeys(scope);
-  transaction.objectStore(STORES.accountMetadata).put(prepared.metadata, keys.metadata);
-  transaction.objectStore(STORES.accountKeys).put(prepared.wrappingKey, keys.wrapping);
-  transaction.objectStore(STORES.accountKeys).put(prepared.sessionKey, keys.session);
-  transaction.objectStore(STORES.accountSecrets).put(prepared.secrets, keys.secrets);
+  transaction.objectStore(STORES.apiSessions).put(prepared.metadata, keys.metadata);
+  transaction.objectStore(STORES.sessionKeys).put(prepared.sessionKey, keys.session);
+  transaction.objectStore(STORES.protectedCredentials).put(prepared.secrets, keys.secrets);
 }
 
 export class IndexedDbAccountRepository {
   private readonly databasePromise: Promise<IDBDatabase>;
 
-  constructor(readonly databaseName = "awsm-vault") {
+  constructor(readonly databaseName = DATABASE_NAME) {
     this.databasePromise = openDatabase(databaseName);
   }
 
@@ -250,7 +209,7 @@ export class IndexedDbAccountRepository {
     const prepared = await prepareAuthenticated(input, scope);
     const database = await this.databasePromise;
     const transaction = database.transaction(
-      [STORES.accountMetadata, STORES.accountKeys, STORES.accountSecrets],
+      [STORES.apiSessions, STORES.sessionKeys, STORES.protectedCredentials],
       "readwrite",
     );
     try {
@@ -265,9 +224,7 @@ export class IndexedDbAccountRepository {
   async loadAuthenticated(scope: AccountCredentialScope = "active"): Promise<
     | {
         readonly metadata: StoredAccountMetadataV1;
-        readonly accountEncryptionKey: Uint8Array;
         readonly refreshToken: string;
-        readonly wrappingKey: CryptoKey;
         readonly sessionKey: CryptoKey;
       }
     | undefined
@@ -275,24 +232,18 @@ export class IndexedDbAccountRepository {
     const database = await this.databasePromise;
     const keys = credentialKeys(scope);
     const transaction = database.transaction(
-      [STORES.accountMetadata, STORES.accountKeys, STORES.accountSecrets],
+      [STORES.apiSessions, STORES.sessionKeys, STORES.protectedCredentials],
       "readonly",
     );
     try {
-      const [metadataValue, wrappingValue, sessionValue, secretsValue] = await Promise.all([
-        requestValue(transaction.objectStore(STORES.accountMetadata).get(keys.metadata)),
-        requestValue(transaction.objectStore(STORES.accountKeys).get(keys.wrapping)),
-        requestValue(transaction.objectStore(STORES.accountKeys).get(keys.session)),
-        requestValue(transaction.objectStore(STORES.accountSecrets).get(keys.secrets)),
+      const [metadataValue, sessionValue, secretsValue] = await Promise.all([
+        requestValue(transaction.objectStore(STORES.apiSessions).get(keys.metadata)),
+        requestValue(transaction.objectStore(STORES.sessionKeys).get(keys.session)),
+        requestValue(transaction.objectStore(STORES.protectedCredentials).get(keys.secrets)),
       ]);
       await transactionDone(transaction);
-      if ([wrappingValue, sessionValue, secretsValue].every((value) => value === undefined))
-        return undefined;
-      if (
-        [metadataValue, wrappingValue, sessionValue, secretsValue].some(
-          (value) => value === undefined,
-        )
-      )
+      if ([sessionValue, secretsValue].every((value) => value === undefined)) return undefined;
+      if ([metadataValue, sessionValue, secretsValue].some((value) => value === undefined))
         throw new DomainValidationError("account", "is only partially initialized");
       const decodedMetadata = metadata(metadataValue);
       const decodedSecrets = secrets(secretsValue);
@@ -301,18 +252,7 @@ export class IndexedDbAccountRepository {
         decodedMetadata.sessionId !== decodedSecrets.sessionId
       )
         throw new DomainValidationError("account", "has mismatched session identity");
-      const wrappingKey = accountWrappingKey(wrappingValue);
       const sessionKey = sessionStorageKey(sessionValue);
-      const carrier = await crypto.subtle.unwrapKey(
-        "raw",
-        Uint8Array.from(decodedSecrets.wrappedAccountEncryptionKey),
-        wrappingKey,
-        "AES-KW",
-        { name: "HMAC", hash: "SHA-256" },
-        true,
-        ["sign"],
-      );
-      const accountEncryptionKey = new Uint8Array(await crypto.subtle.exportKey("raw", carrier));
       const refreshBytes = await crypto.subtle.decrypt(
         {
           name: "AES-GCM",
@@ -326,9 +266,7 @@ export class IndexedDbAccountRepository {
       );
       return {
         metadata: decodedMetadata,
-        accountEncryptionKey,
         refreshToken: decoder.decode(refreshBytes),
-        wrappingKey,
         sessionKey,
       };
     } catch (error) {
@@ -340,9 +278,9 @@ export class IndexedDbAccountRepository {
     scope: AccountCredentialScope = "active",
   ): Promise<StoredAccountMetadataV1 | undefined> {
     const database = await this.databasePromise;
-    const transaction = database.transaction(STORES.accountMetadata, "readonly");
+    const transaction = database.transaction(STORES.apiSessions, "readonly");
     const value = await requestValue(
-      transaction.objectStore(STORES.accountMetadata).get(credentialKeys(scope).metadata),
+      transaction.objectStore(STORES.apiSessions).get(credentialKeys(scope).metadata),
     );
     await transactionDone(transaction);
     return value === undefined ? undefined : metadata(value);
@@ -352,17 +290,16 @@ export class IndexedDbAccountRepository {
     const database = await this.databasePromise;
     const keys = credentialKeys(scope);
     const transaction = database.transaction(
-      [STORES.accountMetadata, STORES.accountKeys, STORES.accountSecrets],
+      [STORES.apiSessions, STORES.sessionKeys, STORES.protectedCredentials],
       "readonly",
     );
-    const [metadataValue, wrappingValue, sessionValue, secretsValue] = await Promise.all([
-      requestValue(transaction.objectStore(STORES.accountMetadata).get(keys.metadata)),
-      requestValue(transaction.objectStore(STORES.accountKeys).get(keys.wrapping)),
-      requestValue(transaction.objectStore(STORES.accountKeys).get(keys.session)),
-      requestValue(transaction.objectStore(STORES.accountSecrets).get(keys.secrets)),
+    const [metadataValue, sessionValue, secretsValue] = await Promise.all([
+      requestValue(transaction.objectStore(STORES.apiSessions).get(keys.metadata)),
+      requestValue(transaction.objectStore(STORES.sessionKeys).get(keys.session)),
+      requestValue(transaction.objectStore(STORES.protectedCredentials).get(keys.secrets)),
     ]);
     await transactionDone(transaction);
-    const secretValues = [wrappingValue, sessionValue, secretsValue];
+    const secretValues = [sessionValue, secretsValue];
     if (secretValues.every((value) => value === undefined)) return false;
     if (metadataValue === undefined || secretValues.some((value) => value === undefined))
       throw new DomainValidationError("account", "has partial credential state");
@@ -373,53 +310,20 @@ export class IndexedDbAccountRepository {
       decodedMetadata.sessionId !== decodedSecrets.sessionId
     )
       throw new DomainValidationError("account", "has mismatched session identity");
-    accountWrappingKey(wrappingValue);
     sessionStorageKey(sessionValue);
     return true;
-  }
-
-  async loadAccountEncryptionKey(scope: AccountCredentialScope = "active"): Promise<Uint8Array> {
-    const database = await this.databasePromise;
-    const keys = credentialKeys(scope);
-    const transaction = database.transaction(
-      [STORES.accountMetadata, STORES.accountKeys, STORES.accountSecrets],
-      "readonly",
-    );
-    const [metadataValue, wrappingValue, secretsValue] = await Promise.all([
-      requestValue(transaction.objectStore(STORES.accountMetadata).get(keys.metadata)),
-      requestValue(transaction.objectStore(STORES.accountKeys).get(keys.wrapping)),
-      requestValue(transaction.objectStore(STORES.accountSecrets).get(keys.secrets)),
-    ]);
-    await transactionDone(transaction);
-    if (metadataValue === undefined || wrappingValue === undefined || secretsValue === undefined)
-      throw new DomainValidationError("account", "is not authenticated");
-    const decodedMetadata = metadata(metadataValue);
-    const decodedSecrets = secrets(secretsValue);
-    if (decodedMetadata.accountId !== decodedSecrets.accountId)
-      throw new DomainValidationError("account", "has mismatched Account identity");
-    const carrier = await crypto.subtle.unwrapKey(
-      "raw",
-      Uint8Array.from(decodedSecrets.wrappedAccountEncryptionKey),
-      accountWrappingKey(wrappingValue),
-      "AES-KW",
-      { name: "HMAC", hash: "SHA-256" },
-      true,
-      ["sign"],
-    );
-    return new Uint8Array(await crypto.subtle.exportKey("raw", carrier));
   }
 
   async eraseAuthenticated(scope: AccountCredentialScope): Promise<void> {
     const database = await this.databasePromise;
     const keys = credentialKeys(scope);
     const transaction = database.transaction(
-      [STORES.accountMetadata, STORES.accountKeys, STORES.accountSecrets],
+      [STORES.apiSessions, STORES.sessionKeys, STORES.protectedCredentials],
       "readwrite",
     );
-    transaction.objectStore(STORES.accountMetadata).delete(keys.metadata);
-    transaction.objectStore(STORES.accountKeys).delete(keys.wrapping);
-    transaction.objectStore(STORES.accountKeys).delete(keys.session);
-    transaction.objectStore(STORES.accountSecrets).delete(keys.secrets);
+    transaction.objectStore(STORES.apiSessions).delete(keys.metadata);
+    transaction.objectStore(STORES.sessionKeys).delete(keys.session);
+    transaction.objectStore(STORES.protectedCredentials).delete(keys.secrets);
     await transactionDone(transaction);
   }
 
@@ -427,12 +331,11 @@ export class IndexedDbAccountRepository {
     const database = await this.databasePromise;
     const keys = credentialKeys(scope);
     const transaction = database.transaction(
-      [STORES.accountKeys, STORES.accountSecrets],
+      [STORES.sessionKeys, STORES.protectedCredentials],
       "readwrite",
     );
-    transaction.objectStore(STORES.accountKeys).delete(keys.wrapping);
-    transaction.objectStore(STORES.accountKeys).delete(keys.session);
-    transaction.objectStore(STORES.accountSecrets).delete(keys.secrets);
+    transaction.objectStore(STORES.sessionKeys).delete(keys.session);
+    transaction.objectStore(STORES.protectedCredentials).delete(keys.secrets);
     await transactionDone(transaction);
   }
 
@@ -441,16 +344,15 @@ export class IndexedDbAccountRepository {
     const keys = credentialKeys("active");
     const transaction = database.transaction(
       [
-        STORES.accountKeys,
-        STORES.accountSecrets,
+        STORES.sessionKeys,
+        STORES.protectedCredentials,
         STORES.synchronizationJobs,
         STORES.synchronizationCheckpoints,
       ],
       "readwrite",
     );
-    transaction.objectStore(STORES.accountKeys).delete(keys.wrapping);
-    transaction.objectStore(STORES.accountKeys).delete(keys.session);
-    transaction.objectStore(STORES.accountSecrets).delete(keys.secrets);
+    transaction.objectStore(STORES.sessionKeys).delete(keys.session);
+    transaction.objectStore(STORES.protectedCredentials).delete(keys.secrets);
     transaction.objectStore(STORES.synchronizationJobs).clear();
     transaction.objectStore(STORES.synchronizationCheckpoints).clear();
     await transactionDone(transaction);
@@ -462,10 +364,10 @@ export class IndexedDbAccountRepository {
   }): Promise<void> {
     const database = await this.databasePromise;
     const transaction = database.transaction(
-      [STORES.accountVault, STORES.synchronizationJobs],
+      [STORES.vaultSyncState, STORES.synchronizationJobs],
       "readwrite",
     );
-    transaction.objectStore(STORES.accountVault).put(input.registration, "active");
+    transaction.objectStore(STORES.vaultSyncState).put(input.registration, "active");
     transaction.objectStore(STORES.synchronizationJobs).put(input.job, "active");
     await transactionDone(transaction);
   }
@@ -476,12 +378,136 @@ export class IndexedDbAccountRepository {
   }): Promise<void> {
     const database = await this.databasePromise;
     const transaction = database.transaction(
-      [STORES.accountVault, STORES.synchronizationJobs],
+      [STORES.vaultSyncState, STORES.synchronizationJobs],
       "readwrite",
     );
-    if (input.registration === undefined) transaction.objectStore(STORES.accountVault).clear();
-    else transaction.objectStore(STORES.accountVault).put(input.registration, "active");
+    if (input.registration === undefined) transaction.objectStore(STORES.vaultSyncState).clear();
+    else transaction.objectStore(STORES.vaultSyncState).put(input.registration, "active");
     transaction.objectStore(STORES.synchronizationJobs).put(input.job, "active");
+    await transactionDone(transaction);
+  }
+
+  async saveRecoveryDiscovery(input: {
+    readonly registration?: StoredAccountVaultV1;
+    readonly recoveryKit?: StoredRecoveryKitV1;
+    readonly job: SynchronizationJobV1;
+  }): Promise<void> {
+    const database = await this.databasePromise;
+    const transaction = database.transaction(
+      [STORES.vaultSyncState, STORES.recoveryKits, STORES.synchronizationJobs],
+      "readwrite",
+    );
+    transaction.objectStore(STORES.vaultSyncState).clear();
+    transaction.objectStore(STORES.recoveryKits).clear();
+    if (input.registration !== undefined)
+      transaction.objectStore(STORES.vaultSyncState).put(input.registration, "active");
+    if (input.recoveryKit !== undefined)
+      transaction
+        .objectStore(STORES.recoveryKits)
+        .put(input.recoveryKit, input.recoveryKit.vaultId);
+    transaction.objectStore(STORES.synchronizationJobs).put(input.job, "active");
+    await transactionDone(transaction);
+  }
+
+  async saveReturningDeviceDiscovery(input: {
+    readonly expected: StoredAccountVaultV1;
+    readonly recoveryKit: StoredRecoveryKitV1;
+  }): Promise<void> {
+    const database = await this.databasePromise;
+    const transaction = database.transaction(
+      [STORES.vaultSyncState, STORES.recoveryKits],
+      "readwrite",
+    );
+    const current = (await requestValue(
+      transaction.objectStore(STORES.vaultSyncState).get("active"),
+    )) as StoredAccountVaultV1 | undefined;
+    if (
+      current === undefined ||
+      current.version !== input.expected.version ||
+      current.accountId !== input.expected.accountId ||
+      current.vaultId !== input.expected.vaultId ||
+      current.activeRecoveryGenerationId !== input.expected.activeRecoveryGenerationId ||
+      current.activeKeyEpochId !== input.expected.activeKeyEpochId ||
+      current.remoteGenerationId !== input.expected.remoteGenerationId ||
+      current.remoteGenerationNumber !== input.expected.remoteGenerationNumber ||
+      current.deliveryCursor !== input.expected.deliveryCursor ||
+      input.recoveryKit.vaultId !== current.vaultId ||
+      input.recoveryKit.recoveryGenerationId !== current.activeRecoveryGenerationId
+    ) {
+      transaction.abort();
+      throw new DomainValidationError(
+        "returningDeviceDiscovery",
+        "changed while refreshing Recovery Kit metadata",
+      );
+    }
+    transaction.objectStore(STORES.recoveryKits).put(input.recoveryKit, input.recoveryKit.vaultId);
+    await transactionDone(transaction);
+  }
+
+  async loadRecoveryKit(vaultId: string): Promise<StoredRecoveryKitV1 | undefined> {
+    const database = await this.databasePromise;
+    const transaction = database.transaction(STORES.recoveryKits, "readonly");
+    const value = await requestValue(transaction.objectStore(STORES.recoveryKits).get(vaultId));
+    await transactionDone(transaction);
+    return value as StoredRecoveryKitV1 | undefined;
+  }
+
+  async beginRecoveredBootstrap(input: {
+    readonly accountId: string;
+    readonly vaultId: string;
+    readonly generationId: string;
+    readonly generationNumber: number;
+    readonly deliveryCursor: number;
+    readonly now: string;
+  }): Promise<void> {
+    const database = await this.databasePromise;
+    const transaction = database.transaction(
+      [STORES.vaultSyncState, STORES.synchronizationJobs],
+      "readwrite",
+    );
+    const stored = (await requestValue(
+      transaction.objectStore(STORES.vaultSyncState).get("active"),
+    )) as StoredAccountVaultV1 | undefined;
+    if (
+      stored === undefined ||
+      stored.accountId !== input.accountId ||
+      stored.vaultId !== input.vaultId ||
+      stored.activeRecoveryGenerationId === undefined ||
+      stored.activeKeyEpochId === undefined
+    ) {
+      transaction.abort();
+      throw new DomainValidationError(
+        "recoveredDevice",
+        "does not match discovered Vault authority",
+      );
+    }
+    const registration: StoredAccountVaultV1 = {
+      ...stored,
+      remoteGenerationId: input.generationId,
+      remoteGenerationNumber: input.generationNumber,
+      deliveryCursor: input.deliveryCursor,
+    };
+    const job: SynchronizationJobV1 = {
+      version: 1,
+      jobId: crypto.randomUUID(),
+      accountId: input.accountId,
+      vaultId: input.vaultId,
+      generationId: input.generationId,
+      generationNumber: input.generationNumber,
+      state: "Running",
+      stage: "DownloadRecords",
+      createdAt: input.now,
+      updatedAt: input.now,
+      snapshotCursor: input.deliveryCursor,
+      completedItems: 0,
+      totalItems: 0,
+      processedBytes: 0,
+      totalBytes: 0,
+      retryCount: 0,
+      attachIdempotencyKey: crypto.randomUUID(),
+    };
+    transaction.objectStore(STORES.vaultSyncState).put(registration, "active");
+    transaction.objectStore(STORES.synchronizationJobs).put(job, "active");
     await transactionDone(transaction);
   }
 
@@ -500,15 +526,15 @@ export class IndexedDbAccountRepository {
     scope: "active" | "server-switch-candidate" = "active",
   ): Promise<void> {
     const database = await this.databasePromise;
-    const transaction = database.transaction(STORES.accountVault, "readwrite");
-    transaction.objectStore(STORES.accountVault).put(registration, scope);
+    const transaction = database.transaction(STORES.vaultSyncState, "readwrite");
+    transaction.objectStore(STORES.vaultSyncState).put(registration, scope);
     await transactionDone(transaction);
   }
 
   async eraseAccountVault(scope: "active" | "server-switch-candidate"): Promise<void> {
     const database = await this.databasePromise;
-    const transaction = database.transaction(STORES.accountVault, "readwrite");
-    transaction.objectStore(STORES.accountVault).delete(scope);
+    const transaction = database.transaction(STORES.vaultSyncState, "readwrite");
+    transaction.objectStore(STORES.vaultSyncState).delete(scope);
     await transactionDone(transaction);
   }
 
@@ -516,8 +542,8 @@ export class IndexedDbAccountRepository {
     scope: "active" | "server-switch-candidate" = "active",
   ): Promise<StoredAccountVaultV1 | undefined> {
     const database = await this.databasePromise;
-    const transaction = database.transaction(STORES.accountVault, "readonly");
-    const value = await requestValue(transaction.objectStore(STORES.accountVault).get(scope));
+    const transaction = database.transaction(STORES.vaultSyncState, "readonly");
+    const value = await requestValue(transaction.objectStore(STORES.vaultSyncState).get(scope));
     await transactionDone(transaction);
     return value as StoredAccountVaultV1 | undefined;
   }
@@ -571,13 +597,14 @@ export class IndexedDbAccountRepository {
       const transaction = database.transaction(
         [
           STORES.accountConfiguration,
-          STORES.accountMetadata,
-          STORES.accountKeys,
-          STORES.accountSecrets,
-          STORES.accountVault,
+          STORES.apiSessions,
+          STORES.sessionKeys,
+          STORES.protectedCredentials,
+          STORES.vaultSyncState,
           STORES.synchronizationJobs,
           STORES.synchronizationCheckpoints,
           STORES.serverSwitchJobs,
+          STORES.deviceSessions,
           ...(replica === undefined
             ? []
             : [
@@ -674,16 +701,49 @@ export class IndexedDbAccountRepository {
         putPrepared(transaction, "active", preparedActive);
         putPrepared(transaction, "server-switch-prior", preparedPrior);
         const candidateKeys = credentialKeys("server-switch-candidate");
-        transaction.objectStore(STORES.accountMetadata).delete(candidateKeys.metadata);
-        transaction.objectStore(STORES.accountKeys).delete(candidateKeys.wrapping);
-        transaction.objectStore(STORES.accountKeys).delete(candidateKeys.session);
-        transaction.objectStore(STORES.accountSecrets).delete(candidateKeys.secrets);
+        transaction.objectStore(STORES.apiSessions).delete(candidateKeys.metadata);
+        transaction.objectStore(STORES.sessionKeys).delete(candidateKeys.session);
+        transaction.objectStore(STORES.protectedCredentials).delete(candidateKeys.secrets);
+        transaction.objectStore(STORES.accountConfiguration).put(
+          {
+            version: 1,
+            mode: "Configured",
+            serverOrigin: input.candidateOrigin,
+            registration: input.job.candidateRegistration,
+          },
+          "active",
+        );
+        transaction.objectStore(STORES.vaultSyncState).put(registration, "active");
+        transaction.objectStore(STORES.vaultSyncState).delete("server-switch-candidate");
+        const candidateDeviceSession = await requestValue(
+          transaction
+            .objectStore(STORES.deviceSessions)
+            .get(`${input.job.vaultId}:server-switch-candidate`),
+        );
+        if (candidateDeviceSession === undefined) {
+          transaction.abort();
+          throw new DomainValidationError(
+            "serverSwitchJob",
+            "candidate Device session is incomplete",
+          );
+        }
         transaction
-          .objectStore(STORES.accountConfiguration)
-          .put({ version: 1, mode: "Configured", serverOrigin: input.candidateOrigin }, "active");
-        transaction.objectStore(STORES.accountVault).put(registration, "active");
-        transaction.objectStore(STORES.accountVault).delete("server-switch-candidate");
+          .objectStore(STORES.deviceSessions)
+          .put(candidateDeviceSession, input.job.vaultId);
+        transaction
+          .objectStore(STORES.deviceSessions)
+          .delete(`${input.job.vaultId}:server-switch-candidate`);
         transaction.objectStore(STORES.synchronizationCheckpoints).clear();
+        if (
+          registration.remoteGenerationId === undefined ||
+          registration.remoteGenerationNumber === undefined
+        ) {
+          transaction.abort();
+          throw new DomainValidationError(
+            "serverSwitchJob",
+            "candidate Generation authority is incomplete",
+          );
+        }
         transaction.objectStore(STORES.synchronizationJobs).put(
           {
             version: 1,
@@ -719,8 +779,7 @@ export class IndexedDbAccountRepository {
         throw error;
       }
     } finally {
-      source.accountEncryptionKey.fill(0);
-      candidate.accountEncryptionKey.fill(0);
+      // Non-extractable session keys and encrypted refresh credentials remain store-owned.
     }
   }
 
@@ -757,16 +816,20 @@ export class IndexedDbAccountRepository {
   async wakeSynchronization(vaultId: string, now = new Date().toISOString()): Promise<boolean> {
     const database = await this.databasePromise;
     const transaction = database.transaction(
-      [STORES.accountVault, STORES.synchronizationJobs],
+      [STORES.vaultSyncState, STORES.synchronizationJobs],
       "readwrite",
     );
     const [registrationValue, jobValue] = await Promise.all([
-      requestValue(transaction.objectStore(STORES.accountVault).get("active")),
+      requestValue(transaction.objectStore(STORES.vaultSyncState).get("active")),
       requestValue(transaction.objectStore(STORES.synchronizationJobs).get("active")),
     ]);
     const registration = registrationValue as StoredAccountVaultV1 | undefined;
     const current = jobValue as SynchronizationJobV1 | undefined;
-    if (registration?.vaultId !== vaultId) {
+    if (
+      registration?.vaultId !== vaultId ||
+      registration.remoteGenerationId === undefined ||
+      registration.remoteGenerationNumber === undefined
+    ) {
       await transactionDone(transaction);
       return false;
     }
@@ -805,17 +868,19 @@ export class IndexedDbAccountRepository {
   async wakePull(latestCursor?: number, now = new Date().toISOString()): Promise<boolean> {
     const database = await this.databasePromise;
     const transaction = database.transaction(
-      [STORES.accountVault, STORES.synchronizationJobs],
+      [STORES.vaultSyncState, STORES.synchronizationJobs],
       "readwrite",
     );
     const [registrationValue, jobValue] = await Promise.all([
-      requestValue(transaction.objectStore(STORES.accountVault).get("active")),
+      requestValue(transaction.objectStore(STORES.vaultSyncState).get("active")),
       requestValue(transaction.objectStore(STORES.synchronizationJobs).get("active")),
     ]);
     const registration = registrationValue as StoredAccountVaultV1 | undefined;
     const current = jobValue as SynchronizationJobV1 | undefined;
     if (
       registration === undefined ||
+      registration.remoteGenerationId === undefined ||
+      registration.remoteGenerationNumber === undefined ||
       (latestCursor !== undefined && latestCursor <= registration.deliveryCursor) ||
       (current !== undefined && current.state !== "Succeeded")
     ) {
@@ -855,7 +920,9 @@ export class IndexedDbAccountRepository {
     const job = value as SynchronizationJobV1 | undefined;
     if (
       job === undefined ||
-      (job.state !== "Waiting" && job.state !== "Failed") ||
+      (job.state !== "Waiting" &&
+        job.state !== "Failed" &&
+        job.state !== "AuthenticationRequired") ||
       job.errorId === "ACCOUNT_VAULT_SELECTION_REQUIRED"
     ) {
       await transactionDone(transaction);
@@ -882,10 +949,10 @@ export class IndexedDbAccountRepository {
   }): Promise<void> {
     const database = await this.databasePromise;
     const transaction = database.transaction(
-      [STORES.accountVault, STORES.synchronizationJobs],
+      [STORES.vaultSyncState, STORES.synchronizationJobs],
       "readwrite",
     );
-    const value = await requestValue(transaction.objectStore(STORES.accountVault).get("active"));
+    const value = await requestValue(transaction.objectStore(STORES.vaultSyncState).get("active"));
     const registration = value as StoredAccountVaultV1 | undefined;
     if (
       registration?.vaultId !== input.vaultId ||
@@ -900,7 +967,7 @@ export class IndexedDbAccountRepository {
       remoteGenerationNumber: input.generationNumber,
       deliveryCursor: input.deliveryCursor,
     };
-    transaction.objectStore(STORES.accountVault).put(updated, "active");
+    transaction.objectStore(STORES.vaultSyncState).put(updated, "active");
     transaction.objectStore(STORES.synchronizationJobs).put(
       {
         version: 1,
@@ -926,6 +993,58 @@ export class IndexedDbAccountRepository {
     await transactionDone(transaction);
   }
 
+  async recordSupersededGeneration(input: {
+    readonly job: SynchronizationJobV1;
+    readonly generationId: string;
+    readonly generationNumber: number;
+    readonly headCursor: number;
+    readonly predecessorGenerationId?: string;
+    readonly now: string;
+  }): Promise<void> {
+    const database = await this.databasePromise;
+    const transaction = database.transaction(
+      [STORES.vaultSyncState, STORES.synchronizationJobs],
+      "readwrite",
+    );
+    const value = await requestValue(transaction.objectStore(STORES.vaultSyncState).get("active"));
+    const registration = value as StoredAccountVaultV1 | undefined;
+    if (
+      input.job.vaultId === undefined ||
+      input.job.generationId === undefined ||
+      registration?.vaultId !== input.job.vaultId ||
+      registration.remoteGenerationId !== input.job.generationId
+    ) {
+      transaction.abort();
+      throw new DomainValidationError("accountVault", "changed during stale detection");
+    }
+    transaction.objectStore(STORES.vaultSyncState).put(
+      {
+        ...registration,
+        remoteGenerationId: input.generationId,
+        remoteGenerationNumber: input.generationNumber,
+        deliveryCursor: input.headCursor,
+      } satisfies StoredAccountVaultV1,
+      "active",
+    );
+    transaction.objectStore(STORES.synchronizationJobs).put(
+      {
+        ...input.job,
+        generationId: input.generationId,
+        generationNumber: input.generationNumber,
+        ...(input.predecessorGenerationId === undefined
+          ? {}
+          : { predecessorGenerationId: input.predecessorGenerationId }),
+        snapshotCursor: input.headCursor,
+        state: "Conflict",
+        retryCount: input.job.retryCount + 1,
+        updatedAt: input.now,
+        errorId: "VAULT_GENERATION_SUPERSEDED",
+      } satisfies SynchronizationJobV1,
+      "active",
+    );
+    await transactionDone(transaction);
+  }
+
   async saveConfiguration(configuration: AccountConfigurationV1): Promise<void> {
     const database = await this.databasePromise;
     const transaction = database.transaction(STORES.accountConfiguration, "readwrite");
@@ -945,16 +1064,40 @@ export class IndexedDbAccountRepository {
       "version",
       "mode",
       "serverOrigin",
+      "registration",
     ]);
     literal(input.version, 1, "accountConfiguration.version");
     if (input.mode === "Unconfigured" || input.mode === "LocalOnly") {
-      if (input.serverOrigin !== undefined)
+      if (input.serverOrigin !== undefined || input.registration !== undefined)
         throw new DomainValidationError("accountConfiguration", "contains an unexpected origin");
       return { version: 1, mode: input.mode };
     }
-    if (input.mode !== "Configured" || typeof input.serverOrigin !== "string")
+    if (
+      input.mode !== "Configured" ||
+      typeof input.serverOrigin !== "string" ||
+      typeof input.registration !== "object" ||
+      input.registration === null
+    )
       throw new DomainValidationError("accountConfiguration", "contains an invalid mode");
-    return { version: 1, mode: "Configured", serverOrigin: input.serverOrigin };
+    const registration = canonicalRecord(input.registration, "accountRegistration", [
+      "enabled",
+      "signUpUrl",
+    ]);
+    if (registration.enabled === false && registration.signUpUrl === undefined)
+      return {
+        version: 1,
+        mode: "Configured",
+        serverOrigin: input.serverOrigin,
+        registration: { enabled: false },
+      };
+    if (registration.enabled !== true || typeof registration.signUpUrl !== "string")
+      throw new DomainValidationError("accountRegistration", "contains invalid registration");
+    return {
+      version: 1,
+      mode: "Configured",
+      serverOrigin: input.serverOrigin,
+      registration: { enabled: true, signUpUrl: registration.signUpUrl },
+    };
   }
 
   async close(): Promise<void> {

@@ -1,19 +1,22 @@
 import { wipe } from "../../crypto/sodium";
+import type { LoadedDeviceAuthority } from "../../drivers/indexeddb/device-repository";
 import type { StoredAccountVaultV1, SynchronizationJobV1 } from "../../drivers/indexeddb/schema";
 import type { AtomicRemoteBootstrap } from "../../drivers/indexeddb/workspace-repository";
-import { openAccountVaultSlot } from "../account/crypto";
 import type { ArtifactStore } from "../artifact";
 import { prepareReplicaDeviceCredentials } from "../import/credentials";
 import { LibraryProjectionRebuilder } from "../library/rebuild";
 import { encryptWorkspaceVaultName } from "../vault";
-import { decodeAccountVaultSlot } from "./discovery";
+import { importVaultKeyring } from "../vault/keyring";
 import { type RemoteReplicaDownloader, verifyPreparedRemoteReplica } from "./download";
 
 interface BootstrapAccountStore {
   latestSynchronizationJob(): Promise<SynchronizationJobV1 | undefined>;
   loadAccountVault(): Promise<StoredAccountVaultV1 | undefined>;
-  loadAccountEncryptionKey(): Promise<Uint8Array>;
   saveSynchronizationJob(job: SynchronizationJobV1): Promise<void>;
+}
+
+interface BootstrapDeviceStore {
+  loadDeviceAuthority(vaultId: string): Promise<LoadedDeviceAuthority | undefined>;
 }
 
 interface BootstrapWorkspaceStore {
@@ -31,13 +34,10 @@ function integrity(message: string): Error {
   return Object.assign(new Error(message), { id: "SYNCHRONIZATION_INTEGRITY_FAILED" });
 }
 
-async function importRootKey(raw: Uint8Array): Promise<CryptoKey> {
-  return crypto.subtle.importKey("raw", Uint8Array.from(raw), "HKDF", false, ["deriveBits"]);
-}
-
 export class RemoteBootstrapRunner {
   constructor(
     private readonly accounts: BootstrapAccountStore,
+    private readonly devices: BootstrapDeviceStore,
     private readonly workspace: BootstrapWorkspaceStore,
     private readonly artifacts: ArtifactStore,
     private readonly downloader: Pick<RemoteReplicaDownloader, "prepare">,
@@ -51,25 +51,40 @@ export class RemoteBootstrapRunner {
     if (
       registration === undefined ||
       registration.accountId !== job.accountId ||
-      registration.vaultId !== job.vaultId
+      registration.vaultId !== job.vaultId ||
+      registration.activeKeyEpochId === undefined
     )
       throw integrity("Remote bootstrap Account context changed");
-    const accountEncryptionKey = await this.accounts.loadAccountEncryptionKey();
     let rawRootKey: Uint8Array | undefined;
+    let authority: LoadedDeviceAuthority | undefined;
     let preparedArtifactIds: readonly string[] = [];
     let committed = false;
     try {
-      rawRootKey = await openAccountVaultSlot(
-        decodeAccountVaultSlot(registration.accountSlot),
-        accountEncryptionKey,
+      authority = await this.devices.loadDeviceAuthority(vaultId);
+      const activeEpoch = authority?.keyEpochs.find(
+        (epoch) => epoch.keyEpochId === registration.activeKeyEpochId,
       );
-      const rootKey = await importRootKey(rawRootKey);
-      const prepared = await this.downloader.prepare(job, rootKey);
+      if (
+        authority === undefined ||
+        authority.accountId !== job.accountId ||
+        authority.vaultId !== vaultId ||
+        activeEpoch === undefined
+      )
+        throw integrity("Remote bootstrap Device authority is unavailable");
+      rawRootKey = activeEpoch.rootKey;
+      const keyring = await importVaultKeyring(
+        registration.activeKeyEpochId,
+        authority.keyEpochs.map((epoch) => ({
+          ...epoch,
+          rootKey: Uint8Array.from(epoch.rootKey),
+        })),
+      );
+      const prepared = await this.downloader.prepare(job, keyring);
       preparedArtifactIds = prepared.preparedArtifactObjectIds;
       const verified = await verifyPreparedRemoteReplica({
         vaultId: job.vaultId,
         prepared,
-        rootKey,
+        keyring,
         artifacts: this.artifacts,
       });
       const records = await prepareReplicaDeviceCredentials({
@@ -78,6 +93,8 @@ export class RemoteBootstrapRunner {
         generation: verified.generation,
         head: verified.head,
         rawRootKey,
+        keyEpochId: activeEpoch.keyEpochId,
+        deviceId: authority.identity.deviceId,
         manuallyLocked: false,
       });
       const objects = new Map(verified.objects.map((object) => [object.objectId, object]));
@@ -87,7 +104,7 @@ export class RemoteBootstrapRunner {
           getStoredObject: (objectId) => Promise.resolve(objects.get(objectId)),
           replaceLibraryProjections: () => Promise.resolve(),
         },
-        rootKey,
+        keyring,
         job.vaultId,
         this.artifacts,
       ).prepare(new AbortController().signal);
@@ -116,8 +133,13 @@ export class RemoteBootstrapRunner {
       committed = true;
       return job.vaultId;
     } finally {
-      await wipe(accountEncryptionKey);
-      if (rawRootKey !== undefined) await wipe(rawRootKey);
+      if (authority !== undefined)
+        await Promise.all([
+          wipe(authority.identity.signingSecretKey),
+          wipe(authority.identity.wrappingSecretKey),
+          ...authority.keyEpochs.map((epoch) => wipe(epoch.rootKey)),
+        ]);
+      else if (rawRootKey !== undefined) await wipe(rawRootKey);
       if (!committed)
         await Promise.all(
           preparedArtifactIds.map((objectId) =>

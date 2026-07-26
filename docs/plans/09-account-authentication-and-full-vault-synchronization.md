@@ -9,6 +9,11 @@
 `docs/plans/08-coordination-server-contract-and-two-replica-proof.md`, and the architecture and
 specifications reconciled by this plan
 
+> **Historical notice:** Plan 15 supersedes this plan's Account-key, extension-signup, and recovery
+> model. See
+> [Plan 15](15-rails-account-recovery-phrase-device-sync.md) for the implemented canonical
+> direction. This document remains unchanged historical implementation context.
+
 ---
 
 # 1. Purpose

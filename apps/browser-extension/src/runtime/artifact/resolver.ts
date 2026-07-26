@@ -1,5 +1,6 @@
 import type { ArtifactReferenceV1 } from "../../domain/artifact-graph";
 import type { StoredArtifactObjectV1 } from "../../drivers/indexeddb/schema";
+import type { VaultKeyring } from "../vault/keyring";
 import { transientPlaintextStream } from "./resolver-plaintext";
 import { verifiedArtifactStream } from "./resolver-stream";
 import { decodeArtifactDownload } from "./resolver-wire";
@@ -56,7 +57,7 @@ export interface OpenEncryptedArtifactInput {
 
 export interface OpenPlaintextArtifactInput extends OpenEncryptedArtifactInput {
   readonly reference: ArtifactReferenceV1;
-  readonly rootKey: CryptoKey;
+  readonly keyring: VaultKeyring;
 }
 
 function runtimeError(id: string, message: string): Error {
@@ -90,7 +91,7 @@ export class ArtifactResolver {
           vaultId: input.vaultId,
           object: input.object,
           reference: input.reference,
-          rootKey: input.rootKey,
+          keyring: input.keyring,
           ...(input.signal === undefined ? {} : { signal: input.signal }),
         }),
       };
@@ -101,7 +102,7 @@ export class ArtifactResolver {
         vaultId: input.vaultId,
         object: input.object,
         reference: input.reference,
-        rootKey: input.rootKey,
+        keyring: input.keyring,
         encrypted: encrypted.stream,
         ...(input.signal === undefined ? {} : { signal: input.signal }),
       }),

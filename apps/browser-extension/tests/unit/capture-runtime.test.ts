@@ -4,6 +4,7 @@ import type { CapturePageCommandV1, LibraryItemV1 } from "../../src/domain/contr
 import type { AtomicRegistrationV1, CommandOutcomeV1 } from "../../src/drivers/indexeddb";
 import { CaptureHostError } from "../../src/hosts/chrome/capture";
 import { CaptureRuntime, type CaptureRuntimePorts } from "../../src/runtime/capture/service";
+import type { VaultKeyring } from "../../src/runtime/vault/keyring";
 
 const ids = Array.from(
   { length: 20 },
@@ -67,6 +68,7 @@ function registration(): AtomicRegistrationV1 {
         version: 1,
         objectId: fixedId(19),
         objectType: "Artifact" as const,
+        keyEpochId: "00000000-0000-4000-8000-000000000009",
         envelopeFormat: "artifact:xchacha20poly1305-chunked:v1" as const,
         envelopeByteLength: 10,
         envelopeChecksumAlgorithm: "hash:sha256:v1" as const,
@@ -99,7 +101,7 @@ function ports(overrides: Partial<CaptureRuntimePorts> = {}): CaptureRuntimePort
   let idIndex = 2;
   return {
     isVaultUnlocked: () => true,
-    rootKey: () => ({}) as CryptoKey,
+    keyring: () => ({}) as VaultKeyring,
     vaultId: fixedId(10),
     deviceId: fixedId(1),
     clientVersion: "0.1.0",
@@ -146,6 +148,7 @@ function ports(overrides: Partial<CaptureRuntimePorts> = {}): CaptureRuntimePort
         version: 1 as const,
         objectId,
         objectType: "Artifact" as const,
+        keyEpochId: "00000000-0000-4000-8000-000000000009",
         envelopeFormat: "artifact:xchacha20poly1305-chunked:v1" as const,
         envelopeByteLength: 10,
         envelopeChecksumAlgorithm: "hash:sha256:v1" as const,

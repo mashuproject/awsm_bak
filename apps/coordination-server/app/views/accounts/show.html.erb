@@ -1,0 +1,14 @@
+<% content_for :title, "AWSM Account" %>
+
+<h1>Your Account</h1>
+<ul class="metadata">
+  <li><strong>Email:</strong> <%= @account.email %></li>
+  <li><strong>Created:</strong> <%= time_tag @account.created_at %></li>
+  <li><strong>Browser sessions:</strong> <%= @account.browser_sessions.count %></li>
+  <li><strong>API sessions:</strong> <%= @account.api_sessions.where(revoked_at: nil).count %></li>
+</ul>
+
+<div class="actions">
+  <%= link_to "Change password", edit_account_password_path, class: "button" %>
+  <%= button_to "Sign out", session_path, method: :delete %>
+</div>

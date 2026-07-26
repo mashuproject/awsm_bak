@@ -5,6 +5,7 @@ import { bytesEqual } from "../../domain/hash";
 import { uuid } from "../../domain/validation";
 import type { StoredArtifactObjectV1 } from "../../drivers/indexeddb/schema";
 import type { ArtifactStore, PreparedArtifact } from "../../runtime/artifact";
+import type { VaultKeyring } from "../../runtime/vault/keyring";
 import { storedArtifactFileMatches, streamChunks } from "./artifact-store-file";
 
 const ROOT_DIRECTORY = "awsm-vault-objects";
@@ -42,7 +43,7 @@ export class OpfsArtifactStore implements ArtifactStore {
   async prepare(input: {
     readonly vaultId: string;
     readonly objectId: string;
-    readonly rootKey: CryptoKey;
+    readonly keyring: VaultKeyring;
     readonly plaintext: AsyncIterable<Uint8Array>;
     readonly noncePrefix?: Uint8Array;
     readonly signal?: AbortSignal;
@@ -59,8 +60,10 @@ export class OpfsArtifactStore implements ArtifactStore {
     }
     const handle = await directory.getFileHandle(name, { create: true });
     const writable = await handle.createWritable({ keepExistingData: false });
-    const key = await deriveContextKeyFromCryptoKey(input.rootKey, {
+    const epoch = input.keyring.active();
+    const key = await deriveContextKeyFromCryptoKey(epoch.rootKey, {
       vaultId,
+      keyEpochId: epoch.keyEpochId,
       domain: "vault:artifact:v1",
       contextId: objectId,
       keyVersion: 1,
@@ -68,6 +71,7 @@ export class OpfsArtifactStore implements ArtifactStore {
     try {
       const summary = await writeArtifactEnvelope({
         objectId,
+        keyEpochId: epoch.keyEpochId,
         key,
         plaintext: input.plaintext,
         write: (value) => writable.write(Uint8Array.from(value).buffer),
@@ -83,6 +87,7 @@ export class OpfsArtifactStore implements ArtifactStore {
           version: 1,
           objectId,
           objectType: "Artifact",
+          keyEpochId: epoch.keyEpochId,
           envelopeFormat: "artifact:xchacha20poly1305-chunked:v1",
           envelopeByteLength: summary.envelopeByteLength,
           envelopeChecksumAlgorithm: "hash:sha256:v1",
@@ -190,15 +195,17 @@ export class OpfsArtifactStore implements ArtifactStore {
     readonly vaultId: string;
     readonly object: StoredArtifactObjectV1;
     readonly reference: import("../../domain/artifact-graph").ArtifactReferenceV1;
-    readonly rootKey: CryptoKey;
+    readonly keyring: VaultKeyring;
     readonly signal?: AbortSignal;
   }): Promise<ReadableStream<Uint8Array>> {
     const vaultId = uuid(input.vaultId, "artifactStore.vaultId");
     if (input.object.objectId !== input.reference.artifactObjectId)
       throw new Error("Artifact reference does not match its Object record.");
     const encrypted = await fileStream(vaultId, input.object.objectId);
-    const key = await deriveContextKeyFromCryptoKey(input.rootKey, {
+    const epoch = input.keyring.require(input.object.keyEpochId);
+    const key = await deriveContextKeyFromCryptoKey(epoch.rootKey, {
       vaultId,
+      keyEpochId: epoch.keyEpochId,
       domain: "vault:artifact:v1",
       contextId: input.object.objectId,
       keyVersion: 1,
@@ -207,6 +214,7 @@ export class OpfsArtifactStore implements ArtifactStore {
     const writer = transform.writable.getWriter();
     void readArtifactEnvelope({
       expectedObjectId: input.object.objectId,
+      expectedKeyEpochId: epoch.keyEpochId,
       key,
       encrypted: streamChunks(encrypted),
       write: (value) => writer.write(value),

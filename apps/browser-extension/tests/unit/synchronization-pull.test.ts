@@ -4,9 +4,11 @@ import type { AtomicRemoteReconciliation } from "../../src/drivers/indexeddb/wor
 import { IncrementalPullRunner } from "../../src/runtime/synchronization/pull";
 import { prepareVaultGeneration } from "../../src/runtime/vault/generation";
 import { prepareVaultNameChange } from "../../src/runtime/vault/name-crypto";
+import { testKeyring } from "../helpers/keyring";
 
 const vaultId = "01900000-0000-7000-8000-000000000301";
 const generationId = "01900000-0000-7000-8000-000000000302";
+const keyEpochId = "01900000-0000-7000-8000-000000000309";
 
 describe("incremental synchronization pull", () => {
   it("uses a fixed cursor snapshot and commits canonical Event order atomically", async () => {
@@ -20,6 +22,7 @@ describe("incremental synchronization pull", () => {
     const generation = await prepareVaultGeneration({
       rootKey,
       vaultId,
+      keyEpochId,
       deviceId: "01900000-0000-7000-8000-000000000303",
       generationId,
       generationNumber: 0,
@@ -29,7 +32,7 @@ describe("incremental synchronization pull", () => {
       retainedEventIds: [],
     });
     const created = await prepareVaultNameChange({
-      rootKey,
+      keyring: testKeyring(rootKey, keyEpochId),
       eventType: "VaultCreated",
       vaultId,
       deviceId: "01900000-0000-7000-8000-000000000303",
@@ -38,7 +41,7 @@ describe("incremental synchronization pull", () => {
       name: "First Name",
     });
     const renamed = await prepareVaultNameChange({
-      rootKey,
+      keyring: testKeyring(rootKey, keyEpochId),
       eventType: "VaultRenamed",
       vaultId,
       deviceId: "01900000-0000-7000-8000-000000000303",
@@ -70,8 +73,8 @@ describe("incremental synchronization pull", () => {
       version: 1 as const,
       accountId,
       vaultId,
-      accountKeyId: "01900000-0000-7000-8000-000000000307",
-      accountSlot: {},
+      activeRecoveryGenerationId: "01900000-0000-7000-8000-000000000307",
+      activeKeyEpochId: keyEpochId,
       remoteGenerationId: generationId,
       remoteGenerationNumber: 0,
       deliveryCursor: 0,
@@ -160,7 +163,7 @@ describe("incremental synchronization pull", () => {
       },
     );
 
-    await expect(runner.run(rootKey)).resolves.toBe(true);
+    await expect(runner.run(testKeyring(rootKey, keyEpochId))).resolves.toBe(true);
     expect(requested[0]).toContain("after=0");
     expect(committed?.registration.deliveryCursor).toBe(2);
     expect(committed?.expectedLocalHead).toEqual(generation.head);

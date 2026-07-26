@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { StoredArtifactObjectV1 } from "../../src/drivers/indexeddb";
 import { StorageReliefService } from "../../src/runtime/storage-relief/service";
+import type { VaultKeyring } from "../../src/runtime/vault/keyring";
 
 const id = (value: number): string => `00000000-0000-4000-8000-${String(value).padStart(12, "0")}`;
 
@@ -11,6 +12,7 @@ describe("StorageReliefService", () => {
       version: 1,
       objectId: id(2),
       objectType: "Artifact",
+      keyEpochId: "00000000-0000-4000-8000-000000000009",
       envelopeFormat: "artifact:xchacha20poly1305-chunked:v1",
       envelopeByteLength: 700,
       envelopeChecksumAlgorithm: "hash:sha256:v1",
@@ -49,7 +51,7 @@ describe("StorageReliefService", () => {
     await expect(
       service.start({
         vaultId: id(1),
-        rootKey: {} as CryptoKey,
+        keyring: {} as VaultKeyring,
         accountId: id(7),
         serverOrigin: "https://sync.example.test",
         candidateArtifacts: 2,
@@ -62,7 +64,7 @@ describe("StorageReliefService", () => {
     await expect(
       service.start({
         vaultId: id(1),
-        rootKey: {} as CryptoKey,
+        keyring: {} as VaultKeyring,
         accountId: id(7),
         serverOrigin: "https://sync.example.test",
         candidateArtifacts: 1,
@@ -117,7 +119,7 @@ describe("StorageReliefService", () => {
       await expect(
         service.start({
           vaultId: id(1),
-          rootKey: {} as CryptoKey,
+          keyring: {} as VaultKeyring,
           accountId: id(7),
           serverOrigin: "https://sync.example.test",
           candidateArtifacts: 0,

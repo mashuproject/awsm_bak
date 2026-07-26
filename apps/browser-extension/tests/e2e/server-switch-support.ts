@@ -4,6 +4,28 @@ import { resolve } from "node:path";
 import { type BrowserContext, chromium, expect, type Page, type TestInfo } from "@playwright/test";
 
 const extensionBuildPath = resolve(process.env.AWSM_EXTENSION_BUILD ?? ".output/chrome-mv3");
+const recoveryPhrases = new Map<string, string>();
+
+export async function createRailsAccount(
+  context: BrowserContext,
+  serverOrigin: string,
+  email: string,
+  password: string,
+): Promise<void> {
+  const signup = await context.newPage();
+  try {
+    await signup.goto(`${serverOrigin}/sign_up`);
+    await signup.getByLabel("Email").fill(email);
+    await signup.getByLabel("Password", { exact: true }).fill(password);
+    await signup.getByLabel("Confirm password").fill(password);
+    await Promise.all([
+      signup.waitForURL(`${serverOrigin}/account`),
+      signup.getByRole("button", { name: "Create Account" }).click(),
+    ]);
+  } finally {
+    await signup.close();
+  }
+}
 
 export interface PackagedClient {
   readonly context: BrowserContext;
@@ -53,7 +75,7 @@ export interface LocalAuthoritySnapshot {
 export async function localAuthoritySnapshot(page: Page): Promise<LocalAuthoritySnapshot> {
   return page.evaluate(async () => {
     const database = await new Promise<IDBDatabase>((resolveDatabase, reject) => {
-      const request = indexedDB.open("awsm-vault");
+      const request = indexedDB.open("awsm-client");
       request.addEventListener("success", () => resolveDatabase(request.result), { once: true });
       request.addEventListener("error", () => reject(request.error), { once: true });
     });
@@ -177,7 +199,7 @@ export async function freeBrowserStorage(
     .toBe("Succeeded");
   return page.evaluate(async (expectedVaultId) => {
     const database = await new Promise<IDBDatabase>((resolveDatabase, reject) => {
-      const request = indexedDB.open("awsm-vault");
+      const request = indexedDB.open("awsm-client");
       request.addEventListener("success", () => resolveDatabase(request.result), { once: true });
       request.addEventListener("error", () => reject(request.error), { once: true });
     });
@@ -328,13 +350,18 @@ export async function createSynchronizedClient(
   password: string,
 ): Promise<PackagedClient> {
   const client = await packagedContext(testInfo, name);
+  await createRailsAccount(client.context, serverOrigin, email, password);
   await appRequest(client.popup, { type: "ConfigureSyncServer", serverOrigin });
-  await appRequest(client.popup, {
-    type: "SignupAccount",
-    email,
-    password,
-    recoveryAcknowledged: true,
+  await appRequest(client.popup, { type: "LoginAccount", email, password });
+  const prepared = await appRequest<{ setupId: string; recoveryPhrase: string }>(client.popup, {
+    type: "PrepareAccountVault",
     newVaultName: name,
+  });
+  recoveryPhrases.set(email, prepared.recoveryPhrase);
+  await appRequest(client.popup, {
+    type: "ConfirmInitialVault",
+    setupId: prepared.setupId,
+    recoveryPhrase: prepared.recoveryPhrase,
   });
   return {
     ...client,
@@ -352,6 +379,14 @@ export async function loginSynchronizedClient(
   const client = await packagedContext(testInfo, name);
   await appRequest(client.popup, { type: "ConfigureSyncServer", serverOrigin });
   await appRequest(client.popup, { type: "LoginAccount", email, password });
+  const recoveryPhrase = recoveryPhrases.get(email);
+  if (recoveryPhrase === undefined)
+    throw new Error(`Recovery Phrase fixture for ${email} is unavailable.`);
+  await appRequest(client.popup, {
+    type: "RecoverAccountVault",
+    recoveryPhrase,
+    confirmationPhrase: recoveryPhrase,
+  });
   return {
     ...client,
     vaultId: await waitForSynchronizedState(client.popup, serverOrigin),
@@ -468,7 +503,6 @@ export async function switchClient(
   page: Page,
   vaultId: string,
   candidateOrigin: string,
-  mode: "Login" | "Signup",
   email: string,
   password: string,
 ): Promise<void> {
@@ -478,7 +512,7 @@ export async function switchClient(
     expectedVaultId: vaultId,
   });
   await appRequest(page, {
-    type: mode === "Login" ? "LoginServerSwitchCandidate" : "SignupServerSwitchCandidate",
+    type: "LoginServerSwitchCandidate",
     email,
     password,
   });
@@ -491,7 +525,7 @@ export async function activeGeneration(page: Page): Promise<{
 }> {
   return page.evaluate(async () => {
     const database = await new Promise<IDBDatabase>((resolveDatabase, reject) => {
-      const request = indexedDB.open("awsm-vault");
+      const request = indexedDB.open("awsm-client");
       request.addEventListener("success", () => resolveDatabase(request.result), { once: true });
       request.addEventListener("error", () => reject(request.error), {
         once: true,
@@ -595,14 +629,12 @@ export async function sharedDeletedBase(testInfo: TestInfo, name: string) {
     bundleIds: [bundleIds[1]],
   });
   await waitForSynchronizedState(page, "http://127.0.0.1:3300");
-  await switchClient(
-    page,
-    client.vaultId,
-    "http://127.0.0.1:3301",
-    "Signup",
-    candidateEmail,
-    password,
-  );
+  await createRailsAccount(client.context, "http://127.0.0.1:3301", candidateEmail, password);
+  await switchClient(page, client.vaultId, "http://127.0.0.1:3301", candidateEmail, password);
+  const recoveryPhrase = recoveryPhrases.get(sourceEmail);
+  if (recoveryPhrase === undefined)
+    throw new Error(`Recovery Phrase fixture for ${sourceEmail} is unavailable.`);
+  recoveryPhrases.set(candidateEmail, recoveryPhrase);
   return {
     client,
     page,

@@ -5,7 +5,11 @@ import type {
   LibraryItemV1,
   RuntimeErrorId,
 } from "../domain/contracts";
-import type { ExportJobV1, ImportJobV1 } from "../drivers/indexeddb/schema";
+import type {
+  ExportJobV1,
+  ImportJobV1,
+  VaultReplacementJobState,
+} from "../drivers/indexeddb/schema";
 import type { ArtifactDetailItem } from "../runtime/library/service";
 import type { WorkspaceState } from "../runtime/vault/workspace-service";
 import {
@@ -31,11 +35,6 @@ export type AppRequest =
       readonly email: string;
       readonly password: string;
     }
-  | {
-      readonly type: "SignupServerSwitchCandidate";
-      readonly email: string;
-      readonly password: string;
-    }
   | { readonly type: "CancelServerSwitch"; readonly jobId: string }
   | { readonly type: "RetryServerSwitch"; readonly jobId: string }
   | { readonly type: "RetrySynchronization" }
@@ -48,21 +47,54 @@ export type AppRequest =
       readonly email: string;
       readonly password: string;
     }
-  | {
-      readonly type: "SignupAccount";
-      readonly email: string;
-      readonly password: string;
-      readonly recoveryAcknowledged: true;
-      readonly existingVaultId?: string;
-      readonly newVaultName?: string;
-    }
   | { readonly type: "LogoutAccount" }
   | { readonly type: "ResetLocalDevice" }
   | {
-      readonly type: "CompleteAccountVault";
+      readonly type: "PrepareAccountVault";
       readonly existingVaultId?: string;
       readonly newVaultName?: string;
     }
+  | {
+      readonly type: "ConfirmInitialVault";
+      readonly setupId: string;
+      readonly recoveryPhrase: string;
+    }
+  | { readonly type: "CancelInitialVault"; readonly setupId: string }
+  | {
+      readonly type: "RecoverAccountVault";
+      readonly recoveryPhrase: string;
+      readonly confirmationPhrase: string;
+    }
+  | ({ readonly type: "ListVaultDevices" } & ExpectedVault)
+  | ({
+      readonly type: "RemoveVaultDevice";
+      readonly deviceId: string;
+    } & ExpectedVault)
+  | ({ readonly type: "RemoveCurrentDevice" } & ExpectedVault)
+  | ({
+      readonly type: "PrepareFutureProtection";
+      readonly targetDeviceId: string;
+    } & ExpectedVault)
+  | {
+      readonly type: "ConfirmFutureProtection";
+      readonly protectionId: string;
+      readonly recoveryPhrase: string;
+    }
+  | { readonly type: "CancelFutureProtection"; readonly protectionId: string }
+  | ({
+      readonly type: "PrepareVaultReplacement";
+      readonly safelyStoredConfirmed: boolean;
+    } & ExpectedVault)
+  | {
+      readonly type: "ConfirmVaultReplacement";
+      readonly replacementId: string;
+      readonly recoveryPhrase: string;
+    }
+  | {
+      readonly type: "CancelVaultReplacement";
+      readonly replacementId: string;
+    }
+  | ({ readonly type: "RetryVaultReplacement" } & ExpectedVault)
   | { readonly type: "SuggestVaultName" }
   | {
       readonly type: "CreateVault";
@@ -169,16 +201,27 @@ const APP_REQUEST_TYPES: ReadonlySet<AppRequest["type"]> = new Set([
   "ConfigureSyncServer",
   "BeginServerSwitch",
   "LoginServerSwitchCandidate",
-  "SignupServerSwitchCandidate",
   "CancelServerSwitch",
   "RetryServerSwitch",
   "RetrySynchronization",
   "DiscardStaleReplica",
   "LoginAccount",
-  "SignupAccount",
   "LogoutAccount",
   "ResetLocalDevice",
-  "CompleteAccountVault",
+  "PrepareAccountVault",
+  "ConfirmInitialVault",
+  "CancelInitialVault",
+  "RecoverAccountVault",
+  "ListVaultDevices",
+  "RemoveVaultDevice",
+  "RemoveCurrentDevice",
+  "PrepareFutureProtection",
+  "ConfirmFutureProtection",
+  "CancelFutureProtection",
+  "PrepareVaultReplacement",
+  "ConfirmVaultReplacement",
+  "CancelVaultReplacement",
+  "RetryVaultReplacement",
   "SuggestVaultName",
   "CreateVault",
   "SelectActiveVault",
@@ -236,34 +279,6 @@ export function isAppRequest(value: unknown): value is AppRequest {
       typeof value.password !== "string")
   )
     return false;
-  if (value.type === "SignupAccount") {
-    const allowed = new Set([
-      "type",
-      "email",
-      "password",
-      "recoveryAcknowledged",
-      "existingVaultId",
-      "newVaultName",
-    ]);
-    const validChoice =
-      ("existingVaultId" in value &&
-        typeof value.existingVaultId === "string" &&
-        !("newVaultName" in value)) ||
-      ("newVaultName" in value &&
-        typeof value.newVaultName === "string" &&
-        !("existingVaultId" in value));
-    if (
-      Object.keys(value).some((key) => !allowed.has(key)) ||
-      !("email" in value) ||
-      typeof value.email !== "string" ||
-      !("password" in value) ||
-      typeof value.password !== "string" ||
-      !("recoveryAcknowledged" in value) ||
-      value.recoveryAcknowledged !== true ||
-      !validChoice
-    )
-      return false;
-  }
   if (value.type === "LogoutAccount" && Object.keys(value).some((key) => key !== "type"))
     return false;
   if (value.type === "ResetLocalDevice" && Object.keys(value).some((key) => key !== "type"))
@@ -287,7 +302,7 @@ export function isAppRequest(value: unknown): value is AppRequest {
   )
     return false;
   if (
-    (value.type === "LoginServerSwitchCandidate" || value.type === "SignupServerSwitchCandidate") &&
+    value.type === "LoginServerSwitchCandidate" &&
     (Object.keys(value).some((key) => key !== "type" && key !== "email" && key !== "password") ||
       !("email" in value) ||
       typeof value.email !== "string" ||
@@ -319,7 +334,7 @@ export function isAppRequest(value: unknown): value is AppRequest {
       (value.exportDecision !== "Exported" && value.exportDecision !== "SkipConfirmed"))
   )
     return false;
-  if (value.type === "CompleteAccountVault") {
+  if (value.type === "PrepareAccountVault") {
     const validChoice =
       ("existingVaultId" in value &&
         typeof value.existingVaultId === "string" &&
@@ -335,6 +350,125 @@ export function isAppRequest(value: unknown): value is AppRequest {
     )
       return false;
   }
+  if (
+    value.type === "ConfirmInitialVault" &&
+    (Object.keys(value).some(
+      (key) => key !== "type" && key !== "setupId" && key !== "recoveryPhrase",
+    ) ||
+      !("setupId" in value) ||
+      typeof value.setupId !== "string" ||
+      !("recoveryPhrase" in value) ||
+      typeof value.recoveryPhrase !== "string")
+  )
+    return false;
+  if (
+    value.type === "CancelInitialVault" &&
+    (Object.keys(value).some((key) => key !== "type" && key !== "setupId") ||
+      !("setupId" in value) ||
+      typeof value.setupId !== "string")
+  )
+    return false;
+  if (
+    value.type === "RecoverAccountVault" &&
+    (Object.keys(value).some(
+      (key) => key !== "type" && key !== "recoveryPhrase" && key !== "confirmationPhrase",
+    ) ||
+      !("recoveryPhrase" in value) ||
+      typeof value.recoveryPhrase !== "string" ||
+      !("confirmationPhrase" in value) ||
+      typeof value.confirmationPhrase !== "string")
+  )
+    return false;
+  if (
+    value.type === "ListVaultDevices" &&
+    (Object.keys(value).some((key) => key !== "type" && key !== "expectedVaultId") ||
+      !("expectedVaultId" in value) ||
+      typeof value.expectedVaultId !== "string")
+  )
+    return false;
+  if (
+    value.type === "RemoveVaultDevice" &&
+    (Object.keys(value).some(
+      (key) => key !== "type" && key !== "expectedVaultId" && key !== "deviceId",
+    ) ||
+      !("expectedVaultId" in value) ||
+      typeof value.expectedVaultId !== "string" ||
+      !("deviceId" in value) ||
+      typeof value.deviceId !== "string")
+  )
+    return false;
+  if (
+    value.type === "RemoveCurrentDevice" &&
+    (Object.keys(value).some((key) => key !== "type" && key !== "expectedVaultId") ||
+      !("expectedVaultId" in value) ||
+      typeof value.expectedVaultId !== "string")
+  )
+    return false;
+  if (
+    value.type === "PrepareFutureProtection" &&
+    (Object.keys(value).some(
+      (key) => key !== "type" && key !== "expectedVaultId" && key !== "targetDeviceId",
+    ) ||
+      !("expectedVaultId" in value) ||
+      typeof value.expectedVaultId !== "string" ||
+      !("targetDeviceId" in value) ||
+      typeof value.targetDeviceId !== "string")
+  )
+    return false;
+  if (
+    value.type === "ConfirmFutureProtection" &&
+    (Object.keys(value).some(
+      (key) => key !== "type" && key !== "protectionId" && key !== "recoveryPhrase",
+    ) ||
+      !("protectionId" in value) ||
+      typeof value.protectionId !== "string" ||
+      !("recoveryPhrase" in value) ||
+      typeof value.recoveryPhrase !== "string")
+  )
+    return false;
+  if (
+    value.type === "CancelFutureProtection" &&
+    (Object.keys(value).some((key) => key !== "type" && key !== "protectionId") ||
+      !("protectionId" in value) ||
+      typeof value.protectionId !== "string")
+  )
+    return false;
+  if (
+    value.type === "PrepareVaultReplacement" &&
+    (Object.keys(value).some(
+      (key) => key !== "type" && key !== "expectedVaultId" && key !== "safelyStoredConfirmed",
+    ) ||
+      !("expectedVaultId" in value) ||
+      typeof value.expectedVaultId !== "string" ||
+      !("safelyStoredConfirmed" in value) ||
+      typeof value.safelyStoredConfirmed !== "boolean")
+  )
+    return false;
+  if (
+    value.type === "ConfirmVaultReplacement" &&
+    (Object.keys(value).some(
+      (key) => key !== "type" && key !== "replacementId" && key !== "recoveryPhrase",
+    ) ||
+      !("replacementId" in value) ||
+      typeof value.replacementId !== "string" ||
+      !("recoveryPhrase" in value) ||
+      typeof value.recoveryPhrase !== "string")
+  )
+    return false;
+  if (
+    value.type === "CancelVaultReplacement" &&
+    (Object.keys(value).some((key) => key !== "type" && key !== "replacementId") ||
+      !("replacementId" in value) ||
+      typeof value.replacementId !== "string")
+  )
+    return false;
+  if (
+    value.type === "RetryVaultReplacement" &&
+    (Object.keys(value).some((key) => key !== "type" && key !== "expectedVaultId") ||
+      !("expectedVaultId" in value) ||
+      typeof value.expectedVaultId !== "string")
+  )
+    return false;
   if (
     value.type === "BeginVaultImport" &&
     (Object.keys(value).some((key) => key !== "type" && key !== "sourceByteLength") ||
@@ -412,6 +546,7 @@ export interface AppState {
   readonly account: AccountView;
   readonly workspace: WorkspaceState;
   readonly serverSwitch?: ServerSwitchView;
+  readonly vaultReplacement?: VaultReplacementView;
   readonly latestJob?: CaptureJob;
   readonly latestWarnings?: readonly CaptureWarningId[];
   readonly recentCapture?: RecentCapture;
@@ -419,6 +554,19 @@ export interface AppState {
   readonly latestImportJob?: ImportJobV1;
   readonly latestStorageReliefJob?: StorageReliefJobView;
   readonly remoteOnlyArtifactCount?: number;
+}
+
+export interface VaultReplacementView {
+  readonly jobId: string;
+  readonly sourceVaultId: string;
+  readonly targetVaultId?: string;
+  readonly state: VaultReplacementJobState;
+  readonly stage: string;
+  readonly completedItems: number;
+  readonly totalItems: number;
+  readonly processedBytes: number;
+  readonly totalBytes: number;
+  readonly errorId?: string;
 }
 
 export interface ServerSwitchView {
@@ -445,7 +593,13 @@ export interface AccountView {
   readonly configuration:
     | { readonly mode: "Unconfigured" }
     | { readonly mode: "LocalOnly" }
-    | { readonly mode: "Configured"; readonly serverOrigin: string };
+    | {
+        readonly mode: "Configured";
+        readonly serverOrigin: string;
+        readonly registration:
+          | { readonly enabled: false }
+          | { readonly enabled: true; readonly signUpUrl: string };
+      };
   readonly email?: string;
   readonly accountState: "SignedOut" | "Authenticating" | "Authenticated" | "Expired";
   readonly vaultSyncState:
@@ -457,9 +611,11 @@ export interface AccountView {
     | "Offline"
     | "PermissionRequired"
     | "AuthenticationRequired"
+    | "DeviceRevoked"
     | "Conflict"
     | "Failed"
-    | "SetupRequired";
+    | "SetupRequired"
+    | "RecoveryRequired";
   readonly errorId?: string;
   readonly staleResolutionRequired?: boolean;
 }
@@ -529,6 +685,31 @@ export type AppValue =
   | { readonly jobId: string; readonly filename: string }
   | { readonly jobId: string }
   | { readonly jobId: string; readonly vaultId: string }
+  | {
+      readonly setupId: string;
+      readonly recoveryPhrase: string;
+      readonly recoveryFileBase64: string;
+      readonly recoveryFilename: string;
+    }
+  | {
+      readonly protectionId: string;
+      readonly recoveryPhrase: string;
+      readonly recoveryFileBase64: string;
+      readonly recoveryFilename: string;
+    }
+  | {
+      readonly replacementId: string;
+      readonly recoveryPhrase: string;
+      readonly recoveryFileBase64: string;
+      readonly recoveryFilename: string;
+    }
+  | readonly {
+      readonly deviceId: string;
+      readonly displayName: string;
+      readonly clientKind: string;
+      readonly current: boolean;
+      readonly revoked: boolean;
+    }[]
   | { readonly forkVaultId: string }
   | { readonly deletedCaptureCount: number; readonly reclaimedBytes: number }
   | { readonly deletedCaptureCount: number; readonly reclaimableBytes: number }

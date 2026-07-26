@@ -104,7 +104,7 @@ Expired (future)
 
 Disabled (future)
 
-Only Trusted devices may decrypt Vault contents.
+Only current certified Devices receive key envelopes for synchronized Vault contents.
 
 ---
 
@@ -127,15 +127,15 @@ Authenticate User
 
 ↓
 
-Existing Trusted Device Approves
+Enter And Confirm Current Recovery Phrase
 
 ↓
 
-Wrap Vault Root Key
+Recovery Administrator Certifies Device
 
 ↓
 
-Upload Wrapped Key
+Upload Signed Key-Epoch Envelopes
 
 ↓
 
@@ -146,83 +146,62 @@ The Coordination Server never receives plaintext Vault Root Keys.
 
 ---
 
-# Approval Methods
+# Enrollment Authority
 
-Possible enrollment methods include:
-
-- QR code
-- One-time pairing code
-- Local network discovery (future)
-- Hardware security key (future)
-- Enterprise administrator approval (future)
-
-The enrollment protocol should be transport-independent.
+The extension decrypts the current Recovery Kit with the 12-word Recovery Phrase, creates a fresh
+Device signing/wrapping identity, signs its certificate and key-epoch envelopes with the recovery
+administrator key, and proves possession of the Device signing key. A second Device is not required
+to approve or relay enrollment.
 
 ---
 
-# Wrapped Vault Root Keys
+# Device Key Envelopes
 
-Each trusted device receives its own encrypted copy of the Vault Root Key.
-
-```
-Vault Root Key
-
-↓
-
-Encrypt For Device A
-
-Encrypt For Device B
-
-Encrypt For Device C
-```
-
-Compromise of one wrapped key does not affect others.
+Each current certified Device receives its own signed encrypted envelope for every readable Key
+Epoch. Every envelope is bound to one Device certificate, Recovery Generation, and Key Epoch.
+Compromise of one Device wrapping secret does not reveal another Device's secret.
 
 ---
 
 # Device Revocation
 
-Revocation removes trust.
+Revocation blocks future server access.
 
 ```
 Revoke Device
 
 ↓
 
-Remove Wrapped Vault Root Key
-
-↓
-
-Append DeviceRevokedEvent
+Revoke Device Sessions And Reject New Synchronization
 ```
 
-Future policy may also trigger Vault Root Key rotation.
+Revocation cannot erase previously downloaded content. Future Protection rotates recovery authority
+and the active Key Epoch when future-content protection is required.
 
 ---
 
-# Key Rotation
-
-The platform supports Vault Root Key rotation.
+# Future Protection
 
 Typical sequence:
 
 ```
-Generate New Vault Root Key
+Select Devices To Retain
 
 ↓
 
-Re-encrypt Active Data Key Material
+Generate New Recovery Phrase And Recovery Generation
 
 ↓
 
-Wrap New Vault Root Key For Trusted Devices
+Create New Key Epoch And Retained-Device Envelopes
 
 ↓
 
-Invalidate Old Wrapped Keys
+Compare-And-Swap Server Authority
 ```
 
-Rotation should minimize disruption to active devices.
+Historical Objects remain encrypted under their original Key Epoch. Authorized retained Devices
+receive the complete readable epoch set; removed Devices receive no new-epoch envelope.
 
 ---
 
@@ -242,43 +221,23 @@ The MVP grants identical capabilities to all trusted devices.
 
 ---
 
-# Device Audit Log
-
-The Event Log records trust-related actions.
-
-Examples:
-
-DeviceEnrolledEvent
-
-DeviceRevokedEvent
-
-VaultKeyRotatedEvent
-
-TrustEstablishedEvent
-
-These Events synchronize like any other Vault Event.
-
----
-
 # Lost Device Recovery
 
-If a trusted device is lost:
+If a certified Device is lost:
 
-1. Revoke the device.
-2. Optionally rotate the Vault Root Key.
-3. Continue synchronization with remaining trusted devices.
+1. Remove the Device to revoke its future server access.
+2. Use Future Protection if it may possess compromised key material.
+3. Recover a fresh installation with the Account password and current Recovery Phrase when needed.
 
-The lost device cannot receive future wrapped keys.
+The lost Device cannot receive new synchronization responses or new Key Epoch envelopes.
 
 ---
 
 # Offline Behavior
 
-Once enrolled, a device may operate offline indefinitely.
-
-Synchronization resumes when connectivity returns.
-
-Enrollment of a new device requires communication with an already trusted device or another approved recovery mechanism.
+Once enrolled, a Device may use already downloaded content offline. Synchronization resumes when
+connectivity returns. Offline unpublished work created under a stale Key Epoch is re-authored under
+the active epoch before publication.
 
 ---
 
@@ -288,9 +247,10 @@ The Coordination Server stores:
 
 - Device metadata
 - Public keys
-- Wrapped Vault Root Keys
-- Enrollment status
-- Trust Events
+- Device certificates and revocation state
+- Encrypted Recovery Kits
+- Signed Device key envelopes
+- Recovery Generation and Key Epoch metadata
 
 The server cannot decrypt Vault data.
 
@@ -302,10 +262,10 @@ The Client Runtime:
 
 - Generates device keys.
 - Stores private keys securely.
-- Requests enrollment.
-- Verifies trust.
-- Wraps and unwraps Vault Root Keys.
-- Applies trust-related Events.
+- Derives recovery authority only during an explicit phrase ceremony.
+- Creates and verifies Device certificates and key envelopes.
+- Enrolls, removes, and future-protects Devices.
+- Wipes phrase and recovery private material after every ceremony.
 
 ---
 
@@ -348,15 +308,17 @@ Each device has an independent cryptographic identity, enabling selective trust 
 
 ---
 
-## Why Wrapped Vault Root Keys?
+## Why Device Key Envelopes?
 
-The Vault Root Key remains the root secret while allowing each trusted device to access it independently.
+Key Epochs preserve historical readability while allowing each certified Device independent access
+and selective future exclusion.
 
 ---
 
-## Why Events?
+## Why Recovery Phrase Enrollment?
 
-Trust changes are part of Vault history and should be synchronized like all other authoritative state.
+A fresh installation can recover with user-held authority when no other Device remains online,
+without granting the Coordination Server decryption power.
 
 ---
 
@@ -366,15 +328,11 @@ The trust model should support browsers, desktop applications, and future mobile
 
 ---
 
-# Open Questions
+# Deferred Policy
 
-Should a Vault require multiple trusted devices before enabling recovery?
-
-Should Vault Root Key rotation be automatic after revocation or user-configurable?
-
-Should inactive devices expire automatically after a configurable period?
-
-How should enterprise policy integrate with personal Vaults?
+Automatic inactive-Device expiry, restricted Device capabilities, and enterprise policy require
+separate contracts. They do not alter the current Recovery Phrase, certificate, revocation, or
+Future Protection model.
 
 ---
 

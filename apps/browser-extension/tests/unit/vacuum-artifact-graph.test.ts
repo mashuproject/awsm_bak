@@ -3,6 +3,7 @@ import type { ArtifactReferenceV1, CaptureMetadataV1 } from "../../src/domain/ar
 import type { StoredArtifactObjectV1 } from "../../src/drivers/indexeddb";
 import { prepareCaptureRegistration } from "../../src/runtime/capture/registration";
 import { objectIdsForBundles, storedObjectByteLength } from "../../src/runtime/library/vacuum";
+import { testKeyring } from "../helpers/keyring";
 
 const id = (value: number): string => `00000000-0000-4000-8000-${String(value).padStart(12, "0")}`;
 const capturedAt = "2026-07-18T20:00:00.000Z";
@@ -22,6 +23,7 @@ function artifact(objectId: string, role: ArtifactReferenceV1["role"]) {
     version: 1,
     objectId,
     objectType: "Artifact",
+    keyEpochId: "00000000-0000-4000-8000-000000000009",
     envelopeFormat: "artifact:xchacha20poly1305-chunked:v1",
     envelopeByteLength: 4_294_967_297,
     envelopeChecksumAlgorithm: "hash:sha256:v1",
@@ -63,7 +65,7 @@ describe("Vacuum Artifact graph reachability", () => {
       captureProfileVersion: 1,
     };
     const first = await prepareCaptureRegistration({
-      rootKey: root,
+      keyring: testKeyring(root),
       vaultId,
       deviceId: id(2),
       commandId: id(3),
@@ -82,7 +84,7 @@ describe("Vacuum Artifact graph reachability", () => {
       clientVersion: "0.1.0",
     });
     const second = await prepareCaptureRegistration({
-      rootKey: root,
+      keyring: testKeyring(root),
       vaultId,
       deviceId: id(2),
       commandId: id(30),
@@ -104,7 +106,7 @@ describe("Vacuum Artifact graph reachability", () => {
       objectIdsForBundles(
         [first.event, second.event],
         new Set([first.outcome.bundleId]),
-        root,
+        testKeyring(root),
         vaultId,
       ),
     ).resolves.toEqual(new Set(first.event.referencedObjectIds));

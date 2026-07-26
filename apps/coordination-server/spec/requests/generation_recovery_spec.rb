@@ -17,7 +17,7 @@ RSpec.describe "Successor Generation and recovery", type: :request do
 
   before do
     allow(Coordination::AccountAuthenticator).to receive(:authenticate).and_return(
-      Coordination::AccountPrincipal.new(account:, confirmed_at: Time.current)
+      create_vault_device_principal(account:, vault:)
     )
   end
 
@@ -26,6 +26,7 @@ RSpec.describe "Successor Generation and recovery", type: :request do
       generationId: successor_id, generationNumber: 1,
       predecessorGenerationId: predecessor_id, headCursor: 2,
       generationObject: { objectId: successor_id, objectType: "VaultGeneration",
+                         keyEpochId: vault.active_key_epoch_id,
                          byteLength: 8, sha256: encoded_sha("next-gen") }
     }.to_json, headers: headers.merge(
       "Idempotency-Key" => "01900000-0000-7000-8000-000000000055"
@@ -90,13 +91,15 @@ RSpec.describe "Successor Generation and recovery", type: :request do
     replica = account.vault_replicas.create!(vault_id:, **vault_slot_attributes(account:, vault_id:),
       state: "Active", head_cursor: 2,
       active_generation_number: 0)
+    create_vault_device_principal(account:, vault: replica)
     generation = replica.vault_generations.create!(generation_id: predecessor_id,
       generation_number: 0, state: "Active", activated_at: Time.current)
     replica.update!(active_generation: generation)
     retained = replica.opaque_records.create!(object_id: retained_id, object_type: "Artifact",
       byte_length: 4, sha256: Digest::SHA256.digest("data"), state: "Committed",
       target_generation_id: predecessor_id, durable_at: Time.current, committed_at: Time.current,
-      storage_key: "objects/#{retained_id}")
+      storage_key: "objects/#{retained_id}",
+      vault_key_epoch_id: replica.active_key_epoch_id)
     generation.generation_memberships.create!(opaque_record: retained)
     replica
   end
@@ -107,7 +110,8 @@ RSpec.describe "Successor Generation and recovery", type: :request do
     record = vault.opaque_records.create!(object_id: successor_id, object_type: "VaultGeneration",
       byte_length: 8, sha256: Digest::SHA256.digest("next-gen"), state: "DurableUncommitted",
       target_generation_id: successor_id, durable_at: Time.current,
-      storage_key: "objects/#{successor_id}")
+      storage_key: "objects/#{successor_id}",
+      vault_key_epoch_id: vault.active_key_epoch_id)
     candidate.update!(generation_record: record)
     candidate
   end

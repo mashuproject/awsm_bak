@@ -116,6 +116,7 @@ export function decodeStoredObject(value: unknown): StoredObjectV1 {
     "version",
     "objectId",
     "objectType",
+    "keyEpochId",
     "envelopeFormat",
     "envelopeByteLength",
     "envelopeChecksumAlgorithm",
@@ -125,6 +126,7 @@ export function decodeStoredObject(value: unknown): StoredObjectV1 {
     version: literal(input.version, 1, "object.version"),
     objectId: uuid(input.objectId, "object.objectId"),
     objectType: literal(input.objectType, "Artifact", "object.objectType"),
+    keyEpochId: uuid(input.keyEpochId, "object.keyEpochId"),
     envelopeFormat: literal(
       input.envelopeFormat,
       "artifact:xchacha20poly1305-chunked:v1",
@@ -308,6 +310,7 @@ export function decodeExportJob(value: unknown): ExportJobV1 {
     "processedBytes",
     "totalBytes",
     "cancellationRequested",
+    "verifiedSnapshot",
     "errorId",
   ]);
   if (!["Created", "Running", "Succeeded", "Failed", "Cancelled"].includes(String(input.state))) {
@@ -317,6 +320,72 @@ export function decodeExportJob(value: unknown): ExportJobV1 {
     throw new DomainValidationError("exportJob.stage", "contains an unsupported stage");
   }
   const errorId = input.errorId === undefined ? undefined : runtimeErrorId(input.errorId);
+  const verifiedSnapshot =
+    input.verifiedSnapshot === undefined
+      ? undefined
+      : canonicalRecord(input.verifiedSnapshot, "exportJob.verifiedSnapshot", [
+          "vaultId",
+          "generationId",
+          "generationNumber",
+          "appendedObjectIds",
+          "appendedEventIds",
+          "coverage",
+          "verifiedAt",
+          "downloadedAt",
+        ]);
+  const identifiers = (value: unknown, field: string): readonly string[] => {
+    if (!Array.isArray(value)) throw new DomainValidationError(field, "must be an array");
+    const result = value.map((entry, index) => uuid(entry, `${field}.${String(index)}`));
+    if (
+      new Set(result).size !== result.length ||
+      result.join("\n") !== result.toSorted().join("\n")
+    )
+      throw new DomainValidationError(field, "must contain unique sorted UUIDs");
+    return result;
+  };
+  const decodedSnapshot =
+    verifiedSnapshot === undefined
+      ? undefined
+      : {
+          vaultId: uuid(verifiedSnapshot.vaultId, "exportJob.verifiedSnapshot.vaultId"),
+          generationId: uuid(
+            verifiedSnapshot.generationId,
+            "exportJob.verifiedSnapshot.generationId",
+          ),
+          generationNumber: integer(
+            verifiedSnapshot.generationNumber,
+            "exportJob.verifiedSnapshot.generationNumber",
+          ),
+          appendedObjectIds: identifiers(
+            verifiedSnapshot.appendedObjectIds,
+            "exportJob.verifiedSnapshot.appendedObjectIds",
+          ),
+          appendedEventIds: identifiers(
+            verifiedSnapshot.appendedEventIds,
+            "exportJob.verifiedSnapshot.appendedEventIds",
+          ),
+          coverage: literal(
+            verifiedSnapshot.coverage,
+            "Complete",
+            "exportJob.verifiedSnapshot.coverage",
+          ),
+          verifiedAt: timestamp(
+            verifiedSnapshot.verifiedAt,
+            "exportJob.verifiedSnapshot.verifiedAt",
+          ),
+          downloadedAt: timestamp(
+            verifiedSnapshot.downloadedAt,
+            "exportJob.verifiedSnapshot.downloadedAt",
+          ),
+        };
+  if (
+    (input.state === "Succeeded") !== (decodedSnapshot !== undefined) ||
+    (decodedSnapshot !== undefined && decodedSnapshot.vaultId !== input.vaultId)
+  )
+    throw new DomainValidationError(
+      "exportJob.verifiedSnapshot",
+      "must exactly accompany a successful Complete Export",
+    );
   return {
     version: literal(input.version, 1, "exportJob.version"),
     vaultId: uuid(input.vaultId, "exportJob.vaultId"),
@@ -331,6 +400,7 @@ export function decodeExportJob(value: unknown): ExportJobV1 {
     processedBytes: integer(input.processedBytes, "exportJob.processedBytes"),
     totalBytes: integer(input.totalBytes, "exportJob.totalBytes"),
     cancellationRequested: boolean(input.cancellationRequested, "exportJob.cancellationRequested"),
+    ...(decodedSnapshot === undefined ? {} : { verifiedSnapshot: decodedSnapshot }),
     ...(errorId === undefined ? {} : { errorId }),
   };
 }

@@ -74,10 +74,10 @@ direct successor Generation fast-forwards only when the predecessor identity, nu
 recovered authoritative closure prove ancestry. Sibling successors or unavailable ancestry are a
 conflict and never an overwrite.
 
-The source and candidate Accounts have independent identities and Account Encryption Keys even when
-their emails match. The trusted Runtime unwraps the candidate Account slot and verifies the same
-Vault Root Key without exposing it. The Coordination Server stores and transfers opaque records but
-never classifies, merges, or interprets history.
+The source and candidate Accounts have independent identities even when their emails match. The
+trusted Runtime authenticates each Account, then uses certified Device authority to prove that both
+servers expose the same Vault cryptographic identity without exposing a Vault key. The Coordination
+Server stores and transfers opaque records but never classifies, merges, or interprets history.
 
 A persisted Server Switch Job and candidate-scoped checkpoints fence comparison, remote staging,
 local staging, promotion, and prior-session revocation. Local authority plus Account/server promotion
@@ -139,5 +139,5 @@ synchronized Vault per Account, polling and advisory Cable wakes, remote bootstr
 reconciliation, manual heavy-Artifact storage relief, integrity-checked on-demand retrieval,
 Git-like Coordination Server switching, synchronized Vacuum, and explicit stale-Replica discard.
 Device request signing and revocation, shared Vaults, automatic retention profiles, pinning,
-production quota policy, shared immutable-byte storage, password
-change, and Account Recovery Keys remain future work.
+production quota policy and shared immutable-byte storage remain future work. Rails password change
+is an identity operation that revokes sessions without changing Vault cryptography.

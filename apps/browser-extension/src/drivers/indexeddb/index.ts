@@ -4,6 +4,10 @@ export {
   type ServerSwitchReplicaPromotion,
 } from "./account-repository";
 export type { CreateStorageReliefJobInput } from "./create-storage-relief-job";
+export {
+  IndexedDbDeviceRepository,
+  type LoadedDeviceAuthority,
+} from "./device-repository";
 export { IndexedDbDriver } from "./driver";
 export {
   StorageDriverError,
@@ -40,6 +44,10 @@ export type {
   SynchronizationJobV1,
   SynchronizationStage,
   VaultDirectoryEntryV1,
+  VaultReplacementCheckpointV1,
+  VaultReplacementJobStage,
+  VaultReplacementJobState,
+  VaultReplacementJobV1,
   WorkspaceMetadataV1,
   WorkspaceRecordsV1,
 } from "./schema";
@@ -49,5 +57,9 @@ export {
   IndexedDbServerSwitchRepository,
 } from "./server-switch-repository";
 export { IndexedDbStorageReliefRepository } from "./storage-relief-repository";
+export {
+  decodeVaultReplacementJob,
+  IndexedDbVaultReplacementRepository,
+} from "./vault-replacement-repository";
 export { IndexedDbVaultRepository } from "./vault-repository";
 export { IndexedDbWorkspaceRepository } from "./workspace-repository";

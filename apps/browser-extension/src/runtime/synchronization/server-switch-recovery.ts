@@ -5,6 +5,7 @@ import type {
   StoredVaultHeadV1,
 } from "../../drivers/indexeddb/schema";
 import type { ArtifactStore } from "../artifact";
+import type { VaultKeyring } from "../vault/keyring";
 import { RemoteReplicaDownloader, verifyPreparedRemoteReplica } from "./download";
 import type { ServerSwitchRecoveryProof } from "./server-switch-classifier";
 
@@ -43,6 +44,7 @@ function objectEqual(left: StoredObjectV1, right: StoredObjectV1): boolean {
     return bytesEqual(left.envelopeBytes, right.envelopeBytes);
   if (left.objectType === "Artifact" && right.objectType === "Artifact")
     return (
+      left.keyEpochId === right.keyEpochId &&
       left.envelopeFormat === right.envelopeFormat &&
       left.envelopeByteLength === right.envelopeByteLength &&
       left.envelopeChecksumAlgorithm === right.envelopeChecksumAlgorithm &&
@@ -103,7 +105,7 @@ export class ServerSwitchRecoveryProver {
   async prove(input: {
     readonly vaultId: string;
     readonly expected: AuthoritativeClosure;
-    readonly rootKey: CryptoKey;
+    readonly keyring: VaultKeyring;
   }): Promise<ServerSwitchRecoveryProof> {
     try {
       const listed = record(
@@ -145,7 +147,7 @@ export class ServerSwitchRecoveryProver {
           retryCount: 0,
           attachIdempotencyKey: crypto.randomUUID(),
         },
-        input.rootKey,
+        input.keyring,
         {
           generation: input.expected.generation,
           events: input.expected.events,
@@ -156,7 +158,7 @@ export class ServerSwitchRecoveryProver {
       const verified = await verifyPreparedRemoteReplica({
         vaultId: input.vaultId,
         prepared,
-        rootKey: input.rootKey,
+        keyring: input.keyring,
         artifacts: this.artifacts,
       });
       return {

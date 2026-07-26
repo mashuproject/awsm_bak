@@ -19,7 +19,8 @@ module Api
       VaultReplica.transaction do
         vault.lock!
         generation = vault.active_generation
-        unless vault.state == "Active" && generation&.generation_id == body.fetch("generationId") &&
+        unless vault.state.in?(%w[Active Provisional]) &&
+            generation&.generation_id == body.fetch("generationId") &&
             generation.generation_number == body.fetch("generationNumber")
           raise Coordination::OutcomeError.new("VAULT_GENERATION_SUPERSEDED", status: :conflict)
         end
@@ -71,9 +72,7 @@ module Api
     private
 
     def account_vault!
-      current_account.vault_replicas.find_by!(vault_id: params[:vault_id])
-    rescue ActiveRecord::RecordNotFound
-      raise Coordination::OutcomeError.new("VAULT_NOT_FOUND", status: :not_found)
+      bound_vault!
     end
 
     def validate_dependencies!(ids)

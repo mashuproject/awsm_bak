@@ -36,6 +36,7 @@ interface SwitchAccount {
 }
 
 interface SwitchSource {
+  getVaultHead(): ReturnType<ConstructorParameters<typeof UploadRunner>[1]["getVaultHead"]>;
   listStoredObjects(): ReturnType<
     ConstructorParameters<typeof UploadRunner>[1]["listStoredObjects"]
   >;
@@ -50,6 +51,15 @@ interface SwitchTransport {
     idempotencyKey?: string,
   ): Promise<{ readonly status: number; readonly body: unknown }>;
   putTransfer(url: string, part: number, bytes: Uint8Array): Promise<void>;
+  useAccessToken?(accessToken: string): void;
+}
+
+export interface ServerSwitchAttachmentAuthority {
+  readonly recoveryGeneration: unknown;
+  readonly deviceCertificate: unknown;
+  readonly deviceKeyEnvelope: unknown;
+  readonly deviceProofSignature: string;
+  readonly acceptDeviceSession?: (session: unknown) => Promise<void>;
 }
 
 function integrity(message: string): Error {
@@ -88,6 +98,10 @@ export class ServerSwitchRemoteApplicator {
     private readonly transport: SwitchTransport,
     private readonly faultCheckpoint: RuntimeFaultCheckpoint = noRuntimeFaultCheckpoint,
     private readonly relayFaults?: ServerSwitchRelayFaults,
+    private readonly attachmentAuthority?: (
+      vaultId: string,
+      activeKeyEpochId: string,
+    ) => Promise<ServerSwitchAttachmentAuthority>,
   ) {}
 
   async publishLocal(records: VaultRecordsV1, now = new Date().toISOString()): Promise<void> {
@@ -102,7 +116,8 @@ export class ServerSwitchRemoteApplicator {
       throw integrity("Publish-local Server Switch context is incomplete");
     let job: ServerSwitchJobV1 = loaded;
     const registration = await this.accounts.loadAccountVault("server-switch-candidate");
-    if (registration?.vaultId !== job.vaultId) throw integrity("Candidate registration is missing");
+    if (registration?.vaultId !== job.vaultId || registration.activeKeyEpochId === undefined)
+      throw integrity("Candidate registration is missing");
     await this.attachGeneration(job, registration, records);
 
     job = await this.transferClosure(job, registration, records, async (current) => {
@@ -297,6 +312,25 @@ export class ServerSwitchRemoteApplicator {
   ): Promise<ServerSwitchJobV1> {
     let job = initialJob;
     let uploadStage: SynchronizationJobV1["stage"] = "UploadObjects";
+    const uploadSource =
+      initialJob.direction === "Union"
+        ? this.source
+        : {
+            listStoredObjects: () => this.source.listStoredObjects(),
+            listStoredEvents: () => this.source.listStoredEvents(),
+            getVaultHead: async () => {
+              const [head, objects, events] = await Promise.all([
+                this.source.getVaultHead(),
+                this.source.listStoredObjects(),
+                this.source.listStoredEvents(),
+              ]);
+              if (head === undefined) return undefined;
+              return {
+                appendedObjectIds: objects.map((entry) => entry.objectId).toSorted(),
+                appendedEventIds: events.map((entry) => entry.eventId).toSorted(),
+              };
+            },
+          };
     const adapter = {
       latestSynchronizationJob: async (): Promise<SynchronizationJobV1> => ({
         version: 1,
@@ -344,7 +378,7 @@ export class ServerSwitchRemoteApplicator {
     };
     await new UploadRunner(
       adapter,
-      this.source,
+      uploadSource,
       this.artifacts,
       this.transport,
       async () => {
@@ -384,7 +418,9 @@ export class ServerSwitchRemoteApplicator {
     job: ServerSwitchJobV1,
     records: VaultRecordsV1,
   ): Promise<void> {
+    const registration = await this.accounts.loadAccountVault("server-switch-candidate");
     if (
+      registration?.activeKeyEpochId === undefined ||
       job.candidateGenerationId === undefined ||
       job.candidateGenerationNumber === undefined ||
       job.candidateHeadCursor === undefined
@@ -424,6 +460,7 @@ export class ServerSwitchRemoteApplicator {
             generationObject: {
               objectId: generation.generationId,
               objectType: "VaultGeneration",
+              keyEpochId: registration.activeKeyEpochId,
               byteLength: generation.envelopeBytes.byteLength,
               sha256: await checksum(generation.envelopeBytes),
             },
@@ -502,6 +539,9 @@ export class ServerSwitchRemoteApplicator {
     const digest = new Uint8Array(
       await crypto.subtle.digest("SHA-256", Uint8Array.from(generation.envelopeBytes)),
     );
+    const activeKeyEpochId = registration.activeKeyEpochId;
+    if (activeKeyEpochId === undefined) throw integrity("Candidate Key Epoch is missing");
+    const authority = await this.attachmentAuthority?.(job.vaultId, activeKeyEpochId);
     const attached = record(
       (
         await this.transport.request(
@@ -511,10 +551,22 @@ export class ServerSwitchRemoteApplicator {
             vaultId: job.vaultId,
             generationId: generation.generationId,
             generationNumber: generation.generationNumber,
-            accountSlot: registration.accountSlot,
+            keyEpoch: {
+              keyEpochId: registration.activeKeyEpochId,
+              ordinal: 0,
+            },
+            ...(authority === undefined
+              ? {}
+              : {
+                  recoveryGeneration: authority.recoveryGeneration,
+                  deviceCertificate: authority.deviceCertificate,
+                  deviceKeyEnvelope: authority.deviceKeyEnvelope,
+                  deviceProofSignature: authority.deviceProofSignature,
+                }),
             generationObject: {
               objectId: generation.generationId,
               objectType: "VaultGeneration",
+              keyEpochId: registration.activeKeyEpochId,
               byteLength: generation.envelopeBytes.byteLength,
               sha256: bytesToBase64Url(digest),
             },
@@ -526,6 +578,13 @@ export class ServerSwitchRemoteApplicator {
     );
     const upload = record(attached.upload, "Vault attachment upload");
     const ticket = record(attached.ticket, "Vault attachment ticket");
+    if (authority !== undefined) {
+      const session = record(attached.session, "Vault attachment session");
+      if (typeof session.accessToken !== "string")
+        throw integrity("Vault attachment Device session is invalid");
+      this.transport.useAccessToken?.(session.accessToken);
+      await authority.acceptDeviceSession?.(session);
+    }
     if (
       typeof upload.uploadId !== "string" ||
       typeof upload.partSizeBytes !== "number" ||

@@ -67,9 +67,7 @@ test("restores encrypted Account credentials and erases only Account state on lo
 }) => {
   await expect(scenario(page, "account-persistence")).resolves.toEqual({
     email: "reader@example.test",
-    accountKeyRestored: true,
     refreshRestored: true,
-    accountWrappingKeyExtractable: false,
     sessionKeyExtractable: false,
     signedOut: true,
     retainedEmail: "reader@example.test",
@@ -87,7 +85,6 @@ test("isolates active and candidate Account credentials across logout and restar
     candidatePresentBeforeLogout: true,
     activePresentAfterLogout: false,
     candidatePresentAfterLogout: true,
-    candidateKeyRestored: true,
     candidateRefreshRestored: true,
     candidateVaultId: "00000000-0000-4000-8000-000000000834",
     candidatePresentAfterErase: false,
@@ -126,6 +123,64 @@ test("persists strict restart-safe Server Switch Jobs and scoped checkpoints", a
       "Running:RevokePriorSession",
       "Succeeded:Terminal",
     ],
+  });
+});
+
+test("atomically replaces a stale-epoch capture head while retaining immutable history", async ({
+  page,
+}) => {
+  await expect(scenario(page, "stale-epoch-replay-commit")).resolves.toEqual({
+    success: {
+      immutableObjectCount: 4,
+      immutableEventCount: 2,
+      headObjectIds: [
+        "00000000-0000-4000-8000-000000000002",
+        "00000000-0000-4000-8000-000000000202",
+      ],
+      headEventIds: ["00000000-0000-4000-8000-000000000102"],
+      projectionBundleIds: ["00000000-0000-4000-8000-000000000302"],
+    },
+    rollback: {
+      rejected: true,
+      newObjectsAbsent: true,
+      oldHeadRetained: true,
+      oldProjectionRetained: true,
+    },
+  });
+});
+
+test("protects restart-safe Vault replacement state and rejects tampering", async ({ page }) => {
+  await expect(scenario(page, "vault-replacement-persistence")).resolves.toEqual({
+    state: "Running",
+    stage: "Rewrite",
+    plaintextRestored: true,
+    staleCasRejected: true,
+    tamperErrorId: "CRYPTO_AUTHENTICATION_FAILED",
+    sensitiveStateCleared: true,
+  });
+});
+
+test("stages a restart-safe replacement without changing the active Workspace", async ({
+  page,
+}) => {
+  await expect(scenario(page, "vault-replacement-hidden-stage")).resolves.toEqual({
+    activeVaultUnchanged: true,
+    directoryContainsOnlySource: true,
+    hiddenStageRestored: true,
+    targetRecordsRestored: true,
+    collisionErrorId: "VAULT_ALREADY_EXISTS",
+    discardRemovedOnlyTarget: true,
+  });
+});
+
+test("atomically promotes replacement authority and removes the source Vault", async ({ page }) => {
+  await expect(scenario(page, "vault-replacement-promotion")).resolves.toEqual({
+    activeReplacement: true,
+    sourceRemoved: true,
+    targetRetained: true,
+    registrationPromoted: true,
+    deviceAuthorityRestored: true,
+    purgeTrackingRetained: true,
   });
 });
 
@@ -461,7 +516,10 @@ test("atomically activates an imported Vault and rejects destination collisions"
     jobState: "Succeeded",
     collisionErrorId: "VAULT_ALREADY_EXISTS",
     directoryCountAfterCollision: 1,
-    rollbackFailurePoints: 14,
+    persistedEpochOrdinals: [0, 1],
+    persistedHistoricalRootByte: 6,
+    persistedActiveRootByte: 7,
+    rollbackFailurePoints: 16,
     rollbackAlwaysAtomic: true,
   });
 });

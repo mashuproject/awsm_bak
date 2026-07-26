@@ -54,7 +54,7 @@ command.
 
 # Deferred Adapters
 
-Device authorization, rate limits, quotas, shared byte storage, alternate transports, and
-compression remain undefined. Account authentication, the password-wrapped Account Encryption Key
-envelope, and the Account-wrapped Vault slot are current protocol resources. Adding deferred
-adapters requires an explicit contract decision and MUST NOT introduce a parallel pre-release path.
+Rate limits, quotas, shared byte storage, alternate transports, and compression remain undefined.
+Rails Account authentication, Recovery Generations, encrypted Recovery Kits, certified Devices,
+Device key envelopes, and key epochs are current protocol resources. Adding deferred adapters
+requires an explicit contract decision and MUST NOT introduce a parallel pre-release path.

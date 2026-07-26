@@ -4,6 +4,7 @@ import { wipe } from "../../crypto/sodium";
 import type { ArtifactReferenceV1 } from "../../domain/artifact-graph";
 import { bytesEqual } from "../../domain/hash";
 import type { StoredArtifactObjectV1 } from "../../drivers/indexeddb/schema";
+import type { VaultKeyring } from "../vault/keyring";
 
 async function* chunks(stream: ReadableStream<Uint8Array>): AsyncGenerator<Uint8Array> {
   const reader = stream.getReader();
@@ -28,13 +29,15 @@ export async function transientPlaintextStream(input: {
   readonly vaultId: string;
   readonly object: StoredArtifactObjectV1;
   readonly reference: ArtifactReferenceV1;
-  readonly rootKey: CryptoKey;
+  readonly keyring: VaultKeyring;
   readonly encrypted: ReadableStream<Uint8Array>;
   readonly signal?: AbortSignal;
 }): Promise<ReadableStream<Uint8Array>> {
   if (input.object.objectId !== input.reference.artifactObjectId) throw integrity();
-  const key = await deriveContextKeyFromCryptoKey(input.rootKey, {
+  const epoch = input.keyring.require(input.object.keyEpochId);
+  const key = await deriveContextKeyFromCryptoKey(epoch.rootKey, {
     vaultId: input.vaultId,
+    keyEpochId: epoch.keyEpochId,
     domain: "vault:artifact:v1",
     contextId: input.object.objectId,
     keyVersion: 1,
@@ -43,6 +46,7 @@ export async function transientPlaintextStream(input: {
   const writer = output.writable.getWriter();
   void readArtifactEnvelope({
     expectedObjectId: input.object.objectId,
+    expectedKeyEpochId: epoch.keyEpochId,
     key,
     encrypted: chunks(input.encrypted),
     write: (value) => writer.write(value),

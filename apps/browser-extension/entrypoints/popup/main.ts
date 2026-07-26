@@ -207,7 +207,7 @@ function render(state: AppState, transientError?: string): void {
       );
     });
     const setup = element("a", "Set up synchronization");
-    setup.href = browser.runtime.getURL("/signup.html");
+    setup.href = browser.runtime.getURL("/sync-setup.html");
     setup.target = "_blank";
     setup.addEventListener("click", (event) => {
       event.preventDefault();
@@ -271,18 +271,23 @@ function render(state: AppState, transientError?: string): void {
       password.value = "";
       void pending.then(render, (cause) => refresh(errorText(cause)));
     });
-    const signup = element("a", "Create an Account");
-    signup.href = browser.runtime.getURL("/signup.html");
-    signup.target = "_blank";
-    signup.addEventListener("click", (event) => {
-      event.preventDefault();
-      void browser.tabs.create({ url: signup.href });
-    });
-    content.append(login, signup);
+    content.append(login);
+    const configuration = state.account.configuration;
+    if (configuration.mode === "Configured" && configuration.registration.enabled) {
+      const createAccount = element("a", "Create account on this server");
+      createAccount.href = configuration.registration.signUpUrl;
+      createAccount.target = "_blank";
+      createAccount.rel = "noreferrer";
+      createAccount.addEventListener("click", (event) => {
+        event.preventDefault();
+        void browser.tabs.create({ url: createAccount.href });
+      });
+      content.append(createAccount);
+    }
   } else if (view.screen === "account-setup") {
     content.append(element("p", "Choose which local Vault this Account should synchronize."));
     const finish = element("a", "Finish Account setup");
-    finish.href = browser.runtime.getURL("/signup.html");
+    finish.href = browser.runtime.getURL("/sync-setup.html");
     finish.target = "_blank";
     finish.addEventListener("click", (event) => {
       event.preventDefault();

@@ -1,13 +1,23 @@
 export const DATABASE_VERSION = 1;
+export const DATABASE_NAME = "awsm-client";
 
 export const STORES = {
   workspaceMetadata: "workspace_metadata",
   workspaceKeys: "workspace_keys",
   accountConfiguration: "account_configuration",
-  accountMetadata: "account_metadata",
-  accountKeys: "account_keys",
-  accountSecrets: "account_secrets",
-  accountVault: "account_vault",
+  apiSessions: "api_sessions",
+  sessionKeys: "session_keys",
+  protectedCredentials: "protected_credentials",
+  vaultSyncState: "vault_sync_state",
+  recoveryKits: "recovery_kits",
+  deviceSessions: "device_sessions",
+  deviceIdentities: "device_identities",
+  deviceLocalKeys: "device_local_keys",
+  epochKeys: "epoch_keys",
+  deviceEnrollmentJobs: "device_enrollment_jobs",
+  futureProtectionJobs: "future_protection_jobs",
+  vaultReplacementJobs: "vault_replacement_jobs",
+  vaultReplacementCheckpoints: "vault_replacement_checkpoints",
   synchronizationJobs: "synchronization_jobs",
   synchronizationCheckpoints: "synchronization_checkpoints",
   serverSwitchJobs: "server_switch_jobs",
@@ -37,22 +47,27 @@ export const STORES = {
 export type AccountConfigurationV1 =
   | { readonly version: 1; readonly mode: "Unconfigured" }
   | { readonly version: 1; readonly mode: "LocalOnly" }
-  | { readonly version: 1; readonly mode: "Configured"; readonly serverOrigin: string };
+  | {
+      readonly version: 1;
+      readonly mode: "Configured";
+      readonly serverOrigin: string;
+      readonly registration:
+        | { readonly enabled: false }
+        | { readonly enabled: true; readonly signUpUrl: string };
+    };
 
 export interface StoredAccountMetadataV1 {
   readonly version: 1;
   readonly accountId: string;
   readonly sessionId: string;
   readonly email: string;
-  readonly accountKeyId: string;
-  readonly accountKeyEnvelope: unknown;
+  readonly scope: "Account" | "VaultDevice";
 }
 
 export interface StoredAccountSecretsV1 {
   readonly version: 1;
   readonly accountId: string;
   readonly sessionId: string;
-  readonly wrappedAccountEncryptionKey: Uint8Array;
   readonly refreshNonce: Uint8Array;
   readonly refreshCiphertext: Uint8Array;
 }
@@ -61,15 +76,25 @@ export interface StoredAccountVaultV1 {
   readonly version: 1;
   readonly accountId: string;
   readonly vaultId: string;
-  readonly accountKeyId: string;
-  readonly accountSlot: unknown;
-  readonly remoteGenerationId: string;
-  readonly remoteGenerationNumber: number;
+  readonly activeRecoveryGenerationId: string;
+  readonly activeKeyEpochId?: string;
+  readonly remoteGenerationId?: string;
+  readonly remoteGenerationNumber?: number;
   readonly deliveryCursor: number;
+}
+
+export interface StoredRecoveryKitV1 {
+  readonly version: 1;
+  readonly vaultId: string;
+  readonly recoveryGenerationId: string;
+  readonly metadata: import("../../runtime/recovery/kit").RecoveryKitMetadataV1;
+  readonly ciphertext: Uint8Array;
 }
 
 export type SynchronizationStage =
   | "DiscoverAccountVault"
+  | "RecoverVault"
+  | "EnrollDevice"
   | "EnrollVault"
   | "Subscribe"
   | "FetchHead"
@@ -157,6 +182,9 @@ export interface ServerSwitchJobV1 {
   readonly jobId: string;
   readonly sourceOrigin: string;
   readonly candidateOrigin: string;
+  readonly candidateRegistration:
+    | { readonly enabled: false }
+    | { readonly enabled: true; readonly signUpUrl: string };
   readonly vaultId: string;
   readonly state: ServerSwitchJobState;
   readonly stage: ServerSwitchStage;
@@ -194,6 +222,73 @@ export interface ServerSwitchCheckpointV1 {
   readonly receivedParts: readonly number[];
 }
 
+export type VaultReplacementJobState =
+  | "Created"
+  | "Running"
+  | "WaitingForPhraseConfirmation"
+  | "WaitingForExportConfirmation"
+  | "WaitingForNetwork"
+  | "Conflict"
+  | "Failed"
+  | "Succeeded"
+  | "Aborted";
+
+export type VaultReplacementJobStage =
+  | "ExportGate"
+  | "PrepareAuthority"
+  | "Rewrite"
+  | "Validate"
+  | "StageRemote"
+  | "Upload"
+  | "CompleteRemote"
+  | "ActivateRemote"
+  | "PromoteLocal"
+  | "PurgeSource"
+  | "Terminal";
+
+export interface VaultReplacementJobV1 {
+  readonly version: 1;
+  readonly jobId: string;
+  readonly accountId: string;
+  readonly sourceVaultId: string;
+  readonly sourceHead: StoredVaultHeadV1;
+  readonly sourceHeadCursor: number;
+  readonly verifiedExportJobId: string;
+  readonly safelyStoredConfirmed: true;
+  readonly candidateIdempotencyKey: string;
+  readonly generationUploadCompleteIdempotencyKey: string;
+  readonly candidateCompleteIdempotencyKey: string;
+  readonly activationIdempotencyKey: string;
+  readonly state: VaultReplacementJobState;
+  readonly stage: VaultReplacementJobStage;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly targetVaultId?: string;
+  readonly targetDeviceId?: string;
+  readonly targetRecoveryGenerationId?: string;
+  readonly targetKeyEpochId?: string;
+  readonly targetGenerationId?: string;
+  readonly targetGenerationNumber?: number;
+  readonly targetHeadCursor?: number;
+  readonly completedItems: number;
+  readonly totalItems: number;
+  readonly processedBytes: number;
+  readonly totalBytes: number;
+  readonly retryCount: number;
+  readonly errorId?: string;
+  readonly purgeId?: string;
+}
+
+export interface VaultReplacementCheckpointV1 {
+  readonly version: 1;
+  readonly jobId: string;
+  readonly sourceVaultId: string;
+  readonly targetVaultId: string;
+  readonly nonce: Uint8Array;
+  readonly ciphertext: Uint8Array;
+  readonly updatedAt: string;
+}
+
 export interface WorkspaceMetadataV1 {
   readonly version: 1;
   readonly workspaceId: string;
@@ -225,6 +320,7 @@ export interface StoredArtifactObjectV1 {
   readonly version: 1;
   readonly objectId: string;
   readonly objectType: "Artifact";
+  readonly keyEpochId: string;
   readonly envelopeFormat: "artifact:xchacha20poly1305-chunked:v1";
   readonly envelopeByteLength: number;
   readonly envelopeChecksumAlgorithm: "hash:sha256:v1";
@@ -351,6 +447,16 @@ export interface ExportJobV1 {
   readonly processedBytes: number;
   readonly totalBytes: number;
   readonly cancellationRequested: boolean;
+  readonly verifiedSnapshot?: {
+    readonly vaultId: string;
+    readonly generationId: string;
+    readonly generationNumber: number;
+    readonly appendedObjectIds: readonly string[];
+    readonly appendedEventIds: readonly string[];
+    readonly coverage: "Complete";
+    readonly verifiedAt: string;
+    readonly downloadedAt: string;
+  };
   readonly errorId?: import("../../domain/contracts").RuntimeErrorId;
 }
 

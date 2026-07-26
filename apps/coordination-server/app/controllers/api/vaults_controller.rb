@@ -1,51 +1,54 @@
 module Api
   class VaultsController < BaseController
+    skip_before_action :require_vault_device_scope, only: :create
+    before_action :require_account_scope, only: :create
+
     def create
       idempotency = Coordination::Idempotency.new(account: current_account, request:,
         operation: "AttachVault")
       if (replay = idempotency.replay)
-        return render_attachment(VaultReplica.find(replay.resource_id), status: :created)
+        vault = current_account.vault_replicas.find(replay.resource_id)
+        device = vault.vault_devices.find_by!(revoked_at: nil)
+        issued = Coordination::SessionCredentials.issue(
+          account: current_account, scope: "VaultDevice", vault_device_id: device.device_id
+        )
+        return render_attachment(vault, issued:, status: :created)
       end
 
       body = request.request_parameters
-      object = body.fetch("generationObject")
-      validate_attachment!(body, object)
-      if current_account.vault_replicas.exists?
-        raise Coordination::OutcomeError.new("VAULT_ACCOUNT_LIMIT_REACHED", status: :conflict)
+      if current_account.vault_replicas.where(state: %w[Provisional Active]).exists?
+        raise Coordination::OutcomeError.new("ACCOUNT_VAULT_LIMIT", status: :conflict)
       end
       if VaultReplica.exists?(vault_id: body.fetch("vaultId"))
         raise Coordination::OutcomeError.new("VAULT_ID_UNAVAILABLE", status: :conflict)
       end
-      slot = Coordination::AccountPayload.decode_slot(body.fetch("accountSlot"),
-        vault_id: body.fetch("vaultId"), account: current_account)
 
       vault = nil
+      issued = nil
       VaultReplica.transaction do
-        vault = current_account.vault_replicas.create!(vault_id: body.fetch("vaultId"),
-          state: "Provisional", head_cursor: 0, **slot,
-          provisional_expires_at: Coordination::ServicePolicy.current.upload_staging_expiry_hours.hours.from_now)
-        generation = vault.vault_generations.create!(generation_id: body.fetch("generationId"),
-          generation_number: body.fetch("generationNumber"), state: "Candidate")
-        record = vault.opaque_records.create!(object_id: object.fetch("objectId"),
-          object_type: "VaultGeneration", byte_length: object.fetch("byteLength"),
-          sha256: Coordination::ProtocolEncoding.decode_sha256(object.fetch("sha256")),
-          state: "Uploading", target_generation_id: generation.generation_id)
-        part_size = [ Coordination::ServicePolicy.current.upload_part_size_bytes, record.byte_length ].min
-        upload = record.create_upload!(state: "Open", part_size:,
-          part_count: (record.byte_length.to_f / part_size).ceil,
-          expires_at: vault.provisional_expires_at, last_activity_at: Time.current)
-        generation.update!(generation_record: record)
+        attached = Coordination::VaultAttachment.new(
+          account: current_account,
+          account_session_id: current_principal.session.id,
+          body:
+        ).create!
+        vault = attached.vault
+        device = attached.device
+        issued = Coordination::SessionCredentials.issue(
+          account: current_account, scope: "VaultDevice", vault_device_id: device.device_id
+        )
         idempotency.persist!(resource_type: "VaultReplica", resource_id: vault.id)
       end
-      render_attachment(vault, status: :created)
-    rescue KeyError, ActiveRecord::RecordInvalid
+      render_attachment(vault, issued:, status: :created)
+    rescue KeyError, ActiveRecord::RecordInvalid, ActiveRecord::RecordNotFound
       raise Coordination::OutcomeError.new("REQUEST_INVALID", status: :bad_request)
     rescue ActiveRecord::RecordNotUnique
-      raise Coordination::OutcomeError.new("VAULT_ID_UNAVAILABLE", status: :conflict)
+      outcome = VaultReplica.exists?(vault_id: body&.fetch("vaultId", nil)) ?
+        "VAULT_ID_UNAVAILABLE" : "ACCOUNT_VAULT_LIMIT"
+      raise Coordination::OutcomeError.new(outcome, status: :conflict)
     end
 
     def index
-      render json: { vaults: current_account.vault_replicas.map { |vault| Coordination::Serializers.vault(vault) } }
+      render json: { vaults: [ Coordination::Serializers.vault(bound_vault!) ] }
     end
 
     def show
@@ -72,9 +75,11 @@ module Api
         record.update!(state: "Committed", committed_at: Time.current)
         generation.generation_memberships.create!(opaque_record: record)
         generation.update!(state: "Active", activated_at: Time.current)
-        vault.update!(state: "Active", active_generation: generation,
+        replacing = vault.account.vault_replicas.where(state: "Active").where.not(id: vault.id)
+          .exists?
+        vault.update!(state: replacing ? "Provisional" : "Active", active_generation: generation,
           active_generation_number: generation.generation_number, head_cursor: 1,
-          provisional_expires_at: nil)
+          provisional_expires_at: replacing ? vault.provisional_expires_at : nil)
         DeliveryChange.create!(vault_replica: vault, vault_generation: generation, cursor: 1,
           kind: "GenerationActivated", accepted_at: Time.current)
         idempotency.persist!(resource_type: "VaultReplica", resource_id: vault.id)
@@ -89,26 +94,19 @@ module Api
     private
 
     def account_vault!
-      current_account.vault_replicas.find_by!(vault_id: params[:vault_id])
-    rescue ActiveRecord::RecordNotFound
-      raise Coordination::OutcomeError.new("VAULT_NOT_FOUND", status: :not_found)
+      bound_vault!
     end
 
-    def validate_attachment!(body, object)
-      generation_number = body.fetch("generationNumber")
-      valid = generation_number.is_a?(Integer) && generation_number.between?(0, 9_007_199_254_740_991) &&
-        body.fetch("generationId") == object.fetch("objectId") &&
-        object.fetch("objectType") == "VaultGeneration" && object.fetch("byteLength").is_a?(Integer)
-      raise KeyError unless valid
-    end
-
-    def render_attachment(vault, status:)
+    def render_attachment(vault, issued:, status:)
       generation = vault.active_generation || vault.vault_generations.find_by!(state: "Candidate")
       upload = generation.generation_record.upload
       render json: { vault: Coordination::Serializers.vault(vault),
                     upload: Coordination::Serializers.upload(upload),
                     ticket: Coordination::TransferTicketIssuer.upload(account: current_account,
-                      vault:, upload:) }, status:
+                      vault:, upload:),
+                    session: Coordination::AccountPayload.response(
+                      account: current_account, issued:
+                    ) }, status:
     end
   end
 end

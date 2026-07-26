@@ -51,6 +51,10 @@ module Coordination
       "#{namespace}:cable-ticket:#{Digest::SHA256.hexdigest(raw_ticket)}"
     end
 
+    def device_session_challenge_key(raw_challenge)
+      "#{namespace}:device-session-challenge:#{Digest::SHA256.hexdigest(raw_challenge)}"
+    end
+
     def with_redis(&)
       pool.with(&)
     end

@@ -27,7 +27,6 @@ export class ServerSwitchService {
       saveAuthenticated(
         credentials: {
           readonly metadata: StoredAccountMetadataV1;
-          readonly accountEncryptionKey: Uint8Array;
           readonly refreshToken: string;
         },
         scope: AccountCredentialScope,
@@ -40,6 +39,9 @@ export class ServerSwitchService {
   async begin(input: {
     readonly sourceOrigin: string;
     readonly candidateOrigin: string;
+    readonly candidateRegistration:
+      | { readonly enabled: false }
+      | { readonly enabled: true; readonly signUpUrl: string };
     readonly vaultId: string;
     readonly expectedLocalHead: StoredVaultHeadV1;
   }): Promise<void> {
@@ -63,6 +65,7 @@ export class ServerSwitchService {
       jobId: this.randomUuid(),
       sourceOrigin: input.sourceOrigin,
       candidateOrigin: input.candidateOrigin,
+      candidateRegistration: input.candidateRegistration,
       vaultId: input.vaultId,
       state: "AuthenticationRequired",
       stage: "AuthenticateCandidate",
@@ -80,10 +83,10 @@ export class ServerSwitchService {
     });
   }
 
-  async authenticate(
-    mode: "Login" | "Signup",
-    input: { readonly email: string; readonly password: string },
-  ): Promise<string> {
+  async authenticate(input: {
+    readonly email: string;
+    readonly password: string;
+  }): Promise<string> {
     const job = await this.jobs.loadJob();
     if (job?.state !== "AuthenticationRequired")
       throw contextChanged("Server Switch authentication is stale");
@@ -95,8 +98,7 @@ export class ServerSwitchService {
           this.accounts.saveAuthenticated(credentials, "server-switch-candidate"),
       },
     );
-    const accessToken =
-      mode === "Login" ? await authentication.login(input) : await authentication.signup(input);
+    const accessToken = await authentication.login(input);
     const authenticated = await this.accounts.loadMetadata?.("server-switch-candidate");
     if (
       expected !== undefined &&

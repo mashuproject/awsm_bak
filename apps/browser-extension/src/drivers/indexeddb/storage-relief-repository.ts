@@ -6,7 +6,7 @@ import { abortTransaction, openDatabase, requestValue, transactionDone } from ".
 import { storageError } from "./errors";
 import { vaultKey, vaultKeyRange } from "./keys";
 import { saveStorageReliefJob } from "./save-storage-relief-job";
-import { STORES } from "./schema";
+import { DATABASE_NAME, STORES } from "./schema";
 import {
   decodeStorageReliefCheckpoint,
   decodeStorageReliefJob,
@@ -46,7 +46,7 @@ function withAggregate(
 export class IndexedDbStorageReliefRepository {
   private readonly databasePromise: Promise<IDBDatabase>;
 
-  constructor(databaseName = "awsm-vault") {
+  constructor(databaseName = DATABASE_NAME) {
     this.databasePromise = openDatabase(databaseName);
   }
 

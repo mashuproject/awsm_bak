@@ -187,27 +187,33 @@ The derivation or wrapping context SHALL include:
 
 The Coordination Server stores wrapped keys only.
 
-## 12.1 Account Password Derivation and Wrapping
+## 12.1 Recovery Phrase Derivation
 
-Account signup creates a random 16-byte salt and a random 32-byte Account Encryption Key. The
-trusted client applies Argon2id13 to the normalized UTF-8 password with three operations and
-67,108,864 bytes of memory. Using the 16 raw bytes of the lowercase Account Key UUID as HKDF salt,
-it derives two independent 32-byte values with HKDF-SHA256:
+The Recovery Phrase is the BIP39 encoding of 16 random bytes. After canonical phrase validation, the
+trusted client decodes the same entropy and derives two independent 32-byte values with
+HKDF-SHA256, using the raw Vault UUID bytes as salt:
 
 ```text
-account:authentication:v1
-account:password-wrapping:v1
+awsm:recovery-kit-wrapping:v1
+awsm:recovery-administrator-ed25519-seed:v1
 ```
 
-The first value is base64url encoded and sent as the authentication secret. The second wraps the
-Account Encryption Key with XChaCha20-Poly1305 using a random 24-byte nonce and canonical envelope
-metadata as associated data. The server stores the authentication-secret bcrypt digest and opaque
-Account-key envelope; it receives neither the password nor either derived/wrapped plaintext key.
+The first value encrypts and authenticates the Recovery Kit with XChaCha20-Poly1305. The second is
+the deterministic seed for the recovery administrator Ed25519 key. The encrypted Recovery Kit
+contains every readable key-epoch root key and its ordinal. Its associated data binds the Vault ID,
+Recovery Generation ID, active Key Epoch ID, algorithms, nonce, and ciphertext length.
 
-The Account Encryption Key wraps exactly one synchronized Vault Root Key with
-`wrap:xchacha20poly1305:account:v1`. Associated data binds slot version, slot ID, Vault ID, Account
-Key ID, algorithm, and nonce. Account and device slots are independent: logout destroys local
-Account credentials but leaves the device slot sufficient for offline Vault access.
+The phrase, entropy, derived wrapping key, administrator seed, and unwrapped epoch keys MUST remain
+inside trusted client memory and MUST be wiped after initial attach, Device enrollment, Future
+Protection, or failure. The Coordination Server receives only the encrypted Recovery Kit, public
+administrator key, signed Device certificates, and signed Device key envelopes.
+
+## 12.2 Device Key Envelopes
+
+Each Device owns independent Ed25519 signing and X25519 wrapping key pairs. The active recovery
+administrator signs the Device certificate and one XChaCha20-Poly1305 envelope for every key epoch
+the Device may read. Envelope derivation and associated data bind the Vault, Recovery Generation,
+Device certificate, Key Epoch, wrapping public key, algorithms, and nonce.
 
 ---
 

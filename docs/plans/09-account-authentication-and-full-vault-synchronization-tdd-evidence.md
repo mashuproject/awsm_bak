@@ -1,5 +1,10 @@
 # Account Authentication and Full Vault Synchronization TDD Evidence
 
+> **Historical notice:** Plan 15 supersedes the Account-key, extension-signup, and recovery model
+> evidenced here. See
+> [Plan 15](15-rails-account-recovery-phrase-device-sync.md) and its evidence for the canonical
+> implementation.
+
 **Document:** `docs/plans/09-account-authentication-and-full-vault-synchronization-tdd-evidence.md`
 **Status:** Implementation evidence
 **Owner:** Engineering

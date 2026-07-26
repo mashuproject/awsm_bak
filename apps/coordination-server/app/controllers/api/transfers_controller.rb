@@ -3,6 +3,7 @@ require "digest"
 module Api
   class TransfersController < BaseController
     skip_before_action :authenticate_account
+    skip_before_action :require_vault_device_scope
 
     def put_part
       ticket = upload_ticket!

@@ -3,17 +3,15 @@ import { createExportKeyEnvelope, type ExportKeyEnvelopeV1 } from "../export";
 import type {
   PreparedVault,
   PrepareVaultInput,
+  VaultEpochRepository,
   VaultRecordsV1,
   VaultRepository,
 } from "./contracts";
 import { VaultServiceError } from "./errors";
 import { prepareVaultGeneration } from "./generation";
+import { importVaultKeyring, importVaultRootKey, VaultKeyring } from "./keyring";
 import { normalizeVaultName } from "./name";
 import { createDeviceSlot, createVerifier, unwrapDeviceSlot, verifyRootKey } from "./slots";
-
-async function importRootKey(rawRootKey: Uint8Array): Promise<CryptoKey> {
-  return crypto.subtle.importKey("raw", Uint8Array.from(rawRootKey), "HKDF", false, ["deriveBits"]);
-}
 
 async function importWrappableRootKey(rawRootKey: Uint8Array): Promise<CryptoKey> {
   return crypto.subtle.importKey(
@@ -26,43 +24,57 @@ async function importWrappableRootKey(rawRootKey: Uint8Array): Promise<CryptoKey
 }
 
 export class VaultService {
-  private rootKey: CryptoKey | undefined;
+  private keyring: VaultKeyring | undefined;
   readonly repository: VaultRepository;
   readonly vaultId: string | undefined;
 
-  constructor(repository: VaultRepository, vaultId?: string) {
+  constructor(
+    repository: VaultRepository,
+    vaultId?: string,
+    private readonly epochRepository?: VaultEpochRepository,
+  ) {
     this.repository = repository;
     this.vaultId = vaultId;
   }
 
   isUnlocked(): boolean {
-    return this.rootKey !== undefined;
+    return this.keyring !== undefined;
   }
 
   requireRootKey(): CryptoKey {
-    if (this.rootKey === undefined) {
+    return this.requireKeyring().active().rootKey;
+  }
+
+  requireKeyring(): VaultKeyring {
+    if (this.keyring === undefined)
       throw new VaultServiceError("VAULT_LOCKED", "Unlock the Vault to continue.");
-    }
-    return this.rootKey;
+    return this.keyring;
+  }
+
+  requireActiveKeyEpochId(): string {
+    return this.requireKeyring().activeKeyEpochId;
   }
 
   async prepareCreate(input: PrepareVaultInput): Promise<PreparedVault> {
     const name = normalizeVaultName(input.name);
     const rawRootKey = crypto.getRandomValues(new Uint8Array(32));
     const vaultId = crypto.randomUUID();
+    const keyEpochId = crypto.randomUUID();
     const deviceId = crypto.randomUUID();
     try {
       const wrappableRootKey = await importWrappableRootKey(rawRootKey);
       const { slot: deviceSlot, deviceKey } = await createDeviceSlot(
         wrappableRootKey,
         vaultId,
+        keyEpochId,
         deviceId,
       );
       const verifier = await createVerifier(rawRootKey, deviceSlot);
-      const rootKey = await importRootKey(rawRootKey);
+      const rootKey = await importVaultRootKey(rawRootKey);
       const initialGeneration = await prepareVaultGeneration({
         rootKey,
         vaultId,
+        keyEpochId,
         deviceId,
         generationId: crypto.randomUUID(),
         generationNumber: 0,
@@ -75,6 +87,7 @@ export class VaultService {
         metadata: {
           version: 1,
           vaultId,
+          activeKeyEpochId: keyEpochId,
           deviceId,
           createdAt: input.createdAt,
           manuallyLocked: false,
@@ -84,7 +97,11 @@ export class VaultService {
         deviceKey,
         ...initialGeneration,
       };
-      return { records, rootKey, name };
+      return {
+        records,
+        keyring: new VaultKeyring(keyEpochId, [{ keyEpochId, ordinal: 0, rootKey }]),
+        name,
+      };
     } catch (error) {
       if (error instanceof VaultServiceError) throw error;
       throw new VaultServiceError(
@@ -97,13 +114,13 @@ export class VaultService {
   }
 
   activatePrepared(prepared: PreparedVault): void {
-    this.rootKey = prepared.rootKey;
+    this.keyring = prepared.keyring;
   }
 
   async lock(): Promise<void> {
     const vaultId = this.requireVaultId();
     await this.repository.setManualLock(vaultId, true);
-    this.rootKey = undefined;
+    this.keyring = undefined;
   }
 
   async autoUnlock(): Promise<boolean> {
@@ -117,9 +134,9 @@ export class VaultService {
 
   async unlockWithDevice(): Promise<void> {
     const records = await this.requireRecords();
-    const rootKey = await this.prepareDeviceRootKey(records);
+    const keyring = await this.prepareDeviceKeyring(records);
     await this.repository.setManualLock(this.requireVaultId(), false);
-    this.rootKey = rootKey;
+    this.keyring = keyring;
   }
 
   async createExportKeyEnvelope(input: {
@@ -130,17 +147,44 @@ export class VaultService {
     readonly nonce: Uint8Array;
   }): Promise<ExportKeyEnvelopeV1> {
     const records = await this.requireRecords();
-    let rawRootKey: Uint8Array | undefined;
+    let rawEpochs:
+      | {
+          readonly keyEpochId: string;
+          readonly ordinal: number;
+          readonly rootKey: Uint8Array;
+        }[]
+      | undefined;
     try {
-      rawRootKey = await unwrapDeviceSlot(records.deviceSlot, records.deviceKey);
-      const rootKey = await importRootKey(rawRootKey);
+      const storedEpochs = await this.epochRepository?.loadEpochKeys(records.metadata.vaultId);
+      if (storedEpochs === undefined) {
+        const rawRootKey = await unwrapDeviceSlot(records.deviceSlot, records.deviceKey);
+        rawEpochs = [
+          {
+            keyEpochId: records.metadata.activeKeyEpochId,
+            ordinal: 0,
+            rootKey: rawRootKey,
+          },
+        ];
+      } else {
+        rawEpochs = [...storedEpochs];
+      }
+      const active = rawEpochs.find(
+        (epoch) => epoch.keyEpochId === records.metadata.activeKeyEpochId,
+      );
+      if (active === undefined) throw new Error("The active Vault key epoch is unavailable.");
+      const rootKey = await importVaultRootKey(active.rootKey);
       await verifyRootKey(rootKey, records.deviceSlot, records.metadata.verifier);
       return await createExportKeyEnvelope({
         packageId: input.packageId,
         originatingVaultId: records.metadata.vaultId,
         manifestBytes: input.manifestBytes,
         passphrase: input.passphrase,
-        rootKey: rawRootKey,
+        keyring: {
+          version: 1,
+          vaultId: records.metadata.vaultId,
+          activeKeyEpochId: records.metadata.activeKeyEpochId,
+          keyEpochs: rawEpochs,
+        },
         salt: input.salt,
         nonce: input.nonce,
       });
@@ -151,7 +195,8 @@ export class VaultService {
         "The local device slot could not be authenticated.",
       );
     } finally {
-      if (rawRootKey !== undefined) await wipe(rawRootKey);
+      if (rawEpochs !== undefined)
+        await Promise.all(rawEpochs.map(async (epoch) => wipe(epoch.rootKey)));
     }
   }
 
@@ -164,7 +209,7 @@ export class VaultService {
   }
 
   releaseRootKey(): void {
-    this.rootKey = undefined;
+    this.keyring = undefined;
   }
 
   private requireVaultId(): string {
@@ -175,16 +220,37 @@ export class VaultService {
   }
 
   private async unlockDeviceRecords(records: VaultRecordsV1): Promise<void> {
-    this.rootKey = await this.prepareDeviceRootKey(records);
+    this.keyring = await this.prepareDeviceKeyring(records);
   }
 
-  private async prepareDeviceRootKey(records: VaultRecordsV1): Promise<CryptoKey> {
+  private async prepareDeviceKeyring(records: VaultRecordsV1): Promise<VaultKeyring> {
     let rawRootKey: Uint8Array | undefined;
     try {
       rawRootKey = await unwrapDeviceSlot(records.deviceSlot, records.deviceKey);
-      const rootKey = await importRootKey(rawRootKey);
+      if (
+        records.deviceSlot.keyEpochId !== records.metadata.activeKeyEpochId ||
+        records.deviceSlot.vaultId !== records.metadata.vaultId
+      )
+        throw new Error("The local Device slot does not match active Vault authority.");
+      const rootKey = await importVaultRootKey(rawRootKey);
       await verifyRootKey(rootKey, records.deviceSlot, records.metadata.verifier);
-      return rootKey;
+      const storedEpochs = await this.epochRepository?.loadEpochKeys(records.metadata.vaultId);
+      if (storedEpochs === undefined) {
+        return new VaultKeyring(records.metadata.activeKeyEpochId, [
+          {
+            keyEpochId: records.metadata.activeKeyEpochId,
+            ordinal: 0,
+            rootKey,
+          },
+        ]);
+      }
+      const active = storedEpochs.find(
+        (epoch) => epoch.keyEpochId === records.metadata.activeKeyEpochId,
+      );
+      if (active === undefined) throw new Error("The active Device epoch is unavailable.");
+      const activeImported = await importVaultRootKey(active.rootKey);
+      await verifyRootKey(activeImported, records.deviceSlot, records.metadata.verifier);
+      return await importVaultKeyring(records.metadata.activeKeyEpochId, storedEpochs);
     } catch {
       throw new VaultServiceError(
         "CRYPTO_AUTHENTICATION_FAILED",

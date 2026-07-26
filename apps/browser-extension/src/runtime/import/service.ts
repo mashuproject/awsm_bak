@@ -59,7 +59,7 @@ export class VaultImportService {
       const vaultId = await withAuthenticatedVaultPackage(
         input.source,
         importPassphrase,
-        async (validated, rawRootKey) => {
+        async (validated, rawKeyring) => {
           input.signal.throwIfAborted();
           destinationVaultId = validated.manifest.originatingVaultId;
           if (validated.manifest.coverage !== "Complete") {
@@ -72,7 +72,10 @@ export class VaultImportService {
             throw new VaultImportError("VAULT_ALREADY_EXISTS", "The Vault already exists.");
           }
           artifactObjects = validated.objects.filter((object) => object.objectType === "Artifact");
-          const records = await prepareImportedVaultCredentials(validated, rawRootKey);
+          const { records, epochStorage } = await prepareImportedVaultCredentials(
+            validated,
+            rawKeyring,
+          );
           let job = await this.jobs.advance(input.jobId, {
             stage: "Prepare",
             completedEntries: 0,
@@ -118,7 +121,7 @@ export class VaultImportService {
               getStoredObject: (objectId) => Promise.resolve(objects.get(objectId)),
               replaceLibraryProjections: () => Promise.resolve(),
             },
-            validated.rootKey,
+            validated.keyring,
             destinationVaultId,
             this.artifactStore,
           ).prepare(input.signal);
@@ -145,6 +148,7 @@ export class VaultImportService {
           await this.workspace.commitVaultImport({
             job,
             records,
+            epochStorage,
             events: validated.events,
             objects: validated.objects,
             libraryProjections: projections.itemProjections,

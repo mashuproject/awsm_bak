@@ -116,11 +116,15 @@ export function artifactPresentation(role: ArtifactRole): {
   }
 }
 
-export function signOutConfirmation(remoteOnlyArtifacts: number): string | undefined {
-  if (remoteOnlyArtifacts === 0) return undefined;
+export function signOutConfirmation(remoteOnlyArtifacts: number): string {
   return [
-    `Sign out while ${String(remoteOnlyArtifacts)} remote-only ${remoteOnlyArtifacts === 1 ? "Artifact depends" : "Artifacts depend"} on this Account?`,
-    "Those payloads will be unavailable until you sign in to the same Account on this synchronization server again.",
+    "Sign out and lock this Vault?",
+    "Decrypted content will disappear immediately. The Account password cannot decrypt the Vault.",
+    ...(remoteOnlyArtifacts === 0
+      ? []
+      : [
+          `${String(remoteOnlyArtifacts)} remote-only ${remoteOnlyArtifacts === 1 ? "Artifact remains" : "Artifacts remain"} on the synchronization server. This Device can retrieve ${remoteOnlyArtifacts === 1 ? "it" : "them"} after you unlock the Vault unless the Device is removed.`,
+        ]),
   ].join("\n\n");
 }
 

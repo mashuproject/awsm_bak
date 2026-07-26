@@ -64,6 +64,7 @@ The Header SHALL contain:
 - Object Type
 - Encryption Algorithm Identifier
 - Object Identifier
+- Key Epoch ID
 
 Optional fields MAY include:
 
@@ -167,8 +168,8 @@ Authentication precedes decryption.
 
 An Artifact wrapper SHALL begin with ASCII magic `AWSMART1`, a big-endian 32-bit canonical-CBOR
 header length, and a canonical-CBOR header containing exactly the wrapper version, encryption
-algorithm, Artifact Object ID, MIME type, chunk size, base nonce, and plaintext checksum algorithm.
-The initial chunk size is 1 MiB and the algorithm is XChaCha20-Poly1305.
+algorithm, Artifact Object ID, Key Epoch ID, MIME type, chunk size, base nonce, and plaintext
+checksum algorithm. The initial chunk size is 1 MiB and the algorithm is XChaCha20-Poly1305.
 
 The header bytes are authenticated by every frame. Each frame SHALL encode its monotonically
 increasing index, final flag, plaintext length, ciphertext, and 16-byte authentication tag. Frame

@@ -3,6 +3,7 @@ import {
   appRequest,
   archiveFixture,
   corruptRemoteArtifactObjects,
+  createRailsAccount,
   createSynchronizedClient,
   faultControl,
   freeBrowserStorage,
@@ -59,6 +60,8 @@ test("keeps remote-only source Artifacts safe across relay failures", async ({
       for (const artifactObjectId of storage.remoteOnlyArtifactIds)
         expect(storage.filenames).not.toContain(`${artifactObjectId}.artifact`);
       if (scenario.corruptSource) await corruptRemoteArtifactObjects(storage.remoteOnlyArtifactIds);
+      const candidateEmail = `relay-candidate-${crypto.randomUUID()}@example.test`;
+      await createRailsAccount(source.context, "http://127.0.0.1:3301", candidateEmail, password);
 
       await appRequest(page, {
         type: "BeginServerSwitch",
@@ -68,8 +71,8 @@ test("keeps remote-only source Artifacts safe across relay failures", async ({
       if (scenario.checkpoint !== undefined)
         await faultControl(page, "arm", scenario.checkpoint, scenario.errorId);
       await appRequest(page, {
-        type: "SignupServerSwitchCandidate",
-        email: `relay-candidate-${crypto.randomUUID()}@example.test`,
+        type: "LoginServerSwitchCandidate",
+        email: candidateEmail,
         password,
       }).catch(() => undefined);
       await expect
@@ -213,6 +216,12 @@ test("reauthenticates a candidate switch before and after remote application", a
   try {
     const beforePage = await before.context.newPage();
     await beforePage.goto(`chrome-extension://${before.extensionId}/library.html`);
+    await createRailsAccount(
+      before.context,
+      "http://127.0.0.1:3301",
+      beforeCandidateEmail,
+      password,
+    );
     await appRequest(beforePage, {
       type: "BeginServerSwitch",
       candidateOrigin: "http://127.0.0.1:3301",
@@ -227,7 +236,7 @@ test("reauthenticates a candidate switch before and after remote application", a
       account: { configuration: { serverOrigin?: string } };
       serverSwitch?: { jobId: string; state: string };
     }>(beforePage, {
-      type: "SignupServerSwitchCandidate",
+      type: "LoginServerSwitchCandidate",
       email: beforeCandidateEmail,
       password,
     });

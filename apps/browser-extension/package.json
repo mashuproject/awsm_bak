@@ -26,6 +26,7 @@
     "zip:firefox": "wxt zip -b firefox --mv3 && node scripts/create-firefox-archive.mjs && node scripts/verify-firefox-release.mjs && node scripts/verify-firefox-archive.mjs"
   },
   "dependencies": {
+    "@scure/bip39": "2.2.0",
     "@zip.js/zip.js": "2.8.31",
     "cborg": "5.1.7",
     "libsodium-wrappers-sumo": "0.8.4"

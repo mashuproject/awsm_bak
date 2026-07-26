@@ -21,9 +21,10 @@ module Coordination
       Base64.urlsafe_encode64(value, padding: false)
     end
 
-    def decode_base64url(value, bytes:)
-      decoded = Base64.urlsafe_decode64(value.to_s)
-      raise ArgumentError unless decoded.bytesize == bytes && encode_base64url(decoded) == value
+  def decode_base64url(value, bytes:)
+    decoded = Base64.urlsafe_decode64(value.to_s)
+    valid_size = bytes.is_a?(Range) ? bytes.cover?(decoded.bytesize) : decoded.bytesize == bytes
+    raise ArgumentError unless valid_size && encode_base64url(decoded) == value
       decoded
     rescue ArgumentError
       raise ArgumentError, "invalid base64url value"

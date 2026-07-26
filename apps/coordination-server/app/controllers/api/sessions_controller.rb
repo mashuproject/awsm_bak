@@ -3,9 +3,9 @@ module Api
     def create
       account = Coordination::AccountAuthenticator.authenticate_login(
         params.require(:email),
-        params.require(:authenticationSecret)
+        params.require(:password)
       )
-      issued = Coordination::SessionCredentials.issue(account:)
+      issued = Coordination::SessionCredentials.issue(account:, scope: "Account")
       render json: Coordination::AccountPayload.response(account:, issued:)
     rescue ActionController::ParameterMissing
       raise Coordination::OutcomeError.new("AUTHENTICATION_FAILED", status: :unauthorized)

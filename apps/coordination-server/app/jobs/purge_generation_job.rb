@@ -25,6 +25,10 @@ class PurgeGenerationJob < ApplicationJob
     purge.update!(stage: "Tombstone")
     now = Time.current
     OpaqueRecord.transaction do
+      if purge.reason == "VaultReplacement"
+        purge_replaced_vault!(purge, generations, deletable, now)
+        return
+      end
       deletable.each do |record|
         TransferTicket.where(upload: record.upload).delete_all if record.upload
         record.update!(state: "Purged", storage_key: nil, purged_at: now)
@@ -47,6 +51,53 @@ class PurgeGenerationJob < ApplicationJob
   end
 
   private
+
+  def purge_replaced_vault!(purge, generations, records, now)
+    vault = purge.vault_replica
+    raise "replacement source became authoritative again" unless vault.state == "Replaced"
+    unless records.length == vault.opaque_records.where.not(state: "Purged").count
+      raise "replacement source still has externally referenced records"
+    end
+
+    record_ids = records.map(&:id)
+    TransferTicket.where(vault_replica: vault).delete_all
+    DeliveryChange.where(vault_replica: vault).delete_all
+    EventCommit.where(vault_replica: vault).delete_all
+    RecordDependency.where(event_record_id: record_ids).or(
+      RecordDependency.where(dependency_record_id: record_ids)
+    ).delete_all
+    Upload.where(opaque_record_id: record_ids).destroy_all
+    GenerationMembership.where(vault_generation: generations).delete_all
+    GenerationReachabilityEntry.where(vault_generation: generations).delete_all
+    GenerationReachabilityPage.where(vault_generation: generations).delete_all
+    vault.update!(
+      active_generation: nil,
+      active_generation_number: nil,
+      active_key_epoch: nil,
+      active_recovery_generation: nil
+    )
+    purge.purge_job_generations.delete_all
+    VaultGeneration.where(id: generations.map(&:id)).update_all(
+      predecessor_generation_id: nil,
+      generation_record_id: nil,
+      updated_at: now
+    )
+    OpaqueRecord.where(id: record_ids).destroy_all
+    generations.each(&:destroy!)
+    DeviceKeyEnvelope.where(vault_device: vault.vault_devices).delete_all
+    vault.recovery_generations.update_all(
+      kit_ciphertext: nil,
+      retired_at: now,
+      updated_at: now
+    )
+    vault.vault_key_epochs.where(retired_at: nil).update_all(retired_at: now, updated_at: now)
+    purge.update!(
+      state: "Succeeded",
+      stage: "Complete",
+      completed_at: now,
+      processed_bytes: records.sum(&:byte_length)
+    )
+  end
 
   def referenced_elsewhere?(record, purged_generations)
     record.generation_memberships.where.not(vault_generation: purged_generations).exists? ||

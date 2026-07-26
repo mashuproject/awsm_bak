@@ -47,12 +47,24 @@ describe("Vault Package contracts", () => {
   it("wraps the Root Key for only the exact Manifest and passphrase", async () => {
     const manifestBytes = encodeCanonicalCbor(manifest());
     const rootKey = Uint8Array.from({ length: 32 }, (_, index) => index);
+    const keyring = {
+      version: 1 as const,
+      vaultId,
+      activeKeyEpochId: "00000000-0000-4000-8000-000000000009",
+      keyEpochs: [
+        {
+          keyEpochId: "00000000-0000-4000-8000-000000000009",
+          ordinal: 0,
+          rootKey,
+        },
+      ],
+    };
     const envelope = await createExportKeyEnvelope({
       packageId,
       originatingVaultId: vaultId,
       manifestBytes,
       passphrase: "correct horse battery staple",
-      rootKey,
+      keyring,
       salt: new Uint8Array(16).fill(7),
       nonce: new Uint8Array(24).fill(9),
     });
@@ -61,7 +73,7 @@ describe("Vault Package contracts", () => {
 
     await expect(
       openExportKeyEnvelope(decoded, manifestBytes, "correct horse battery staple"),
-    ).resolves.toEqual(Uint8Array.from({ length: 32 }, (_, index) => index));
+    ).resolves.toEqual(keyring);
     await expect(
       openExportKeyEnvelope(decoded, manifestBytes, "correct horse battery stapler"),
     ).rejects.toMatchObject({ id: "EXPORT_AUTHENTICATION_FAILED" });

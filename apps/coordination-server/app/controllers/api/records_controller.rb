@@ -2,7 +2,7 @@ module Api
   class RecordsController < BaseController
     def index
       vault = account_vault!
-      ensure_active!(vault)
+      ensure_readable!(vault)
       limit = requested_limit
       relation = vault.active_generation.opaque_records.where(state: "Committed").order(:object_id)
       relation = relation.where("object_id > ?", params[:afterObjectId]) if params[:afterObjectId].present?
@@ -21,7 +21,7 @@ module Api
       idempotency = Coordination::Idempotency.new(account: current_account, request:,
         operation: "CreateActiveDownload")
       vault = account_vault!
-      ensure_active!(vault)
+      ensure_readable!(vault)
       record = if (replay = idempotency.replay)
         OpaqueRecord.find(replay.resource_id)
       else
@@ -42,13 +42,11 @@ module Api
     private
 
     def account_vault!
-      current_account.vault_replicas.find_by!(vault_id: params[:vault_id])
-    rescue ActiveRecord::RecordNotFound
-      raise Coordination::OutcomeError.new("VAULT_NOT_FOUND", status: :not_found)
+      bound_vault!
     end
 
-    def ensure_active!(vault)
-      return if vault.state == "Active" && vault.active_generation
+    def ensure_readable!(vault)
+      return if vault.state.in?(%w[Active Provisional]) && vault.active_generation
       raise Coordination::OutcomeError.new("VAULT_NOT_READY", status: :conflict)
     end
 

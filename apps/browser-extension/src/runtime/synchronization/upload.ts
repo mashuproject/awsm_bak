@@ -1,3 +1,4 @@
+import { decodeEncryptedEnvelopeBytes } from "../../crypto/envelope";
 import type {
   StoredEvent,
   StoredObjectV1,
@@ -20,6 +21,13 @@ interface UploadStateRepository {
 }
 
 interface UploadSource {
+  getVaultHead(): Promise<
+    | {
+        readonly appendedObjectIds: readonly string[];
+        readonly appendedEventIds: readonly string[];
+      }
+    | undefined
+  >;
   listStoredObjects(): Promise<readonly StoredObjectV1[]>;
   listStoredEvents(): Promise<readonly StoredEvent[]>;
 }
@@ -70,7 +78,10 @@ export class UploadRunner {
     this.transfer = new UploadTransfer(state, transport, faults?.afterUploadPart);
   }
 
-  async run(now = new Date().toISOString()): Promise<void> {
+  async run(
+    now = new Date().toISOString(),
+    publishedEntityIds: ReadonlySet<string> = new Set(),
+  ): Promise<void> {
     const loaded = await this.state.latestSynchronizationJob();
     if (
       loaded?.vaultId === undefined ||
@@ -89,9 +100,17 @@ export class UploadRunner {
       generationNumber: loaded.generationNumber,
     };
     if (job.stage === "UploadObjects") {
-      const objects = (await this.source.listStoredObjects()).toSorted((left, right) =>
-        left.objectId.localeCompare(right.objectId),
-      );
+      const head = await this.source.getVaultHead();
+      if (head === undefined)
+        throw Object.assign(new Error("Local Vault head is unavailable."), {
+          id: "SYNCHRONIZATION_INTEGRITY_FAILED",
+        });
+      const retained = new Set(head.appendedObjectIds);
+      const objects = (await this.source.listStoredObjects())
+        .filter(
+          (object) => retained.has(object.objectId) && !publishedEntityIds.has(object.objectId),
+        )
+        .toSorted((left, right) => left.objectId.localeCompare(right.objectId));
       for (const object of objects) {
         await this.uploadObject(job, object);
         job = { ...job, state: "Running", completedItems: job.completedItems + 1, updatedAt: now };
@@ -101,11 +120,19 @@ export class UploadRunner {
       await this.state.saveSynchronizationJob(job);
     }
     if (job.stage === "CommitEvents") {
-      const events = (await this.source.listStoredEvents()).toSorted((left, right) =>
-        left.orderingTimestamp === right.orderingTimestamp
-          ? left.eventId.localeCompare(right.eventId)
-          : left.orderingTimestamp.localeCompare(right.orderingTimestamp),
-      );
+      const head = await this.source.getVaultHead();
+      if (head === undefined)
+        throw Object.assign(new Error("Local Vault head is unavailable."), {
+          id: "SYNCHRONIZATION_INTEGRITY_FAILED",
+        });
+      const retained = new Set(head.appendedEventIds);
+      const events = (await this.source.listStoredEvents())
+        .filter((event) => retained.has(event.eventId) && !publishedEntityIds.has(event.eventId))
+        .toSorted((left, right) =>
+          left.orderingTimestamp === right.orderingTimestamp
+            ? left.eventId.localeCompare(right.eventId)
+            : left.orderingTimestamp.localeCompare(right.orderingTimestamp),
+        );
       for (const event of events) {
         await this.uploadEventDurable(job, event);
         job = { ...job, state: "Running", completedItems: job.completedItems + 1, updatedAt: now };
@@ -119,6 +146,60 @@ export class UploadRunner {
         stage: "FetchChanges",
         updatedAt: now,
       });
+    }
+  }
+
+  async assertPendingUploadsUseEpoch(
+    activeKeyEpochId: string,
+    publishedEntityIds: ReadonlySet<string> = new Set(),
+  ): Promise<void> {
+    const job = await this.state.latestSynchronizationJob();
+    if (job?.vaultId === undefined) return;
+    const [head, objects, events] = await Promise.all([
+      this.source.getVaultHead(),
+      this.source.listStoredObjects(),
+      this.source.listStoredEvents(),
+    ]);
+    if (head === undefined)
+      throw Object.assign(new Error("Local Vault head is unavailable."), {
+        id: "SYNCHRONIZATION_INTEGRITY_FAILED",
+      });
+    const retainedObjectIds = new Set(head.appendedObjectIds);
+    const retainedEventIds = new Set(head.appendedEventIds);
+    const pending = [
+      ...objects
+        .filter((object) => retainedObjectIds.has(object.objectId))
+        .map((object) => ({
+          kind: "Object" as const,
+          entityId: object.objectId,
+          keyEpochId:
+            object.objectType === "Artifact"
+              ? object.keyEpochId
+              : decodeEncryptedEnvelopeBytes(object.envelopeBytes).keyEpochId,
+        })),
+      ...events
+        .filter((event) => retainedEventIds.has(event.eventId))
+        .map((event) => ({
+          kind: "Event" as const,
+          entityId: event.eventId,
+          keyEpochId: decodeEncryptedEnvelopeBytes(event.envelopeBytes).keyEpochId,
+        })),
+    ];
+    for (const record of pending) {
+      const checkpoint = await this.state.synchronizationCheckpoint(
+        job.vaultId,
+        record.kind,
+        record.entityId,
+      );
+      if (
+        !publishedEntityIds.has(record.entityId) &&
+        checkpoint?.state !== "Durable" &&
+        checkpoint?.state !== "Committed" &&
+        record.keyEpochId !== activeKeyEpochId
+      )
+        throw Object.assign(new Error("Unpublished local work uses a retired Vault key epoch."), {
+          id: "KEY_EPOCH_CHANGED",
+        });
     }
   }
 
@@ -138,11 +219,16 @@ export class UploadRunner {
       object.objectType === "BundleDescriptor"
         ? await checksum(object.envelopeBytes)
         : bytesToBase64Url(object.envelopeChecksum);
+    const keyEpochId =
+      object.objectType === "Artifact"
+        ? object.keyEpochId
+        : decodeEncryptedEnvelopeBytes(object.envelopeBytes).keyEpochId;
     await this.transfer.upload(
       job,
       "Object",
       object.objectId,
       object.objectType,
+      keyEpochId,
       byteLength,
       sha256,
       stream,
@@ -158,6 +244,7 @@ export class UploadRunner {
       "Event",
       event.eventId,
       "Event",
+      decodeEncryptedEnvelopeBytes(event.envelopeBytes).keyEpochId,
       event.envelopeBytes.byteLength,
       await checksum(event.envelopeBytes),
       bytesStream(event.envelopeBytes),

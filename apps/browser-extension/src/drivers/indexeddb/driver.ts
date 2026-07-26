@@ -43,7 +43,9 @@ async function assertNoActiveExport(transaction: IDBTransaction, vaultId: string
   if (
     values.map(decodeExportJob).some((job) => job.state === "Created" || job.state === "Running")
   ) {
-    throw Object.assign(new Error("Vault Export is in progress."), { id: "VAULT_BUSY" });
+    throw Object.assign(new Error("Vault Export is in progress."), {
+      id: "VAULT_BUSY",
+    });
   }
 }
 
@@ -78,6 +80,7 @@ export class IndexedDbDriver {
       return bytesEqual(left.envelopeBytes, right.envelopeBytes);
     if (left.objectType === "Artifact" && right.objectType === "Artifact")
       return (
+        left.keyEpochId === right.keyEpochId &&
         left.envelopeFormat === right.envelopeFormat &&
         left.envelopeByteLength === right.envelopeByteLength &&
         left.envelopeChecksumAlgorithm === right.envelopeChecksumAlgorithm &&
@@ -196,6 +199,121 @@ export class IndexedDbDriver {
     }
   }
 
+  async commitStaleEpochCaptureReplays(input: {
+    readonly expectedHead: import("./schema").StoredVaultHeadV1;
+    readonly retainedObjectIds: readonly string[];
+    readonly retainedEventIds: readonly string[];
+    readonly replays: readonly {
+      readonly oldBundleId: string;
+      readonly oldEventId: string;
+      readonly registration: AtomicRegistrationV1;
+    }[];
+  }): Promise<void> {
+    const retainedObjectIds = [...input.retainedObjectIds].toSorted();
+    const retainedEventIds = [...input.retainedEventIds].toSorted();
+    const newObjectIds = input.replays
+      .flatMap((replay) => replay.registration.objects.map((object) => object.objectId))
+      .toSorted();
+    const newEventIds = input.replays.map((replay) => replay.registration.event.eventId).toSorted();
+    if (
+      input.expectedHead.vaultId !== this.vaultId ||
+      new Set(retainedObjectIds).size !== retainedObjectIds.length ||
+      new Set(retainedEventIds).size !== retainedEventIds.length ||
+      new Set(newObjectIds).size !== newObjectIds.length ||
+      new Set(newEventIds).size !== newEventIds.length ||
+      retainedObjectIds.some((id) => !input.expectedHead.appendedObjectIds.includes(id)) ||
+      retainedEventIds.some((id) => !input.expectedHead.appendedEventIds.includes(id)) ||
+      input.replays.some(
+        (replay) =>
+          !input.expectedHead.appendedEventIds.includes(replay.oldEventId) ||
+          replay.registration.event.vaultId !== this.vaultId,
+      )
+    )
+      throw storageError(new Error("Stale epoch replay closure is inconsistent."));
+    const database = await this.databasePromise;
+    const transaction = database.transaction(
+      [
+        STORES.objects,
+        STORES.events,
+        STORES.libraryProjection,
+        STORES.commandOutcomes,
+        STORES.vaultHead,
+        STORES.vacuumJobs,
+        STORES.exportJobs,
+        STORES.importJobs,
+        STORES.storageReliefJobs,
+      ],
+      "readwrite",
+    );
+    try {
+      await assertNoActiveExport(transaction, this.vaultId);
+      await assertNoActiveImport(transaction);
+      await assertNoActiveStorageRelief(transaction, this.vaultId);
+      if (
+        (await requestValue(
+          transaction.objectStore(STORES.vacuumJobs).count(vaultKeyRange(this.vaultId)),
+        )) !== 0
+      )
+        throw Object.assign(new Error("Vault Vacuum is in progress."), {
+          id: "VAULT_BUSY",
+        });
+      const headStore = transaction.objectStore(STORES.vaultHead);
+      const storedHead = await requestValue(
+        headStore.get(vaultSingletonKey(this.vaultId, "active")),
+      );
+      const current = storedHead === undefined ? undefined : decodeStoredVaultHead(storedHead);
+      if (
+        current === undefined ||
+        current.generationId !== input.expectedHead.generationId ||
+        current.generationNumber !== input.expectedHead.generationNumber ||
+        current.appendedObjectIds.join("\n") !== input.expectedHead.appendedObjectIds.join("\n") ||
+        current.appendedEventIds.join("\n") !== input.expectedHead.appendedEventIds.join("\n")
+      )
+        throw Object.assign(new Error("Vault changed during stale epoch replay."), {
+          id: "VAULT_CONTEXT_CHANGED",
+        });
+      for (const replay of input.replays) {
+        for (const object of replay.registration.objects)
+          transaction
+            .objectStore(STORES.objects)
+            .add(object, vaultKey(this.vaultId, object.objectId));
+        transaction
+          .objectStore(STORES.events)
+          .add(
+            replay.registration.event,
+            vaultKey(this.vaultId, replay.registration.event.eventId),
+          );
+        transaction
+          .objectStore(STORES.libraryProjection)
+          .delete(vaultKey(this.vaultId, replay.oldBundleId));
+        transaction
+          .objectStore(STORES.libraryProjection)
+          .add(
+            replay.registration.projection,
+            vaultKey(this.vaultId, replay.registration.projection.bundleId),
+          );
+        transaction
+          .objectStore(STORES.commandOutcomes)
+          .add(
+            replay.registration.outcome,
+            vaultKey(this.vaultId, replay.registration.outcome.commandId),
+          );
+      }
+      headStore.put(
+        {
+          ...current,
+          appendedObjectIds: [...retainedObjectIds, ...newObjectIds].toSorted(),
+          appendedEventIds: [...retainedEventIds, ...newEventIds].toSorted(),
+        },
+        vaultSingletonKey(this.vaultId, "active"),
+      );
+      await transactionDone(transaction);
+    } catch (error) {
+      abortTransaction(transaction);
+      throw storageError(error);
+    }
+  }
+
   async hasObject(objectId: string): Promise<boolean> {
     const database = await this.databasePromise;
     const transaction = database.transaction(STORES.objects, "readonly");
@@ -303,7 +421,10 @@ export class IndexedDbDriver {
       for (const projection of projections)
         projectionStore.put(projection, vaultKey(this.vaultId, projection.bundleId));
       headStore.put(
-        { ...head, appendedEventIds: [...head.appendedEventIds, event.eventId].toSorted() },
+        {
+          ...head,
+          appendedEventIds: [...head.appendedEventIds, event.eventId].toSorted(),
+        },
         vaultSingletonKey(this.vaultId, "active"),
       );
       await transactionDone(transaction);
@@ -684,7 +805,9 @@ export class IndexedDbDriver {
           return job.state === "Created" || job.state === "Running";
         })
       ) {
-        throw Object.assign(new Error("Capture is in progress."), { id: "VAULT_BUSY" });
+        throw Object.assign(new Error("Capture is in progress."), {
+          id: "VAULT_BUSY",
+        });
       }
       const exportJobs = await requestValue(
         transaction.objectStore(STORES.exportJobs).getAll(vaultKeyRange(this.vaultId)),
@@ -694,14 +817,22 @@ export class IndexedDbDriver {
           .map(decodeExportJob)
           .some((job) => job.state === "Created" || job.state === "Running")
       ) {
-        throw Object.assign(new Error("Export is in progress."), { id: "VAULT_BUSY" });
+        throw Object.assign(new Error("Export is in progress."), {
+          id: "VAULT_BUSY",
+        });
       }
       const head = (await requestValue(
         transaction.objectStore(STORES.vaultHead).get(vaultSingletonKey(this.vaultId, "active")),
       )) as import("./schema").StoredVaultHeadV1 | undefined;
       if (head === undefined) throw new Error("The active Vault Generation is missing.");
       jobs.add(
-        { version: 1, jobId, sourceGenerationId: head.generationId, stage: "Preflight", createdAt },
+        {
+          version: 1,
+          jobId,
+          sourceGenerationId: head.generationId,
+          stage: "Preflight",
+          createdAt,
+        },
         vaultKey(this.vaultId, jobId),
       );
       await transactionDone(transaction);
@@ -888,7 +1019,9 @@ export class IndexedDbDriver {
         });
       }
       if (metadataValue === undefined || decodeVaultMetadata(metadataValue).manuallyLocked) {
-        throw Object.assign(new Error("Vault is locked."), { id: "VAULT_LOCKED" });
+        throw Object.assign(new Error("Vault is locked."), {
+          id: "VAULT_LOCKED",
+        });
       }
       if (
         vacuumCount !== 0 ||
@@ -1073,7 +1206,12 @@ export class IndexedDbDriver {
         );
         const reconciled: CaptureJob =
           outcome === undefined
-            ? { ...job, state: "Failed", updatedAt, errorId: "CAPTURE_INTERRUPTED" }
+            ? {
+                ...job,
+                state: "Failed",
+                updatedAt,
+                errorId: "CAPTURE_INTERRUPTED",
+              }
             : { ...job, state: "Succeeded", stage: "Commit", updatedAt };
         jobsStore.put(reconciled, vaultKey(this.vaultId, reconciled.jobId));
       }

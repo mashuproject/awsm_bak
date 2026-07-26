@@ -6,7 +6,7 @@ module Coordination
       generation = vault.active_generation || vault.vault_generations.find_by!(state: "Candidate")
       result = { vaultId: vault.vault_id, state: vault.state, generationId: generation.generation_id,
        generationNumber: generation.generation_number, headCursor: vault.head_cursor,
-       accountSlot: AccountPayload.slot(vault) }
+       activeKeyEpochId: vault.active_key_epoch_id }
       if generation.predecessor_generation
         result[:predecessorGenerationId] = generation.predecessor_generation.generation_id
       end
@@ -23,6 +23,7 @@ module Coordination
 
     def record(record)
       result = { objectId: record.object_id, objectType: record.object_type,
+                keyEpochId: record.vault_key_epoch_id,
                 byteLength: record.byte_length, sha256: ProtocolEncoding.encode_sha256(record.sha256),
                 state: record.state }
       if record.object_type == "Event"

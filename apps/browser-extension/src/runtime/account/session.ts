@@ -1,4 +1,3 @@
-import { wipe } from "../../crypto/sodium";
 import type {
   AccountCredentialScope,
   IndexedDbAccountRepository,
@@ -46,34 +45,29 @@ export class AccountSessionManager {
       throw Object.assign(new Error("Account authentication is required"), {
         id: "SYNCHRONIZATION_AUTHENTICATION_REQUIRED",
       });
-    try {
-      const session = await this.http.refresh(stored.refreshToken);
-      if (
-        session.account.accountId !== stored.metadata.accountId ||
-        session.account.accountKeyEnvelope.accountKeyId !== stored.metadata.accountKeyId
-      )
-        throw Object.assign(new Error("Account identity changed"), {
-          id: "SYNCHRONIZATION_INTEGRITY_FAILED",
-        });
-      await this.repository.saveAuthenticated(
-        {
-          metadata: {
-            version: 1,
-            accountId: session.account.accountId,
-            sessionId: session.sessionId,
-            email: session.account.email,
-            accountKeyId: session.account.accountKeyEnvelope.accountKeyId,
-            accountKeyEnvelope: session.account.accountKeyEnvelope,
-          },
-          accountEncryptionKey: stored.accountEncryptionKey,
-          refreshToken: session.refreshToken,
+    const session = await this.http.refresh(stored.refreshToken);
+    if (
+      session.account.accountId !== stored.metadata.accountId ||
+      session.account.email !== stored.metadata.email ||
+      session.scope !== stored.metadata.scope
+    )
+      throw Object.assign(new Error("Account identity changed"), {
+        id: "SYNCHRONIZATION_INTEGRITY_FAILED",
+      });
+    await this.repository.saveAuthenticated(
+      {
+        metadata: {
+          version: 1,
+          accountId: session.account.accountId,
+          sessionId: session.sessionId,
+          email: session.account.email,
+          scope: session.scope,
         },
-        this.scope,
-      );
-      this.access = session.accessToken;
-      return session.accessToken;
-    } finally {
-      await wipe(stored.accountEncryptionKey);
-    }
+        refreshToken: session.refreshToken,
+      },
+      this.scope,
+    );
+    this.access = session.accessToken;
+    return session.accessToken;
   }
 }

@@ -7,6 +7,7 @@ import { sha256 } from "../../src/domain/hash";
 import { bytesToBase64Url } from "../../src/runtime/account/wire";
 import type { ArtifactStore } from "../../src/runtime/artifact";
 import { ArtifactResolver } from "../../src/runtime/artifact/resolver";
+import { TEST_KEY_EPOCH_ID, testKeyring } from "../helpers/keyring";
 
 const vaultId = "01900000-0000-7000-8000-000000000711";
 const objectId = "01900000-0000-7000-8000-000000000712";
@@ -18,6 +19,7 @@ async function preparedArtifact() {
   ]);
   const key = await deriveContextKeyFromCryptoKey(rootKey, {
     vaultId,
+    keyEpochId: TEST_KEY_EPOCH_ID,
     domain: "vault:artifact:v1",
     contextId: objectId,
     keyVersion: 1,
@@ -29,6 +31,7 @@ async function preparedArtifact() {
   }
   const summary = await writeArtifactEnvelope({
     objectId,
+    keyEpochId: TEST_KEY_EPOCH_ID,
     key,
     plaintext: source(),
     noncePrefix: new Uint8Array(16).fill(4),
@@ -51,6 +54,7 @@ async function preparedArtifact() {
       version: 1,
       objectId,
       objectType: "Artifact",
+      keyEpochId: "00000000-0000-4000-8000-000000000009",
       envelopeFormat: "artifact:xchacha20poly1305-chunked:v1",
       envelopeByteLength: wrapper.byteLength,
       envelopeChecksumAlgorithm: "hash:sha256:v1",
@@ -105,6 +109,7 @@ describe("ArtifactResolver plaintext retrieval", () => {
                 state: "Committed",
                 objectId,
                 objectType: "Artifact",
+                keyEpochId: TEST_KEY_EPOCH_ID,
                 byteLength: value.wrapper.byteLength,
                 sha256: bytesToBase64Url(value.object.envelopeChecksum),
               },
@@ -127,7 +132,7 @@ describe("ArtifactResolver plaintext retrieval", () => {
       serverOrigin: "https://sync.example.test",
       object: value.object,
       reference: value.reference,
-      rootKey: value.rootKey,
+      keyring: testKeyring(value.rootKey),
       scope: { type: "ActiveGeneration", generationId },
       retention: "RestoreLocal",
     });

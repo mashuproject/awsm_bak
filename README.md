@@ -182,15 +182,16 @@ docker compose up --build
 ```
 
 The server is then available at <http://localhost:3000>. In AWSM, choose self-hosted
-synchronization, enter that origin, grant Chrome access to it, and create an Account. See the
-[Coordination Server development guide](apps/coordination-server/README.md) for operations and
-troubleshooting.
+synchronization and follow its signup link to create the Account on the Rails web page. Then return
+to the extension, enter the server origin, grant browser access, and log in. See the [Coordination
+Server development guide](apps/coordination-server/README.md) for operations and troubleshooting.
 
 The client encrypts Vault content before transmission. The server stores opaque encrypted Objects,
 Events, Artifacts, and wrapped keys; it does not receive the keys needed to decrypt plaintext Vault
-content. The current pre-release implementation does not include device signing and revocation,
-Account Recovery Keys, password changes, production quotas, billing, shared object storage, or
-production deployment hardening.
+content. Fresh Chrome and Firefox installations recover the Account's synchronized Vault with the
+current 12-word Recovery Phrase, certify a new Device, and download the active encrypted
+Generation. Rails password changes revoke sessions without changing Vault keys. Production quotas,
+billing, shared object storage, and production deployment hardening remain future work.
 
 ## Development
 

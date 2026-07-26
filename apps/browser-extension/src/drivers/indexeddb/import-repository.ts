@@ -4,7 +4,7 @@ import { openDatabase, requestValue, transactionDone } from "./database";
 import { decodeCaptureJob, decodeExportJob, decodeImportJob } from "./decode";
 import { storageError } from "./errors";
 import { vaultKeyRange } from "./keys";
-import { type ImportJobStage, type ImportJobV1, STORES } from "./schema";
+import { DATABASE_NAME, type ImportJobStage, type ImportJobV1, STORES } from "./schema";
 import { hasActiveStorageRelief } from "./storage-relief-lease";
 
 function active(job: ImportJobV1): boolean {
@@ -23,7 +23,7 @@ export async function assertNoActiveImport(transaction: IDBTransaction): Promise
 export class IndexedDbImportRepository {
   private readonly databasePromise: Promise<IDBDatabase>;
 
-  constructor(readonly databaseName = "awsm-vault") {
+  constructor(readonly databaseName = DATABASE_NAME) {
     this.databasePromise = openDatabase(databaseName);
   }
 

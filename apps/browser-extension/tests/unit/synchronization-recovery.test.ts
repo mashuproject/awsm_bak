@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { SynchronizationJobV1 } from "../../src/drivers/indexeddb/schema";
 import { StaleReplicaDiscardService } from "../../src/runtime/synchronization/recovery";
+import type { VaultKeyring } from "../../src/runtime/vault/keyring";
 
 describe("stale Replica discard", () => {
   it("returns interrupted replacement to Conflict and removes only prepared replacement wrappers", async () => {
@@ -37,8 +38,8 @@ describe("stale Replica discard", () => {
           version: 1,
           accountId: initial.accountId,
           vaultId,
-          accountKeyId: crypto.randomUUID(),
-          accountSlot: {},
+          activeRecoveryGenerationId: crypto.randomUUID(),
+          activeKeyEpochId: crypto.randomUUID(),
           remoteGenerationId,
           remoteGenerationNumber: 2,
           deliveryCursor: 8,
@@ -57,7 +58,7 @@ describe("stale Replica discard", () => {
         metadata: { vaultId },
         head: { generationId: staleGenerationId },
       } as never,
-      {} as CryptoKey,
+      {} as VaultKeyring,
       {
         prepare: async (_job, _rootKey, _existing, _scope, beforeArtifactPrepare) => {
           await beforeArtifactPrepare?.(preparedArtifactObjectId);

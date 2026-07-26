@@ -163,7 +163,7 @@ export class WorkspaceContextManager {
     const eventId = this.uuid();
     const prepareName = this.dependencies.prepareNameChange ?? prepareVaultNameChange;
     const nameChange = await prepareName({
-      rootKey: prepared.rootKey,
+      keyring: prepared.keyring,
       eventType: "VaultCreated",
       vaultId,
       deviceId: prepared.records.metadata.deviceId,
@@ -215,7 +215,7 @@ export class WorkspaceContextManager {
         "The active Vault changed. Refresh and try again.",
       );
     }
-    const rootKey = context.vault.requireRootKey();
+    const keyring = context.vault.requireKeyring();
     const workspace = await this.dependencies.workspaceRepository.bootstrap(this.now());
     if (workspace.metadata.activeVaultId !== context.vaultId) {
       throw new VaultServiceError(
@@ -238,7 +238,7 @@ export class WorkspaceContextManager {
     const timestamp = this.now();
     const prepareName = this.dependencies.prepareNameChange ?? prepareVaultNameChange;
     const nameChange = await prepareName({
-      rootKey,
+      keyring,
       eventType: "VaultRenamed",
       vaultId: context.vaultId,
       deviceId: records.metadata.deviceId,
@@ -289,7 +289,7 @@ export class WorkspaceContextManager {
       );
     }
     const decryptName = this.dependencies.decryptNameProjection ?? decryptVaultNameProjection;
-    const projection = await decryptName(context.vault.requireRootKey(), stored);
+    const projection = await decryptName(context.vault.requireKeyring(), stored);
     const encryptName = this.dependencies.encryptNameCache ?? encryptWorkspaceVaultName;
     const cache = await encryptName({
       key: workspace.nameCacheKey,

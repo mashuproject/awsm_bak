@@ -38,14 +38,48 @@ The authenticated principal that owns at most one synchronized Vault replica rec
 Coordination Server.
 
 An Account owns its Vault directly, but authentication alone does not grant cryptographic access.
-The trusted client must unwrap the Account Encryption Key and the Vault's Account slot. Memberships,
-shared Vault authority, Organizations, and Device authorization remain future concepts.
+Rails receives the Account password over TLS and stores only its password digest. A certified
+Device must separately possess locally protected Vault key material. Memberships, shared Vault
+authority, and Organizations remain future concepts.
 
-## Account Encryption Key
+## Account Session
 
-A random client-created key that wraps the Account's single synchronized Vault Root Key slot. The
-login password derives independent authentication and wrapping material; the Coordination Server
-stores only the password-wrapped Account Encryption Key envelope and cannot unwrap either key.
+An authenticated Rails session scoped to Account identity and Account-level operations. It can
+discover whether the Account owns a synchronized Vault and authorize Device enrollment ceremonies,
+but cannot synchronize Vault Objects or decrypt Vault content.
+
+## VaultDevice Session
+
+An authenticated API session bound to one current certified Device and one synchronized Vault.
+It authorizes opaque synchronization operations but carries no Vault decryption key.
+
+## Recovery Phrase
+
+The canonical 12-word BIP39 representation of 128 bits of client-generated recovery entropy. It
+recovers the encrypted Recovery Kit and authorizes enrollment of a fresh Device. Neither the words
+nor the entropy cross the Coordination Server boundary.
+
+## Recovery Kit
+
+An encrypted client-created package containing the complete key-epoch root-key set and the recovery
+administrator seed for one Recovery Generation. The Coordination Server stores it as opaque
+ciphertext.
+
+## Device
+
+A browser installation with independent signing and wrapping key pairs, certified for one Recovery
+Generation. Device secrets remain protected in trusted client storage.
+
+## Device Certificate
+
+A recovery-administrator-signed statement binding a Device ID, public signing and wrapping keys,
+display metadata, Vault ID, and Recovery Generation.
+
+## Key Epoch
+
+A numbered content-encryption authority within one Vault. Every encrypted Object declares its Key
+Epoch. Future Protection activates a new epoch while retaining prior keys for authorized Devices to
+read history.
 
 ## Remote-only Artifact
 

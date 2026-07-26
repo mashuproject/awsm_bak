@@ -8,6 +8,7 @@ function job(overrides: Partial<ServerSwitchJobV1> = {}): ServerSwitchJobV1 {
     jobId: "01900000-0000-7000-8000-000000000001",
     sourceOrigin: "https://source.example",
     candidateOrigin: "https://candidate.example",
+    candidateRegistration: { enabled: false },
     vaultId: "01900000-0000-7000-8000-000000000002",
     state: "Running",
     stage: "PrepareRemote",

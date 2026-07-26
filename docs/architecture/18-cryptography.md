@@ -87,24 +87,22 @@ Plaintext never crosses the encryption boundary.
 # Key Hierarchy
 
 ```
-Account password
+Recovery Phrase entropy
 
-├── Authentication derivative
-└── Password-wrapping derivative
+├── Recovery Kit wrapping key
+└── Recovery administrator seed
         ↓
-  Account Encryption Key
+  encrypted Recovery Kit
         ↓
-  Account Vault slot (synchronized Vault only)
+  key-epoch root keys
 
-Independent local device key
+Certified Device wrapping key
         ↓
-  Device Vault slot
+  signed Device key envelopes
+        ↓
+  key-epoch root keys
 
-Both slots unwrap the same random
-
-↓
-
-Vault Root Key
+Active key-epoch root key
 
 ├── Bundle Key
 ├── Event Key
@@ -115,9 +113,10 @@ Vault Root Key
 
 Keys should be derived rather than randomly generated independently where appropriate.
 
-The Account password and Account Encryption Key are not Vault ownership boundaries. The random
-Vault Root Key remains the cryptographic root of one Vault. Local-only Vaults have only the
-mandatory device slot. A synchronized Vault has both the device slot and one Account slot.
+The Account password is an identity credential and never participates in Vault cryptography.
+Local-only Vaults use their mandatory local Device slot. A synchronized Vault uses Recovery
+Generation authority and certified Device envelopes. Each encrypted Object binds the Key Epoch whose
+root key derives its encryption key.
 
 ---
 
@@ -125,14 +124,15 @@ mandatory device slot. A synchronized Vault has both the device slot and one Acc
 
 ## Account Password
 
-Argon2id13 derives one master value, and HKDF-SHA256 domain-separates the authentication derivative
-from the Account-key password-wrapping derivative. The password and derived values never persist as
-plaintext or cross the server boundary.
+Rails receives the password over TLS, verifies it against the Account password digest, and never
+returns it to the extension. Password change revokes Account and VaultDevice sessions but does not
+rotate or recover Vault keys.
 
-## Account Encryption Key
+## Recovery Phrase
 
-Random client-generated key wrapped by the password-wrapping derivative. It wraps the synchronized
-Vault Root Key in an authenticated Account slot and never encrypts archive Objects directly.
+The 12-word Recovery Phrase encodes 128 bits of client-generated entropy. Domain-separated
+derivation produces a Recovery Kit wrapping key and recovery administrator signing seed. The phrase,
+entropy, and derived secrets never cross the server boundary or persist after a ceremony.
 
 ---
 
@@ -183,21 +183,9 @@ Public keys are synchronized.
 
 # Wrapped Keys
 
-Vault keys are wrapped individually for each trusted device.
-
-```
-Vault Root Key
-
-↓
-
-Encrypt for Device A
-
-Encrypt for Device B
-
-Encrypt for Device C
-```
-
-The Coordination Server stores wrapped keys only.
+Key-epoch root keys are wrapped individually for each certified Device. Each envelope is signed by
+the active recovery administrator and bound to the Device certificate, Recovery Generation, Vault,
+and Key Epoch. The Coordination Server stores wrapped keys only.
 
 The initial browser Host uses a non-exportable device key to wrap the Vault Root Key locally. Local-only Vaults do not persist a passphrase wrapper. A passphrase-derived wrapper exists only inside a user-created Vault Package and is independent of local unlock state.
 
@@ -375,7 +363,8 @@ Derived keys isolate cryptographic domains and simplify future rotation.
 
 ## Why Wrapped Keys?
 
-Each trusted device receives independent access without exposing the Vault Root Key to the server.
+Each certified Device receives independent key-epoch access without exposing an unwrapped key to
+the server.
 
 ---
 

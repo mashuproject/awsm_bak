@@ -62,12 +62,16 @@ describe("Library collection navigation", () => {
     });
   });
 
-  it("warns before signing out when remote-only payloads depend on Account access", () => {
+  it("explains that Account sign-out locks content without revoking Device authority", () => {
     expect(signOutConfirmation(3)).toBe(
-      "Sign out while 3 remote-only Artifacts depend on this Account?\n\n" +
-        "Those payloads will be unavailable until you sign in to the same Account on this synchronization server again.",
+      "Sign out and lock this Vault?\n\n" +
+        "Decrypted content will disappear immediately. The Account password cannot decrypt the Vault.\n\n" +
+        "3 remote-only Artifacts remain on the synchronization server. This Device can retrieve them after you unlock the Vault unless the Device is removed.",
     );
-    expect(signOutConfirmation(0)).toBeUndefined();
+    expect(signOutConfirmation(0)).toBe(
+      "Sign out and lock this Vault?\n\n" +
+        "Decrypted content will disappear immediately. The Account password cannot decrypt the Vault.",
+    );
   });
   it("distinguishes remote integrity, availability, authentication, and offline failures", () => {
     expect(remoteArtifactFailureMessage("REMOTE_ARTIFACT_INTEGRITY_FAILED", "Screenshot")).toBe(

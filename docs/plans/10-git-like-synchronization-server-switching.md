@@ -13,6 +13,12 @@
 `docs/specifications/protocol/protocol.md`, and
 `docs/architecture/19-testing-strategy.md`
 
+> **Historical notice:** Plan 15 supersedes this plan's Account-key and candidate-signup
+> assumptions. See
+> [Plan 15](15-rails-account-recovery-phrase-device-sync.md) for the implemented canonical
+> identity, Device, and recovery direction. This document remains historical implementation
+> context.
+
 ---
 
 # 1. Purpose

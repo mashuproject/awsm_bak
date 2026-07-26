@@ -25,11 +25,11 @@ application runs in the standard `development` environment, so changes to applic
 templates, and other watched files are reloaded without rebuilding the image or restarting the
 server.
 
-The server exposes strict `/api` Account and opaque synchronization endpoints. Account signup uses
-email and a client-derived authentication secret without email delivery; the raw password and
-unwrapped Account/Vault keys must never reach Rails. Configure
-`AWSM_SYNTHETIC_ACCOUNT_SECRET` with a stable private deployment secret so authentication-parameter
-responses for unknown emails remain deterministic without disclosing Account existence.
+The server exposes Rails signup, Account management, strict `/api` Account and VaultDevice sessions,
+and opaque synchronization endpoints. Account signup and password change happen on the Rails web
+surface. Rails receives passwords over TLS and stores only password digests. The extension only
+logs in; it never creates an Account. Recovery Phrases, recovery private material, Device secrets,
+and unwrapped Vault keys must never reach Rails.
 
 The server waits for PostgreSQL and runs `bin/rails db:prepare` each time it starts. PostgreSQL data
 is retained in a named Docker volume across container restarts. Redis is started in dependency

@@ -35,6 +35,7 @@ import { decodeBundleRegisteredPayload, validateArtifactWarnings } from "../capt
 import { assertCanonicalEventFields } from "../library/vacuum";
 import { validatePageSnapshot } from "../page-snapshot";
 import { verifyVaultGeneration } from "../vault/generation";
+import type { VaultKeyring } from "../vault/keyring";
 import { normalizeVaultName } from "../vault/name";
 import type { ExportManifestV1 } from "./contracts";
 
@@ -78,20 +79,25 @@ function decodeHead(value: unknown): StoredVaultHeadV1 {
 
 async function eventPayload(
   event: StoredEvent,
-  rootKey: CryptoKey,
+  keyring: VaultKeyring,
   vaultId: string,
 ): Promise<Record<string, unknown>> {
-  const key = await deriveContextKeyFromCryptoKey(rootKey, {
+  const envelope = decodeEncryptedEnvelopeBytes(event.envelopeBytes);
+  const epoch = keyring.require(envelope.keyEpochId);
+  const key = await deriveContextKeyFromCryptoKey(epoch.rootKey, {
     vaultId,
+    keyEpochId: epoch.keyEpochId,
     domain: "vault:event:v1",
     contextId: event.eventId,
     keyVersion: 1,
   });
   try {
-    const envelope = decodeEncryptedEnvelopeBytes(event.envelopeBytes);
     if (envelope.objectType !== "Event" || envelope.objectId !== event.eventId)
       throw new Error("Event envelope mismatch");
-    return record(decodeCanonicalCbor(await decryptEnvelope(envelope, key)), "event");
+    return record(
+      decodeCanonicalCbor(await decryptEnvelope(envelope, key, epoch.keyEpochId)),
+      "event",
+    );
   } finally {
     await wipe(key);
   }
@@ -157,12 +163,12 @@ async function primaryValidationSink(): Promise<{
 
 export async function verifyAuthoritativeVaultPackage(input: {
   readonly manifest: ExportManifestV1;
-  readonly rootKey: CryptoKey;
+  readonly keyring: VaultKeyring;
   readonly read: (path: string, maximum: number) => Promise<Uint8Array>;
   readonly openArtifact: (objectId: string) => Promise<ReadableStream<Uint8Array>>;
   readonly signal?: AbortSignal;
 }): Promise<VerifiedAuthoritativeVaultPackage> {
-  const { manifest, rootKey, read } = input;
+  const { manifest, keyring, read } = input;
   input.signal?.throwIfAborted();
   const generation = decodeStoredVaultGeneration(
     decodeCanonicalCbor(await read("generation.cbor", 16 * 1024 * 1024)),
@@ -176,7 +182,7 @@ export async function verifyAuthoritativeVaultPackage(input: {
     head.generationNumber !== generation.generationNumber
   )
     throw new Error("Generation identity mismatch");
-  const retained = await verifyVaultGeneration(rootKey, manifest.originatingVaultId, generation);
+  const retained = await verifyVaultGeneration(keyring, manifest.originatingVaultId, generation);
   const expectedEventIds = [...retained.retainedEventIds, ...head.appendedEventIds].toSorted();
   const expectedObjectIds = [...retained.retainedObjectIds, ...head.appendedObjectIds].toSorted();
   if (
@@ -216,7 +222,7 @@ export async function verifyAuthoritativeVaultPackage(input: {
     if (stored.eventId !== descriptor.recordId || stored.vaultId !== manifest.originatingVaultId)
       throw new Error("Stored Event identity mismatch");
     for (const objectId of stored.referencedObjectIds) referencedObjects.add(objectId);
-    const payload = await eventPayload(stored, rootKey, manifest.originatingVaultId);
+    const payload = await eventPayload(stored, keyring, manifest.originatingVaultId);
     const eventType = string(payload.eventType, "event.eventType");
     assertCanonicalEventFields(payload, eventType);
     literal(payload.version, 1, "event.version");
@@ -332,18 +338,22 @@ export async function verifyAuthoritativeVaultPackage(input: {
     input.signal?.throwIfAborted();
     const stored = objects.get(registration.descriptorObjectId);
     if (stored?.objectType !== "BundleDescriptor") throw new Error("Descriptor Object missing");
-    const key = await deriveContextKeyFromCryptoKey(rootKey, {
+    const envelope = decodeEncryptedEnvelopeBytes(stored.envelopeBytes);
+    const epoch = keyring.require(envelope.keyEpochId);
+    const key = await deriveContextKeyFromCryptoKey(epoch.rootKey, {
       vaultId: manifest.originatingVaultId,
+      keyEpochId: epoch.keyEpochId,
       domain: "vault:bundle-descriptor:v1",
       contextId: registration.bundleId,
       keyVersion: 1,
     });
     let bundleDescriptor: BundleDescriptorV1;
     try {
-      const envelope = decodeEncryptedEnvelopeBytes(stored.envelopeBytes);
       if (envelope.objectType !== "BundleDescriptor" || envelope.objectId !== stored.objectId)
         throw new Error("Descriptor envelope mismatch");
-      bundleDescriptor = decodeBundleDescriptor(await decryptEnvelope(envelope, key));
+      bundleDescriptor = decodeBundleDescriptor(
+        await decryptEnvelope(envelope, key, epoch.keyEpochId),
+      );
     } finally {
       await wipe(key);
     }
@@ -383,8 +393,10 @@ export async function verifyAuthoritativeVaultPackage(input: {
         !bytesEqual(payload.checksum, artifact.envelopeChecksum)
       )
         throw new Error("Artifact payload descriptor does not match Object record");
-      const artifactKey = await deriveContextKeyFromCryptoKey(rootKey, {
+      const artifactEpoch = keyring.require(artifact.keyEpochId);
+      const artifactKey = await deriveContextKeyFromCryptoKey(artifactEpoch.rootKey, {
         vaultId: manifest.originatingVaultId,
+        keyEpochId: artifactEpoch.keyEpochId,
         domain: "vault:artifact:v1",
         contextId: artifact.objectId,
         keyVersion: 1,
@@ -403,6 +415,7 @@ export async function verifyAuthoritativeVaultPackage(input: {
         try {
           summary = await readArtifactEnvelope({
             expectedObjectId: artifact.objectId,
+            expectedKeyEpochId: artifactEpoch.keyEpochId,
             key: artifactKey,
             encrypted: await input.openArtifact(artifact.objectId),
             write: async (chunk: Uint8Array) => {

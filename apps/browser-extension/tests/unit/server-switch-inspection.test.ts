@@ -1,90 +1,118 @@
 import { describe, expect, it } from "vitest";
-import { createAccountVaultSlot } from "../../src/runtime/account/crypto";
-import { bytesToBase64Url } from "../../src/runtime/account/wire";
+
+import { createRecoveryKit, recoveryKitToWire } from "../../src/runtime/recovery/kit";
 import { ServerSwitchCandidateInspector } from "../../src/runtime/synchronization/server-switch-inspection";
 
 const accountId = "01900000-0000-7000-8000-000000000001";
-const accountKeyId = "01900000-0000-7000-8000-000000000002";
 const vaultId = "01900000-0000-7000-8000-000000000003";
-const generationId = "01900000-0000-7000-8000-000000000004";
-const accountKey = new Uint8Array(32).fill(3);
+const recoveryGenerationId = "01900000-0000-7000-8000-000000000004";
+const keyEpochId = "01900000-0000-7000-8000-000000000005";
 const rootKey = new Uint8Array(32).fill(7);
 
-async function resource() {
-  const slot = await createAccountVaultSlot({
-    slotId: "01900000-0000-7000-8000-000000000005",
-    vaultId,
-    accountKeyId,
-    accountEncryptionKey: accountKey,
-    vaultRootKey: rootKey,
-    nonce: new Uint8Array(24).fill(9),
-  });
-  return {
-    vaultId,
-    state: "Active",
-    generationId,
-    generationNumber: 4,
-    predecessorGenerationId: "01900000-0000-7000-8000-000000000006",
-    headCursor: 17,
-    accountSlot: {
-      ...slot,
-      nonce: bytesToBase64Url(slot.nonce),
-      ciphertext: bytesToBase64Url(slot.ciphertext),
+async function recovery() {
+  return createRecoveryKit({
+    keyring: {
+      version: 1,
+      vaultId,
+      recoveryGenerationId,
+      activeKeyEpochId: keyEpochId,
+      keyEpochs: [{ keyEpochId, ordinal: 0, rootKey }],
     },
-  };
+    recoveryKitWrappingKey: new Uint8Array(32).fill(3),
+    recoveryAdministratorSeed: new Uint8Array(32).fill(4),
+    nonce: new Uint8Array(24).fill(5),
+  });
 }
 
-function inspector(vaults: unknown[]) {
+async function inspector(
+  response: unknown,
+  suppliedLocal?: Awaited<ReturnType<typeof recovery>>,
+  authority: unknown = {
+    vaultId,
+    state: "Active",
+    activeKeyEpochId: keyEpochId,
+    generationId: "01900000-0000-7000-8000-000000000806",
+    generationNumber: 2,
+    headCursor: 7,
+  },
+) {
+  const local = suppliedLocal ?? (await recovery());
   return new ServerSwitchCandidateInspector(
     {
       loadMetadata: async () => ({
         version: 1,
         accountId,
-        sessionId: accountId,
+        sessionId: "01900000-0000-7000-8000-000000000006",
         email: "candidate@example.test",
-        accountKeyId,
-        accountKeyEnvelope: {},
+        scope: "Account",
       }),
-      loadAccountEncryptionKey: async () => Uint8Array.from(accountKey),
+      loadRecoveryKit: async () => ({
+        version: 1,
+        vaultId,
+        recoveryGenerationId,
+        metadata: local.metadata,
+        ciphertext: local.ciphertext,
+      }),
     },
-    { request: async () => ({ status: 200, body: { vaults } }) },
+    { request: async () => ({ status: 200, body: response }) },
+    async () => ({ request: async () => ({ status: 200, body: authority }) }),
   );
 }
 
 describe("Server Switch candidate inspection", () => {
   it("classifies an empty Account without writing candidate authority", async () => {
-    await expect(inspector([]).inspect(vaultId, rootKey)).resolves.toEqual({ headCursor: 0 });
+    await expect((await inspector({ state: "Empty" })).inspect(vaultId, rootKey)).resolves.toEqual({
+      headCursor: 0,
+    });
   });
 
-  it("unwraps and verifies the candidate Root Key and Generation identity", async () => {
-    await expect(inspector([await resource()]).inspect(vaultId, rootKey)).resolves.toMatchObject({
+  it("accepts only an attached Vault with the same encrypted Recovery Kit authority", async () => {
+    const kit = await recovery();
+    await expect(
+      (
+        await inspector({
+          state: "Attached",
+          vaultId,
+          recoveryKit: recoveryKitToWire(kit),
+        })
+      ).inspect(vaultId, rootKey),
+    ).resolves.toMatchObject({
+      registration: {
+        accountId,
+        vaultId,
+        activeRecoveryGenerationId: recoveryGenerationId,
+        activeKeyEpochId: keyEpochId,
+        remoteGenerationId: "01900000-0000-7000-8000-000000000806",
+        remoteGenerationNumber: 2,
+      },
+      headCursor: 7,
       replica: {
         vaultId,
-        generation: { generationId, generationNumber: 4 },
+        generation: {
+          generationId: "01900000-0000-7000-8000-000000000806",
+          generationNumber: 2,
+        },
       },
-      registration: { accountId, accountKeyId, vaultId, deliveryCursor: 17 },
-      headCursor: 17,
     });
   });
 
-  it("distinguishes another Vault from a same-ID Root Key integrity failure", async () => {
-    const another = { ...(await resource()), vaultId: "01900000-0000-7000-8000-000000000099" };
-    await expect(inspector([another]).inspect(vaultId, rootKey)).rejects.toMatchObject({
-      id: "SERVER_SWITCH_VAULT_MISMATCH",
-    });
+  it("distinguishes another Vault and mismatched recovery authority", async () => {
+    const kit = await recovery();
     await expect(
-      inspector([await resource()]).inspect(vaultId, new Uint8Array(32).fill(8)),
-    ).rejects.toMatchObject({ id: "SYNCHRONIZATION_INTEGRITY_FAILED" });
-  });
-
-  it("rejects noncanonical cardinality and counters", async () => {
+      (
+        await inspector({
+          state: "Attached",
+          vaultId: "01900000-0000-7000-8000-000000000099",
+          recoveryKit: recoveryKitToWire(kit),
+        })
+      ).inspect(vaultId, rootKey),
+    ).rejects.toMatchObject({ id: "SERVER_SWITCH_VAULT_MISMATCH" });
+    const other = await recovery();
+    other.ciphertext[0] = (other.ciphertext[0] ?? 0) ^ 1;
     await expect(
-      inspector([await resource(), await resource()]).inspect(vaultId, rootKey),
-    ).rejects.toMatchObject({
-      id: "SYNCHRONIZATION_INTEGRITY_FAILED",
-    });
-    await expect(
-      inspector([{ ...(await resource()), headCursor: -1 }]).inspect(vaultId, rootKey),
+      (
+        await inspector({ state: "Attached", vaultId, recoveryKit: recoveryKitToWire(kit) }, other)
+      ).inspect(vaultId, rootKey),
     ).rejects.toMatchObject({ id: "SYNCHRONIZATION_INTEGRITY_FAILED" });
   });
 });

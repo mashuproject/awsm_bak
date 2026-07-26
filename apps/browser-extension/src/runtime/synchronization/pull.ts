@@ -11,6 +11,7 @@ import type { ArtifactStore } from "../artifact";
 import { noRuntimeFaultCheckpoint, type RuntimeFaultCheckpoint } from "../fault-checkpoint";
 import { LibraryProjectionRebuilder } from "../library/rebuild";
 import { encryptWorkspaceVaultName } from "../vault";
+import type { VaultKeyring } from "../vault/keyring";
 import { type RemoteReplicaDownloader, verifyPreparedRemoteReplica } from "./download";
 import { openPullArtifact } from "./pull-artifact";
 
@@ -86,7 +87,7 @@ export class IncrementalPullRunner {
     private readonly remoteArtifacts?: PullRemoteArtifacts,
   ) {}
 
-  async run(rootKey: CryptoKey, now = new Date().toISOString()): Promise<boolean> {
+  async run(keyring: VaultKeyring, now = new Date().toISOString()): Promise<boolean> {
     const job = await this.accounts.latestSynchronizationJob();
     const registration = await this.accounts.loadAccountVault();
     if (
@@ -120,7 +121,7 @@ export class IncrementalPullRunner {
       throw integrity("Local Generation authority is unavailable");
     const prepared = await this.downloader.prepare(
       { ...job, state: "Running", stage: "DownloadRecords", updatedAt: now },
-      rootKey,
+      keyring,
       { generation, events, objects },
     );
     let committed = false;
@@ -128,7 +129,7 @@ export class IncrementalPullRunner {
       const verified = await verifyPreparedRemoteReplica({
         vaultId: scopedVaultId,
         prepared,
-        rootKey,
+        keyring,
         artifacts: this.artifacts,
         ...(this.availability === undefined || this.remoteArtifacts === undefined
           ? {}
@@ -148,7 +149,7 @@ export class IncrementalPullRunner {
           getStoredObject: (objectId) => Promise.resolve(allObjects.get(objectId)),
           replaceLibraryProjections: () => Promise.resolve(),
         },
-        rootKey,
+        keyring,
         job.vaultId,
         this.artifacts,
       ).prepare(new AbortController().signal);

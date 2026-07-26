@@ -4,6 +4,7 @@ import {
   authoritativeClosuresEqual,
   ServerSwitchRecoveryProver,
 } from "../../src/runtime/synchronization/server-switch-recovery";
+import { testKeyring } from "../helpers/keyring";
 
 const vaultId = "01900000-0000-7000-8000-000000000001";
 const generationId = "01900000-0000-7000-8000-000000000002";
@@ -84,7 +85,9 @@ describe("Server Switch Recovery base equality", () => {
         },
       },
     );
-    await expect(prover.prove({ vaultId, expected: closure(), rootKey })).resolves.toEqual({
+    await expect(
+      prover.prove({ vaultId, expected: closure(), keyring: testKeyring(rootKey) }),
+    ).resolves.toEqual({
       state: "IntegrityFailure",
     });
   });

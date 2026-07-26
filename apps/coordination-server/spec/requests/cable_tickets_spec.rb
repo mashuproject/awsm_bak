@@ -2,6 +2,14 @@ require "rails_helper"
 
 RSpec.describe "Cable tickets", type: :request do
   let(:account) { create_account }
+  let(:vault) do
+    account.vault_replicas.create!(
+      vault_id: "01900000-0000-7000-8000-000000000081",
+      state: "Active",
+      head_cursor: 0
+    )
+  end
+  let(:principal) { create_vault_device_principal(account:, vault:) }
   let(:headers) do
     {
       "Awsm-Protocol-Version" => "1",
@@ -12,7 +20,7 @@ RSpec.describe "Cable tickets", type: :request do
 
   before do
     allow(Coordination::AccountAuthenticator).to receive(:authenticate).and_return(
-      Coordination::AccountPrincipal.new(account:, confirmed_at: Time.current)
+      principal
     )
   end
 
@@ -25,6 +33,15 @@ RSpec.describe "Cable tickets", type: :request do
     expect(response.parsed_body.fetch("expiresAt")).to be_present
 
     expect(Coordination::CableTickets.consume(raw_ticket)).to eq(account)
+    expect { Coordination::CableTickets.consume(raw_ticket) }
+      .to raise_error(Coordination::OutcomeError, /AUTHENTICATION_FAILED/)
+  end
+
+  it "rejects an unconsumed ticket after Device session revocation" do
+    post "/api/cable-tickets", headers: headers
+    raw_ticket = response.parsed_body.fetch("ticket")
+    principal.session.revoke!
+
     expect { Coordination::CableTickets.consume(raw_ticket) }
       .to raise_error(Coordination::OutcomeError, /AUTHENTICATION_FAILED/)
   end

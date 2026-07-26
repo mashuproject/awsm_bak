@@ -4,21 +4,18 @@ RSpec.describe Account, type: :model do
   let(:attributes) do
     {
       email: "reader@example.test",
-      authentication_secret: "A" * 43,
-      account_key_id: "01900000-0000-7000-8000-000000000010",
-      kdf_salt: "s" * 16,
-      key_envelope_nonce: "n" * 24,
-      key_envelope_ciphertext: "c" * 48
+      password: "correct horse battery staple",
+      password_confirmation: "correct horse battery staple"
     }
   end
 
-  it "stores one normalized Account credential and permits at most one Vault" do
+  it "stores one normalized password credential and permits at most one Vault" do
     account = described_class.create!(**attributes)
 
     expect(account.email).to eq("reader@example.test")
-    expect(account.authentication_secret_digest).to be_present
-    expect(account.authenticate_authentication_secret("A" * 43)).to eq(account)
-    expect(account.authenticate_authentication_secret("B" * 43)).to be(false)
+    expect(account.password_digest).to be_present
+    expect(account.authenticate("correct horse battery staple")).to eq(account)
+    expect(account.authenticate("wrong password")).to be(false)
     expect(account.vault_replicas).to be_empty
   end
 

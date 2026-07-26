@@ -4,37 +4,36 @@ class CreateCoordinationSchema < ActiveRecord::Migration[8.1]
 
     create_table :accounts, id: :uuid do |table|
       table.string :email, null: false
-      table.string :authentication_secret_digest, null: false
-      table.uuid :account_key_id, null: false
-      table.binary :kdf_salt, null: false
-      table.integer :kdf_operations, null: false, default: 3
-      table.bigint :kdf_memory_bytes, null: false, default: 67_108_864
-      table.string :key_envelope_algorithm, null: false,
-        default: "wrap:xchacha20poly1305:account-password:v1"
-      table.binary :key_envelope_nonce, null: false
-      table.binary :key_envelope_ciphertext, null: false
+      table.string :password_digest, null: false
       table.timestamps
     end
     add_index :accounts, :email, unique: true
-    add_index :accounts, :account_key_id, unique: true
     add_check_constraint :accounts, "email = lower(email)", name: "accounts_normalized_email"
-    add_check_constraint :accounts, "octet_length(kdf_salt) = 16", name: "accounts_kdf_salt"
-    add_check_constraint :accounts, "kdf_operations = 3", name: "accounts_kdf_operations"
-    add_check_constraint :accounts, "kdf_memory_bytes = 67108864", name: "accounts_kdf_memory"
-    add_check_constraint :accounts, "octet_length(key_envelope_nonce) = 24",
-      name: "accounts_key_envelope_nonce"
-    add_check_constraint :accounts, "octet_length(key_envelope_ciphertext) >= 48",
-      name: "accounts_key_envelope_ciphertext"
 
-    create_table :account_sessions, id: :uuid do |table|
+    create_table :browser_sessions, id: :uuid do |table|
       table.references :account, null: false, type: :uuid, foreign_key: true
+      table.string :ip_address
+      table.string :user_agent
+      table.timestamps
+    end
+
+    create_table :api_sessions, id: :uuid do |table|
+      table.references :account, null: false, type: :uuid, foreign_key: true
+      table.uuid :vault_device_id
+      table.string :scope, null: false
       table.datetime :confirmed_at, null: false
       table.datetime :revoked_at
       table.timestamps
     end
+    add_check_constraint :api_sessions,
+      "(scope = 'Account' AND vault_device_id IS NULL) OR " \
+      "(scope = 'VaultDevice' AND vault_device_id IS NOT NULL)",
+      name: "api_sessions_scope_binding"
+    add_check_constraint :api_sessions, "scope IN ('Account', 'VaultDevice')",
+      name: "api_sessions_scope"
 
     create_table :session_credentials, id: :uuid do |table|
-      table.references :account_session, null: false, type: :uuid, foreign_key: true
+      table.references :api_session, null: false, type: :uuid, foreign_key: true
       table.string :kind, null: false
       table.binary :secret_digest, null: false
       table.datetime :expires_at, null: false
@@ -42,56 +41,172 @@ class CreateCoordinationSchema < ActiveRecord::Migration[8.1]
       table.datetime :revoked_at
       table.timestamps
     end
-    add_index :session_credentials, [ :account_session_id, :kind ]
+    add_index :session_credentials, [ :api_session_id, :kind ]
     add_check_constraint :session_credentials, "kind IN ('Access', 'Refresh')",
       name: "session_credentials_kind"
     add_check_constraint :session_credentials, "octet_length(secret_digest) = 32",
       name: "session_credentials_digest"
 
-    create_table :signup_registrations, id: :uuid do |table|
-      table.references :account, null: false, type: :uuid, foreign_key: true
-      table.uuid :idempotency_key, null: false
-      table.binary :request_sha256, null: false
-      table.timestamps
-    end
-    add_index :signup_registrations, :idempotency_key, unique: true
-    add_check_constraint :signup_registrations, "octet_length(request_sha256) = 32",
-      name: "signup_registrations_request_sha256"
-
     create_table :vault_replicas, id: :uuid do |table|
-      table.references :account, null: false, type: :uuid, foreign_key: true,
-        index: { unique: true }
+      table.references :account, null: false, type: :uuid, foreign_key: true
       table.uuid :vault_id, null: false
-      table.uuid :account_slot_id, null: false
-      table.uuid :account_key_id, null: false
-      table.string :account_slot_algorithm, null: false,
-        default: "wrap:xchacha20poly1305:account:v1"
-      table.binary :account_slot_nonce, null: false
-      table.binary :account_slot_ciphertext, null: false
       table.string :state, null: false
       table.uuid :active_generation_id
+      table.uuid :active_key_epoch_id
+      table.uuid :active_recovery_generation_id
       table.bigint :active_generation_number
       table.bigint :head_cursor, null: false, default: 0
       table.datetime :provisional_expires_at
+      table.datetime :replaced_at
       table.timestamps
     end
     add_index :vault_replicas, :vault_id, unique: true
-    add_index :vault_replicas, :account_slot_id, unique: true
-    add_check_constraint :vault_replicas, "state IN ('Provisional', 'Active')", name: "vault_replicas_state"
+    add_index :vault_replicas, :account_id, unique: true, where: "state = 'Active'",
+      name: "index_one_active_vault_per_account"
+    add_index :vault_replicas, :account_id, unique: true, where: "state = 'Provisional'",
+      name: "index_one_provisional_vault_per_account"
+    add_check_constraint :vault_replicas, "state IN ('Provisional', 'Active', 'Replaced')",
+      name: "vault_replicas_state"
     add_check_constraint :vault_replicas, "head_cursor >= 0", name: "vault_replicas_head_cursor"
-    add_check_constraint :vault_replicas, "octet_length(account_slot_nonce) = 24",
-      name: "vault_replicas_account_slot_nonce"
-    add_check_constraint :vault_replicas, "octet_length(account_slot_ciphertext) >= 48",
-      name: "vault_replicas_account_slot_ciphertext"
-    add_check_constraint :vault_replicas,
-      "account_slot_algorithm = 'wrap:xchacha20poly1305:account:v1'",
-      name: "vault_replicas_account_slot_algorithm"
     add_check_constraint :vault_replicas,
       "active_generation_number IS NULL OR active_generation_number >= 0",
       name: "vault_replicas_generation_number"
 
+    create_table :recovery_generations, id: :uuid do |table|
+      table.references :vault_replica, null: false, type: :uuid, foreign_key: true
+      table.bigint :ordinal, null: false
+      table.string :derivation_algorithm, null: false
+      table.string :wrapping_algorithm, null: false
+      table.string :administrator_signing_algorithm, null: false
+      table.binary :administrator_public_key, null: false
+      table.binary :kit_nonce, null: false
+      table.binary :kit_ciphertext
+      table.bigint :kit_ciphertext_length, null: false
+      table.binary :kit_ciphertext_sha256, null: false
+      table.datetime :activated_at
+      table.datetime :retired_at
+      table.timestamps
+    end
+    add_index :recovery_generations, [ :vault_replica_id, :ordinal ], unique: true
+    add_index :recovery_generations, :vault_replica_id, unique: true,
+      where: "activated_at IS NOT NULL AND retired_at IS NULL",
+      name: "index_one_active_recovery_generation_per_vault"
+    add_check_constraint :recovery_generations, "ordinal >= 0",
+      name: "recovery_generations_ordinal"
+    add_check_constraint :recovery_generations,
+      "derivation_algorithm = 'kdf:hkdf-sha256:recovery-entropy:v1'",
+      name: "recovery_generations_derivation"
+    add_check_constraint :recovery_generations,
+      "wrapping_algorithm = 'wrap:xchacha20poly1305:recovery-kit:v1'",
+      name: "recovery_generations_wrapping"
+    add_check_constraint :recovery_generations,
+      "administrator_signing_algorithm = 'sign:ed25519:recovery-administrator:v1'",
+      name: "recovery_generations_signing"
+    add_check_constraint :recovery_generations, "octet_length(administrator_public_key) = 32",
+      name: "recovery_generations_public_key"
+    add_check_constraint :recovery_generations, "octet_length(kit_nonce) = 24",
+      name: "recovery_generations_nonce"
+    add_check_constraint :recovery_generations,
+      "kit_ciphertext IS NULL OR octet_length(kit_ciphertext) = kit_ciphertext_length",
+      name: "recovery_generations_ciphertext"
+    add_check_constraint :recovery_generations, "kit_ciphertext_length >= 16",
+      name: "recovery_generations_ciphertext_length"
+    add_check_constraint :recovery_generations, "octet_length(kit_ciphertext_sha256) = 32",
+      name: "recovery_generations_ciphertext_sha256"
+    add_check_constraint :recovery_generations,
+      "(retired_at IS NULL AND kit_ciphertext IS NOT NULL) OR retired_at IS NOT NULL",
+      name: "recovery_generations_retired_ciphertext"
+
+    create_table :vault_key_epochs, id: :uuid do |table|
+      table.references :vault_replica, null: false, type: :uuid, foreign_key: true
+      table.references :recovery_generation, null: false, type: :uuid, foreign_key: true
+      table.bigint :ordinal, null: false
+      table.datetime :activated_at, null: false
+      table.datetime :retired_at
+      table.timestamps
+    end
+    add_index :vault_key_epochs, [ :vault_replica_id, :ordinal ], unique: true
+    add_index :vault_key_epochs, :vault_replica_id, unique: true,
+      where: "retired_at IS NULL", name: "index_one_active_key_epoch_per_vault"
+    add_check_constraint :vault_key_epochs, "ordinal >= 0", name: "vault_key_epochs_ordinal"
+
+    create_table :vault_devices, id: :uuid, primary_key: :device_id do |table|
+      table.references :vault_replica, null: false, type: :uuid, foreign_key: true
+      table.references :recovery_generation, null: false, type: :uuid, foreign_key: true
+      table.uuid :certificate_id, null: false
+      table.string :display_name, null: false
+      table.string :client_kind, null: false
+      table.string :signing_algorithm, null: false
+      table.binary :signing_public_key, null: false
+      table.string :wrapping_algorithm, null: false
+      table.binary :wrapping_public_key, null: false
+      table.binary :certificate_cbor, null: false
+      table.binary :certificate_signature, null: false
+      table.datetime :enrolled_at, null: false
+      table.datetime :revoked_at
+      table.string :revocation_reason
+      table.timestamps
+    end
+    add_index :vault_devices, :certificate_id, unique: true
+    add_index :vault_devices, [ :vault_replica_id, :device_id ], unique: true
+    add_check_constraint :vault_devices,
+      "client_kind IN ('ChromeExtension', 'FirefoxExtension')",
+      name: "vault_devices_client_kind"
+    add_check_constraint :vault_devices, "signing_algorithm = 'sign:ed25519:device:v1'",
+      name: "vault_devices_signing_algorithm"
+    add_check_constraint :vault_devices, "octet_length(signing_public_key) = 32",
+      name: "vault_devices_signing_public_key"
+    add_check_constraint :vault_devices,
+      "wrapping_algorithm = 'wrap:x25519-hkdf-sha256-xchacha20poly1305:device:v1'",
+      name: "vault_devices_wrapping_algorithm"
+    add_check_constraint :vault_devices, "octet_length(wrapping_public_key) = 32",
+      name: "vault_devices_wrapping_public_key"
+    add_check_constraint :vault_devices, "octet_length(certificate_signature) = 64",
+      name: "vault_devices_certificate_signature"
+    add_check_constraint :vault_devices,
+      "(revoked_at IS NULL AND revocation_reason IS NULL) OR " \
+      "(revoked_at IS NOT NULL AND revocation_reason IN ('Removed', 'FutureProtection', 'VaultReencrypted'))",
+      name: "vault_devices_revocation"
+
+    create_table :device_key_envelopes, id: :uuid do |table|
+      table.references :vault_device, null: false, type: :uuid, foreign_key: {
+        to_table: :vault_devices, primary_key: :device_id
+      }
+      table.references :vault_key_epoch, null: false, type: :uuid,
+        foreign_key: { to_table: :vault_key_epochs }
+      table.references :recovery_generation, null: false, type: :uuid, foreign_key: true
+      table.string :algorithm, null: false
+      table.binary :ephemeral_public_key, null: false
+      table.binary :nonce, null: false
+      table.binary :ciphertext, null: false
+      table.binary :ciphertext_sha256, null: false
+      table.binary :signed_metadata, null: false
+      table.binary :administrator_signature, null: false
+      table.timestamps
+    end
+    add_index :device_key_envelopes, [ :vault_device_id, :vault_key_epoch_id ], unique: true,
+      name: "index_device_envelopes_on_device_and_epoch"
+    add_check_constraint :device_key_envelopes,
+      "algorithm = 'wrap:x25519-hkdf-sha256-xchacha20poly1305:device:v1'",
+      name: "device_key_envelopes_algorithm"
+    add_check_constraint :device_key_envelopes, "octet_length(ephemeral_public_key) = 32",
+      name: "device_key_envelopes_ephemeral_public_key"
+    add_check_constraint :device_key_envelopes, "octet_length(nonce) = 24",
+      name: "device_key_envelopes_nonce"
+    add_check_constraint :device_key_envelopes, "octet_length(ciphertext) = 48",
+      name: "device_key_envelopes_ciphertext"
+    add_check_constraint :device_key_envelopes, "octet_length(ciphertext_sha256) = 32",
+      name: "device_key_envelopes_ciphertext_sha256"
+    add_check_constraint :device_key_envelopes, "octet_length(administrator_signature) = 64",
+      name: "device_key_envelopes_administrator_signature"
+
+    add_foreign_key :api_sessions, :vault_devices, column: :vault_device_id,
+      primary_key: :device_id
+
     create_table :opaque_records, id: :uuid do |table|
       table.references :vault_replica, null: false, type: :uuid, foreign_key: true
+      table.references :vault_key_epoch, null: false, type: :uuid,
+        foreign_key: { to_table: :vault_key_epochs }
       table.uuid :object_id, null: false
       table.string :object_type, null: false
       table.bigint :byte_length, null: false
@@ -343,7 +458,8 @@ class CreateCoordinationSchema < ActiveRecord::Migration[8.1]
     add_check_constraint :purge_jobs,
       "stage IN ('Snapshot', 'Detach', 'Analyze', 'DeleteBytes', 'Tombstone', 'Complete')",
       name: "purge_jobs_stage"
-    add_check_constraint :purge_jobs, "reason IN ('Automatic', 'Manual')", name: "purge_jobs_reason"
+    add_check_constraint :purge_jobs,
+      "reason IN ('Automatic', 'Manual', 'VaultReplacement')", name: "purge_jobs_reason"
     add_check_constraint :purge_jobs,
       "generation_count >= 0 AND record_count >= 0 AND processed_bytes >= 0 AND " \
       "total_bytes >= 0 AND retry_count >= 0", name: "purge_jobs_counters"

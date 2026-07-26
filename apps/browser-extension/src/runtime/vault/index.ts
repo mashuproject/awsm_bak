@@ -9,6 +9,12 @@ export type {
 } from "./contracts";
 export { VaultServiceError, type VaultServiceErrorId } from "./errors";
 export {
+  importVaultKeyring,
+  importVaultRootKey,
+  type VaultEpochKey,
+  VaultKeyring,
+} from "./keyring";
+export {
   InvalidVaultNameError,
   normalizeVaultName,
   suggestVaultName,

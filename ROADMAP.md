@@ -35,6 +35,40 @@ remains disabled in the selected provider topology.
 
 ---
 
+## Executable OpenAPI Contract Generation
+
+**Status:** Candidate
+
+Replace separately maintained OpenAPI YAML with executable Rails API contract specifications as the
+authoritative source for exact HTTPS paths, methods, authentication scopes, request bodies,
+responses, headers, and stable outcomes. Generate
+`docs/specifications/protocol/http-api.openapi.yaml` deterministically from those specifications,
+commit the generated artifact, and prohibit manual edits to it. Prefer a permissively licensed,
+Rails 8.1-compatible RSpec generator such as RSwag after recording the exact version and license.
+Do not infer the contract merely by observing controller traffic: required fields, strict
+unknown-field rejection, UUID and byte-length formats, enums, Account versus VaultDevice
+authorization, security failures, and unexercised error responses must remain explicit executable
+declarations.
+
+Extract reusable Ruby schema definitions for common identifiers, authenticated sessions, Recovery
+Kits, Device certificates, Device key envelopes, encrypted Object metadata, and outcomes so
+operation specifications do not duplicate their shapes. Continue using Committee to validate real
+requests and responses against the generated artifact. Generate extension wire types and, where
+practical, its HTTP client boundary from that same artifact without allowing generated code to
+bypass Runtime validation or introduce a second domain model.
+
+The implementation plan must define a cold conversion that preserves the complete current
+contract while each endpoint moves to the executable source, then removes every hand-maintained
+schema fragment. Add deterministic generation, formatting, OpenAPI validation, Rails-route
+coverage, operation and response coverage, stale-artifact detection, and generated-client
+typechecking to local verification and CI. CI must fail when regeneration changes a tracked
+artifact, a Rails API route lacks a declared operation, a declared operation lacks contract
+evidence, or implementation behavior violates the generated contract. Keep prose specifications
+authoritative for transport-independent security and behavioral invariants, but remove duplicated
+JSON field inventories once the generated OpenAPI artifact owns those exact wire shapes.
+
+---
+
 ## Preserve-First Stale Replica Recovery
 
 **Status:** Candidate
@@ -172,29 +206,14 @@ Vacuum, server switching, and stale-Replica recovery before promotion.
 
 ---
 
-## Device Trust and Revocation
+## Alternative Account Authentication and Reset
 
 **Status:** Discovery
 
-Define cryptographic Device identities, signed requests, enrollment approval, per-Device Vault key
-wrapping, audit Events, capability restrictions, and revocation. Resolve the approval ceremony,
-offline authorization, lost or compromised Device behavior, key rotation, and how revocation
-interacts with synchronized history without giving the Coordination Server plaintext or unwrapped
-keys.
-
----
-
-## Account Credential Lifecycle and Recovery
-
-**Status:** Discovery
-
-Define password change, Account Recovery Keys, recovery Devices, and recovery after every enrolled
-browser is lost. Account recovery and Vault recovery must remain distinct, and no email,
-administrator, or server-side reset may gain access to plaintext Vault keys.
-
-Alternative authentication methods such as passkeys, WebAuthn, OAuth, or SSO require a separately
-approved contract. Resolve recovery ceremonies, key-envelope replacement, credential revocation,
-all-browser-loss guarantees, and proof that recovery does not weaken the zero-knowledge boundary.
+Define optional Account identity methods such as passkeys, WebAuthn, OAuth, or SSO, plus a
+server-side password-reset ceremony. Account reset must remain separate from Recovery Phrase-based
+Vault recovery: no email, administrator, identity provider, or Coordination Server reset may gain
+access to plaintext Vault keys or silently enroll a Device.
 
 ---
 

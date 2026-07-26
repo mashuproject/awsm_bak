@@ -18,7 +18,7 @@ import type {
   ServerSwitchJobV1,
   ServerSwitchStage,
 } from "./schema";
-import { STORES } from "./schema";
+import { DATABASE_NAME, STORES } from "./schema";
 
 function enumeration<T extends string>(value: unknown, allowed: readonly T[], field: string): T {
   if (typeof value !== "string" || !allowed.includes(value as T))
@@ -44,6 +44,7 @@ export function decodeServerSwitchJob(value: unknown): ServerSwitchJobV1 {
     "jobId",
     "sourceOrigin",
     "candidateOrigin",
+    "candidateRegistration",
     "vaultId",
     "state",
     "stage",
@@ -69,11 +70,37 @@ export function decodeServerSwitchJob(value: unknown): ServerSwitchJobV1 {
   ]);
   const optional = <T>(candidate: T | undefined, key: string): Record<string, T> =>
     candidate === undefined ? {} : { [key]: candidate };
+  const registration = canonicalRecord(
+    input.candidateRegistration,
+    "serverSwitchJob.candidateRegistration",
+    ["enabled", "signUpUrl"],
+  );
+  const candidateOrigin = httpUrl(input.candidateOrigin, "serverSwitchJob.candidateOrigin");
+  const candidateRegistration =
+    registration.enabled === false && registration.signUpUrl === undefined
+      ? ({ enabled: false } as const)
+      : registration.enabled === true && typeof registration.signUpUrl === "string"
+        ? ({
+            enabled: true,
+            signUpUrl: httpUrl(
+              registration.signUpUrl,
+              "serverSwitchJob.candidateRegistration.signUpUrl",
+            ),
+          } as const)
+        : undefined;
+  if (
+    candidateRegistration === undefined ||
+    (candidateRegistration.enabled &&
+      (new URL(candidateRegistration.signUpUrl).origin !== candidateOrigin ||
+        new URL(candidateRegistration.signUpUrl).pathname !== "/sign_up"))
+  )
+    throw new DomainValidationError("serverSwitchJob.candidateRegistration", "is invalid");
   return {
     version: literal(input.version, 1, "serverSwitchJob.version"),
     jobId: uuid(input.jobId, "serverSwitchJob.jobId"),
     sourceOrigin: httpUrl(input.sourceOrigin, "serverSwitchJob.sourceOrigin"),
-    candidateOrigin: httpUrl(input.candidateOrigin, "serverSwitchJob.candidateOrigin"),
+    candidateOrigin,
+    candidateRegistration,
     vaultId: uuid(input.vaultId, "serverSwitchJob.vaultId"),
     state: enumeration<ServerSwitchJobState>(
       input.state,
@@ -225,7 +252,7 @@ export function decodeServerSwitchCheckpoint(value: unknown): ServerSwitchCheckp
 export class IndexedDbServerSwitchRepository {
   private readonly databasePromise: Promise<IDBDatabase>;
 
-  constructor(databaseName = "awsm-vault") {
+  constructor(databaseName = DATABASE_NAME) {
     this.databasePromise = openDatabase(databaseName);
   }
 

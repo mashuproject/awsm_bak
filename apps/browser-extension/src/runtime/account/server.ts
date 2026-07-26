@@ -58,36 +58,70 @@ export interface ServerConfigurationHost {
   commit(configuration: AccountConfigurationV1): Promise<void>;
 }
 
-function compatibleInformation(value: unknown): boolean {
-  if (typeof value !== "object" || value === null) return false;
+export interface DiscoveredServer {
+  readonly serverOrigin: string;
+  readonly registration:
+    | { readonly enabled: false }
+    | { readonly enabled: true; readonly signUpUrl: string };
+}
+
+function compatibleInformation(
+  value: unknown,
+  serverOrigin: string,
+): DiscoveredServer["registration"] | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
   const body = value as Record<string, unknown>;
   if (
     Object.keys(body).toSorted().join("\n") !==
-      ["capabilities", "protocolVersion", "service"].toSorted().join("\n") ||
+      ["capabilities", "protocolVersion", "registration", "service"].toSorted().join("\n") ||
     body.service !== "AWSM Coordination Server" ||
     body.protocolVersion !== "1" ||
     typeof body.capabilities !== "object" ||
     body.capabilities === null
   )
-    return false;
+    return undefined;
   const capabilities = body.capabilities as Record<string, unknown>;
-  return (
-    Object.keys(capabilities).toSorted().join("\n") ===
-      ["accountPassword", "accountVaultLimit", "completeReplicaSynchronization"]
+  if (
+    Object.keys(capabilities).toSorted().join("\n") !==
+      [
+        "accountPassword",
+        "accountVaultLimit",
+        "completeReplicaSynchronization",
+        "deviceEnrollment",
+        "deviceRevocation",
+      ]
         .toSorted()
-        .join("\n") &&
-    capabilities.accountPassword === true &&
-    capabilities.accountVaultLimit === 1 &&
-    capabilities.completeReplicaSynchronization === true
-  );
+        .join("\n") ||
+    capabilities.accountPassword !== true ||
+    capabilities.accountVaultLimit !== 1 ||
+    capabilities.completeReplicaSynchronization !== true ||
+    capabilities.deviceEnrollment !== "RecoveryPhrase" ||
+    capabilities.deviceRevocation !== true ||
+    typeof body.registration !== "object" ||
+    body.registration === null
+  )
+    return undefined;
+  const registration = body.registration as Record<string, unknown>;
+  if (registration.enabled === false && Object.keys(registration).length === 1)
+    return { enabled: false };
+  if (
+    registration.enabled === true &&
+    Object.keys(registration).toSorted().join("\n") === ["enabled", "signUpUrl"].join("\n") &&
+    typeof registration.signUpUrl === "string"
+  ) {
+    const signUpUrl = new URL(registration.signUpUrl);
+    if (signUpUrl.origin === serverOrigin && signUpUrl.pathname === "/sign_up")
+      return { enabled: true, signUpUrl: signUpUrl.href };
+  }
+  return undefined;
 }
 
 export async function configureSyncServer(
   input: string,
   host: ServerConfigurationHost,
 ): Promise<AccountConfigurationV1> {
-  const serverOrigin = await validateSyncServer(input, host);
-  const configuration = { version: 1, mode: "Configured", serverOrigin } as const;
+  const discovered = await discoverSyncServer(input, host);
+  const configuration = { version: 1, mode: "Configured", ...discovered } as const;
   await host.commit(configuration);
   return configuration;
 }
@@ -95,7 +129,14 @@ export async function configureSyncServer(
 export async function validateSyncServer(
   input: string,
   host: Pick<ServerConfigurationHost, "requestPermission" | "probe">,
-): Promise<string> {
+): Promise<DiscoveredServer> {
+  return discoverSyncServer(input, host);
+}
+
+async function discoverSyncServer(
+  input: string,
+  host: Pick<ServerConfigurationHost, "requestPermission" | "probe">,
+): Promise<DiscoveredServer> {
   const serverOrigin = validateServerOrigin(input);
   let permissionGranted = false;
   try {
@@ -112,8 +153,9 @@ export async function validateSyncServer(
   } catch {
     throw new ServerSelectionError("SERVER_INCOMPATIBLE");
   }
-  if (response.redirected || response.status !== 200 || !compatibleInformation(response.body)) {
+  const registration = compatibleInformation(response.body, serverOrigin);
+  if (response.redirected || response.status !== 200 || registration === undefined) {
     throw new ServerSelectionError("SERVER_INCOMPATIBLE");
   }
-  return serverOrigin;
+  return { serverOrigin, registration };
 }

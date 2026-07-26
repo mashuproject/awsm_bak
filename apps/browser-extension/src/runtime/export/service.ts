@@ -97,7 +97,7 @@ export class VaultExportService {
     if (generation === undefined || generation.generationNumber !== head.generationNumber)
       throw new Error("Active Generation missing");
     const retained = await verifyVaultGeneration(
-      this.vault.requireRootKey(),
+      this.vault.requireKeyring(),
       this.vaultId,
       generation,
     );
@@ -201,7 +201,7 @@ export class VaultExportService {
     const manifestBytes = encodeCanonicalCbor(manifest);
     await verifyAuthoritativeVaultPackage({
       manifest,
-      rootKey: this.vault.requireRootKey(),
+      keyring: this.vault.requireKeyring(),
       read: async (path) => {
         if (path === "generation.cbor") return generationBytes;
         if (path === "head.cbor") return headBytes;

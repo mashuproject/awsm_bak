@@ -8,6 +8,7 @@ const object: StoredArtifactObjectV1 = {
   version: 1,
   objectId: "01900000-0000-7000-8000-000000000722",
   objectType: "Artifact",
+  keyEpochId: "00000000-0000-4000-8000-000000000009",
   envelopeFormat: "artifact:xchacha20poly1305-chunked:v1",
   envelopeByteLength: 10,
   envelopeChecksumAlgorithm: "hash:sha256:v1",

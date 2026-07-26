@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { encodeEncryptedEnvelope, encryptEnvelope } from "../../src/crypto/envelope";
 import type {
   SynchronizationCheckpointV1,
   SynchronizationJobV1,
@@ -50,6 +51,25 @@ describe("synchronization upload ordering", () => {
     };
     const descriptorId = crypto.randomUUID();
     const eventId = crypto.randomUUID();
+    const keyEpochId = crypto.randomUUID();
+    const descriptorEnvelope = encodeEncryptedEnvelope(
+      await encryptEnvelope({
+        objectType: "BundleDescriptor",
+        objectId: descriptorId,
+        keyEpochId,
+        plaintext: new Uint8Array([1, 2]),
+        key: new Uint8Array(32).fill(1),
+      }),
+    );
+    const eventEnvelope = encodeEncryptedEnvelope(
+      await encryptEnvelope({
+        objectType: "Event",
+        objectId: eventId,
+        keyEpochId,
+        plaintext: new Uint8Array([3, 4]),
+        key: new Uint8Array(32).fill(2),
+      }),
+    );
     const runner = new UploadRunner(
       {
         latestSynchronizationJob: async () => job,
@@ -63,12 +83,16 @@ describe("synchronization upload ordering", () => {
         },
       },
       {
+        getVaultHead: async () => ({
+          appendedObjectIds: [descriptorId],
+          appendedEventIds: [eventId],
+        }),
         listStoredObjects: async () => [
           {
             version: 1,
             objectId: descriptorId,
             objectType: "BundleDescriptor",
-            envelopeBytes: new Uint8Array([1, 2]),
+            envelopeBytes: descriptorEnvelope,
           },
         ],
         listStoredEvents: async () => [
@@ -78,7 +102,7 @@ describe("synchronization upload ordering", () => {
             eventId,
             referencedObjectIds: [descriptorId],
             orderingTimestamp: "2026-07-19T20:00:00.000Z",
-            envelopeBytes: new Uint8Array([3, 4]),
+            envelopeBytes: eventEnvelope,
           },
         ],
       },
@@ -143,11 +167,16 @@ describe("synchronization upload ordering", () => {
         },
       },
       {
+        getVaultHead: async () => ({
+          appendedObjectIds: [artifactId],
+          appendedEventIds: [],
+        }),
         listStoredObjects: async () => [
           {
             version: 1,
             objectId: artifactId,
             objectType: "Artifact",
+            keyEpochId: "00000000-0000-4000-8000-000000000009",
             envelopeFormat: "artifact:xchacha20poly1305-chunked:v1",
             envelopeByteLength: 2048,
             envelopeChecksumAlgorithm: "hash:sha256:v1",
@@ -191,5 +220,99 @@ describe("synchronization upload ordering", () => {
     expect(opened).toBe(0);
     expect(checkpoints.get(`Object:${artifactId}`)?.state).toBe("Durable");
     expect(job.stage).toBe("FetchChanges");
+  });
+
+  it("blocks every pending old-epoch record before an upload request", async () => {
+    const vaultId = crypto.randomUUID();
+    const oldEpochId = crypto.randomUUID();
+    const activeEpochId = crypto.randomUUID();
+    const durableObjectId = crypto.randomUUID();
+    const pendingEventId = crypto.randomUUID();
+    const envelope = async (objectType: "BundleDescriptor" | "Event", objectId: string) =>
+      encodeEncryptedEnvelope(
+        await encryptEnvelope({
+          objectType,
+          objectId,
+          keyEpochId: oldEpochId,
+          plaintext: new Uint8Array([1]),
+          key: new Uint8Array(32).fill(1),
+        }),
+      );
+    const objectEnvelope = await envelope("BundleDescriptor", durableObjectId);
+    const eventEnvelope = await envelope("Event", pendingEventId);
+    const job: SynchronizationJobV1 = {
+      version: 1,
+      jobId: crypto.randomUUID(),
+      accountId: crypto.randomUUID(),
+      vaultId,
+      generationId: crypto.randomUUID(),
+      generationNumber: 1,
+      state: "Running",
+      stage: "UploadObjects",
+      createdAt: "2026-07-25T20:00:00.000Z",
+      updatedAt: "2026-07-25T20:00:00.000Z",
+      snapshotCursor: 1,
+      completedItems: 0,
+      totalItems: 2,
+      processedBytes: 0,
+      totalBytes: 2,
+      retryCount: 0,
+      attachIdempotencyKey: crypto.randomUUID(),
+    };
+    const request = vi.fn();
+    const runner = new UploadRunner(
+      {
+        latestSynchronizationJob: async () => job,
+        saveSynchronizationJob: async () => undefined,
+        synchronizationCheckpoint: async (_vaultId, kind, entityId) =>
+          kind === "Object" && entityId === durableObjectId
+            ? {
+                version: 1,
+                vaultId,
+                entityId,
+                kind,
+                state: "Durable",
+                createIdempotencyKey: crypto.randomUUID(),
+                completeIdempotencyKey: crypto.randomUUID(),
+                receivedParts: [],
+              }
+            : undefined,
+        saveSynchronizationCheckpoint: async () => undefined,
+      },
+      {
+        getVaultHead: async () => ({
+          appendedObjectIds: [durableObjectId],
+          appendedEventIds: [pendingEventId],
+        }),
+        listStoredObjects: async () => [
+          {
+            version: 1,
+            objectId: durableObjectId,
+            objectType: "BundleDescriptor",
+            envelopeBytes: objectEnvelope,
+          },
+        ],
+        listStoredEvents: async () => [
+          {
+            version: 1,
+            vaultId,
+            eventId: pendingEventId,
+            referencedObjectIds: [],
+            orderingTimestamp: "2026-07-25T20:00:00.000Z",
+            envelopeBytes: eventEnvelope,
+          },
+        ],
+      },
+      { openEncrypted: vi.fn() },
+      { request, putTransfer: vi.fn() },
+    );
+
+    await expect(runner.assertPendingUploadsUseEpoch(activeEpochId)).rejects.toMatchObject({
+      id: "KEY_EPOCH_CHANGED",
+    });
+    await expect(
+      runner.assertPendingUploadsUseEpoch(activeEpochId, new Set([pendingEventId])),
+    ).resolves.toBeUndefined();
+    expect(request).not.toHaveBeenCalled();
   });
 });

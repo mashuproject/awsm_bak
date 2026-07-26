@@ -1,16 +1,12 @@
+require "digest"
+
 module AccountHelpers
   def account_attributes(email: nil)
     sequence = SecureRandom.uuid
     {
       email: email || "reader-#{sequence}@example.test",
-      authentication_secret: "test-authentication-secret-#{sequence}",
-      account_key_id: SecureRandom.uuid,
-      kdf_salt: SecureRandom.random_bytes(16),
-      kdf_operations: Account::KDF_OPERATIONS,
-      kdf_memory_bytes: Account::KDF_MEMORY_BYTES,
-      key_envelope_algorithm: Account::KEY_ENVELOPE_ALGORITHM,
-      key_envelope_nonce: SecureRandom.random_bytes(24),
-      key_envelope_ciphertext: SecureRandom.random_bytes(48)
+      password: "test password #{sequence}",
+      password_confirmation: "test password #{sequence}"
     }
   end
 
@@ -19,12 +15,61 @@ module AccountHelpers
   end
 
   def vault_slot_attributes(account:, vault_id:)
-    {
-      account_slot_id: SecureRandom.uuid,
-      account_key_id: account.account_key_id,
-      account_slot_algorithm: Account::VAULT_SLOT_ALGORITHM,
-      account_slot_nonce: SecureRandom.random_bytes(24),
-      account_slot_ciphertext: SecureRandom.random_bytes(48)
-    }
+    {}
+  end
+
+  def create_vault_device_principal(account:, vault:)
+    Coordination::AccountAuthenticator
+    recovery = vault.recovery_generations.first || begin
+      ciphertext = SecureRandom.random_bytes(32)
+      vault.recovery_generations.create!(
+        id: SecureRandom.uuid,
+        ordinal: 0,
+        derivation_algorithm: RecoveryGeneration::DERIVATION_ALGORITHM,
+        wrapping_algorithm: RecoveryGeneration::WRAPPING_ALGORITHM,
+        administrator_signing_algorithm: RecoveryGeneration::SIGNING_ALGORITHM,
+        administrator_public_key: SecureRandom.random_bytes(32),
+        kit_nonce: SecureRandom.random_bytes(24),
+        kit_ciphertext: ciphertext,
+        kit_ciphertext_length: ciphertext.bytesize,
+        kit_ciphertext_sha256: Digest::SHA256.digest(ciphertext),
+        activated_at: Time.current
+      )
+    end
+    epoch = vault.vault_key_epochs.first || vault.vault_key_epochs.create!(
+      id: SecureRandom.uuid,
+      recovery_generation: recovery,
+      ordinal: 0,
+      activated_at: Time.current
+    )
+    device = vault.vault_devices.first || vault.vault_devices.create!(
+      device_id: SecureRandom.uuid,
+      recovery_generation: recovery,
+      certificate_id: SecureRandom.uuid,
+      display_name: "Test Device",
+      client_kind: "FirefoxExtension",
+      signing_algorithm: "sign:ed25519:device:v1",
+      signing_public_key: SecureRandom.random_bytes(32),
+      wrapping_algorithm: "wrap:x25519-hkdf-sha256-xchacha20poly1305:device:v1",
+      wrapping_public_key: SecureRandom.random_bytes(32),
+      certificate_cbor: "certificate",
+      certificate_signature: SecureRandom.random_bytes(64),
+      enrolled_at: Time.current
+    )
+    vault.update!(
+      active_recovery_generation_id: recovery.id,
+      active_key_epoch_id: epoch.id
+    )
+    session = Coordination::SessionCredentials.issue(
+      account:,
+      scope: "VaultDevice",
+      vault_device_id: device.device_id
+    ).fetch(:session)
+    Coordination::AccountPrincipal.new(
+      account:,
+      confirmed_at: session.confirmed_at,
+      session:,
+      scope: "VaultDevice"
+    )
   end
 end

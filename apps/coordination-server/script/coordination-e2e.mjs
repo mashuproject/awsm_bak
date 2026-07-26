@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
+import { createInitialVaultAuthority } from "./plan15-proof-authority.mjs";
 
 const baseUrl = process.env.AWSM_COORDINATION_E2E_BASE_URL;
 const cableUrl = process.env.AWSM_COORDINATION_E2E_CABLE_URL;
@@ -70,13 +71,14 @@ async function putPart(url, bytes) {
   assert.equal(response.status, 204);
 }
 
-async function uploadEvent(vaultId, generationId, objectId, bytes) {
+async function uploadEvent(vaultId, generationId, keyEpochId, objectId, bytes) {
   const started = await request(
     "POST",
     `/api/vaults/${vaultId}/uploads`,
     {
       objectId,
       objectType: "Event",
+      keyEpochId,
       byteLength: bytes.byteLength,
       sha256: sha256(bytes),
       targetGenerationId: generationId,
@@ -187,58 +189,29 @@ async function waitForMessage(messages, cursor, timeout = 15_000) {
   throw new Error(`Timed out waiting for Cable cursor ${cursor}`);
 }
 
-const authenticationSecret = randomBytes(32).toString("base64url");
-const accountKeyId = randomUUID();
-const signup = await request(
-  "POST",
-  "/api/accounts",
-  {
-    email: `resilience-${randomUUID()}@example.test`,
-    authenticationSecret,
-    accountKeyEnvelope: {
-      version: 1,
-      accountKeyId,
-      kdfAlgorithm: "kdf:argon2id13:account:v1",
-      kdfSalt: randomBytes(16).toString("base64url"),
-      kdfOperations: 3,
-      kdfMemoryBytes: 67_108_864,
-      wrappingAlgorithm: "wrap:xchacha20poly1305:account-password:v1",
-      nonce: randomBytes(24).toString("base64url"),
-      ciphertext: randomBytes(48).toString("base64url"),
-    },
-  },
-  { idempotencyKey: randomUUID(), expected: [201] },
-);
-credential = signup.accessToken;
-
-const vaultId = randomUUID();
-const generationId = randomUUID();
+const email = `resilience-${randomUUID()}@example.test`;
+const password = `coordination proof ${randomUUID()}`;
+const signupResponse = await fetch(`${baseUrl}/sign_up`, {
+  method: "POST",
+  headers: { "Content-Type": "application/x-www-form-urlencoded" },
+  body: new URLSearchParams({
+    "account[email]": email,
+    "account[password]": password,
+    "account[password_confirmation]": password,
+  }),
+  redirect: "manual",
+});
+assert.equal(signupResponse.status, 302);
+const login = await request("POST", "/api/sessions", { email, password });
+credential = login.accessToken;
 const generationBytes = Buffer.from("opaque-resilience-generation");
-const attached = await request(
-  "POST",
-  "/api/vaults",
-  {
-    vaultId,
-    generationId,
-    generationNumber: 0,
-    accountSlot: {
-      version: 1,
-      slotId: randomUUID(),
-      vaultId,
-      accountKeyId,
-      algorithm: "wrap:xchacha20poly1305:account:v1",
-      nonce: randomBytes(24).toString("base64url"),
-      ciphertext: randomBytes(48).toString("base64url"),
-    },
-    generationObject: {
-      objectId: generationId,
-      objectType: "VaultGeneration",
-      byteLength: generationBytes.byteLength,
-      sha256: sha256(generationBytes),
-    },
-  },
-  { idempotencyKey: randomUUID(), expected: [201] },
-);
+const authority = createInitialVaultAuthority(login.sessionId, generationBytes);
+const { vaultId, generationId, keyEpochId } = authority;
+const attached = await request("POST", "/api/vaults", authority.body, {
+  idempotencyKey: randomUUID(),
+  expected: [201],
+});
+credential = attached.session.accessToken;
 await putPart(attached.ticket.url, generationBytes);
 await request(
   "POST",
@@ -269,6 +242,7 @@ const outageEventId = randomUUID();
 await uploadEvent(
   vaultId,
   generationId,
+  keyEpochId,
   outageEventId,
   Buffer.from("opaque-event-during-redis-outage"),
 );
@@ -292,6 +266,7 @@ const recoveryEventId = randomUUID();
 await uploadEvent(
   vaultId,
   generationId,
+  keyEpochId,
   recoveryEventId,
   Buffer.from("opaque-event-after-redis-recovery"),
 );

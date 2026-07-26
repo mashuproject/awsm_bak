@@ -26,51 +26,6 @@ paths:
                 $ref: "#/components/schemas/ServerInformation"
         default:
           $ref: "#/components/responses/Outcome"
-  /api/authentication-parameters:
-    post:
-      operationId: getAuthenticationParameters
-      security: []
-      parameters:
-        - $ref: "#/components/parameters/ProtocolVersion"
-        - $ref: "#/components/parameters/RequestId"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/AuthenticationParametersRequest"
-      responses:
-        "200":
-          description: Canonical public password derivation parameters
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AuthenticationParameters"
-        default:
-          $ref: "#/components/responses/Outcome"
-  /api/accounts:
-    post:
-      operationId: createAccount
-      security: []
-      parameters:
-        - $ref: "#/components/parameters/ProtocolVersion"
-        - $ref: "#/components/parameters/RequestId"
-        - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreateAccountRequest"
-      responses:
-        "201":
-          description: Account and initial authenticated session
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AuthenticatedSession"
-        default:
-          $ref: "#/components/responses/Outcome"
   /api/sessions:
     post:
       operationId: createSession
@@ -197,6 +152,63 @@ paths:
                 $ref: "#/components/schemas/AttachVaultResponse"
         default:
           $ref: "#/components/responses/Outcome"
+  /api/account/vault-enrollment:
+    get:
+      operationId: getAccountVaultEnrollment
+      parameters:
+        - $ref: "#/components/parameters/ProtocolVersion"
+        - $ref: "#/components/parameters/RequestId"
+      responses:
+        "200":
+          description: Account enrollment state and active encrypted Recovery Kit
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountVaultEnrollment"
+        default:
+          $ref: "#/components/responses/Outcome"
+  /api/device-session-challenges:
+    post:
+      operationId: createDeviceSessionChallenge
+      parameters:
+        - $ref: "#/components/parameters/ProtocolVersion"
+        - $ref: "#/components/parameters/RequestId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeviceSessionChallengeRequest"
+      responses:
+        "201":
+          description: One-use Device authentication challenge
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeviceSessionChallenge"
+        default:
+          $ref: "#/components/responses/Outcome"
+  /api/device-sessions:
+    post:
+      operationId: createDeviceSession
+      parameters:
+        - $ref: "#/components/parameters/ProtocolVersion"
+        - $ref: "#/components/parameters/RequestId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateDeviceSessionRequest"
+      responses:
+        "200":
+          description: VaultDevice-scoped API session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthenticatedSession"
+        default:
+          $ref: "#/components/responses/Outcome"
   /api/vaults/{vaultId}:
     parameters:
       - $ref: "#/components/parameters/VaultId"
@@ -234,6 +246,148 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Vault"
+        default:
+          $ref: "#/components/responses/Outcome"
+  /api/vaults/{vaultId}/devices:
+    parameters:
+      - $ref: "#/components/parameters/VaultId"
+      - $ref: "#/components/parameters/ProtocolVersion"
+      - $ref: "#/components/parameters/RequestId"
+    get:
+      operationId: listVaultDevices
+      responses:
+        "200":
+          description: Public Device certificate facts for the bound Vault
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VaultDeviceList"
+        default:
+          $ref: "#/components/responses/Outcome"
+    post:
+      operationId: enrollVaultDevice
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EnrollVaultDeviceRequest"
+      responses:
+        "201":
+          description: Certified Device enrollment and VaultDevice-scoped API session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthenticatedSession"
+        default:
+          $ref: "#/components/responses/Outcome"
+  /api/vaults/{vaultId}/devices/{deviceId}:
+    parameters:
+      - $ref: "#/components/parameters/VaultId"
+      - name: deviceId
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/Uuid"
+      - $ref: "#/components/parameters/ProtocolVersion"
+      - $ref: "#/components/parameters/RequestId"
+    delete:
+      operationId: removeVaultDevice
+      responses:
+        "204":
+          description: Device authority removed
+        default:
+          $ref: "#/components/responses/Outcome"
+  /api/vaults/{vaultId}/device-authority:
+    parameters:
+      - $ref: "#/components/parameters/VaultId"
+      - $ref: "#/components/parameters/ProtocolVersion"
+      - $ref: "#/components/parameters/RequestId"
+    get:
+      operationId: getCurrentVaultDeviceAuthority
+      responses:
+        "200":
+          description: Current certificate and active-epoch envelope for the authenticated Device
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrentVaultDeviceAuthority"
+        default:
+          $ref: "#/components/responses/Outcome"
+  /api/vaults/{vaultId}/future-protections:
+    parameters:
+      - $ref: "#/components/parameters/VaultId"
+      - $ref: "#/components/parameters/ProtocolVersion"
+      - $ref: "#/components/parameters/RequestId"
+      - $ref: "#/components/parameters/IdempotencyKey"
+    post:
+      operationId: protectFutureVaultContent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FutureProtectionRequest"
+      responses:
+        "200":
+          description: Vault authority after atomic recovery-generation and key-epoch rotation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Vault"
+        default:
+          $ref: "#/components/responses/Outcome"
+  /api/vaults/{vaultId}/replacement-candidates:
+    parameters:
+      - $ref: "#/components/parameters/VaultId"
+      - $ref: "#/components/parameters/ProtocolVersion"
+      - $ref: "#/components/parameters/RequestId"
+      - $ref: "#/components/parameters/IdempotencyKey"
+    post:
+      operationId: createVaultReplacementCandidate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateVaultReplacementRequest"
+      responses:
+        "201":
+          description: Provisional cryptographically independent replacement Vault
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttachVaultResponse"
+        default:
+          $ref: "#/components/responses/Outcome"
+  /api/vaults/{vaultId}/replacement-candidates/{replacementVaultId}/activate:
+    parameters:
+      - $ref: "#/components/parameters/VaultId"
+      - name: replacementVaultId
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/Uuid"
+      - $ref: "#/components/parameters/ProtocolVersion"
+      - $ref: "#/components/parameters/RequestId"
+      - $ref: "#/components/parameters/IdempotencyKey"
+    post:
+      operationId: activateVaultReplacement
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ActivateVaultReplacementRequest"
+      responses:
+        "202":
+          description: Replacement activated and source purge scheduled without a Recovery Snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VaultReplacementActivation"
         default:
           $ref: "#/components/responses/Outcome"
   /api/vaults/{vaultId}/uploads:
@@ -796,7 +950,7 @@ components:
     ServerInformation:
       type: object
       additionalProperties: false
-      required: [service, protocolVersion, capabilities]
+      required: [service, protocolVersion, capabilities, registration]
       properties:
         service:
           type: string
@@ -808,7 +962,13 @@ components:
           type: object
           additionalProperties: false
           required:
-            [accountPassword, accountVaultLimit, completeReplicaSynchronization]
+            [
+              accountPassword,
+              accountVaultLimit,
+              completeReplicaSynchronization,
+              deviceEnrollment,
+              deviceRevocation,
+            ]
           properties:
             accountPassword:
               type: boolean
@@ -819,6 +979,31 @@ components:
             completeReplicaSynchronization:
               type: boolean
               enum: [true]
+            deviceEnrollment:
+              type: string
+              enum: [RecoveryPhrase]
+            deviceRevocation:
+              type: boolean
+              enum: [true]
+        registration:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [enabled, signUpUrl]
+              properties:
+                enabled:
+                  type: boolean
+                  enum: [true]
+                signUpUrl:
+                  type: string
+                  format: uri
+            - type: object
+              additionalProperties: false
+              required: [enabled]
+              properties:
+                enabled:
+                  type: boolean
+                  enum: [false]
     Email:
       type: string
       minLength: 3
@@ -833,82 +1018,25 @@ components:
     Base64Url24:
       type: string
       pattern: "^[A-Za-z0-9_-]{32}$"
-    AccountKeyEnvelope:
-      type: object
-      additionalProperties: false
-      required:
-        - version
-        - accountKeyId
-        - kdfAlgorithm
-        - kdfSalt
-        - kdfOperations
-        - kdfMemoryBytes
-        - wrappingAlgorithm
-        - nonce
-        - ciphertext
-      properties:
-        version:
-          type: integer
-          enum: [1]
-        accountKeyId:
-          $ref: "#/components/schemas/Uuid"
-        kdfAlgorithm:
-          type: string
-          enum: ["kdf:argon2id13:account:v1"]
-        kdfSalt:
-          $ref: "#/components/schemas/Base64Url16"
-        kdfOperations:
-          type: integer
-          enum: [3]
-        kdfMemoryBytes:
-          type: integer
-          enum: [67108864]
-        wrappingAlgorithm:
-          type: string
-          enum: ["wrap:xchacha20poly1305:account-password:v1"]
-        nonce:
-          $ref: "#/components/schemas/Base64Url24"
-        ciphertext:
-          type: string
-          minLength: 64
-          pattern: "^[A-Za-z0-9_-]+$"
+    Base64Url48:
+      type: string
+      pattern: "^[A-Za-z0-9_-]{64}$"
+    Base64Url64:
+      type: string
+      pattern: "^[A-Za-z0-9_-]{86}$"
+    Base64UrlBytes:
+      type: string
+      minLength: 1
+      pattern: "^[A-Za-z0-9_-]+$"
     AccountSummary:
       type: object
       additionalProperties: false
-      required: [accountId, email, accountKeyEnvelope]
+      required: [accountId, email]
       properties:
         accountId:
           $ref: "#/components/schemas/Uuid"
         email:
           $ref: "#/components/schemas/Email"
-        accountKeyEnvelope:
-          $ref: "#/components/schemas/AccountKeyEnvelope"
-    AuthenticationParametersRequest:
-      type: object
-      additionalProperties: false
-      required: [email]
-      properties:
-        email:
-          $ref: "#/components/schemas/Email"
-    AuthenticationParameters:
-      type: object
-      additionalProperties: false
-      required:
-        [accountKeyId, kdfAlgorithm, kdfSalt, kdfOperations, kdfMemoryBytes]
-      properties:
-        accountKeyId:
-          $ref: "#/components/schemas/Uuid"
-        kdfAlgorithm:
-          type: string
-          enum: ["kdf:argon2id13:account:v1"]
-        kdfSalt:
-          $ref: "#/components/schemas/Base64Url16"
-        kdfOperations:
-          type: integer
-          enum: [3]
-        kdfMemoryBytes:
-          type: integer
-          enum: [67108864]
     CableTicket:
       type: object
       additionalProperties: false
@@ -920,26 +1048,17 @@ components:
         expiresAt:
           type: string
           format: date-time
-    CreateAccountRequest:
-      type: object
-      additionalProperties: false
-      required: [email, authenticationSecret, accountKeyEnvelope]
-      properties:
-        email:
-          $ref: "#/components/schemas/Email"
-        authenticationSecret:
-          $ref: "#/components/schemas/Base64Url32"
-        accountKeyEnvelope:
-          $ref: "#/components/schemas/AccountKeyEnvelope"
     CreateSessionRequest:
       type: object
       additionalProperties: false
-      required: [email, authenticationSecret]
+      required: [email, password]
       properties:
         email:
           $ref: "#/components/schemas/Email"
-        authenticationSecret:
-          $ref: "#/components/schemas/Base64Url32"
+        password:
+          type: string
+          minLength: 1
+          maxLength: 72
     RefreshSessionRequest:
       type: object
       additionalProperties: false
@@ -955,6 +1074,7 @@ components:
       required:
         - account
         - sessionId
+        - scope
         - accessToken
         - accessExpiresAt
         - refreshToken
@@ -964,6 +1084,9 @@ components:
           $ref: "#/components/schemas/AccountSummary"
         sessionId:
           $ref: "#/components/schemas/Uuid"
+        scope:
+          type: string
+          enum: [Account, VaultDevice]
         accessToken:
           type: string
           minLength: 80
@@ -999,12 +1122,14 @@ components:
     ObjectMetadata:
       type: object
       additionalProperties: false
-      required: [objectId, objectType, byteLength, sha256]
+      required: [objectId, objectType, keyEpochId, byteLength, sha256]
       properties:
         objectId:
           $ref: "#/components/schemas/Uuid"
         objectType:
           $ref: "#/components/schemas/ObjectType"
+        keyEpochId:
+          $ref: "#/components/schemas/Uuid"
         byteLength:
           $ref: "#/components/schemas/PositiveByteLength"
         sha256:
@@ -1026,7 +1151,17 @@ components:
       type: object
       additionalProperties: false
       required:
-        [vaultId, generationId, generationNumber, accountSlot, generationObject]
+        [
+          vaultId,
+          generationId,
+          generationNumber,
+          generationObject,
+          recoveryGeneration,
+          keyEpoch,
+          deviceCertificate,
+          deviceKeyEnvelope,
+          deviceProofSignature,
+        ]
       properties:
         vaultId:
           $ref: "#/components/schemas/Uuid"
@@ -1034,14 +1169,74 @@ components:
           $ref: "#/components/schemas/Uuid"
         generationNumber:
           $ref: "#/components/schemas/Counter"
-        accountSlot:
-          $ref: "#/components/schemas/AccountSlot"
         generationObject:
           $ref: "#/components/schemas/ObjectMetadata"
+        recoveryGeneration:
+          $ref: "#/components/schemas/RecoveryKit"
+        keyEpoch:
+          $ref: "#/components/schemas/InitialKeyEpoch"
+        deviceCertificate:
+          $ref: "#/components/schemas/DeviceCertificate"
+        deviceKeyEnvelope:
+          $ref: "#/components/schemas/DeviceKeyEnvelope"
+        deviceProofSignature:
+          $ref: "#/components/schemas/Base64Url64"
+    AccountVaultEnrollment:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [state]
+          properties:
+            state:
+              type: string
+              enum: [Empty]
+        - type: object
+          additionalProperties: false
+          required: [state, vaultId, recoveryKit]
+          properties:
+            state:
+              type: string
+              enum: [Attached]
+            vaultId:
+              $ref: "#/components/schemas/Uuid"
+            recoveryKit:
+              $ref: "#/components/schemas/RecoveryKit"
+    DeviceSessionChallengeRequest:
+      type: object
+      additionalProperties: false
+      required: [vaultId, deviceId]
+      properties:
+        vaultId:
+          $ref: "#/components/schemas/Uuid"
+        deviceId:
+          $ref: "#/components/schemas/Uuid"
+    DeviceSessionChallenge:
+      type: object
+      additionalProperties: false
+      required: [challenge, expiresAt]
+      properties:
+        challenge:
+          $ref: "#/components/schemas/Base64Url32"
+        expiresAt:
+          type: string
+          format: date-time
+    CreateDeviceSessionRequest:
+      type: object
+      additionalProperties: false
+      required: [vaultId, deviceId, challenge, signature]
+      properties:
+        vaultId:
+          $ref: "#/components/schemas/Uuid"
+        deviceId:
+          $ref: "#/components/schemas/Uuid"
+        challenge:
+          $ref: "#/components/schemas/Base64Url32"
+        signature:
+          $ref: "#/components/schemas/Base64Url64"
     AttachVaultResponse:
       type: object
       additionalProperties: false
-      required: [vault, upload, ticket]
+      required: [vault, upload, ticket, session]
       properties:
         vault:
           $ref: "#/components/schemas/Vault"
@@ -1049,6 +1244,83 @@ components:
           $ref: "#/components/schemas/Upload"
         ticket:
           $ref: "#/components/schemas/TransferTicket"
+        session:
+          $ref: "#/components/schemas/AuthenticatedSession"
+    CreateVaultReplacementRequest:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          accountSessionId,
+          expectedSourceGenerationId,
+          expectedSourceGenerationNumber,
+          expectedSourceHeadCursor,
+          replacement,
+        ]
+      properties:
+        accountSessionId:
+          $ref: "#/components/schemas/Uuid"
+        expectedSourceGenerationId:
+          $ref: "#/components/schemas/Uuid"
+        expectedSourceGenerationNumber:
+          $ref: "#/components/schemas/Counter"
+        expectedSourceHeadCursor:
+          $ref: "#/components/schemas/Counter"
+        replacement:
+          $ref: "#/components/schemas/AttachVaultRequest"
+    ActivateVaultReplacementRequest:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          expectedSourceGenerationId,
+          expectedSourceGenerationNumber,
+          expectedSourceHeadCursor,
+          replacementGenerationId,
+          replacementGenerationNumber,
+        ]
+      properties:
+        expectedSourceGenerationId:
+          $ref: "#/components/schemas/Uuid"
+        expectedSourceGenerationNumber:
+          $ref: "#/components/schemas/Counter"
+        expectedSourceHeadCursor:
+          $ref: "#/components/schemas/Counter"
+        replacementGenerationId:
+          $ref: "#/components/schemas/Uuid"
+        replacementGenerationNumber:
+          $ref: "#/components/schemas/Counter"
+    VaultReplacementPurge:
+      type: object
+      additionalProperties: false
+      required: [purgeId, state, stage, processedBytes, totalBytes]
+      properties:
+        purgeId:
+          $ref: "#/components/schemas/Uuid"
+        state:
+          type: string
+          enum: [Pending, Running, Succeeded, FailedRetryable]
+        stage:
+          type: string
+          enum: [Detach, Analyze, DeleteBytes, Tombstone, Complete]
+        processedBytes:
+          $ref: "#/components/schemas/Counter"
+        totalBytes:
+          $ref: "#/components/schemas/Counter"
+    VaultReplacementActivation:
+      type: object
+      additionalProperties: false
+      required: [sourceVaultId, sourceState, vault, purge]
+      properties:
+        sourceVaultId:
+          $ref: "#/components/schemas/Uuid"
+        sourceState:
+          type: string
+          enum: [Replaced]
+        vault:
+          $ref: "#/components/schemas/Vault"
+        purge:
+          $ref: "#/components/schemas/VaultReplacementPurge"
     CompleteVaultRequest:
       type: object
       additionalProperties: false
@@ -1066,16 +1338,14 @@ components:
           generationId,
           generationNumber,
           headCursor,
-          accountSlot,
+          activeKeyEpochId,
         ]
       properties:
         vaultId:
           $ref: "#/components/schemas/Uuid"
-        accountSlot:
-          $ref: "#/components/schemas/AccountSlot"
         state:
           type: string
-          enum: [Provisional, Active]
+          enum: [Provisional, Active, Replaced]
         generationId:
           $ref: "#/components/schemas/Uuid"
         generationNumber:
@@ -1084,6 +1354,8 @@ components:
           $ref: "#/components/schemas/Uuid"
         headCursor:
           $ref: "#/components/schemas/Counter"
+        activeKeyEpochId:
+          $ref: "#/components/schemas/Uuid"
     VaultList:
       type: object
       additionalProperties: false
@@ -1094,30 +1366,221 @@ components:
           maxItems: 1
           items:
             $ref: "#/components/schemas/Vault"
-    AccountSlot:
+    RecoveryKit:
       type: object
       additionalProperties: false
       required:
-        [version, slotId, vaultId, accountKeyId, algorithm, nonce, ciphertext]
+        [
+          version,
+          vaultId,
+          recoveryGenerationId,
+          derivationAlgorithm,
+          wrappingAlgorithm,
+          administratorSigningAlgorithm,
+          administratorPublicKey,
+          nonce,
+          ciphertextLength,
+          ciphertextSha256,
+          ciphertext,
+        ]
       properties:
         version:
           type: integer
           enum: [1]
-        slotId:
-          $ref: "#/components/schemas/Uuid"
         vaultId:
           $ref: "#/components/schemas/Uuid"
-        accountKeyId:
+        recoveryGenerationId:
           $ref: "#/components/schemas/Uuid"
-        algorithm:
+        derivationAlgorithm:
           type: string
-          enum: ["wrap:xchacha20poly1305:account:v1"]
+          enum: ["kdf:hkdf-sha256:recovery-entropy:v1"]
+        wrappingAlgorithm:
+          type: string
+          enum: ["wrap:xchacha20poly1305:recovery-kit:v1"]
+        administratorSigningAlgorithm:
+          type: string
+          enum: ["sign:ed25519:recovery-administrator:v1"]
+        administratorPublicKey:
+          $ref: "#/components/schemas/Base64Url32"
         nonce:
           $ref: "#/components/schemas/Base64Url24"
+        ciphertextLength:
+          $ref: "#/components/schemas/PositiveByteLength"
+        ciphertextSha256:
+          $ref: "#/components/schemas/Sha256"
         ciphertext:
+          $ref: "#/components/schemas/Base64UrlBytes"
+    InitialKeyEpoch:
+      type: object
+      additionalProperties: false
+      required: [keyEpochId, ordinal]
+      properties:
+        keyEpochId:
+          $ref: "#/components/schemas/Uuid"
+        ordinal:
+          type: integer
+          enum: [0]
+    NextKeyEpoch:
+      type: object
+      additionalProperties: false
+      required: [keyEpochId, ordinal]
+      properties:
+        keyEpochId:
+          $ref: "#/components/schemas/Uuid"
+        ordinal:
+          type: integer
+          minimum: 1
+    DeviceCertificate:
+      type: object
+      additionalProperties: false
+      required: [content, recoveryAdministratorPublicKey, signature]
+      properties:
+        content:
+          $ref: "#/components/schemas/Base64UrlBytes"
+        recoveryAdministratorPublicKey:
+          $ref: "#/components/schemas/Base64Url32"
+        signature:
+          $ref: "#/components/schemas/Base64Url64"
+    DeviceKeyEnvelope:
+      type: object
+      additionalProperties: false
+      required: [metadata, ciphertext, ciphertextSha256, administratorSignature]
+      properties:
+        metadata:
+          $ref: "#/components/schemas/Base64UrlBytes"
+        ciphertext:
+          $ref: "#/components/schemas/Base64Url48"
+        ciphertextSha256:
+          $ref: "#/components/schemas/Sha256"
+        administratorSignature:
+          $ref: "#/components/schemas/Base64Url64"
+    EnrollVaultDeviceRequest:
+      type: object
+      additionalProperties: false
+      required: [deviceCertificate, deviceKeyEnvelopes, deviceProofSignature]
+      properties:
+        deviceCertificate:
+          $ref: "#/components/schemas/DeviceCertificate"
+        deviceKeyEnvelopes:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/DeviceKeyEnvelope"
+        deviceProofSignature:
+          $ref: "#/components/schemas/Base64Url64"
+    FutureProtectionDevice:
+      type: object
+      additionalProperties: false
+      required: [deviceCertificate, deviceKeyEnvelope]
+      properties:
+        deviceCertificate:
+          $ref: "#/components/schemas/DeviceCertificate"
+        deviceKeyEnvelope:
+          $ref: "#/components/schemas/DeviceKeyEnvelope"
+    FutureProtectionRequest:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          expectedRecoveryGenerationId,
+          expectedKeyEpochId,
+          targetDeviceId,
+          recoveryGeneration,
+          keyEpoch,
+          remainingDevices,
+        ]
+      properties:
+        expectedRecoveryGenerationId:
+          $ref: "#/components/schemas/Uuid"
+        expectedKeyEpochId:
+          $ref: "#/components/schemas/Uuid"
+        targetDeviceId:
+          $ref: "#/components/schemas/Uuid"
+        recoveryGeneration:
+          $ref: "#/components/schemas/RecoveryKit"
+        keyEpoch:
+          $ref: "#/components/schemas/NextKeyEpoch"
+        remainingDevices:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/FutureProtectionDevice"
+    CurrentVaultDeviceAuthority:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          vaultId,
+          activeRecoveryGenerationId,
+          activeKeyEpochId,
+          keyEpochOrdinal,
+          deviceCertificate,
+          deviceKeyEnvelope,
+        ]
+      properties:
+        vaultId:
+          $ref: "#/components/schemas/Uuid"
+        activeRecoveryGenerationId:
+          $ref: "#/components/schemas/Uuid"
+        activeKeyEpochId:
+          $ref: "#/components/schemas/Uuid"
+        keyEpochOrdinal:
+          type: integer
+          minimum: 0
+        deviceCertificate:
+          $ref: "#/components/schemas/DeviceCertificate"
+        deviceKeyEnvelope:
+          $ref: "#/components/schemas/DeviceKeyEnvelope"
+    VaultDeviceList:
+      type: object
+      additionalProperties: false
+      required: [devices]
+      properties:
+        devices:
+          type: array
+          items:
+            $ref: "#/components/schemas/VaultDevice"
+    VaultDevice:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          deviceId,
+          certificateId,
+          displayName,
+          clientKind,
+          recoveryGenerationId,
+          deviceCertificate,
+          enrolledAt,
+          current,
+        ]
+      properties:
+        deviceId:
+          $ref: "#/components/schemas/Uuid"
+        certificateId:
+          $ref: "#/components/schemas/Uuid"
+        displayName:
           type: string
-          minLength: 64
-          pattern: "^[A-Za-z0-9_-]+$"
+          minLength: 1
+          maxLength: 64
+        clientKind:
+          type: string
+          enum: [ChromeExtension, FirefoxExtension]
+        recoveryGenerationId:
+          $ref: "#/components/schemas/Uuid"
+        deviceCertificate:
+          $ref: "#/components/schemas/DeviceCertificate"
+        enrolledAt:
+          type: string
+          format: date-time
+        revokedAt:
+          type: string
+          format: date-time
+        revocationReason:
+          type: string
+          enum: [Removed, FutureProtection, VaultReencrypted]
+        current:
+          type: boolean
     CreateUploadRequest:
       allOf:
         - $ref: "#/components/schemas/ObjectMetadata"
@@ -1506,15 +1969,19 @@ components:
             - ACCOUNT_UNAVAILABLE
             - ACCOUNT_INPUT_INVALID
             - RECENT_AUTHENTICATION_REQUIRED
-            - AUTHORIZATION_DENIED
+            - AUTHORIZATION_FAILED
             - PROTOCOL_VERSION_UNSUPPORTED
             - REQUEST_INVALID
             - IDEMPOTENCY_CONFLICT
+            - ACCOUNT_VAULT_LIMIT
             - VAULT_ID_UNAVAILABLE
-            - VAULT_ACCOUNT_LIMIT_REACHED
-            - VAULT_IDENTITY_MISMATCH
             - VAULT_NOT_FOUND
             - VAULT_NOT_READY
+            - RECOVERY_GENERATION_CHANGED
+            - KEY_EPOCH_CHANGED
+            - DEVICE_REVOKED
+            - DEVICE_ENROLLMENT_INVALID
+            - VAULT_REPLACEMENT_CONFLICT
             - OBJECT_ID_CONFLICT
             - OBJECT_NOT_DURABLE
             - OBJECT_NOT_ACTIVE

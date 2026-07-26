@@ -38,6 +38,7 @@ export type KeyDomain =
 
 export interface ContextDescriptor {
   readonly vaultId: string;
+  readonly keyEpochId: string;
   readonly domain: KeyDomain;
   readonly contextId: string;
   readonly keyVersion: 1;
@@ -52,9 +53,21 @@ export function encodeDerivationContext(input: ContextDescriptor): {
   readonly info: Uint8Array;
 } {
   return {
-    salt: encodeCanonicalCbor(["awsm:hkdf-salt:v1", input.vaultId, 1]),
+    salt: encodeCanonicalCbor([
+      "awsm:hkdf-salt:v1",
+      uuidBytes(input.vaultId),
+      uuidBytes(input.keyEpochId),
+    ]),
     info: encodeCanonicalCbor([input.domain, input.keyVersion, input.contextId]),
   };
+}
+
+function uuidBytes(value: string): Uint8Array {
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(value))
+    throw new TypeError("Invalid key derivation UUID");
+  return Uint8Array.from(value.replaceAll("-", "").match(/../gu) ?? [], (byte) =>
+    Number.parseInt(byte, 16),
+  );
 }
 
 export async function deriveContextKey(input: ContextKeyInput): Promise<Uint8Array> {

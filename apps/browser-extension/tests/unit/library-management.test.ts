@@ -10,6 +10,7 @@ import {
   planCollectionMerge,
   prepareCollectionOperation,
 } from "../../src/runtime/library/management";
+import { TEST_KEY_EPOCH_ID, testKeyring } from "../helpers/keyring";
 
 const id = (suffix: number): string =>
   `00000000-0000-4000-8000-${String(suffix).padStart(12, "0")}`;
@@ -163,7 +164,7 @@ describe("Library Collection management planning", () => {
       destination.assignedCollectionId,
     );
     const prepared = await prepareCollectionOperation({
-      rootKey,
+      keyring: testKeyring(rootKey),
       vaultId: id(90),
       deviceId: id(91),
       eventId: id(92),
@@ -177,18 +178,22 @@ describe("Library Collection management planning", () => {
 
     const eventKey = await deriveContextKeyFromCryptoKey(rootKey, {
       vaultId: id(90),
+      keyEpochId: TEST_KEY_EPOCH_ID,
       domain: "vault:event:v1",
       contextId: id(92),
       keyVersion: 1,
     });
     await expect(
-      decryptEnvelope(decodeEncryptedEnvelopeBytes(prepared.event.envelopeBytes), eventKey).then(
-        decodeCanonicalCbor,
-      ),
+      decryptEnvelope(
+        decodeEncryptedEnvelopeBytes(prepared.event.envelopeBytes),
+        eventKey,
+        TEST_KEY_EPOCH_ID,
+      ).then(decodeCanonicalCbor),
     ).resolves.toMatchObject({ eventType: "CapturesMoved", moves });
 
     const projectionKey = await deriveContextKeyFromCryptoKey(rootKey, {
       vaultId: id(90),
+      keyEpochId: TEST_KEY_EPOCH_ID,
       domain: "vault:projection:v1",
       contextId: `LibraryItem-v1:${source.bundleId}`,
       keyVersion: 1,
@@ -197,6 +202,7 @@ describe("Library Collection management planning", () => {
       decryptEnvelope(
         decodeEncryptedEnvelopeBytes(prepared.projections[0]?.envelopeBytes ?? new Uint8Array()),
         projectionKey,
+        TEST_KEY_EPOCH_ID,
       ).then(decodeCanonicalCbor),
     ).resolves.toMatchObject({ assignedCollectionId: id(30) });
   });
@@ -212,7 +218,7 @@ describe("Library Collection management planning", () => {
     const captures = [item(1, 20), item(2, 21)];
     const mergeEvent = planCollectionMerge(captures, [], id(20), [id(21)], id(40));
     const prepared = await prepareCollectionOperation({
-      rootKey,
+      keyring: testKeyring(rootKey),
       vaultId: id(90),
       deviceId: id(91),
       eventId: mergeEvent.eventId,
@@ -226,6 +232,7 @@ describe("Library Collection management planning", () => {
 
     const key = await deriveContextKeyFromCryptoKey(rootKey, {
       vaultId: id(90),
+      keyEpochId: TEST_KEY_EPOCH_ID,
       domain: "vault:projection:v1",
       contextId: `LibraryCollections-v1:${id(90)}`,
       keyVersion: 1,
@@ -236,6 +243,7 @@ describe("Library Collection management planning", () => {
           prepared.collectionProjection?.envelopeBytes ?? new Uint8Array(),
         ),
         key,
+        TEST_KEY_EPOCH_ID,
       ).then(decodeCanonicalCbor),
     ).resolves.toMatchObject({
       version: 1,

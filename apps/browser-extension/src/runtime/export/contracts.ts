@@ -278,6 +278,14 @@ export function decodeExportKeyEnvelope(encoded: Uint8Array): ExportKeyEnvelopeV
       "exportKeyEnvelope.manifestChecksumAlgorithm",
     ),
     manifestChecksum: bytes(input.manifestChecksum, 32, "exportKeyEnvelope.manifestChecksum"),
-    ciphertext: bytes(input.ciphertext, 48, "exportKeyEnvelope.ciphertext"),
+    ciphertext:
+      input.ciphertext instanceof Uint8Array && input.ciphertext.byteLength > 16
+        ? Uint8Array.from(input.ciphertext)
+        : (() => {
+            throw new DomainValidationError(
+              "exportKeyEnvelope.ciphertext",
+              "must contain an encrypted Vault keyring",
+            );
+          })(),
   };
 }

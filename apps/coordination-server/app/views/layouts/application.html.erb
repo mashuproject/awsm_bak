@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
   <head>
-    <title><%= content_for(:title) || "Coordination Server" %></title>
+    <title><%= content_for(:title) || "AWSM Account" %></title>
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="application-name" content="Coordination Server">
@@ -24,6 +24,10 @@
   </head>
 
   <body>
-    <%= yield %>
+    <main class="account-shell">
+      <% if notice.present? %><p class="flash success" role="status"><%= notice %></p><% end %>
+      <% if alert.present? %><p class="flash error" role="alert"><%= alert %></p><% end %>
+      <%= yield %>
+    </main>
   </body>
 </html>

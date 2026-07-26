@@ -18,6 +18,7 @@ import type {
 import type { ArtifactStore } from "../artifact";
 import { decodeBundleRegisteredPayload } from "../capture/contracts";
 import { prepareVaultGeneration, verifyVaultGeneration } from "../vault/generation";
+import type { VaultKeyring } from "../vault/keyring";
 import { decodeVaultNameEvent, decryptVaultNameProjection } from "../vault/name-crypto";
 import { reduceVaultNameProjection, type VaultNameEventV1 } from "../vault/name-projection";
 import type { LibraryService } from "./service";
@@ -108,21 +109,26 @@ export function assertCanonicalEventFields(
 
 async function eventPayload(
   event: StoredEvent,
-  rootKey: CryptoKey,
+  keyring: VaultKeyring,
   vaultId: string,
 ): Promise<Record<string, unknown>> {
-  const key = await deriveContextKeyFromCryptoKey(rootKey, {
+  const envelope = decodeEncryptedEnvelopeBytes(event.envelopeBytes);
+  const epoch = keyring.require(envelope.keyEpochId);
+  const key = await deriveContextKeyFromCryptoKey(epoch.rootKey, {
     vaultId,
+    keyEpochId: epoch.keyEpochId,
     domain: "vault:event:v1",
     contextId: event.eventId,
     keyVersion: 1,
   });
   try {
-    const envelope = decodeEncryptedEnvelopeBytes(event.envelopeBytes);
     if (envelope.objectId !== event.eventId || envelope.objectType !== "Event") {
       throw new Error("Event envelope mismatch");
     }
-    return record(decodeCanonicalCbor(await decryptEnvelope(envelope, key)), "event");
+    return record(
+      decodeCanonicalCbor(await decryptEnvelope(envelope, key, epoch.keyEpochId)),
+      "event",
+    );
   } finally {
     await wipe(key);
   }
@@ -131,12 +137,12 @@ async function eventPayload(
 export async function objectIdsForBundles(
   events: readonly StoredEvent[],
   bundleIds: ReadonlySet<string>,
-  rootKey: CryptoKey,
+  keyring: VaultKeyring,
   vaultId: string,
 ): Promise<ReadonlySet<string>> {
   const objectIds = new Set<string>();
   for (const event of events) {
-    const payload = await eventPayload(event, rootKey, vaultId);
+    const payload = await eventPayload(event, keyring, vaultId);
     if (payload.eventType !== "BundleRegistered") continue;
     const registration = decodeBundleRegisteredPayload(payload, event.referencedObjectIds);
     if (bundleIds.has(registration.bundleId))
@@ -156,12 +162,14 @@ async function rewrittenEvent(
   payload: Record<string, unknown>,
   bundleIds: readonly string[],
   objectId: string,
-  rootKey: CryptoKey,
+  keyring: VaultKeyring,
   vaultId: string,
 ): Promise<StoredEvent> {
   const eventId = crypto.randomUUID();
-  const key = await deriveContextKeyFromCryptoKey(rootKey, {
+  const epoch = keyring.active();
+  const key = await deriveContextKeyFromCryptoKey(epoch.rootKey, {
     vaultId,
+    keyEpochId: epoch.keyEpochId,
     domain: "vault:event:v1",
     contextId: eventId,
     keyVersion: 1,
@@ -177,6 +185,7 @@ async function rewrittenEvent(
         await encryptEnvelope({
           objectType: "Event",
           objectId: eventId,
+          keyEpochId: epoch.keyEpochId,
           plaintext: encodeCanonicalCbor({
             ...payload,
             bundleIds: [...bundleIds].toSorted(),
@@ -196,12 +205,14 @@ async function rewrittenMoveEvent(
   payload: Record<string, unknown>,
   moves: readonly Record<string, string>[],
   objectId: string,
-  rootKey: CryptoKey,
+  keyring: VaultKeyring,
   vaultId: string,
 ): Promise<StoredEvent> {
   const eventId = crypto.randomUUID();
-  const key = await deriveContextKeyFromCryptoKey(rootKey, {
+  const epoch = keyring.active();
+  const key = await deriveContextKeyFromCryptoKey(epoch.rootKey, {
     vaultId,
+    keyEpochId: epoch.keyEpochId,
     domain: "vault:event:v1",
     contextId: eventId,
     keyVersion: 1,
@@ -217,6 +228,7 @@ async function rewrittenMoveEvent(
         await encryptEnvelope({
           objectType: "Event",
           objectId: eventId,
+          keyEpochId: epoch.keyEpochId,
           plaintext: encodeCanonicalCbor({
             ...payload,
             moves,
@@ -235,12 +247,14 @@ async function rewrittenManagementEvent(
   source: StoredEvent,
   payload: Record<string, unknown>,
   objectId: string,
-  rootKey: CryptoKey,
+  keyring: VaultKeyring,
   vaultId: string,
 ): Promise<StoredEvent> {
   const eventId = crypto.randomUUID();
-  const key = await deriveContextKeyFromCryptoKey(rootKey, {
+  const epoch = keyring.active();
+  const key = await deriveContextKeyFromCryptoKey(epoch.rootKey, {
     vaultId,
+    keyEpochId: epoch.keyEpochId,
     domain: "vault:event:v1",
     contextId: eventId,
     keyVersion: 1,
@@ -256,6 +270,7 @@ async function rewrittenManagementEvent(
         await encryptEnvelope({
           objectType: "Event",
           objectId: eventId,
+          keyEpochId: epoch.keyEpochId,
           plaintext: encodeCanonicalCbor({
             ...payload,
             rewrite: { version: 1, sourceEventId: source.eventId },
@@ -273,7 +288,7 @@ export class VaultVacuumService {
   constructor(
     readonly repository: VacuumRepository,
     readonly library: LibraryService,
-    readonly rootKey: CryptoKey,
+    readonly keyring: VaultKeyring,
     readonly vaultId: string,
     readonly deviceId: string,
     readonly artifactStore: ArtifactStore,
@@ -303,7 +318,7 @@ export class VaultVacuumService {
     const sourceGeneration = await this.repository.getVaultGeneration(currentHead.generationId);
     if (sourceGeneration === undefined) throw new Error("The active Vault Generation is missing.");
     const sourceManifest = await verifyVaultGeneration(
-      this.rootKey,
+      this.keyring,
       this.vaultId,
       sourceGeneration,
     );
@@ -367,11 +382,11 @@ export class VaultVacuumService {
         left.eventId.localeCompare(right.eventId),
     );
     for (const event of orderedEvents) {
-      const payload = await eventPayload(event, this.rootKey, this.vaultId);
+      const payload = await eventPayload(event, this.keyring, this.vaultId);
       const eventType = string(payload.eventType, "event.eventType");
       assertCanonicalEventFields(payload, eventType);
       if (eventType === "VaultCreated" || eventType === "VaultRenamed") {
-        vaultNameEvents.push(await decodeVaultNameEvent(this.rootKey, event));
+        vaultNameEvents.push(await decodeVaultNameEvent(this.keyring, event));
         continue;
       }
       if (eventType === "BundleRegistered") {
@@ -406,7 +421,7 @@ export class VaultVacuumService {
             payload,
             retainedIds,
             first.descriptorObjectId,
-            this.rootKey,
+            this.keyring,
             this.vaultId,
           );
           eventsToAdd.push(rewritten);
@@ -443,7 +458,7 @@ export class VaultVacuumService {
             payload,
             retainedMoves,
             first.descriptorObjectId,
-            this.rootKey,
+            this.keyring,
             this.vaultId,
           );
           eventsToAdd.push(rewritten);
@@ -471,7 +486,7 @@ export class VaultVacuumService {
             event,
             payload,
             anchor.descriptorObjectId,
-            this.rootKey,
+            this.keyring,
             this.vaultId,
           );
           eventsToAdd.push(rewritten);
@@ -501,7 +516,7 @@ export class VaultVacuumService {
               mergeEventId: rewrittenMergeEventId ?? mergeEventId,
             },
             anchor.descriptorObjectId,
-            this.rootKey,
+            this.keyring,
             this.vaultId,
           );
           eventsToAdd.push(rewritten);
@@ -522,7 +537,7 @@ export class VaultVacuumService {
     const rebuiltVaultName = reduceVaultNameProjection(vaultNameEvents);
     const storedVaultName = await this.repository.getVaultNameProjection();
     if (storedVaultName === undefined) throw new Error("The Vault Name Projection is missing.");
-    const materializedVaultName = await decryptVaultNameProjection(this.rootKey, storedVaultName);
+    const materializedVaultName = await decryptVaultNameProjection(this.keyring, storedVaultName);
     if (
       materializedVaultName.vaultId !== rebuiltVaultName.vaultId ||
       materializedVaultName.name !== rebuiltVaultName.name ||
@@ -547,9 +562,11 @@ export class VaultVacuumService {
       .concat(eventsToAdd.map((event) => event.eventId))
       .toSorted();
     await this.repository.updateVacuumStage(jobId, "Rewrite");
+    const activeEpoch = this.keyring.active();
     const { generation, head } = await prepareVaultGeneration({
-      rootKey: this.rootKey,
+      rootKey: activeEpoch.rootKey,
       vaultId: this.vaultId,
+      keyEpochId: activeEpoch.keyEpochId,
       deviceId: this.deviceId,
       generationId,
       generationNumber,
@@ -560,7 +577,7 @@ export class VaultVacuumService {
       retainedEventIds,
     });
     await this.repository.updateVacuumStage(jobId, "Verify");
-    await verifyVaultGeneration(this.rootKey, this.vaultId, generation);
+    await verifyVaultGeneration(this.keyring, this.vaultId, generation);
     const deletedArtifacts = objects.filter(
       (object) => object.objectType === "Artifact" && deletedObjectIds.has(object.objectId),
     );

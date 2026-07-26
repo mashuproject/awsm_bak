@@ -12,6 +12,7 @@ import { xchachaDecrypt, xchachaEncrypt } from "../../src/crypto/xchacha";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
+const keyEpochId = "00000000-0000-4000-8000-000000000009";
 
 function fromHex(hex: string): Uint8Array {
   const bytes = new Uint8Array(hex.length / 2);
@@ -46,6 +47,7 @@ describe("cryptographic contracts", () => {
     const common = {
       rootKey,
       vaultId: "00000000-0000-4000-8000-000000000001",
+      keyEpochId,
       contextId: "00000000-0000-4000-8000-000000000002",
       keyVersion: 1,
     } as const;
@@ -97,16 +99,18 @@ describe("cryptographic contracts", () => {
     const envelope = await encryptEnvelope({
       objectType: "BundleDescriptor",
       objectId: "00000000-0000-4000-8000-000000000003",
+      keyEpochId,
       plaintext,
       key,
       nonce: new Uint8Array(24).fill(4),
     });
 
-    expect(await decryptEnvelope(envelope, key)).toEqual(plaintext);
+    expect(await decryptEnvelope(envelope, key, keyEpochId)).toEqual(plaintext);
 
     const mutations = [
       { ...envelope, objectType: "Event" as const },
       { ...envelope, objectId: "00000000-0000-4000-8000-000000000004" },
+      { ...envelope, keyEpochId: "00000000-0000-4000-8000-000000000008" },
       { ...envelope, payloadLength: envelope.payloadLength + 1 },
       { ...envelope, nonce: envelope.nonce.map((byte, index) => (index === 0 ? byte ^ 1 : byte)) },
       {
@@ -116,7 +120,7 @@ describe("cryptographic contracts", () => {
     ];
 
     for (const mutation of mutations) {
-      await expect(decryptEnvelope(mutation, key)).rejects.toMatchObject({
+      await expect(decryptEnvelope(mutation, key, keyEpochId)).rejects.toMatchObject({
         id: "CRYPTO_AUTHENTICATION_FAILED",
       });
     }
@@ -127,6 +131,7 @@ describe("cryptographic contracts", () => {
     const envelope = await encryptEnvelope({
       objectType: "Projection",
       objectId: "00000000-0000-4000-8000-000000000005",
+      keyEpochId,
       plaintext,
       key: new Uint8Array(32).fill(5),
       nonce: new Uint8Array(24).fill(6),

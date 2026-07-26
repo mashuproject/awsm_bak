@@ -8,9 +8,9 @@ module Coordination
     REFRESH_LIFETIME = 30.days
 
     class << self
-      def issue(account:, confirmed_at: Time.current)
-        AccountSession.transaction do
-          session = account.account_sessions.create!(confirmed_at:)
+      def issue(account:, scope: "Account", vault_device_id: nil, confirmed_at: Time.current)
+        ApiSession.transaction do
+          session = account.api_sessions.create!(scope:, vault_device_id:, confirmed_at:)
           tokens_for(session)
         end
       end
@@ -21,11 +21,11 @@ module Coordination
         SessionCredential.transaction do
           credential.lock!
           unless credential.usable?(at: now) && secure_equal?(credential.secret_digest, digest(secret))
-            credential.account_session.revoke!(at: now) if credential.consumed_at.present?
+            credential.api_session.revoke!(at: now) if credential.consumed_at.present?
             raise OutcomeError.new("AUTHENTICATION_FAILED", status: :unauthorized)
           end
           credential.update!(consumed_at: now)
-          tokens_for(credential.account_session, now:)
+          tokens_for(credential.api_session, now:)
         end
       rescue ActiveRecord::RecordNotFound
         raise OutcomeError.new("AUTHENTICATION_FAILED", status: :unauthorized)
@@ -36,7 +36,7 @@ module Coordination
         unless credential.usable? && secure_equal?(credential.secret_digest, digest(secret))
           raise OutcomeError.new("AUTHENTICATION_FAILED", status: :unauthorized)
         end
-        credential.account_session
+        credential.api_session
       rescue ActiveRecord::RecordNotFound
         raise OutcomeError.new("AUTHENTICATION_FAILED", status: :unauthorized)
       end
@@ -64,7 +64,7 @@ module Coordination
       def find(token, kind:)
         id, secret = token.to_s.split(".", 2)
         raise ActiveRecord::RecordNotFound if id.blank? || secret.blank?
-        [ SessionCredential.includes(:account_session).find_by!(id:, kind:), secret ]
+        [ SessionCredential.includes(:api_session).find_by!(id:, kind:), secret ]
       end
 
       def digest(secret)

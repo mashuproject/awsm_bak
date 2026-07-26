@@ -43,9 +43,7 @@ module Api
     private
 
     def account_vault!
-      current_account.vault_replicas.find_by!(vault_id: params[:vault_id])
-    rescue ActiveRecord::RecordNotFound
-      raise Coordination::OutcomeError.new("VAULT_NOT_FOUND", status: :not_found)
+      bound_vault!
     end
 
     def recovery!

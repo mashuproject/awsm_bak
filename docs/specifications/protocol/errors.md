@@ -194,6 +194,12 @@ Future codes MAY be introduced.
 
 `VAULT_GENERATION_SUPERSEDED` is stable. It means the submitted authoritative work names a generation that is no longer active. The client MUST NOT retry that history against the new generation as an automatic merge.
 
+For a fenced change read, the response identifies the current opaque Generation and Delivery
+Cursor. A stale client MUST atomically quarantine its local Replica against that authority before
+offering explicit recovery. It MAY read current Vault authority to obtain the authenticated
+predecessor identifier required to verify the encrypted Generation, but MUST NOT activate the
+server Replica locally until the explicit recovery ceremony commits.
+
 ---
 
 # 12. Diagnostics

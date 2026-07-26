@@ -4,7 +4,13 @@ require "rack/mock"
 RSpec.describe ApplicationCable::Connection do
   it "consumes a one-use ticket and erases it from every retained request URL surface" do
     account = create_account
-    raw_ticket, = Coordination::CableTickets.issue(account)
+    vault = account.vault_replicas.create!(
+      vault_id: SecureRandom.uuid,
+      state: "Active",
+      head_cursor: 0
+    )
+    principal = create_vault_device_principal(account:, vault:)
+    raw_ticket, = Coordination::CableTickets.issue(principal)
     request = ActionDispatch::Request.new(Rack::MockRequest.env_for("/cable?ticket=#{raw_ticket}"))
     connection = described_class.allocate
     allow(connection).to receive(:request).and_return(request)

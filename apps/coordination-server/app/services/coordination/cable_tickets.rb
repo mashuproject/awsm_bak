@@ -18,11 +18,21 @@ module Coordination
     end
     private_constant :CollisionBudgetExhausted
 
-    def issue(account)
+    def issue(principal)
+      session = principal.session
+      unless principal.scope == "VaultDevice" &&
+          session&.vault_device&.active?
+        invalid!
+      end
+      authority = JSON.generate(
+        "accountId" => principal.account.id,
+        "sessionId" => session.id,
+        "deviceId" => session.vault_device_id
+      )
       ATTEMPTS.times do
         raw_ticket = ProtocolEncoding.encode_base64url(SecureRandom.random_bytes(32))
         stored = EphemeralCoordination.with_redis do |redis|
-          redis.set(EphemeralCoordination.ticket_key(raw_ticket), account.id, nx: true, ex: 60)
+          redis.set(EphemeralCoordination.ticket_key(raw_ticket), authority, nx: true, ex: 60)
         end
         return [ raw_ticket, LIFETIME.from_now ] if stored
       end
@@ -43,13 +53,24 @@ module Coordination
       decoded = ProtocolEncoding.decode_base64url(ticket, bytes: 32)
       invalid! unless ProtocolEncoding.encode_base64url(decoded) == ticket
 
-      account_id = EphemeralCoordination.with_redis do |redis|
+      encoded_authority = EphemeralCoordination.with_redis do |redis|
         redis.getdel(EphemeralCoordination.ticket_key(ticket))
       end
-      invalid! unless account_id&.match?(ACCOUNT_ID_PATTERN)
+      authority = JSON.parse(encoded_authority.to_s)
+      invalid! unless authority.is_a?(Hash) &&
+        authority.keys.sort == %w[accountId deviceId sessionId].sort &&
+        authority.values.all? { |value| value.is_a?(String) && value.match?(ACCOUNT_ID_PATTERN) }
+      session = ApiSession.includes(:account, :vault_device).find_by(
+        id: authority.fetch("sessionId"),
+        account_id: authority.fetch("accountId"),
+        vault_device_id: authority.fetch("deviceId"),
+        scope: "VaultDevice",
+        revoked_at: nil
+      )
+      invalid! unless session&.vault_device&.active?
 
-      Account.find_by(id: account_id) || invalid!
-    rescue ArgumentError
+      session.account
+    rescue ArgumentError, JSON::ParserError
       invalid!
     rescue Redis::BaseError
       report(EphemeralCoordination.unavailable_error, operation: "consume")

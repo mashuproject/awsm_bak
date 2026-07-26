@@ -1,3 +1,4 @@
+import { decodeEncryptedEnvelopeBytes } from "../../crypto/envelope";
 import type { StoredEvent, StoredObjectV1 } from "../../drivers/indexeddb/schema";
 import { bytesToBase64Url } from "../account/wire";
 import { noRuntimeFaultCheckpoint, type RuntimeFaultCheckpoint } from "../fault-checkpoint";
@@ -60,6 +61,7 @@ export class SynchronizedVacuumActivator {
     await this.faultCheckpoint.reach("vacuum:before-candidate");
     await this.journal?.persistCandidate(candidate);
     const generationBytes = candidate.generation.envelopeBytes;
+    const generationEnvelope = decodeEncryptedEnvelopeBytes(generationBytes);
     const created = object(
       (
         await this.transport.request(
@@ -73,6 +75,7 @@ export class SynchronizedVacuumActivator {
             generationObject: {
               objectId: candidate.generation.generationId,
               objectType: "VaultGeneration",
+              keyEpochId: generationEnvelope.keyEpochId,
               byteLength: generationBytes.byteLength,
               sha256: await checksum(generationBytes),
             },
@@ -152,6 +155,7 @@ export class SynchronizedVacuumActivator {
   }
 
   private async uploadEvent(generationId: string, event: StoredEvent): Promise<void> {
+    const envelope = decodeEncryptedEnvelopeBytes(event.envelopeBytes);
     const response = object(
       (
         await this.transport.request(
@@ -160,6 +164,7 @@ export class SynchronizedVacuumActivator {
           {
             objectId: event.eventId,
             objectType: "Event",
+            keyEpochId: envelope.keyEpochId,
             byteLength: event.envelopeBytes.byteLength,
             sha256: await checksum(event.envelopeBytes),
             targetGenerationId: generationId,

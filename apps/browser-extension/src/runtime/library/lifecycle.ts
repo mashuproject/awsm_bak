@@ -4,9 +4,10 @@ import { wipe } from "../../crypto/sodium";
 import { encodeCanonicalCbor } from "../../domain/cbor";
 import type { LibraryItemV1 } from "../../domain/contracts";
 import type { StoredEvent, StoredProjectionV1 } from "../../drivers/indexeddb/schema";
+import type { VaultKeyring } from "../vault/keyring";
 
 export interface PrepareLibraryStateChangeInput {
-  readonly rootKey: CryptoKey;
+  readonly keyring: VaultKeyring;
   readonly vaultId: string;
   readonly deviceId: string;
   readonly eventId: string;
@@ -44,14 +45,24 @@ async function encryptBytes(
   objectId: string,
   plaintext: Uint8Array,
 ): Promise<Uint8Array> {
-  const key = await deriveContextKeyFromCryptoKey(input.rootKey, {
+  const epoch = input.keyring.active();
+  const key = await deriveContextKeyFromCryptoKey(epoch.rootKey, {
     vaultId: input.vaultId,
+    keyEpochId: epoch.keyEpochId,
     domain,
     contextId,
     keyVersion: 1,
   });
   try {
-    return encodeEncryptedEnvelope(await encryptEnvelope({ objectType, objectId, plaintext, key }));
+    return encodeEncryptedEnvelope(
+      await encryptEnvelope({
+        objectType,
+        objectId,
+        keyEpochId: epoch.keyEpochId,
+        plaintext,
+        key,
+      }),
+    );
   } finally {
     await wipe(key);
   }

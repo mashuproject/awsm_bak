@@ -33,6 +33,7 @@ export interface StorageReliefArtifactStore {
 
 export interface StorageReliefRemoteRecord {
   readonly objectType: "VaultGeneration" | "Artifact" | "BundleDescriptor" | "Event";
+  readonly keyEpochId: string;
   readonly byteLength: number;
   readonly sha256: Uint8Array;
   readonly dependencyObjectIds?: readonly string[];
@@ -84,6 +85,7 @@ export function artifactObject(checkpoint: StorageReliefCheckpointV1): StoredArt
     version: 1,
     objectId: checkpoint.artifactObjectId,
     objectType: "Artifact",
+    keyEpochId: checkpoint.keyEpochId,
     envelopeFormat: "artifact:xchacha20poly1305-chunked:v1",
     envelopeByteLength: checkpoint.envelopeByteLength,
     envelopeChecksumAlgorithm: "hash:sha256:v1",
@@ -113,6 +115,7 @@ export function storageReliefSkipReason(
   if (remote === undefined) return "NotRemoteMember";
   if (
     remote.objectType !== "Artifact" ||
+    remote.keyEpochId !== checkpoint.keyEpochId ||
     remote.byteLength !== checkpoint.envelopeByteLength ||
     !bytesEqual(remote.sha256, checkpoint.envelopeChecksum)
   )

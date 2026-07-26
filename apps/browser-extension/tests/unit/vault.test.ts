@@ -82,7 +82,7 @@ describe("Vault lifecycle", () => {
     expect(repository.requireRecords).toThrow();
     expect(prepared.records.metadata.createdAt).toBe(createdAt);
     expect(prepared.records.head.vaultId).toBe(prepared.records.metadata.vaultId);
-    expect(prepared.rootKey.extractable).toBe(false);
+    expect(prepared.keyring.active().rootKey.extractable).toBe(false);
     expect(service.isUnlocked()).toBe(false);
   });
 

@@ -7,6 +7,7 @@ import {
 import { bytesEqual, sha256 } from "../../src/domain/hash";
 
 const objectId = "00000000-0000-4000-8000-000000000001";
+const keyEpochId = "00000000-0000-4000-8000-000000000009";
 const key = Uint8Array.from({ length: 32 }, (_, index) => index + 1);
 const noncePrefix = Uint8Array.from({ length: 16 }, (_, index) => 0xa0 + index);
 
@@ -21,6 +22,7 @@ async function envelope(plaintext: readonly Uint8Array[]): Promise<{
   const output: Uint8Array[] = [];
   await writeArtifactEnvelope({
     objectId,
+    keyEpochId,
     key,
     noncePrefix,
     plaintext: chunks(plaintext),
@@ -32,6 +34,7 @@ async function envelope(plaintext: readonly Uint8Array[]): Promise<{
   const recovered: Uint8Array[] = [];
   await readArtifactEnvelope({
     expectedObjectId: objectId,
+    expectedKeyEpochId: keyEpochId,
     key,
     encrypted: chunks([bytes.subarray(0, 13), bytes.subarray(13)]),
     write: (value) => {
@@ -70,6 +73,7 @@ describe("chunked Artifact envelope", () => {
     const output: Uint8Array[] = [];
     const written = await writeArtifactEnvelope({
       objectId,
+      keyEpochId,
       key,
       noncePrefix,
       plaintext: chunks([plaintext]),
@@ -86,6 +90,7 @@ describe("chunked Artifact envelope", () => {
     const recovered: Uint8Array[] = [];
     const read = await readArtifactEnvelope({
       expectedObjectId: objectId,
+      expectedKeyEpochId: keyEpochId,
       key,
       encrypted: chunks([bytes]),
       write: (value) => {
@@ -100,6 +105,7 @@ describe("chunked Artifact envelope", () => {
     const read = (value: Uint8Array, expectedObjectId = objectId, candidateKey = key) =>
       readArtifactEnvelope({
         expectedObjectId,
+        expectedKeyEpochId: keyEpochId,
         key: candidateKey,
         encrypted: chunks([value]),
         write: () => undefined,
@@ -120,6 +126,7 @@ describe("chunked Artifact envelope", () => {
       await expect(
         readArtifactEnvelope({
           expectedObjectId: objectId,
+          expectedKeyEpochId: keyEpochId,
           key,
           encrypted: chunks([corrupt]),
           write: () => undefined,

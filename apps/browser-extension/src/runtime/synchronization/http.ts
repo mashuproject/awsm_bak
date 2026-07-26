@@ -5,12 +5,18 @@ interface AccessTokens {
 }
 
 export class SynchronizationHttp {
+  private accessTokenOverride: string | undefined;
+
   constructor(
     private readonly origin: string,
     private readonly tokens: AccessTokens,
     private readonly fetcher: typeof fetch = fetch,
     private readonly operationSignal?: AbortSignal,
   ) {}
+
+  useAccessToken(accessToken: string): void {
+    this.accessTokenOverride = accessToken;
+  }
 
   private signal(): AbortSignal {
     const timeout = AbortSignal.timeout(15_000);
@@ -19,8 +25,14 @@ export class SynchronizationHttp {
       : AbortSignal.any([this.operationSignal, timeout]);
   }
 
-  private fetch(input: string, init: RequestInit): Promise<Response> {
-    return this.fetcher.call(globalThis, input, init);
+  private async fetch(input: string, init: RequestInit): Promise<Response> {
+    try {
+      return await this.fetcher.call(globalThis, input, init);
+    } catch (cause) {
+      throw Object.assign(new Error("Synchronization request failed.", { cause }), {
+        id: "SYNCHRONIZATION_INTERRUPTED",
+      });
+    }
   }
 
   async request(
@@ -29,7 +41,7 @@ export class SynchronizationHttp {
     body?: unknown,
     idempotencyKey?: string,
   ): Promise<{ readonly status: number; readonly body: unknown }> {
-    const token = await this.tokens.accessToken();
+    const token = this.accessTokenOverride ?? (await this.tokens.accessToken());
     const response = await this.fetch(`${this.origin}${path}`, {
       method,
       signal: this.signal(),
@@ -62,6 +74,8 @@ export class SynchronizationHttp {
         status: response.status,
         method,
         path,
+        origin: this.origin,
+        responseBody: payload,
       });
     }
     return { status: response.status, body: payload };

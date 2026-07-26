@@ -5,13 +5,13 @@ import { decodeExportJob } from "./decode";
 import { storageError } from "./errors";
 import { assertNoActiveImport } from "./import-repository";
 import { vaultKeyRange, vaultSingletonKey } from "./keys";
-import { STORES } from "./schema";
+import { DATABASE_NAME, STORES } from "./schema";
 
 export class IndexedDbVaultRepository implements VaultRepository {
   private readonly databasePromise: Promise<IDBDatabase>;
   readonly databaseName: string;
 
-  constructor(databaseName = "awsm-vault") {
+  constructor(databaseName = DATABASE_NAME) {
     this.databaseName = databaseName;
     this.databasePromise = openDatabase(databaseName);
   }

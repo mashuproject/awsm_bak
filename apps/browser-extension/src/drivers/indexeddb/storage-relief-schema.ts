@@ -61,6 +61,7 @@ export type StorageReliefCheckpointV1 = {
   readonly vaultId: string;
   readonly jobId: string;
   readonly artifactObjectId: string;
+  readonly keyEpochId: string;
   readonly envelopeByteLength: number;
   readonly envelopeChecksum: Uint8Array;
   readonly state: StorageReliefCheckpointState;

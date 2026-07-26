@@ -1,10 +1,12 @@
 import {
   type AtomicRegistrationV1,
   IndexedDbAccountRepository,
+  IndexedDbDeviceRepository,
   IndexedDbDriver,
   IndexedDbImportRepository,
   IndexedDbServerSwitchRepository,
   IndexedDbStorageReliefRepository,
+  IndexedDbVaultReplacementRepository,
   IndexedDbVaultRepository,
   IndexedDbWorkspaceRepository,
   type ServerSwitchJobV1,
@@ -20,6 +22,7 @@ import type {
 } from "../../../src/drivers/indexeddb/storage-relief-schema";
 import { OpfsArtifactStore } from "../../../src/hosts/shared/artifact-store";
 import { VaultImportHost } from "../../../src/hosts/shared/import";
+import { prepareVaultEpochStorage } from "../../../src/runtime/import/credentials";
 import type { StorageReliefFaults } from "../../../src/runtime/storage-relief/contracts";
 import { StorageReliefJobRunner } from "../../../src/runtime/storage-relief/runner";
 import { InterruptedStaleDiscardReconciler } from "../../../src/runtime/synchronization/recovery-reconciliation";
@@ -31,6 +34,8 @@ import {
   WorkspaceService,
 } from "../../../src/runtime/vault";
 import type { VaultRecordsV1 } from "../../../src/runtime/vault/contracts";
+import { unwrapDeviceSlot } from "../../../src/runtime/vault/slots";
+import { TEST_KEY_EPOCH_ID, testKeyring } from "../../helpers/keyring";
 
 function id(suffix: string): string {
   return `00000000-0000-4000-8000-${suffix.padStart(12, "0")}`;
@@ -45,29 +50,63 @@ function object(objectId: string, byte: number): StoredBundleDescriptorObjectV1 
   };
 }
 
+async function seedCandidateDeviceSession(
+  databaseName: string,
+  vaultId: string,
+  accountId: string,
+  email: string,
+): Promise<void> {
+  const database = await new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open(databaseName);
+    request.addEventListener("success", () => resolve(request.result), { once: true });
+    request.addEventListener("error", () => reject(request.error), { once: true });
+  });
+  const transaction = database.transaction("device_sessions", "readwrite");
+  transaction.objectStore("device_sessions").put(
+    {
+      version: 1,
+      accountId,
+      vaultId,
+      deviceId: id("999"),
+      sessionId: id("998"),
+      email,
+      scope: "VaultDevice",
+      refreshNonce: new Uint8Array(12),
+      refreshCiphertext: new Uint8Array(16),
+    },
+    `${vaultId}:server-switch-candidate`,
+  );
+  await new Promise<void>((resolve, reject) => {
+    transaction.addEventListener("complete", () => resolve(), { once: true });
+    transaction.addEventListener("error", () => reject(transaction.error), { once: true });
+  });
+  database.close();
+}
+
 async function accountPersistenceScenario(): Promise<unknown> {
   const databaseName = `awsm-integration-${crypto.randomUUID()}`;
   const repository = new IndexedDbAccountRepository(databaseName);
   const accountId = id("810");
   const sessionId = id("811");
-  const accountKeyId = id("812");
   await repository.saveAuthenticated({
     metadata: {
       version: 1,
       accountId,
       sessionId,
       email: "reader@example.test",
-      accountKeyId,
-      accountKeyEnvelope: { version: 1 },
+      scope: "Account",
     },
-    accountEncryptionKey: new Uint8Array(32).fill(0x42),
     refreshToken: "refresh-token-secret",
   });
 
   const database = await new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open(databaseName);
-    request.addEventListener("success", () => resolve(request.result), { once: true });
-    request.addEventListener("error", () => reject(request.error), { once: true });
+    request.addEventListener("success", () => resolve(request.result), {
+      once: true,
+    });
+    request.addEventListener("error", () => reject(request.error), {
+      once: true,
+    });
   });
   const seed = database.transaction("objects", "readwrite");
   seed.objectStore("objects").put({ localVaultData: true }, [id("813"), id("814")]);
@@ -83,22 +122,28 @@ async function accountPersistenceScenario(): Promise<unknown> {
   const retainedMetadata = await repository.loadMetadata();
   const reopened = await new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open(databaseName);
-    request.addEventListener("success", () => resolve(request.result), { once: true });
-    request.addEventListener("error", () => reject(request.error), { once: true });
+    request.addEventListener("success", () => resolve(request.result), {
+      once: true,
+    });
+    request.addEventListener("error", () => reject(request.error), {
+      once: true,
+    });
   });
   const read = reopened.transaction("objects", "readonly");
   const localObjectCount = await new Promise<number>((resolve, reject) => {
     const request = read.objectStore("objects").count();
-    request.addEventListener("success", () => resolve(request.result), { once: true });
-    request.addEventListener("error", () => reject(request.error), { once: true });
+    request.addEventListener("success", () => resolve(request.result), {
+      once: true,
+    });
+    request.addEventListener("error", () => reject(request.error), {
+      once: true,
+    });
   });
   reopened.close();
 
   return {
     email: afterRestart?.metadata.email,
-    accountKeyRestored: afterRestart?.accountEncryptionKey.every((byte) => byte === 0x42),
     refreshRestored: afterRestart?.refreshToken === "refresh-token-secret",
-    accountWrappingKeyExtractable: afterRestart?.wrappingKey.extractable,
     sessionKeyExtractable: afterRestart?.sessionKey.extractable,
     signedOut: afterLogout === undefined,
     retainedEmail: retainedMetadata?.email,
@@ -112,17 +157,15 @@ async function accountScopeIsolationScenario(): Promise<unknown> {
   const credentials = (
     seed: string,
     email: string,
-    byte: number,
+    _byte: number,
   ): Parameters<IndexedDbAccountRepository["saveAuthenticated"]>[0] => ({
     metadata: {
       version: 1,
       accountId: id(`${seed}0`),
       sessionId: id(`${seed}1`),
       email,
-      accountKeyId: id(`${seed}2`),
-      accountKeyEnvelope: { version: 1 },
+      scope: "Account",
     },
-    accountEncryptionKey: new Uint8Array(32).fill(byte),
     refreshToken: `refresh-${email}`,
   });
   await repository.saveAuthenticated(credentials("82", "active@example.test", 0x41), "active");
@@ -135,8 +178,8 @@ async function accountScopeIsolationScenario(): Promise<unknown> {
       version: 1,
       accountId: id("830"),
       vaultId: id("834"),
-      accountKeyId: id("832"),
-      accountSlot: { opaque: "candidate-slot" },
+      activeRecoveryGenerationId: id("832"),
+      activeKeyEpochId: id("833"),
       remoteGenerationId: id("835"),
       remoteGenerationNumber: 4,
       deliveryCursor: 7,
@@ -167,7 +210,6 @@ async function accountScopeIsolationScenario(): Promise<unknown> {
     candidatePresentBeforeLogout,
     activePresentAfterLogout,
     candidatePresentAfterLogout,
-    candidateKeyRestored: restoredCandidate?.accountEncryptionKey.every((byte) => byte === 0x43),
     candidateRefreshRestored: restoredCandidate?.refreshToken === "refresh-candidate@example.test",
     candidateVaultId: candidateVault?.vaultId,
     candidatePresentAfterErase: await reopened.hasAuthenticatedSecrets("server-switch-candidate"),
@@ -178,22 +220,21 @@ async function serverSwitchPromotionScenario(): Promise<unknown> {
   const databaseName = `awsm-integration-${crypto.randomUUID()}`;
   const accounts = new IndexedDbAccountRepository(databaseName);
   const switches = new IndexedDbServerSwitchRepository(databaseName);
-  const credentials = (account: string, email: string, byte: number) => ({
+  const credentials = (account: string, email: string, _byte: number) => ({
     metadata: {
       version: 1 as const,
       accountId: id(`${account}0`),
       sessionId: id(`${account}1`),
       email,
-      accountKeyId: id(`${account}2`),
-      accountKeyEnvelope: { version: 1 },
+      scope: "Account" as const,
     },
-    accountEncryptionKey: new Uint8Array(32).fill(byte),
     refreshToken: `refresh-${email}`,
   });
   await accounts.saveConfiguration({
     version: 1,
     mode: "Configured",
     serverOrigin: "https://source.example",
+    registration: { enabled: false },
   });
   await accounts.saveAuthenticated(credentials("84", "source@example.test", 0x44), "active");
   const candidate = credentials("85", "candidate@example.test", 0x45);
@@ -205,19 +246,26 @@ async function serverSwitchPromotionScenario(): Promise<unknown> {
       version: 1,
       accountId: candidate.metadata.accountId,
       vaultId,
-      accountKeyId: candidate.metadata.accountKeyId,
-      accountSlot: { encrypted: true },
+      activeRecoveryGenerationId: id("852"),
+      activeKeyEpochId: id("853"),
       remoteGenerationId: generationId,
       remoteGenerationNumber: 9,
       deliveryCursor: 21,
     },
     "server-switch-candidate",
   );
+  await seedCandidateDeviceSession(
+    databaseName,
+    vaultId,
+    candidate.metadata.accountId,
+    candidate.metadata.email,
+  );
   const job = {
     version: 1 as const,
     jobId: id("856"),
     sourceOrigin: "https://source.example",
     candidateOrigin: "https://candidate.example",
+    candidateRegistration: { enabled: false } as const,
     vaultId,
     state: "Running" as const,
     stage: "PromoteContext" as const,
@@ -286,16 +334,14 @@ async function serverSwitchReplicaPromotionAttempt(failAt?: number): Promise<{
   const newEventId = id("864");
   const oldObjectId = id("865");
   const newObjectId = id("866");
-  const credentials = (seed: string, email: string, byte: number) => ({
+  const credentials = (seed: string, email: string, _byte: number) => ({
     metadata: {
       version: 1 as const,
       accountId: id(`${seed}0`),
       sessionId: id(`${seed}1`),
       email,
-      accountKeyId: id(`${seed}2`),
-      accountKeyEnvelope: { version: 1 },
+      scope: "Account" as const,
     },
-    accountEncryptionKey: new Uint8Array(32).fill(byte),
     refreshToken: `refresh-${email}`,
   });
   const source = credentials("87", "source@example.test", 0x47);
@@ -304,6 +350,7 @@ async function serverSwitchReplicaPromotionAttempt(failAt?: number): Promise<{
     version: 1,
     mode: "Configured",
     serverOrigin: "https://source.example",
+    registration: { enabled: false },
   });
   await accounts.saveAuthenticated(source, "active");
   await accounts.saveAuthenticated(candidate, "server-switch-candidate");
@@ -312,13 +359,19 @@ async function serverSwitchReplicaPromotionAttempt(failAt?: number): Promise<{
       version: 1,
       accountId: candidate.metadata.accountId,
       vaultId,
-      accountKeyId: candidate.metadata.accountKeyId,
-      accountSlot: { encrypted: true },
+      activeRecoveryGenerationId: id("882"),
+      activeKeyEpochId: id("883"),
       remoteGenerationId: newGenerationId,
       remoteGenerationNumber: 1,
       deliveryCursor: 31,
     },
     "server-switch-candidate",
+  );
+  await seedCandidateDeviceSession(
+    databaseName,
+    vaultId,
+    candidate.metadata.accountId,
+    candidate.metadata.email,
   );
   const oldHead = {
     version: 1 as const,
@@ -333,6 +386,7 @@ async function serverSwitchReplicaPromotionAttempt(failAt?: number): Promise<{
     jobId: id("869"),
     sourceOrigin: "https://source.example",
     candidateOrigin: "https://candidate.example",
+    candidateRegistration: { enabled: false },
     vaultId,
     state: "Running",
     stage: "PromoteContext",
@@ -356,8 +410,12 @@ async function serverSwitchReplicaPromotionAttempt(failAt?: number): Promise<{
   await switches.saveJob(job);
   const database = await new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open(databaseName);
-    request.addEventListener("success", () => resolve(request.result), { once: true });
-    request.addEventListener("error", () => reject(request.error), { once: true });
+    request.addEventListener("success", () => resolve(request.result), {
+      once: true,
+    });
+    request.addEventListener("error", () => reject(request.error), {
+      once: true,
+    });
   });
   const seed = database.transaction(
     [
@@ -409,12 +467,15 @@ async function serverSwitchReplicaPromotionAttempt(failAt?: number): Promise<{
       { version: 1, projectionId: vaultId, envelopeBytes: new Uint8Array([5]) },
       vaultSingletonKey(vaultId, "active"),
     );
-  seed
-    .objectStore("vault_name_projection")
-    .put(
-      { version: 1, vaultId, sourceEventId: oldEventId, envelopeBytes: new Uint8Array([6]) },
-      vaultSingletonKey(vaultId, "active"),
-    );
+  seed.objectStore("vault_name_projection").put(
+    {
+      version: 1,
+      vaultId,
+      sourceEventId: oldEventId,
+      envelopeBytes: new Uint8Array([6]),
+    },
+    vaultSingletonKey(vaultId, "active"),
+  );
   seed.objectStore("vault_name_cache").put(
     {
       version: 1,
@@ -467,6 +528,7 @@ async function serverSwitchReplicaPromotionAttempt(failAt?: number): Promise<{
       vaultId,
       jobId: reliefJobId,
       artifactObjectId: oldObjectId,
+      keyEpochId: "00000000-0000-4000-8000-000000000009",
       envelopeByteLength: 3,
       envelopeChecksum: new Uint8Array(32),
       state: "Evicted",
@@ -650,6 +712,7 @@ async function serverSwitchPersistenceScenario(): Promise<unknown> {
     jobId,
     sourceOrigin: "https://source.example.test",
     candidateOrigin: "https://candidate.example.test",
+    candidateRegistration: { enabled: false },
     vaultId: id("842"),
     state: "Running",
     stage: "PrepareRemote",
@@ -735,14 +798,20 @@ async function serverSwitchPersistenceScenario(): Promise<unknown> {
 
   const database = await new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open(databaseName);
-    request.addEventListener("success", () => resolve(request.result), { once: true });
-    request.addEventListener("error", () => reject(request.error), { once: true });
+    request.addEventListener("success", () => resolve(request.result), {
+      once: true,
+    });
+    request.addEventListener("error", () => reject(request.error), {
+      once: true,
+    });
   });
   const corrupt = database.transaction("server_switch_jobs", "readwrite");
   corrupt.objectStore("server_switch_jobs").put({ version: 2 }, "active");
   await new Promise<void>((resolve, reject) => {
     corrupt.addEventListener("complete", () => resolve(), { once: true });
-    corrupt.addEventListener("error", () => reject(corrupt.error), { once: true });
+    corrupt.addEventListener("error", () => reject(corrupt.error), {
+      once: true,
+    });
   });
   database.close();
   let corruptJobRejected = false;
@@ -773,6 +842,7 @@ function registration(
     version: 1,
     objectId: id(String(seed + 200)),
     objectType: "Artifact",
+    keyEpochId: "00000000-0000-4000-8000-000000000009",
     envelopeFormat: "artifact:xchacha20poly1305-chunked:v1",
     envelopeByteLength: seed + 10,
     envelopeChecksumAlgorithm: "hash:sha256:v1",
@@ -853,6 +923,7 @@ async function vaultScenario(): Promise<unknown> {
     metadata: {
       version: 1,
       vaultId: id("1"),
+      activeKeyEpochId: id("9"),
       deviceId: id("2"),
       createdAt: "2026-07-16T17:00:00.000Z",
       manuallyLocked: false,
@@ -866,6 +937,7 @@ async function vaultScenario(): Promise<unknown> {
       version: 1,
       slotId: id("3"),
       vaultId: id("1"),
+      keyEpochId: id("9"),
       deviceId: id("2"),
       algorithm: "wrap:aes-kw-256:device:v1",
       wrappedRootKey: new Uint8Array(40),
@@ -909,6 +981,7 @@ async function makeVaultRecords(seed: number): Promise<VaultRecordsV1> {
     metadata: {
       version: 1,
       vaultId,
+      activeKeyEpochId: id(String(seed + 8)),
       deviceId,
       createdAt: "2026-07-16T17:00:00.000Z",
       manuallyLocked: false,
@@ -922,6 +995,7 @@ async function makeVaultRecords(seed: number): Promise<VaultRecordsV1> {
       version: 1,
       slotId: id(String(seed + 2)),
       vaultId,
+      keyEpochId: id(String(seed + 8)),
       deviceId,
       algorithm: "wrap:aes-kw-256:device:v1",
       wrappedRootKey: new Uint8Array(40),
@@ -1029,7 +1103,7 @@ async function atomicVaultCreateScenario(): Promise<unknown> {
   const vaultId = records.metadata.vaultId;
   const eventId = id("952");
   const nameChange = await prepareVaultNameChange({
-    rootKey: prepared.rootKey,
+    keyring: prepared.keyring,
     eventType: "VaultCreated",
     vaultId,
     deviceId: records.metadata.deviceId,
@@ -1088,7 +1162,7 @@ async function atomicVaultCreateFailureScenario(): Promise<unknown> {
     const secondVaultId = prepared.records.metadata.vaultId;
     const eventId = crypto.randomUUID();
     const nameChange = await prepareVaultNameChange({
-      rootKey: prepared.rootKey,
+      keyring: prepared.keyring,
       eventType: "VaultCreated",
       vaultId: secondVaultId,
       deviceId: prepared.records.metadata.deviceId,
@@ -1163,7 +1237,7 @@ async function prepareAndCommitVault(
   const vaultId = prepared.records.metadata.vaultId;
   const eventId = crypto.randomUUID();
   const nameChange = await prepareVaultNameChange({
-    rootKey: prepared.rootKey,
+    keyring: prepared.keyring,
     eventType: "VaultCreated",
     vaultId,
     deviceId: prepared.records.metadata.deviceId,
@@ -1351,7 +1425,7 @@ async function atomicVaultRenameScenario(): Promise<unknown> {
   const vaultId = created.records.metadata.vaultId;
   const createdEventId = crypto.randomUUID();
   const createdName = await prepareVaultNameChange({
-    rootKey: created.rootKey,
+    keyring: created.keyring,
     eventType: "VaultCreated",
     vaultId,
     deviceId: created.records.metadata.deviceId,
@@ -1373,7 +1447,7 @@ async function atomicVaultRenameScenario(): Promise<unknown> {
   });
   const renamedEventId = crypto.randomUUID();
   const renamed = await prepareVaultNameChange({
-    rootKey: created.rootKey,
+    keyring: created.keyring,
     eventType: "VaultRenamed",
     vaultId,
     deviceId: created.records.metadata.deviceId,
@@ -1424,7 +1498,7 @@ async function atomicVaultRenameFailureScenario(): Promise<unknown> {
     const vaultId = created.records.metadata.vaultId;
     const createdEventId = crypto.randomUUID();
     const createdName = await prepareVaultNameChange({
-      rootKey: created.rootKey,
+      keyring: created.keyring,
       eventType: "VaultCreated",
       vaultId,
       deviceId: created.records.metadata.deviceId,
@@ -1446,7 +1520,7 @@ async function atomicVaultRenameFailureScenario(): Promise<unknown> {
     });
     const renamedEventId = crypto.randomUUID();
     const renamed = await prepareVaultNameChange({
-      rootKey: created.rootKey,
+      keyring: created.keyring,
       eventType: "VaultRenamed",
       vaultId,
       deviceId: created.records.metadata.deviceId,
@@ -1601,6 +1675,594 @@ async function rollbackScenario(): Promise<unknown> {
     appendedObjects: head?.appendedObjectIds.length,
     appendedEvents: head?.appendedEventIds.length,
   };
+}
+
+async function staleEpochReplayCommitScenario(): Promise<unknown> {
+  const databaseName = `awsm-integration-${crypto.randomUUID()}`;
+  const driver = new IndexedDbDriver(databaseName, id("0"));
+  await seedHead(driver);
+  const stale = registration(1);
+  await driver.commitRegistration(stale);
+  const expectedHead = await driver.getVaultHead();
+  if (expectedHead === undefined) throw new Error("Seeded Vault head is missing.");
+  const replay = registration(2);
+  await driver.commitStaleEpochCaptureReplays({
+    expectedHead,
+    retainedObjectIds: [],
+    retainedEventIds: [],
+    replays: [
+      {
+        oldBundleId: stale.graph.bundleId,
+        oldEventId: stale.event.eventId,
+        registration: replay,
+      },
+    ],
+  });
+  const head = await driver.getVaultHead();
+  const projections = await driver.listEncryptedProjections();
+  const success = {
+    immutableObjectCount: (await driver.listStoredObjects()).length,
+    immutableEventCount: (await driver.listStoredEvents()).length,
+    headObjectIds: head?.appendedObjectIds,
+    headEventIds: head?.appendedEventIds,
+    projectionBundleIds: projections.map((projection) => projection.bundleId),
+  };
+  await driver.deleteDatabase();
+
+  const rollback = new IndexedDbDriver(`awsm-integration-${crypto.randomUUID()}`, id("0"));
+  await seedHead(rollback);
+  await rollback.commitRegistration(stale);
+  const rollbackHead = await rollback.getVaultHead();
+  if (rollbackHead === undefined) throw new Error("Rollback Vault head is missing.");
+  const conflicting: AtomicRegistrationV1 = {
+    ...replay,
+    event: { ...replay.event, eventId: stale.event.eventId },
+  };
+  let rejected = false;
+  try {
+    await rollback.commitStaleEpochCaptureReplays({
+      expectedHead: rollbackHead,
+      retainedObjectIds: [],
+      retainedEventIds: [],
+      replays: [
+        {
+          oldBundleId: stale.graph.bundleId,
+          oldEventId: stale.event.eventId,
+          registration: conflicting,
+        },
+      ],
+    });
+  } catch {
+    rejected = true;
+  }
+  const finalHead = await rollback.getVaultHead();
+  const finalProjections = await rollback.listEncryptedProjections();
+  const rollbackResult = {
+    rejected,
+    newObjectsAbsent: replay.objects.every(
+      (entry) => !finalHead?.appendedObjectIds.includes(entry.objectId),
+    ),
+    oldHeadRetained:
+      finalHead?.appendedObjectIds.join("\n") === rollbackHead.appendedObjectIds.join("\n") &&
+      finalHead?.appendedEventIds.join("\n") === rollbackHead.appendedEventIds.join("\n"),
+    oldProjectionRetained:
+      finalProjections.length === 1 && finalProjections[0]?.bundleId === stale.projection.bundleId,
+  };
+  await rollback.deleteDatabase();
+  return { success, rollback: rollbackResult };
+}
+
+async function vaultReplacementPersistenceScenario(): Promise<unknown> {
+  const databaseName = `awsm-integration-${crypto.randomUUID()}`;
+  const repository = new IndexedDbVaultReplacementRepository(databaseName);
+  const sourceVaultId = id("880");
+  const createdAt = "2026-07-25T23:00:00.000Z";
+  const sourceHead = {
+    version: 1 as const,
+    vaultId: sourceVaultId,
+    generationId: id("881"),
+    generationNumber: 2,
+    appendedObjectIds: [id("882")],
+    appendedEventIds: [id("883")],
+  };
+  const created = {
+    version: 1 as const,
+    jobId: id("884"),
+    accountId: id("885"),
+    sourceVaultId,
+    sourceHead,
+    sourceHeadCursor: 9,
+    verifiedExportJobId: id("886"),
+    safelyStoredConfirmed: true as const,
+    candidateIdempotencyKey: id("910"),
+    generationUploadCompleteIdempotencyKey: id("911"),
+    candidateCompleteIdempotencyKey: id("912"),
+    activationIdempotencyKey: id("913"),
+    state: "Created" as const,
+    stage: "ExportGate" as const,
+    createdAt,
+    updatedAt: createdAt,
+    completedItems: 0,
+    totalItems: 0,
+    processedBytes: 0,
+    totalBytes: 0,
+    retryCount: 0,
+  };
+  await repository.create(created);
+  const running = {
+    ...created,
+    state: "Running" as const,
+    stage: "Rewrite" as const,
+    updatedAt: "2026-07-25T23:00:01.000Z",
+    targetVaultId: id("887"),
+    targetDeviceId: id("888"),
+    targetRecoveryGenerationId: id("889"),
+    targetKeyEpochId: id("890"),
+    targetGenerationId: id("891"),
+    targetGenerationNumber: 0,
+  };
+  await repository.save(running, created.updatedAt);
+  const plaintext = new Uint8Array([1, 2, 3, 4]);
+  await repository.sealCheckpoint({
+    job: running,
+    targetVaultId: running.targetVaultId,
+    plaintext,
+    updatedAt: "2026-07-25T23:00:02.000Z",
+  });
+  await repository.close();
+
+  const reopened = new IndexedDbVaultReplacementRepository(databaseName);
+  const loaded = await reopened.latest(sourceVaultId);
+  if (loaded === undefined) throw new Error("Replacement Job did not persist.");
+  const opened = await reopened.openCheckpoint(loaded);
+  let staleCasRejected = false;
+  try {
+    await reopened.save({ ...running, retryCount: 1 }, created.updatedAt);
+  } catch {
+    staleCasRejected = true;
+  }
+
+  const database = await new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open(databaseName);
+    request.addEventListener("success", () => resolve(request.result), {
+      once: true,
+    });
+    request.addEventListener("error", () => reject(request.error), {
+      once: true,
+    });
+  });
+  const transaction = database.transaction("vault_replacement_checkpoints", "readwrite");
+  const key = vaultKey(sourceVaultId, running.jobId);
+  const store = transaction.objectStore("vault_replacement_checkpoints");
+  const checkpoint = (await new Promise<unknown>((resolve, reject) => {
+    const request = store.get(key);
+    request.addEventListener("success", () => resolve(request.result), {
+      once: true,
+    });
+    request.addEventListener("error", () => reject(request.error), {
+      once: true,
+    });
+  })) as { ciphertext: Uint8Array };
+  checkpoint.ciphertext = Uint8Array.from(checkpoint.ciphertext);
+  checkpoint.ciphertext[0] = (checkpoint.ciphertext[0] ?? 0) ^ 1;
+  store.put(checkpoint, key);
+  await new Promise<void>((resolve, reject) => {
+    transaction.addEventListener("complete", () => resolve(), { once: true });
+    transaction.addEventListener("error", () => reject(transaction.error), {
+      once: true,
+    });
+  });
+  database.close();
+  let tamperErrorId = "";
+  try {
+    await reopened.openCheckpoint(loaded);
+  } catch (error) {
+    tamperErrorId = error instanceof Error && "id" in error ? String(error.id) : "unexpected";
+  }
+  await reopened.clearSensitive(loaded);
+  const cleared = await reopened.openCheckpoint(loaded);
+  await reopened.close();
+  const cleanup = new IndexedDbDriver(databaseName, sourceVaultId);
+  await cleanup.deleteDatabase();
+  return {
+    state: loaded.state,
+    stage: loaded.stage,
+    plaintextRestored: opened?.join(",") === plaintext.join(","),
+    staleCasRejected,
+    tamperErrorId,
+    sensitiveStateCleared: cleared === undefined,
+  };
+}
+
+async function vaultReplacementHiddenStageScenario(): Promise<unknown> {
+  const databaseName = `awsm-integration-${crypto.randomUUID()}`;
+  const workspaceRepository = new IndexedDbWorkspaceRepository(databaseName);
+  await workspaceRepository.bootstrap("2026-07-25T23:10:00.000Z");
+  const sourceVaultId = await prepareAndCommitVault(
+    databaseName,
+    workspaceRepository,
+    "Source archive",
+    "2026-07-25T23:11:00.000Z",
+  );
+  const sourceRepository = new IndexedDbVaultRepository(databaseName);
+  const source = await sourceRepository.load(sourceVaultId);
+  if (source === undefined) throw new Error("Source Vault is unavailable.");
+
+  const targetPreparationRepository = new IndexedDbVaultRepository(databaseName);
+  const target = await new VaultService(targetPreparationRepository).prepareCreate({
+    name: "Replacement archive",
+    createdAt: "2026-07-25T23:12:00.000Z",
+  });
+  const targetVaultId = target.records.metadata.vaultId;
+  const targetEventId = id("892");
+  const targetName = await prepareVaultNameChange({
+    keyring: target.keyring,
+    eventType: "VaultCreated",
+    vaultId: targetVaultId,
+    deviceId: target.records.metadata.deviceId,
+    eventId: targetEventId,
+    timestamp: target.records.metadata.createdAt,
+    name: target.name,
+  });
+  const targetRecords: VaultRecordsV1 = {
+    ...target.records,
+    head: {
+      ...target.records.head,
+      appendedEventIds: [targetEventId],
+    },
+  };
+  const replacementRepository = new IndexedDbVaultReplacementRepository(databaseName);
+  const createdAt = "2026-07-25T23:13:00.000Z";
+  const created = {
+    version: 1 as const,
+    jobId: id("893"),
+    accountId: id("894"),
+    sourceVaultId,
+    sourceHead: source.head,
+    sourceHeadCursor: 5,
+    verifiedExportJobId: id("895"),
+    safelyStoredConfirmed: true as const,
+    candidateIdempotencyKey: id("914"),
+    generationUploadCompleteIdempotencyKey: id("915"),
+    candidateCompleteIdempotencyKey: id("916"),
+    activationIdempotencyKey: id("917"),
+    state: "Created" as const,
+    stage: "ExportGate" as const,
+    createdAt,
+    updatedAt: createdAt,
+    completedItems: 0,
+    totalItems: 1,
+    processedBytes: 0,
+    totalBytes: targetName.event.envelopeBytes.byteLength,
+    retryCount: 0,
+  };
+  await replacementRepository.create(created);
+  const staging = {
+    ...created,
+    state: "Running" as const,
+    stage: "StageRemote" as const,
+    updatedAt: "2026-07-25T23:14:00.000Z",
+    targetVaultId,
+    targetDeviceId: target.records.metadata.deviceId,
+    targetRecoveryGenerationId: id("896"),
+    targetKeyEpochId: target.records.metadata.activeKeyEpochId,
+    targetGenerationId: target.records.generation.generationId,
+    targetGenerationNumber: 0,
+  };
+  await replacementRepository.save(staging, created.updatedAt);
+  const stage = {
+    job: staging,
+    records: targetRecords,
+    events: [targetName.event],
+    objects: [],
+    libraryProjections: [],
+    collectionProjection: {
+      version: 1 as const,
+      projectionId: targetVaultId,
+      envelopeBytes: new Uint8Array([1, 2, 3]),
+    },
+    vaultNameProjection: targetName.projection,
+    preparedArtifactObjectIds: [],
+  };
+  await workspaceRepository.stageVaultReplacement(stage);
+  await workspaceRepository.close();
+  await replacementRepository.close();
+  await sourceRepository.close();
+  await targetPreparationRepository.close();
+
+  const reopenedWorkspace = new IndexedDbWorkspaceRepository(databaseName);
+  const reopenedTarget = new IndexedDbVaultRepository(databaseName);
+  const targetDriver = new IndexedDbDriver(databaseName, targetVaultId);
+  const [workspace, directory, staged, targetLoaded, targetEvents] = await Promise.all([
+    reopenedWorkspace.load(),
+    reopenedWorkspace.listVaultDirectory(),
+    reopenedWorkspace.hasStagedVaultReplacement({
+      sourceVaultId,
+      targetVaultId,
+      jobId: staging.jobId,
+    }),
+    reopenedTarget.load(targetVaultId),
+    targetDriver.listStoredEvents(),
+  ]);
+  let collisionErrorId = "";
+  try {
+    await reopenedWorkspace.stageVaultReplacement(stage);
+  } catch (error) {
+    collisionErrorId = error instanceof Error && "id" in error ? String(error.id) : "unexpected";
+  }
+  await reopenedWorkspace.discardStagedVaultReplacement(staging);
+  const [discardedTarget, retainedSource] = await Promise.all([
+    reopenedTarget.load(targetVaultId),
+    reopenedTarget.load(sourceVaultId),
+  ]);
+  const result = {
+    activeVaultUnchanged: workspace?.metadata.activeVaultId === sourceVaultId,
+    directoryContainsOnlySource: directory.length === 1 && directory[0]?.vaultId === sourceVaultId,
+    hiddenStageRestored: staged,
+    targetRecordsRestored:
+      targetLoaded?.head.appendedEventIds[0] === targetEventId &&
+      targetEvents[0]?.eventId === targetEventId,
+    collisionErrorId,
+    discardRemovedOnlyTarget:
+      discardedTarget === undefined && retainedSource?.metadata.vaultId === sourceVaultId,
+  };
+  await reopenedWorkspace.close();
+  await reopenedTarget.close();
+  await targetDriver.deleteDatabase();
+  return result;
+}
+
+async function vaultReplacementPromotionScenario(): Promise<unknown> {
+  const databaseName = `awsm-integration-${crypto.randomUUID()}`;
+  const workspaceRepository = new IndexedDbWorkspaceRepository(databaseName);
+  const workspace = await workspaceRepository.bootstrap("2026-07-25T23:40:00.000Z");
+  const sourceVaultId = await prepareAndCommitVault(
+    databaseName,
+    workspaceRepository,
+    "Source archive",
+    "2026-07-25T23:41:00.000Z",
+  );
+  const sourceRepository = new IndexedDbVaultRepository(databaseName);
+  const source = await sourceRepository.load(sourceVaultId);
+  if (source === undefined) throw new Error("Source Vault is unavailable.");
+  const targetPreparationRepository = new IndexedDbVaultRepository(databaseName);
+  const target = await new VaultService(targetPreparationRepository).prepareCreate({
+    name: "Replacement archive",
+    createdAt: "2026-07-25T23:42:00.000Z",
+  });
+  const targetVaultId = target.records.metadata.vaultId;
+  const targetEventId = id("897");
+  const targetName = await prepareVaultNameChange({
+    keyring: target.keyring,
+    eventType: "VaultCreated",
+    vaultId: targetVaultId,
+    deviceId: target.records.metadata.deviceId,
+    eventId: targetEventId,
+    timestamp: target.records.metadata.createdAt,
+    name: target.name,
+  });
+  const targetRecords: VaultRecordsV1 = {
+    ...target.records,
+    head: {
+      ...target.records.head,
+      appendedEventIds: [targetEventId],
+    },
+  };
+  const accountId = id("898");
+  const replacementRepository = new IndexedDbVaultReplacementRepository(databaseName);
+  const createdAt = "2026-07-25T23:43:00.000Z";
+  const created = {
+    version: 1 as const,
+    jobId: id("900"),
+    accountId,
+    sourceVaultId,
+    sourceHead: source.head,
+    sourceHeadCursor: 8,
+    verifiedExportJobId: id("901"),
+    safelyStoredConfirmed: true as const,
+    candidateIdempotencyKey: id("918"),
+    generationUploadCompleteIdempotencyKey: id("919"),
+    candidateCompleteIdempotencyKey: id("920"),
+    activationIdempotencyKey: id("921"),
+    state: "Created" as const,
+    stage: "ExportGate" as const,
+    createdAt,
+    updatedAt: createdAt,
+    completedItems: 0,
+    totalItems: 1,
+    processedBytes: 0,
+    totalBytes: targetName.event.envelopeBytes.byteLength,
+    retryCount: 0,
+  };
+  await replacementRepository.create(created);
+  const recoveryGenerationId = id("907");
+  const targetRootKey = await unwrapDeviceSlot(target.records.deviceSlot, target.records.deviceKey);
+  const identity = {
+    deviceId: target.records.metadata.deviceId,
+    signingPublicKey: new Uint8Array(32).fill(1),
+    signingSecretKey: new Uint8Array(64).fill(2),
+    wrappingPublicKey: new Uint8Array(32).fill(3),
+    wrappingSecretKey: new Uint8Array(32).fill(4),
+  };
+  const certificate = {
+    content: {
+      version: 1 as const,
+      certificateId: id("908"),
+      vaultId: targetVaultId,
+      recoveryGenerationId,
+      deviceId: identity.deviceId,
+      displayName: "Firefox",
+      clientKind: "FirefoxExtension" as const,
+      signingAlgorithm: "sign:ed25519:device:v1" as const,
+      signingPublicKey: identity.signingPublicKey,
+      wrappingAlgorithm: "wrap:x25519-hkdf-sha256-xchacha20poly1305:device:v1" as const,
+      wrappingPublicKey: identity.wrappingPublicKey,
+      issuedAt: "2026-07-25T23:43:30.000Z",
+    },
+    contentCbor: new Uint8Array([1]),
+    recoveryAdministratorPublicKey: new Uint8Array(32).fill(5),
+    signature: new Uint8Array(64).fill(6),
+  };
+  const envelope = {
+    metadata: {
+      version: 1 as const,
+      vaultId: targetVaultId,
+      recoveryGenerationId,
+      keyEpochId: target.records.metadata.activeKeyEpochId,
+      deviceId: identity.deviceId,
+      algorithm: "wrap:x25519-hkdf-sha256-xchacha20poly1305:device:v1" as const,
+      ephemeralPublicKey: new Uint8Array(32).fill(7),
+      nonce: new Uint8Array(24).fill(8),
+      ciphertextLength: 48,
+    },
+    ciphertext: new Uint8Array(48).fill(9),
+    ciphertextSha256: new Uint8Array(32).fill(10),
+    administratorSignature: new Uint8Array(64).fill(11),
+  };
+  const recoveryKit = {
+    metadata: {
+      version: 1 as const,
+      vaultId: targetVaultId,
+      recoveryGenerationId,
+      derivationAlgorithm: "kdf:hkdf-sha256:recovery-entropy:v1" as const,
+      wrappingAlgorithm: "wrap:xchacha20poly1305:recovery-kit:v1" as const,
+      administratorSigningAlgorithm: "sign:ed25519:recovery-administrator:v1" as const,
+      administratorPublicKey: new Uint8Array(32).fill(5),
+      nonce: new Uint8Array(24).fill(12),
+      ciphertextLength: 48,
+      ciphertextSha256: new Uint8Array(32).fill(13),
+    },
+    ciphertext: new Uint8Array(48).fill(14),
+  };
+  const staging = {
+    ...created,
+    state: "Running" as const,
+    stage: "StageRemote" as const,
+    updatedAt: "2026-07-25T23:44:00.000Z",
+    targetVaultId,
+    targetDeviceId: target.records.metadata.deviceId,
+    targetRecoveryGenerationId: recoveryGenerationId,
+    targetKeyEpochId: target.records.metadata.activeKeyEpochId,
+    targetGenerationId: target.records.generation.generationId,
+    targetGenerationNumber: 0,
+  };
+  await replacementRepository.save(staging, created.updatedAt);
+  await workspaceRepository.stageVaultReplacement({
+    job: staging,
+    records: targetRecords,
+    events: [targetName.event],
+    objects: [],
+    libraryProjections: [],
+    collectionProjection: {
+      version: 1,
+      projectionId: targetVaultId,
+      envelopeBytes: new Uint8Array([4, 5, 6]),
+    },
+    vaultNameProjection: targetName.projection,
+    preparedArtifactObjectIds: [],
+  });
+  const accountRepository = new IndexedDbAccountRepository(databaseName);
+  await accountRepository.saveSynchronizationCheckpoint({
+    version: 1,
+    vaultId: targetVaultId,
+    entityId: targetEventId,
+    kind: "Event",
+    state: "Committed",
+    createIdempotencyKey: id("902"),
+    completeIdempotencyKey: id("903"),
+    commitIdempotencyKey: id("904"),
+    receivedParts: [0],
+  });
+  const promotion = {
+    ...staging,
+    stage: "PromoteLocal" as const,
+    updatedAt: "2026-07-25T23:45:00.000Z",
+    targetHeadCursor: 2,
+    purgeId: id("905"),
+  };
+  await replacementRepository.save(promotion, staging.updatedAt);
+  const cache = await encryptWorkspaceVaultName({
+    key: workspace.nameCacheKey,
+    workspaceId: workspace.metadata.workspaceId,
+    vaultId: targetVaultId,
+    sourceEventId: targetEventId,
+    name: target.name,
+  });
+  const promoted = await workspaceRepository.commitVaultReplacement({
+    job: promotion,
+    authority: {
+      accountId,
+      vaultId: targetVaultId,
+      recoveryGenerationId,
+      identity,
+      certificate,
+      envelopes: [envelope],
+      keyEpochs: [
+        {
+          keyEpochId: target.records.metadata.activeKeyEpochId,
+          ordinal: 0,
+          rootKey: targetRootKey,
+        },
+      ],
+      recoveryKit,
+      remoteGenerationId: target.records.generation.generationId,
+      remoteGenerationNumber: 0,
+      session: {
+        account: { accountId, email: "owner@example.test" },
+        sessionId: id("906"),
+        scope: "VaultDevice",
+        accessToken: "replacement-access",
+        accessExpiresAt: "2026-07-26T00:45:00.000Z",
+        refreshToken: "replacement-refresh",
+        refreshExpiresAt: "2026-08-25T23:45:00.000Z",
+      },
+    },
+    nameCache: cache,
+    promotedAt: "2026-07-25T23:46:00.000Z",
+  });
+  await workspaceRepository.close();
+  await replacementRepository.close();
+  await sourceRepository.close();
+  await targetPreparationRepository.close();
+  await accountRepository.close();
+
+  const reopenedWorkspace = new IndexedDbWorkspaceRepository(databaseName);
+  const reopenedVaults = new IndexedDbVaultRepository(databaseName);
+  const reopenedAccount = new IndexedDbAccountRepository(databaseName);
+  const reopenedDevices = new IndexedDbDeviceRepository(databaseName);
+  const [workspaceAfter, directory, sourceAfter, targetAfter, registration, device, deviceSession] =
+    await Promise.all([
+      reopenedWorkspace.load(),
+      reopenedWorkspace.listVaultDirectory(),
+      reopenedVaults.load(sourceVaultId),
+      reopenedVaults.load(targetVaultId),
+      reopenedAccount.loadAccountVault(),
+      reopenedDevices.loadDeviceAuthority(targetVaultId),
+      reopenedDevices.loadDeviceSession(targetVaultId),
+    ]);
+  const result = {
+    activeReplacement:
+      workspaceAfter?.metadata.activeVaultId === targetVaultId &&
+      directory.length === 1 &&
+      directory[0]?.vaultId === targetVaultId,
+    sourceRemoved: sourceAfter === undefined,
+    targetRetained: targetAfter?.head.appendedEventIds[0] === targetEventId,
+    registrationPromoted:
+      registration?.vaultId === targetVaultId && registration.deliveryCursor === 2,
+    deviceAuthorityRestored:
+      device?.identity.deviceId === target.records.metadata.deviceId &&
+      device.keyEpochs.length === 1 &&
+      deviceSession?.refreshToken === "replacement-refresh",
+    purgeTrackingRetained:
+      promoted.job.stage === "PurgeSource" && promoted.job.purgeId === id("905"),
+  };
+  await reopenedWorkspace.close();
+  await reopenedVaults.close();
+  await reopenedAccount.close();
+  await reopenedDevices.close();
+  const cleanup = new IndexedDbDriver(databaseName, targetVaultId);
+  await cleanup.deleteDatabase();
+  return result;
 }
 
 async function projectionScenario(): Promise<unknown> {
@@ -1846,8 +2508,12 @@ async function vacuumAvailabilityCleanupScenario(): Promise<unknown> {
   await driver.commitRegistration(input);
   const database = await new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open(databaseName);
-    request.addEventListener("success", () => resolve(request.result), { once: true });
-    request.addEventListener("error", () => reject(request.error), { once: true });
+    request.addEventListener("success", () => resolve(request.result), {
+      once: true,
+    });
+    request.addEventListener("error", () => reject(request.error), {
+      once: true,
+    });
   });
   const jobId = id("987");
   const generationId = id("990");
@@ -1922,6 +2588,7 @@ async function vacuumAvailabilityCleanupScenario(): Promise<unknown> {
       vaultId: driver.vaultId,
       jobId: reliefJobId,
       artifactObjectId: input.object.objectId,
+      keyEpochId: "00000000-0000-4000-8000-000000000009",
       envelopeByteLength: 3,
       envelopeChecksum: new Uint8Array(32),
       state: "Evicted",
@@ -1960,8 +2627,12 @@ async function vacuumAvailabilityCleanupScenario(): Promise<unknown> {
   });
   const reopened = await new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open(databaseName);
-    request.addEventListener("success", () => resolve(request.result), { once: true });
-    request.addEventListener("error", () => reject(request.error), { once: true });
+    request.addEventListener("success", () => resolve(request.result), {
+      once: true,
+    });
+    request.addEventListener("error", () => reject(request.error), {
+      once: true,
+    });
   });
   const inspect = reopened.transaction(
     ["artifact_availability", "storage_relief_jobs", "storage_relief_checkpoints"],
@@ -1972,8 +2643,12 @@ async function vacuumAvailabilityCleanupScenario(): Promise<unknown> {
       (storeName) =>
         new Promise<number>((resolve, reject) => {
           const request = inspect.objectStore(storeName).count();
-          request.addEventListener("success", () => resolve(request.result), { once: true });
-          request.addEventListener("error", () => reject(request.error), { once: true });
+          request.addEventListener("success", () => resolve(request.result), {
+            once: true,
+          });
+          request.addEventListener("error", () => reject(request.error), {
+            once: true,
+          });
         }),
     ),
   );
@@ -2281,6 +2956,7 @@ async function exportLeaseScenario(): Promise<unknown> {
     {
       version: 1,
       vaultId: driver.vaultId,
+      activeKeyEpochId: TEST_KEY_EPOCH_ID,
       deviceId: id("998"),
       createdAt: "2026-07-18T12:59:00.000Z",
       manuallyLocked: false,
@@ -2338,6 +3014,7 @@ async function exportLeaseScenario(): Promise<unknown> {
       {
         version: 1,
         vaultId: driver.vaultId,
+        activeKeyEpochId: TEST_KEY_EPOCH_ID,
         deviceId: id("998"),
         createdAt: "2026-07-18T12:59:00.000Z",
         manuallyLocked,
@@ -2730,6 +3407,18 @@ async function atomicVaultImportScenario(): Promise<unknown> {
   }
   const input = {
     records,
+    epochStorage: await prepareVaultEpochStorage(vaultId, [
+      {
+        keyEpochId: id("727"),
+        ordinal: 0,
+        rootKey: new Uint8Array(32).fill(6),
+      },
+      {
+        keyEpochId: records.metadata.activeKeyEpochId,
+        ordinal: 1,
+        rootKey: new Uint8Array(32).fill(7),
+      },
+    ]),
     events: [event],
     objects: [storedObject],
     libraryProjections: [
@@ -2756,7 +3445,7 @@ async function atomicVaultImportScenario(): Promise<unknown> {
   const first = await runningCommit(id("732"), "01");
   const rollbackVaultRepository = new IndexedDbVaultRepository(databaseName);
   const rollbackResults: boolean[] = [];
-  for (let failAt = 1; failAt <= 14; failAt += 1) {
+  for (let failAt = 1; failAt <= 16; failAt += 1) {
     const originalAdd = IDBObjectStore.prototype.add;
     const originalPut = IDBObjectStore.prototype.put;
     let write = 0;
@@ -2804,6 +3493,8 @@ async function atomicVaultImportScenario(): Promise<unknown> {
   const state = await new WorkspaceService(workspaceRepository).state({});
   const vaultRepository = new IndexedDbVaultRepository(databaseName);
   const loaded = await vaultRepository.load(vaultId);
+  const deviceRepository = new IndexedDbDeviceRepository(databaseName);
+  const persistedEpochs = await deviceRepository.loadEpochKeys(vaultId);
   let collisionErrorId = "";
   const second = await runningCommit(id("734"), "02");
   try {
@@ -2824,12 +3515,16 @@ async function atomicVaultImportScenario(): Promise<unknown> {
     jobState: firstSucceeded?.state,
     collisionErrorId,
     directoryCountAfterCollision: (await workspaceRepository.listVaultDirectory()).length,
+    persistedEpochOrdinals: persistedEpochs?.map((epoch) => epoch.ordinal),
+    persistedHistoricalRootByte: persistedEpochs?.[0]?.rootKey[0],
+    persistedActiveRootByte: persistedEpochs?.[1]?.rootKey[0],
     rollbackFailurePoints: rollbackResults.length,
     rollbackAlwaysAtomic: rollbackResults.every(Boolean),
   };
   await imports.close();
   await rollbackVaultRepository.close();
   await vaultRepository.close();
+  await deviceRepository.close();
   await workspaceRepository.close();
   await driver.deleteDatabase();
   return result;
@@ -2888,8 +3583,8 @@ async function atomicStaleDiscardScenario(): Promise<unknown> {
     version: 1 as const,
     accountId: id("880"),
     vaultId: staleVaultId,
-    accountKeyId: id("881"),
-    accountSlot: { ciphertext: "opaque" },
+    activeRecoveryGenerationId: id("881"),
+    activeKeyEpochId: id("889"),
     remoteGenerationId,
     remoteGenerationNumber: 1,
     deliveryCursor: 9,
@@ -2915,11 +3610,15 @@ async function atomicStaleDiscardScenario(): Promise<unknown> {
   };
   const database = await new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open(databaseName);
-    request.addEventListener("success", () => resolve(request.result), { once: true });
-    request.addEventListener("error", () => reject(request.error), { once: true });
+    request.addEventListener("success", () => resolve(request.result), {
+      once: true,
+    });
+    request.addEventListener("error", () => reject(request.error), {
+      once: true,
+    });
   });
-  const seed = database.transaction(["account_vault", "synchronization_jobs"], "readwrite");
-  seed.objectStore("account_vault").put(registration, "active");
+  const seed = database.transaction(["vault_sync_state", "synchronization_jobs"], "readwrite");
+  seed.objectStore("vault_sync_state").put(registration, "active");
   seed.objectStore("synchronization_jobs").put(job, "active");
   await new Promise<void>((resolve, reject) => {
     seed.addEventListener("complete", () => resolve(), { once: true });
@@ -2937,7 +3636,11 @@ async function atomicStaleDiscardScenario(): Promise<unknown> {
     remoteEvents: [remoteEvent],
     remoteObjects: [remoteObject],
     remoteLibraryProjections: [
-      { version: 1 as const, bundleId: id("853"), envelopeBytes: new Uint8Array([8, 5, 3]) },
+      {
+        version: 1 as const,
+        bundleId: id("853"),
+        envelopeBytes: new Uint8Array([8, 5, 3]),
+      },
     ],
     remoteCollectionProjection: {
       version: 1 as const,
@@ -3036,8 +3739,8 @@ async function remoteReconciliationFenceScenario(): Promise<unknown> {
     version: 1 as const,
     accountId: id("910"),
     vaultId,
-    accountKeyId: id("911"),
-    accountSlot: { ciphertext: "opaque" },
+    activeRecoveryGenerationId: id("911"),
+    activeKeyEpochId: id("919"),
     remoteGenerationId: head.generationId,
     remoteGenerationNumber: head.generationNumber,
     deliveryCursor: 4,
@@ -3070,16 +3773,20 @@ async function remoteReconciliationFenceScenario(): Promise<unknown> {
   });
   const database = await new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open(databaseName);
-    request.addEventListener("success", () => resolve(request.result), { once: true });
-    request.addEventListener("error", () => reject(request.error), { once: true });
+    request.addEventListener("success", () => resolve(request.result), {
+      once: true,
+    });
+    request.addEventListener("error", () => reject(request.error), {
+      once: true,
+    });
   });
   const installedArtifactId = id("915");
   const retainedRemoteOnlyId = id("916");
   const seed = database.transaction(
-    ["account_vault", "synchronization_jobs", "artifact_availability"],
+    ["vault_sync_state", "synchronization_jobs", "artifact_availability"],
     "readwrite",
   );
-  seed.objectStore("account_vault").put(registration, "active");
+  seed.objectStore("vault_sync_state").put(registration, "active");
   seed.objectStore("synchronization_jobs").put(job, "active");
   for (const artifactObjectId of [installedArtifactId, retainedRemoteOnlyId])
     seed.objectStore("artifact_availability").put(
@@ -3131,12 +3838,17 @@ async function remoteReconciliationFenceScenario(): Promise<unknown> {
   mutate.objectStore("vault_head").put(changedHead, vaultSingletonKey(vaultId, "active"));
   await new Promise<void>((resolve, reject) => {
     mutate.addEventListener("complete", () => resolve(), { once: true });
-    mutate.addEventListener("error", () => reject(mutate.error), { once: true });
+    mutate.addEventListener("error", () => reject(mutate.error), {
+      once: true,
+    });
   });
   database.close();
   let changedHeadErrorId = "";
   try {
-    await workspaceRepository.commitRemoteReconciliation({ ...baseInput, head });
+    await workspaceRepository.commitRemoteReconciliation({
+      ...baseInput,
+      head,
+    });
   } catch (error) {
     changedHeadErrorId = error instanceof Error && "id" in error ? String(error.id) : "";
   }
@@ -3147,8 +3859,12 @@ async function remoteReconciliationFenceScenario(): Promise<unknown> {
   ]);
   const resetDatabase = await new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open(databaseName);
-    request.addEventListener("success", () => resolve(request.result), { once: true });
-    request.addEventListener("error", () => reject(request.error), { once: true });
+    request.addEventListener("success", () => resolve(request.result), {
+      once: true,
+    });
+    request.addEventListener("error", () => reject(request.error), {
+      once: true,
+    });
   });
   const reset = resetDatabase.transaction("vault_head", "readwrite");
   reset.objectStore("vault_head").put(head, vaultSingletonKey(vaultId, "active"));
@@ -3226,7 +3942,9 @@ async function staleDiscardRestartScenario(): Promise<unknown> {
     await new Promise<void>((resolve, reject) => {
       const request = indexedDB.deleteDatabase(databaseName);
       request.addEventListener("success", () => resolve(), { once: true });
-      request.addEventListener("error", () => reject(request.error), { once: true });
+      request.addEventListener("error", () => reject(request.error), {
+        once: true,
+      });
     });
   }
   return results;
@@ -3251,7 +3969,7 @@ async function artifactStoreScenario(): Promise<unknown> {
   const prepared = await store.prepare({
     vaultId,
     objectId,
-    rootKey,
+    keyring: testKeyring(rootKey),
     plaintext: source(),
     noncePrefix: new Uint8Array(16).fill(7),
   });
@@ -3333,7 +4051,7 @@ async function artifactStoreScenario(): Promise<unknown> {
         checksumAlgorithm: "hash:sha256:v1",
         plaintextChecksum: prepared.plaintextChecksum,
       },
-      rootKey,
+      keyring: testKeyring(rootKey),
     })
   ).getReader();
   const recovered: Uint8Array[] = [];
@@ -3344,7 +4062,12 @@ async function artifactStoreScenario(): Promise<unknown> {
   }
   let collisionRejected = false;
   try {
-    await store.prepare({ vaultId, objectId, rootKey, plaintext: source() });
+    await store.prepare({
+      vaultId,
+      objectId,
+      keyring: testKeyring(rootKey),
+      plaintext: source(),
+    });
   } catch {
     collisionRejected = true;
   }
@@ -3437,8 +4160,12 @@ async function storageReliefSchemaScenario(): Promise<unknown> {
   await driver.counts();
   const database = await new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open(databaseName);
-    request.addEventListener("success", () => resolve(request.result), { once: true });
-    request.addEventListener("error", () => reject(request.error), { once: true });
+    request.addEventListener("success", () => resolve(request.result), {
+      once: true,
+    });
+    request.addEventListener("error", () => reject(request.error), {
+      once: true,
+    });
   });
   const result = {
     databaseVersion: database.version,
@@ -3469,8 +4196,12 @@ async function storageReliefPersistenceScenario(): Promise<unknown> {
   } as const;
   const database = await new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open(databaseName);
-    request.addEventListener("success", () => resolve(request.result), { once: true });
-    request.addEventListener("error", () => reject(request.error), { once: true });
+    request.addEventListener("success", () => resolve(request.result), {
+      once: true,
+    });
+    request.addEventListener("error", () => reject(request.error), {
+      once: true,
+    });
   });
   const seed = database.transaction("vault_head", "readwrite");
   seed.objectStore("vault_head").put(head, vaultSingletonKey(vaultId, "active"));
@@ -3484,6 +4215,7 @@ async function storageReliefPersistenceScenario(): Promise<unknown> {
     vaultId,
     jobId,
     artifactObjectId,
+    keyEpochId: TEST_KEY_EPOCH_ID,
     envelopeByteLength: 4096,
     envelopeChecksum: new Uint8Array(32).fill(7),
     state: "Candidate",
@@ -3542,7 +4274,10 @@ async function storageReliefPersistenceScenario(): Promise<unknown> {
     remoteGenerationNumber: 4,
   } satisfies StorageReliefCheckpointV1;
   await repository.saveStorageReliefCheckpoint(verified, "2026-07-21T00:00:02.000Z");
-  const evicting = { ...verified, state: "Evicting" } satisfies StorageReliefCheckpointV1;
+  const evicting = {
+    ...verified,
+    state: "Evicting",
+  } satisfies StorageReliefCheckpointV1;
   await repository.saveStorageReliefCheckpoint(evicting, "2026-07-21T00:00:03.000Z");
   let mismatchedAvailabilityRejected = false;
   try {
@@ -3643,6 +4378,7 @@ async function storageReliefLeaseScenario(): Promise<unknown> {
         vaultId,
         jobId,
         artifactObjectId,
+        keyEpochId: TEST_KEY_EPOCH_ID,
         envelopeByteLength: 128,
         envelopeChecksum: new Uint8Array(32),
         state: "Candidate",
@@ -3676,7 +4412,12 @@ async function storageReliefLeaseScenario(): Promise<unknown> {
   const busyWhileWaiting = await driver.managementBusy();
   await repository.close();
   await driver.deleteDatabase();
-  return { busy, captureErrorId, vacuumErrorId, busyWhileWaiting: busyWhileWaiting ?? null };
+  return {
+    busy,
+    captureErrorId,
+    vacuumErrorId,
+    busyWhileWaiting: busyWhileWaiting ?? null,
+  };
 }
 
 type StorageReliefBoundary =
@@ -3726,7 +4467,7 @@ async function storageReliefRunnerScenario(fault?: StorageReliefBoundary): Promi
   const prepared = await store.prepare({
     vaultId,
     objectId: artifactObjectId,
-    rootKey,
+    keyring: testKeyring(rootKey),
     plaintext: (async function* () {
       yield new TextEncoder().encode("storage relief integration payload");
     })(),
@@ -3741,8 +4482,12 @@ async function storageReliefRunnerScenario(fault?: StorageReliefBoundary): Promi
   } as const;
   const database = await new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open(databaseName);
-    request.addEventListener("success", () => resolve(request.result), { once: true });
-    request.addEventListener("error", () => reject(request.error), { once: true });
+    request.addEventListener("success", () => resolve(request.result), {
+      once: true,
+    });
+    request.addEventListener("error", () => reject(request.error), {
+      once: true,
+    });
   });
   const seed = database.transaction("vault_head", "readwrite");
   seed.objectStore("vault_head").put(head, vaultSingletonKey(vaultId, "active"));
@@ -3782,6 +4527,7 @@ async function storageReliefRunnerScenario(fault?: StorageReliefBoundary): Promi
         vaultId,
         jobId,
         artifactObjectId,
+        keyEpochId: prepared.object.keyEpochId,
         envelopeByteLength: prepared.object.envelopeByteLength,
         envelopeChecksum: prepared.object.envelopeChecksum,
         state: "Candidate",
@@ -3809,18 +4555,25 @@ async function storageReliefRunnerScenario(fault?: StorageReliefBoundary): Promi
           artifactObjectId,
           {
             objectType: "Artifact" as const,
+            keyEpochId: prepared.object.keyEpochId,
             byteLength: prepared.object.envelopeByteLength,
             sha256: prepared.object.envelopeChecksum,
           },
         ],
         [
           descriptorObjectId,
-          { objectType: "BundleDescriptor" as const, byteLength: 1, sha256: new Uint8Array(32) },
+          {
+            objectType: "BundleDescriptor" as const,
+            keyEpochId: TEST_KEY_EPOCH_ID,
+            byteLength: 1,
+            sha256: new Uint8Array(32),
+          },
         ],
         [
           eventId,
           {
             objectType: "Event" as const,
+            keyEpochId: TEST_KEY_EPOCH_ID,
             byteLength: 1,
             sha256: new Uint8Array(32),
             dependencyObjectIds: [artifactObjectId, descriptorObjectId].toSorted(),
@@ -3954,64 +4707,77 @@ async function run(): Promise<void> {
                                                     ? await atomicScenario()
                                                     : scenario === "rollback"
                                                       ? await rollbackScenario()
-                                                      : scenario === "projection"
-                                                        ? await projectionScenario()
-                                                        : scenario === "interruption"
-                                                          ? await interruptionScenario()
-                                                          : scenario === "dismissal"
-                                                            ? await dismissalScenario()
-                                                            : scenario === "library-state"
-                                                              ? await libraryStateScenario()
-                                                              : scenario === "vacuum-rollback"
-                                                                ? await vacuumRollbackScenario()
-                                                                : scenario ===
-                                                                    "vacuum-availability-cleanup"
-                                                                  ? await vacuumAvailabilityCleanupScenario()
-                                                                  : scenario ===
-                                                                      "vacuum-cas-conflict"
-                                                                    ? await vacuumCasConflictScenario()
-                                                                    : scenario === "vacuum-lease"
-                                                                      ? await vacuumLeaseScenario()
+                                                      : scenario === "stale-epoch-replay-commit"
+                                                        ? await staleEpochReplayCommitScenario()
+                                                        : scenario ===
+                                                            "vault-replacement-persistence"
+                                                          ? await vaultReplacementPersistenceScenario()
+                                                          : scenario ===
+                                                              "vault-replacement-hidden-stage"
+                                                            ? await vaultReplacementHiddenStageScenario()
+                                                            : scenario ===
+                                                                "vault-replacement-promotion"
+                                                              ? await vaultReplacementPromotionScenario()
+                                                              : scenario === "projection"
+                                                                ? await projectionScenario()
+                                                                : scenario === "interruption"
+                                                                  ? await interruptionScenario()
+                                                                  : scenario === "dismissal"
+                                                                    ? await dismissalScenario()
+                                                                    : scenario === "library-state"
+                                                                      ? await libraryStateScenario()
                                                                       : scenario ===
-                                                                          "synchronized-vacuum-journal"
-                                                                        ? await synchronizedVacuumJournalScenario()
+                                                                          "vacuum-rollback"
+                                                                        ? await vacuumRollbackScenario()
                                                                         : scenario ===
-                                                                            "collection-operation"
-                                                                          ? await collectionOperationScenario()
+                                                                            "vacuum-availability-cleanup"
+                                                                          ? await vacuumAvailabilityCleanupScenario()
                                                                           : scenario ===
-                                                                              "management-busy"
-                                                                            ? await managementBusyScenario()
+                                                                              "vacuum-cas-conflict"
+                                                                            ? await vacuumCasConflictScenario()
                                                                             : scenario ===
-                                                                                "export-lease"
-                                                                              ? await exportLeaseScenario()
+                                                                                "vacuum-lease"
+                                                                              ? await vacuumLeaseScenario()
                                                                               : scenario ===
-                                                                                  "import-lease"
-                                                                                ? await importLeaseScenario()
+                                                                                  "synchronized-vacuum-journal"
+                                                                                ? await synchronizedVacuumJournalScenario()
                                                                                 : scenario ===
-                                                                                    "artifact-store"
-                                                                                  ? await artifactStoreScenario()
+                                                                                    "collection-operation"
+                                                                                  ? await collectionOperationScenario()
                                                                                   : scenario ===
-                                                                                      "import-source-staging"
-                                                                                    ? await importSourceStagingScenario()
+                                                                                      "management-busy"
+                                                                                    ? await managementBusyScenario()
                                                                                     : scenario ===
-                                                                                        "import-job-lifecycle"
-                                                                                      ? await importJobLifecycleScenario()
+                                                                                        "export-lease"
+                                                                                      ? await exportLeaseScenario()
                                                                                       : scenario ===
-                                                                                          "atomic-vault-import"
-                                                                                        ? await atomicVaultImportScenario()
+                                                                                          "import-lease"
+                                                                                        ? await importLeaseScenario()
                                                                                         : scenario ===
-                                                                                            "atomic-stale-discard"
-                                                                                          ? await atomicStaleDiscardScenario()
+                                                                                            "artifact-store"
+                                                                                          ? await artifactStoreScenario()
                                                                                           : scenario ===
-                                                                                              "remote-reconciliation-fence"
-                                                                                            ? await remoteReconciliationFenceScenario()
+                                                                                              "import-source-staging"
+                                                                                            ? await importSourceStagingScenario()
                                                                                             : scenario ===
-                                                                                                "stale-discard-restart"
-                                                                                              ? await staleDiscardRestartScenario()
-                                                                                              : {
-                                                                                                  error:
-                                                                                                    "unknown scenario",
-                                                                                                };
+                                                                                                "import-job-lifecycle"
+                                                                                              ? await importJobLifecycleScenario()
+                                                                                              : scenario ===
+                                                                                                  "atomic-vault-import"
+                                                                                                ? await atomicVaultImportScenario()
+                                                                                                : scenario ===
+                                                                                                    "atomic-stale-discard"
+                                                                                                  ? await atomicStaleDiscardScenario()
+                                                                                                  : scenario ===
+                                                                                                      "remote-reconciliation-fence"
+                                                                                                    ? await remoteReconciliationFenceScenario()
+                                                                                                    : scenario ===
+                                                                                                        "stale-discard-restart"
+                                                                                                      ? await staleDiscardRestartScenario()
+                                                                                                      : {
+                                                                                                          error:
+                                                                                                            "unknown scenario",
+                                                                                                        };
   const output = document.querySelector("#result");
   if (output !== null) {
     output.textContent = JSON.stringify(result);

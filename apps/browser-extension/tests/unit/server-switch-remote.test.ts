@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { encodeEncryptedEnvelope, encryptEnvelope } from "../../src/crypto/envelope";
 import type {
   ServerSwitchCheckpointV1,
   ServerSwitchJobV1,
@@ -33,6 +34,7 @@ describe("Server Switch remote application", () => {
       jobId,
       sourceOrigin: "https://source.example",
       candidateOrigin: "https://candidate.example",
+      candidateRegistration: { enabled: false },
       vaultId,
       state: "Running" as const,
       stage: "PrepareRemote" as const,
@@ -102,8 +104,8 @@ describe("Server Switch remote application", () => {
           version: 1,
           accountId,
           vaultId,
-          accountKeyId: "01900000-0000-7000-8000-000000000008",
-          accountSlot: { encrypted: true },
+          activeRecoveryGenerationId: "01900000-0000-7000-8000-000000000008",
+          activeKeyEpochId: "01900000-0000-7000-8000-000000000009",
           remoteGenerationId: generationId,
           remoteGenerationNumber: 7,
           deliveryCursor: 0,
@@ -111,11 +113,16 @@ describe("Server Switch remote application", () => {
         saveAccountVault: async () => undefined,
       },
       {
+        getVaultHead: async () => ({
+          appendedObjectIds: [artifactId],
+          appendedEventIds: [],
+        }),
         listStoredObjects: async () => [
           {
             version: 1,
             objectId: artifactId,
             objectType: "Artifact",
+            keyEpochId: "00000000-0000-4000-8000-000000000009",
             envelopeFormat: "artifact:xchacha20poly1305-chunked:v1",
             envelopeByteLength: 4,
             envelopeChecksumAlgorithm: "hash:sha256:v1",
@@ -159,6 +166,7 @@ describe("Server Switch remote application", () => {
       jobId,
       sourceOrigin: "https://source.example",
       candidateOrigin: "https://candidate.example",
+      candidateRegistration: { enabled: false },
       vaultId,
       state: "Running",
       stage: "PrepareRemote",
@@ -196,7 +204,7 @@ describe("Server Switch remote application", () => {
       },
     };
     const transport = {
-      request: vi.fn(async (method: string, path: string) => {
+      request: vi.fn(async (method: string, path: string, _body?: unknown) => {
         calls.push(`${method} ${path}`);
         if (method === "POST" && path === "/api/vaults")
           return {
@@ -208,11 +216,13 @@ describe("Server Switch remote application", () => {
                 receivedParts: [],
               },
               ticket: { url: "/transfer/{partNumber}" },
+              session: { accessToken: "device-access" },
             },
           };
         return { status: 200, body: {} };
       }),
       putTransfer: vi.fn(async () => undefined),
+      useAccessToken: vi.fn(),
     };
     const records = {
       metadata: { vaultId },
@@ -231,19 +241,38 @@ describe("Server Switch remote application", () => {
           version: 1,
           accountId,
           vaultId,
-          accountKeyId: "01900000-0000-7000-8000-000000000008",
-          accountSlot: { encrypted: true },
+          activeRecoveryGenerationId: "01900000-0000-7000-8000-000000000008",
+          activeKeyEpochId: "01900000-0000-7000-8000-000000000009",
           remoteGenerationId: generationId,
           remoteGenerationNumber: 7,
           deliveryCursor: 0,
         }),
         saveAccountVault: async () => undefined,
       },
-      { listStoredObjects: async () => [], listStoredEvents: async () => [] },
+      {
+        getVaultHead: async () => ({ appendedObjectIds: [], appendedEventIds: [] }),
+        listStoredObjects: async () => [],
+        listStoredEvents: async () => [],
+      },
       { openEncrypted: vi.fn() },
       transport,
+      undefined,
+      undefined,
+      async () => ({
+        recoveryGeneration: { recoveryGenerationId: "recovery" },
+        deviceCertificate: { certificateId: "certificate" },
+        deviceKeyEnvelope: { keyEpochId: "epoch" },
+        deviceProofSignature: "proof",
+      }),
     ).publishLocal(records, "2026-07-20T00:01:00.000Z");
 
+    expect(transport.request.mock.calls[0]?.[2]).toMatchObject({
+      recoveryGeneration: { recoveryGenerationId: "recovery" },
+      deviceCertificate: { certificateId: "certificate" },
+      deviceKeyEnvelope: { keyEpochId: "epoch" },
+      deviceProofSignature: "proof",
+    });
+    expect(transport.useAccessToken).toHaveBeenCalledWith("device-access");
     expect(calls).toEqual([
       "POST /api/vaults",
       `POST /api/vaults/${vaultId}/uploads/01900000-0000-7000-8000-000000000007/complete`,
@@ -265,6 +294,7 @@ describe("Server Switch remote application", () => {
       jobId,
       sourceOrigin: "https://source.example",
       candidateOrigin: "https://candidate.example",
+      candidateRegistration: { enabled: false },
       vaultId,
       state: "Running",
       stage: "PrepareRemote",
@@ -344,8 +374,8 @@ describe("Server Switch remote application", () => {
           version: 1,
           accountId,
           vaultId,
-          accountKeyId: "01900000-0000-7000-8000-000000000008",
-          accountSlot: { encrypted: true },
+          activeRecoveryGenerationId: "01900000-0000-7000-8000-000000000008",
+          activeKeyEpochId: "01900000-0000-7000-8000-000000000009",
           remoteGenerationId: generationId,
           remoteGenerationNumber: 7,
           deliveryCursor: 0,
@@ -353,11 +383,16 @@ describe("Server Switch remote application", () => {
         saveAccountVault: async () => undefined,
       },
       {
+        getVaultHead: async () => ({
+          appendedObjectIds: [artifactId],
+          appendedEventIds: [],
+        }),
         listStoredObjects: async () => [
           {
             version: 1,
             objectId: artifactId,
             objectType: "Artifact",
+            keyEpochId: "00000000-0000-4000-8000-000000000009",
             envelopeFormat: "artifact:xchacha20poly1305-chunked:v1",
             envelopeByteLength: encrypted.byteLength,
             envelopeChecksumAlgorithm: "hash:sha256:v1",
@@ -404,6 +439,7 @@ describe("Server Switch remote application", () => {
       jobId,
       sourceOrigin: "https://source.example",
       candidateOrigin: "https://candidate.example",
+      candidateRegistration: { enabled: false },
       vaultId,
       state: "Running",
       stage: "PrepareRemote",
@@ -436,8 +472,8 @@ describe("Server Switch remote application", () => {
       version: 1 as const,
       accountId,
       vaultId,
-      accountKeyId: "01900000-0000-7000-8000-000000000008",
-      accountSlot: { encrypted: true },
+      activeRecoveryGenerationId: "01900000-0000-7000-8000-000000000008",
+      activeKeyEpochId: "01900000-0000-7000-8000-000000000009",
       remoteGenerationId: predecessorId,
       remoteGenerationNumber: 7,
       deliveryCursor: 17,
@@ -483,7 +519,11 @@ describe("Server Switch remote application", () => {
           registration = next;
         },
       },
-      { listStoredObjects: async () => [], listStoredEvents: async () => [] },
+      {
+        getVaultHead: async () => ({ appendedObjectIds: [], appendedEventIds: [] }),
+        listStoredObjects: async () => [],
+        listStoredEvents: async () => [],
+      },
       { openEncrypted: vi.fn() },
       transport,
     ).fastForwardCandidate({
@@ -520,6 +560,7 @@ describe("Server Switch remote application", () => {
       jobId,
       sourceOrigin: "https://source.example",
       candidateOrigin: "https://candidate.example",
+      candidateRegistration: { enabled: false },
       vaultId,
       state: "Running",
       stage: "PrepareRemote",
@@ -569,16 +610,35 @@ describe("Server Switch remote application", () => {
       }),
       putTransfer: vi.fn(async () => undefined),
     };
+    const activeKeyEpochId = "01900000-0000-7000-8000-000000000009";
     const registration: StoredAccountVaultV1 = {
       version: 1,
       accountId,
       vaultId,
-      accountKeyId: "01900000-0000-7000-8000-000000000008",
-      accountSlot: { encrypted: true },
+      activeRecoveryGenerationId: "01900000-0000-7000-8000-000000000008",
+      activeKeyEpochId,
       remoteGenerationId: generationId,
       remoteGenerationNumber: 7,
       deliveryCursor: 12,
     };
+    const descriptorEnvelope = encodeEncryptedEnvelope(
+      await encryptEnvelope({
+        objectType: "BundleDescriptor",
+        objectId: descriptorId,
+        keyEpochId: activeKeyEpochId,
+        plaintext: new Uint8Array([1, 2]),
+        key: new Uint8Array(32).fill(1),
+      }),
+    );
+    const eventEnvelope = encodeEncryptedEnvelope(
+      await encryptEnvelope({
+        objectType: "Event",
+        objectId: eventId,
+        keyEpochId: activeKeyEpochId,
+        plaintext: new Uint8Array([3, 4]),
+        key: new Uint8Array(32).fill(2),
+      }),
+    );
     const applicator = new ServerSwitchRemoteApplicator(
       {
         loadJob: async () => job,
@@ -595,12 +655,16 @@ describe("Server Switch remote application", () => {
         saveAccountVault: async () => undefined,
       },
       {
+        getVaultHead: async () => ({
+          appendedObjectIds: [descriptorId],
+          appendedEventIds: [eventId],
+        }),
         listStoredObjects: async () => [
           {
             version: 1,
             objectId: descriptorId,
             objectType: "BundleDescriptor",
-            envelopeBytes: new Uint8Array([1, 2]),
+            envelopeBytes: descriptorEnvelope,
           },
         ],
         listStoredEvents: async () => [
@@ -610,7 +674,7 @@ describe("Server Switch remote application", () => {
             eventId,
             referencedObjectIds: [descriptorId],
             orderingTimestamp: "2026-07-20T00:00:00.000Z",
-            envelopeBytes: new Uint8Array([3, 4]),
+            envelopeBytes: eventEnvelope,
           },
         ],
       },

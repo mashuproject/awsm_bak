@@ -1,5 +1,6 @@
 import type { ArtifactReferenceV1 } from "../../domain/artifact-graph";
 import type { StoredArtifactObjectV1 } from "../../drivers/indexeddb/schema";
+import type { VaultKeyring } from "../vault/keyring";
 
 export interface PreparedArtifact {
   readonly object: StoredArtifactObjectV1;
@@ -11,7 +12,7 @@ export interface ArtifactStore {
   prepare(input: {
     readonly vaultId: string;
     readonly objectId: string;
-    readonly rootKey: CryptoKey;
+    readonly keyring: VaultKeyring;
     readonly plaintext: AsyncIterable<Uint8Array>;
     readonly noncePrefix?: Uint8Array;
     readonly signal?: AbortSignal;
@@ -35,7 +36,7 @@ export interface ArtifactStore {
     readonly vaultId: string;
     readonly object: StoredArtifactObjectV1;
     readonly reference: ArtifactReferenceV1;
-    readonly rootKey: CryptoKey;
+    readonly keyring: VaultKeyring;
     readonly signal?: AbortSignal;
   }): Promise<ReadableStream<Uint8Array>>;
 

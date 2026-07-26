@@ -10,6 +10,7 @@ import type { ArtifactStore } from "../artifact";
 import { LibraryProjectionRebuilder } from "../library/rebuild";
 import type { VaultRecordsV1 } from "../vault";
 import { encryptWorkspaceVaultName } from "../vault";
+import type { VaultKeyring } from "../vault/keyring";
 import { type RemoteReplicaDownloader, verifyPreparedRemoteReplica } from "./download";
 
 interface DiscardAccountStore {
@@ -59,7 +60,7 @@ export class StaleReplicaDiscardService {
     private readonly workspace: DiscardWorkspace,
     private readonly source: DiscardSource,
     private readonly originalRecords: VaultRecordsV1,
-    private readonly originalRootKey: CryptoKey,
+    private readonly originalKeyring: VaultKeyring,
     private readonly downloader: Pick<RemoteReplicaDownloader, "prepare">,
     private readonly artifacts: ArtifactStore,
     private readonly faults: StaleDiscardFaults = noStaleDiscardFaults,
@@ -98,7 +99,7 @@ export class StaleReplicaDiscardService {
       if (generation === undefined) throw integrity("Stale Generation is unavailable");
       const prepared = await this.downloader.prepare(
         { ...job, stage: "DownloadRecords" },
-        this.originalRootKey,
+        this.originalKeyring,
         { generation, events, objects },
         undefined,
         async (objectId) => {
@@ -114,7 +115,7 @@ export class StaleReplicaDiscardService {
       const remote = await verifyPreparedRemoteReplica({
         vaultId,
         prepared,
-        rootKey: this.originalRootKey,
+        keyring: this.originalKeyring,
         artifacts: this.artifacts,
       });
       const remoteObjects = new Map(remote.objects.map((object) => [object.objectId, object]));
@@ -124,7 +125,7 @@ export class StaleReplicaDiscardService {
           getStoredObject: (objectId) => Promise.resolve(remoteObjects.get(objectId)),
           replaceLibraryProjections: () => Promise.resolve(),
         },
-        this.originalRootKey,
+        this.originalKeyring,
         vaultId,
         this.artifacts,
       ).prepare(new AbortController().signal);

@@ -10,7 +10,9 @@ import {
 import { wipe } from "../../crypto/sodium";
 import { decodeCanonicalCbor, encodeCanonicalCbor } from "../../domain/cbor";
 import { bytesEqual, sha256 } from "../../domain/hash";
+import { importVaultKeyring, type VaultKeyring } from "../vault/keyring";
 import { decodeExportKeyEnvelope, decodeExportManifest, type ExportManifestV1 } from "./contracts";
+import type { ExportedVaultKeyring } from "./key-envelope";
 import { ExportAuthenticationError, openExportKeyEnvelope } from "./key-envelope";
 import type { VerifiedAuthoritativeVaultPackage } from "./verify";
 import { verifyAuthoritativeVaultPackage } from "./verify";
@@ -28,7 +30,7 @@ export interface VaultPackageEntry {
 
 export interface ValidatedVaultPackage extends VerifiedAuthoritativeVaultPackage {
   readonly manifest: ExportManifestV1;
-  readonly rootKey: CryptoKey;
+  readonly keyring: VaultKeyring;
 }
 
 export class ExportPackageInvalidError extends Error {
@@ -145,7 +147,10 @@ async function entryBytes(
 export async function withAuthenticatedVaultPackage<Result>(
   source: Blob,
   passphrase: string,
-  use: (validated: ValidatedVaultPackage, rawRootKey: Uint8Array) => Result | Promise<Result>,
+  use: (
+    validated: ValidatedVaultPackage,
+    rawKeyring: ExportedVaultKeyring,
+  ) => Result | Promise<Result>,
   onRootKeyAuthenticated?: (vaultId: string) => void | Promise<void>,
   signal?: AbortSignal,
 ): Promise<Result> {
@@ -154,7 +159,7 @@ export async function withAuthenticatedVaultPackage<Result>(
     checkSignature: true,
     checkOverlappingEntry: true,
   });
-  let rawRootKey: Uint8Array | undefined;
+  let rawKeyring: ExportedVaultKeyring | undefined;
   try {
     signal?.throwIfAborted();
     await assertZip64Tail(source, signal);
@@ -201,7 +206,8 @@ export async function withAuthenticatedVaultPackage<Result>(
     ) {
       throw new ExportAuthenticationError();
     }
-    rawRootKey = await openExportKeyEnvelope(keyEnvelope, manifestBytes, passphrase);
+    rawKeyring = await openExportKeyEnvelope(keyEnvelope, manifestBytes, passphrase);
+    if (rawKeyring.vaultId !== manifest.originatingVaultId) throw new ExportAuthenticationError();
     passphrase = "";
     signal?.throwIfAborted();
     const descriptorChecksum = await sha256(
@@ -233,12 +239,12 @@ export async function withAuthenticatedVaultPackage<Result>(
       const decoded = decodeCanonicalCbor(bytes);
       if (!bytesEqual(bytes, encodeCanonicalCbor(decoded))) throw new ExportPackageInvalidError();
     }
-    const rootKey = await crypto.subtle.importKey(
-      "raw",
-      Uint8Array.from(rawRootKey),
-      "HKDF",
-      false,
-      ["deriveBits"],
+    const keyring = await importVaultKeyring(
+      rawKeyring.activeKeyEpochId,
+      rawKeyring.keyEpochs.map((epoch) => ({
+        ...epoch,
+        rootKey: Uint8Array.from(epoch.rootKey),
+      })),
     );
     try {
       await onRootKeyAuthenticated?.(manifest.originatingVaultId);
@@ -247,7 +253,7 @@ export async function withAuthenticatedVaultPackage<Result>(
     }
     const verified = await verifyAuthoritativeVaultPackage({
       manifest,
-      rootKey,
+      keyring,
       read: async (path, maximum) => {
         const entry = files.get(path);
         if (entry === undefined) throw new ExportPackageInvalidError();
@@ -266,7 +272,7 @@ export async function withAuthenticatedVaultPackage<Result>(
       ...(signal === undefined ? {} : { signal }),
     });
     try {
-      return await use({ manifest, rootKey, ...verified }, rawRootKey);
+      return await use({ manifest, keyring, ...verified }, rawKeyring);
     } catch (error) {
       throw new VaultPackageConsumerError(error);
     }
@@ -278,7 +284,8 @@ export async function withAuthenticatedVaultPackage<Result>(
     throw new ExportPackageInvalidError();
   } finally {
     passphrase = "";
-    if (rawRootKey !== undefined) await wipe(rawRootKey);
+    if (rawKeyring !== undefined)
+      await Promise.all(rawKeyring.keyEpochs.map(async (epoch) => wipe(epoch.rootKey)));
     await reader.close().catch(() => undefined);
   }
 }

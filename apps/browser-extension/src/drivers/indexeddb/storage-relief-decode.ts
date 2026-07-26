@@ -55,6 +55,7 @@ export function decodeStorageReliefCheckpoint(value: unknown): StorageReliefChec
     "vaultId",
     "jobId",
     "artifactObjectId",
+    "keyEpochId",
     "envelopeByteLength",
     "envelopeChecksum",
     "state",
@@ -89,6 +90,7 @@ export function decodeStorageReliefCheckpoint(value: unknown): StorageReliefChec
     vaultId: uuid(input.vaultId, "storageReliefCheckpoint.vaultId"),
     jobId: uuid(input.jobId, "storageReliefCheckpoint.jobId"),
     artifactObjectId: uuid(input.artifactObjectId, "storageReliefCheckpoint.artifactObjectId"),
+    keyEpochId: uuid(input.keyEpochId, "storageReliefCheckpoint.keyEpochId"),
     envelopeByteLength: integer(
       input.envelopeByteLength,
       "storageReliefCheckpoint.envelopeByteLength",

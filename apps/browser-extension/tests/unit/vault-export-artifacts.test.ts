@@ -30,6 +30,7 @@ import { prepareImportedArtifacts } from "../../src/runtime/import/artifacts";
 import { prepareImportedVaultCredentials } from "../../src/runtime/import/credentials";
 import { createPageSnapshotBlob } from "../../src/runtime/page-snapshot";
 import { type VaultRecordsV1, type VaultRepository, VaultService } from "../../src/runtime/vault";
+import type { VaultKeyring } from "../../src/runtime/vault/keyring";
 import { prepareVaultNameChange } from "../../src/runtime/vault/name-crypto";
 
 const id = (suffix: number): string =>
@@ -97,7 +98,7 @@ class MemoryArtifactStore {
 
 async function prepareArtifact(
   store: MemoryArtifactStore,
-  rootKey: CryptoKey,
+  keyring: VaultKeyring,
   vaultId: string,
   objectId: string,
   plaintext: Uint8Array,
@@ -106,8 +107,10 @@ async function prepareArtifact(
   mimeType: string,
   acquiredAt: string,
 ): Promise<PreparedCaptureArtifact> {
-  const key = await deriveContextKeyFromCryptoKey(rootKey, {
+  const epoch = keyring.active();
+  const key = await deriveContextKeyFromCryptoKey(epoch.rootKey, {
     vaultId,
+    keyEpochId: epoch.keyEpochId,
     domain: "vault:artifact:v1",
     contextId: objectId,
     keyVersion: 1,
@@ -115,6 +118,7 @@ async function prepareArtifact(
   const chunks: Uint8Array[] = [];
   const summary = await writeArtifactEnvelope({
     objectId,
+    keyEpochId: epoch.keyEpochId,
     key,
     noncePrefix: new Uint8Array(16).fill(Number(objectId.slice(-1))),
     plaintext: (async function* () {
@@ -135,6 +139,7 @@ async function prepareArtifact(
     version: 1,
     objectId,
     objectType: "Artifact",
+    keyEpochId: epoch.keyEpochId,
     envelopeFormat: "artifact:xchacha20poly1305-chunked:v1",
     envelopeByteLength: summary.envelopeByteLength,
     envelopeChecksumAlgorithm: "hash:sha256:v1",
@@ -219,7 +224,7 @@ describe("Artifact graph Vault Export", () => {
     const artifacts = await Promise.all([
       prepareArtifact(
         store,
-        preparedVault.rootKey,
+        preparedVault.keyring,
         vaultId,
         id(20),
         primary,
@@ -230,7 +235,7 @@ describe("Artifact graph Vault Export", () => {
       ),
       prepareArtifact(
         store,
-        preparedVault.rootKey,
+        preparedVault.keyring,
         vaultId,
         id(21),
         text,
@@ -241,7 +246,7 @@ describe("Artifact graph Vault Export", () => {
       ),
       prepareArtifact(
         store,
-        preparedVault.rootKey,
+        preparedVault.keyring,
         vaultId,
         id(22),
         structured,
@@ -252,7 +257,7 @@ describe("Artifact graph Vault Export", () => {
       ),
     ]);
     const registration = await prepareCaptureRegistration({
-      rootKey: preparedVault.rootKey,
+      keyring: preparedVault.keyring,
       vaultId,
       deviceId: preparedVault.records.metadata.deviceId,
       commandId: id(10),
@@ -267,7 +272,7 @@ describe("Artifact graph Vault Export", () => {
       clientVersion: "0.1.0",
     });
     const created = await prepareVaultNameChange({
-      rootKey: preparedVault.rootKey,
+      keyring: preparedVault.keyring,
       eventType: "VaultCreated",
       vaultId,
       deviceId: preparedVault.records.metadata.deviceId,
@@ -331,10 +336,10 @@ describe("Artifact graph Vault Export", () => {
       withAuthenticatedVaultPackage(
         completeBlob,
         options.passphrase,
-        (authenticated, rawRootKey) => {
-          scopedRawRootKey = rawRootKey;
-          expect(rawRootKey).toHaveLength(32);
-          expect(authenticated.rootKey.extractable).toBe(false);
+        (authenticated, rawKeyring) => {
+          scopedRawRootKey = rawKeyring.keyEpochs[0]?.rootKey;
+          expect(rawKeyring.keyEpochs[0]?.rootKey).toHaveLength(32);
+          expect(authenticated.keyring.active().rootKey.extractable).toBe(false);
           return authenticated.manifest.originatingVaultId;
         },
       ),
@@ -348,11 +353,13 @@ describe("Artifact graph Vault Export", () => {
         throw consumerFailure;
       }),
     ).rejects.toBe(consumerFailure);
-    const importedRecords = await withAuthenticatedVaultPackage(
+    const imported = await withAuthenticatedVaultPackage(
       completeBlob,
       options.passphrase,
       (authenticated, rawRootKey) => prepareImportedVaultCredentials(authenticated, rawRootKey),
     );
+    const importedRecords = imported.records;
+    expect(imported.epochStorage.epochs).toHaveLength(1);
     expect(importedRecords.metadata).toMatchObject({
       vaultId: preparedVault.records.metadata.vaultId,
       createdAt: "2026-07-18T20:00:00.000Z",

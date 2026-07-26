@@ -11,6 +11,7 @@ import type { LibraryItemV1 } from "../../src/domain/contracts";
 import type { StoredObjectV1, StoredProjectionV1 } from "../../src/drivers/indexeddb";
 import type { ArtifactStore } from "../../src/runtime/artifact";
 import { LibraryService } from "../../src/runtime/library/service";
+import { TEST_KEY_EPOCH_ID, testKeyring } from "../helpers/keyring";
 
 const id = (value: number): string => `00000000-0000-4000-8000-${String(value).padStart(12, "0")}`;
 const capturedAt = "2026-07-18T20:00:00.000Z";
@@ -30,11 +31,20 @@ async function encrypted(
 ): Promise<Uint8Array> {
   const key = await deriveContextKeyFromCryptoKey(root, {
     vaultId,
+    keyEpochId: TEST_KEY_EPOCH_ID,
     domain,
     contextId,
     keyVersion: 1,
   });
-  return encodeEncryptedEnvelope(await encryptEnvelope({ objectType, objectId, plaintext, key }));
+  return encodeEncryptedEnvelope(
+    await encryptEnvelope({
+      objectType,
+      objectId,
+      keyEpochId: TEST_KEY_EPOCH_ID,
+      plaintext,
+      key,
+    }),
+  );
 }
 
 function reference(objectId: string, role: ArtifactReferenceV1["role"]): ArtifactReferenceV1 {
@@ -138,6 +148,7 @@ async function fixture(warnings: LibraryItemV1["warnings"] = []) {
       version: 1,
       objectId: entry.artifactObjectId,
       objectType: "Artifact",
+      keyEpochId: "00000000-0000-4000-8000-000000000009",
       envelopeFormat: "artifact:xchacha20poly1305-chunked:v1",
       envelopeByteLength: 100,
       envelopeChecksumAlgorithm: "hash:sha256:v1",
@@ -158,7 +169,7 @@ async function fixture(warnings: LibraryItemV1["warnings"] = []) {
         getCollectionProjection: async () => undefined,
         getStoredObject: async (objectId) => objects.get(objectId),
       },
-      root,
+      testKeyring(root),
       vaultId,
       artifactStore,
       availability,

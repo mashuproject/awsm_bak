@@ -429,7 +429,8 @@ collapses, the deferred reconciliation SHALL complete from the same detail route
 
 The packaged-Chrome Account proof SHALL include one cold first-use journey through the real
 self-hosted Coordination Server. Through visible extension controls it SHALL choose the server,
-create an Account, capture and organize content, bootstrap a second browser profile, prove live
+open Rails signup, log in, create and confirm a Recovery Phrase, capture and organize content,
+bootstrap a second browser profile with the same Account and phrase, prove live
 cross-profile Collection convergence, disconnect that profile before a remote Generation change,
 delete and Vacuum from the authoritative profile, resolve the resulting stale Replica with
 the export-first warning and explicit overwrite confirmations, preserve its prior state as a fresh
@@ -438,6 +439,20 @@ owns Export-to-Import portability because headless Chrome cannot complete the na
 boundary. Test harness accommodations for headless Chrome MAY grant permissions only in a
 disposable packaged copy; the release-manifest verifier remains authoritative for shipped
 permissions.
+
+The packaged recovery interaction suite SHALL use real release builds and the public Coordination
+Server contract to prove fresh Chrome from Chrome, fresh Firefox from Firefox, Chrome from Firefox,
+and Firefox from Chrome. Each direction SHALL compare the exact active Event/Object closure,
+Generation, Head, Delivery Cursor, and encrypted Artifact bytes after bidirectional convergence.
+The suite SHALL also prove returning-Device restart, ordinary Device removal, Future Protection,
+concurrent Recovery Generation compare-and-swap loss, offline unpublished old-epoch replay, and
+rejection of removed Devices and old Recovery Phrases.
+
+Vault replacement interaction coverage SHALL require a verified Complete Export, fail the network
+request immediately before activation and prove the source remains authoritative, retry through
+atomic promotion and asynchronous source purge, prove stale source Devices retain old downloaded
+content but cannot synchronize, reject the old phrase, recover a fresh Device with the replacement
+phrase, and compare the exact resulting encrypted Replica.
 
 The proof SHALL also show that state reads do not create synchronization work, a visible Retry can
 rediscover a server-superseded Generation without reauthentication, and a stable synchronized

@@ -108,11 +108,40 @@ availability/maintenance rows. A restart after activation retains the committed 
 
 # Account Scope
 
-One Account owns at most one synchronized Vault. The Runtime creates and retains the Account
-Encryption Key only in trusted client storage, sends only its password-wrapped envelope and the
-Account-wrapped Vault Root Key slot, and retains the device-local slot for offline access after
-logout. Account Commands, credentials, Jobs, checkpoints, Delivery Cursors, and wake-up hints are
-operational state and never authoritative Vault history.
+One Account owns at most one synchronized Vault. Rails Account authentication establishes identity
+only. The Runtime stores independent Account and VaultDevice sessions, protected local Device
+identity, encrypted Recovery Kit metadata, and signed key-epoch envelopes. It never derives Vault
+keys from the Account password. Account Commands, credentials, Jobs, checkpoints, Delivery Cursors,
+and wake-up hints are operational state and never authoritative Vault history.
+
+# Initial Attach and Device Recovery
+
+For an Account without a synchronized Vault, the Runtime SHALL generate the first Recovery
+Generation, Key Epoch, encrypted Recovery Kit, Device identity, Device certificate, and Device key
+envelope. It SHALL submit them only after the user confirms all 12 Recovery Phrase words. Initial
+attach is atomic; failure leaves the local Vault local-only and retains no phrase.
+
+For an Account with a synchronized Vault but no matching local Device, the Runtime SHALL require the
+current Recovery Phrase, decrypt and validate the Recovery Kit, create and certify a fresh Device,
+prove possession of its signing key, install every readable Key Epoch, and atomically activate the
+verified downloaded Replica. Enrollment never requires another Device to be online.
+
+A returning Device SHALL exchange a signed one-use challenge for a VaultDevice session. Ordinary
+Device removal revokes server access but cannot erase previously downloaded content.
+
+# Future Protection and Vault Replacement
+
+Future Protection SHALL use compare-and-swap on the current Recovery Generation. It creates a new
+Recovery Phrase, Recovery Generation, and Key Epoch, reissues retained-Device envelopes, and makes
+offline unpublished old-epoch work replay under the active epoch before upload. Already published
+history retains its original Key Epoch.
+
+Vault replacement SHALL require a current verified Complete Export and explicit safe-storage
+confirmation. The Runtime rewrites the exact active closure under a fresh Vault identity and keys,
+validates the provisional remote candidate, and activates it with an atomic source fence. Failure
+before activation leaves the source authoritative. After activation it atomically promotes local
+authority, revokes source Devices, and tracks server purge to completion. The old Recovery Phrase
+cannot enroll into the replacement Vault.
 
 Synchronized Vacuum SHALL treat authentication expiry at any remote activation checkpoint as an
 authentication boundary, not as local completion. It SHALL retain deleted content and the

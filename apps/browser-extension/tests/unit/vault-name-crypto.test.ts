@@ -4,6 +4,7 @@ import {
   decryptVaultNameProjection,
   prepareVaultNameChange,
 } from "../../src/runtime/vault/name-crypto";
+import { testKeyring } from "../helpers/keyring";
 
 const vaultId = "00000000-0000-4000-8000-000000000001";
 const deviceId = "00000000-0000-4000-8000-000000000002";
@@ -17,8 +18,9 @@ async function rootKey(): Promise<CryptoKey> {
 describe("encrypted Vault name state", () => {
   it("prepares matching authoritative Event and rebuildable Projection ciphertext", async () => {
     const key = await rootKey();
+    const keyring = testKeyring(key);
     const prepared = await prepareVaultNameChange({
-      rootKey: key,
+      keyring,
       eventType: "VaultCreated",
       vaultId,
       deviceId,
@@ -35,7 +37,7 @@ describe("encrypted Vault name state", () => {
       orderingTimestamp: timestamp,
     });
     expect(prepared.projection).toMatchObject({ version: 1, vaultId, sourceEventId: eventId });
-    await expect(decodeVaultNameEvent(key, prepared.event)).resolves.toMatchObject({
+    await expect(decodeVaultNameEvent(keyring, prepared.event)).resolves.toMatchObject({
       version: 1,
       eventType: "VaultCreated",
       vaultId,
@@ -43,7 +45,7 @@ describe("encrypted Vault name state", () => {
       name: "Amber Archive",
       orderingTimestamp: timestamp,
     });
-    await expect(decryptVaultNameProjection(key, prepared.projection)).resolves.toEqual({
+    await expect(decryptVaultNameProjection(keyring, prepared.projection)).resolves.toEqual({
       version: 1,
       vaultId,
       name: "Amber Archive",
@@ -55,7 +57,7 @@ describe("encrypted Vault name state", () => {
   it("rejects a noncanonical name before producing ciphertext", async () => {
     await expect(
       prepareVaultNameChange({
-        rootKey: await rootKey(),
+        keyring: testKeyring(await rootKey()),
         eventType: "VaultRenamed",
         vaultId,
         deviceId,

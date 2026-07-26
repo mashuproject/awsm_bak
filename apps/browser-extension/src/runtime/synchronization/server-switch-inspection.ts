@@ -1,12 +1,15 @@
-import { wipe } from "../../crypto/sodium";
-import type { StoredAccountMetadataV1, StoredAccountVaultV1 } from "../../drivers/indexeddb/schema";
-import { openAccountVaultSlot } from "../account/crypto";
-import { decodeAccountVaultSlot } from "./discovery";
+import { canonicalRecord, integer, uuid } from "../../domain/validation";
+import type {
+  StoredAccountMetadataV1,
+  StoredAccountVaultV1,
+  StoredRecoveryKitV1,
+} from "../../drivers/indexeddb/schema";
+import { recoveryKitFromWire } from "../recovery/kit";
 import type { VerifiedServerSwitchReplica } from "./server-switch-classifier";
 
 interface CandidateAccountStore {
   loadMetadata(scope: "server-switch-candidate"): Promise<StoredAccountMetadataV1 | undefined>;
-  loadAccountEncryptionKey(scope: "server-switch-candidate"): Promise<Uint8Array>;
+  loadRecoveryKit(vaultId: string): Promise<StoredRecoveryKitV1 | undefined>;
 }
 
 interface CandidateTransport {
@@ -26,23 +29,6 @@ function integrity(message: string): Error {
   return Object.assign(new Error(message), { id: "SYNCHRONIZATION_INTEGRITY_FAILED" });
 }
 
-function record(value: unknown, field: string): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value))
-    throw integrity(`${field} is invalid`);
-  return value as Record<string, unknown>;
-}
-
-function text(value: unknown, field: string): string {
-  if (typeof value !== "string" || value.length === 0) throw integrity(`${field} is invalid`);
-  return value;
-}
-
-function counter(value: unknown, field: string): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0)
-    throw integrity(`${field} is invalid`);
-  return value;
-}
-
 function equal(left: Uint8Array, right: Uint8Array): boolean {
   if (left.byteLength !== right.byteLength) return false;
   let difference = 0;
@@ -54,45 +40,71 @@ function equal(left: Uint8Array, right: Uint8Array): boolean {
 export class ServerSwitchCandidateInspector {
   constructor(
     private readonly accounts: CandidateAccountStore,
-    private readonly transport: CandidateTransport,
+    private readonly accountTransport: CandidateTransport,
+    private readonly deviceTransportForAttached: (vaultId: string) => Promise<CandidateTransport>,
   ) {}
 
-  async inspect(expectedVaultId: string, localRootKey: Uint8Array): Promise<CandidateInspection> {
+  async inspect(expectedVaultId: string, _localRootKey: Uint8Array): Promise<CandidateInspection> {
     const metadata = await this.accounts.loadMetadata("server-switch-candidate");
-    if (metadata === undefined) throw integrity("Candidate Account metadata is missing");
-    const response = record(
-      (await this.transport.request("GET", "/api/vaults")).body,
-      "Vault list",
+    if (metadata === undefined || metadata.scope !== "Account")
+      throw integrity("Candidate Account metadata is missing");
+    const response = canonicalRecord(
+      (await this.accountTransport.request("GET", "/api/account/vault-enrollment")).body,
+      "candidateEnrollment",
+      ["state", "vaultId", "recoveryKit"],
     );
-    if (!Array.isArray(response.vaults) || response.vaults.length > 1)
-      throw integrity("Candidate Account Vault cardinality is invalid");
-    if (response.vaults.length === 0) return { headCursor: 0 };
-    const remote = record(response.vaults[0], "Candidate Vault");
-    const vaultId = text(remote.vaultId, "Candidate Vault ID");
+    if (response.state === "Empty") {
+      if (Object.keys(response).length !== 1)
+        throw integrity("Empty candidate enrollment has extra fields");
+      return { headCursor: 0 };
+    }
+    if (response.state !== "Attached") throw integrity("Candidate enrollment state is invalid");
+    const vaultId = uuid(response.vaultId, "candidateEnrollment.vaultId");
     if (vaultId !== expectedVaultId)
       throw Object.assign(new Error("Candidate Account owns another Vault"), {
         id: "SERVER_SWITCH_VAULT_MISMATCH",
       });
-    if (remote.state !== "Active") throw integrity("Candidate Vault is not active");
-    const generationId = text(remote.generationId, "Candidate Generation ID");
-    const generationNumber = counter(remote.generationNumber, "Candidate Generation number");
-    const headCursor = counter(remote.headCursor, "Candidate head cursor");
+    const [remote, local] = await Promise.all([
+      Promise.resolve(recoveryKitFromWire(response.recoveryKit)),
+      this.accounts.loadRecoveryKit(vaultId),
+    ]);
+    if (
+      local === undefined ||
+      local.recoveryGenerationId !== remote.metadata.recoveryGenerationId ||
+      !equal(local.metadata.administratorPublicKey, remote.metadata.administratorPublicKey) ||
+      !equal(local.metadata.ciphertextSha256, remote.metadata.ciphertextSha256) ||
+      !equal(local.ciphertext, remote.ciphertext)
+    )
+      throw integrity("Candidate Recovery Kit authority differs");
+    const authority = canonicalRecord(
+      (
+        await (
+          await this.deviceTransportForAttached(vaultId)
+        ).request("GET", `/api/vaults/${vaultId}`)
+      ).body,
+      "candidateVault",
+      [
+        "vaultId",
+        "state",
+        "generationId",
+        "generationNumber",
+        "headCursor",
+        "activeKeyEpochId",
+        "predecessorGenerationId",
+      ],
+    );
+    if (
+      uuid(authority.vaultId, "candidateVault.vaultId") !== vaultId ||
+      authority.state !== "Active"
+    )
+      throw integrity("Candidate Vault authority is invalid");
+    const generationId = uuid(authority.generationId, "candidateVault.generationId");
+    const generationNumber = integer(authority.generationNumber, "candidateVault.generationNumber");
+    const headCursor = integer(authority.headCursor, "candidateVault.headCursor");
     const predecessorGenerationId =
-      remote.predecessorGenerationId === undefined
+      authority.predecessorGenerationId === undefined
         ? undefined
-        : text(remote.predecessorGenerationId, "Candidate predecessor Generation ID");
-    const slot = decodeAccountVaultSlot(remote.accountSlot);
-    if (slot.vaultId !== vaultId || slot.accountKeyId !== metadata.accountKeyId)
-      throw integrity("Candidate Account slot identity differs");
-    const accountKey = await this.accounts.loadAccountEncryptionKey("server-switch-candidate");
-    let remoteRootKey: Uint8Array | undefined;
-    try {
-      remoteRootKey = await openAccountVaultSlot(slot, accountKey);
-      if (!equal(remoteRootKey, localRootKey)) throw integrity("Candidate Vault Root Key differs");
-    } finally {
-      await wipe(accountKey);
-      if (remoteRootKey !== undefined) await wipe(remoteRootKey);
-    }
+        : uuid(authority.predecessorGenerationId, "candidateVault.predecessorGenerationId");
     return {
       replica: {
         vaultId,
@@ -106,8 +118,8 @@ export class ServerSwitchCandidateInspector {
         version: 1,
         accountId: metadata.accountId,
         vaultId,
-        accountKeyId: metadata.accountKeyId,
-        accountSlot: remote.accountSlot,
+        activeRecoveryGenerationId: remote.metadata.recoveryGenerationId,
+        activeKeyEpochId: uuid(authority.activeKeyEpochId, "candidateVault.activeKeyEpochId"),
         remoteGenerationId: generationId,
         remoteGenerationNumber: generationNumber,
         deliveryCursor: headCursor,

@@ -54,6 +54,7 @@ services:
       AWSM_JOB_QUEUE_ADAPTER: async
       AWSM_OPENAPI_PATH: /docs/specifications/protocol/http-api.openapi.yaml
       AWSM_OPAQUE_STORAGE_PATH: /opaque-storage
+      AWSM_PUBLIC_ORIGIN: http://127.0.0.1:${AWSM_COORDINATION_E2E_PRIMARY_PORT:-3310}
       AWSM_REDIS_NAMESPACE: awsm:coordination-e2e
       AWSM_REDIS_URL: redis://redis-coordination-e2e:6379/0
       AWSM_SYNTHETIC_ACCOUNT_SECRET: awsm-coordination-e2e-synthetic-account-parameter-secret

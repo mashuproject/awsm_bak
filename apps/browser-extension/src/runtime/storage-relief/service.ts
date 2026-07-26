@@ -4,6 +4,7 @@ import type {
   StorageReliefJobV1,
   StoredRemoteOnlyArtifactV1,
 } from "../../drivers/indexeddb/storage-relief-schema";
+import type { VaultKeyring } from "../vault/keyring";
 import type { StorageReliefEstimate } from "./candidates";
 import { storageReliefError } from "./contracts";
 
@@ -19,12 +20,12 @@ interface StorageReliefServiceRepository {
 }
 
 interface StorageReliefEnumerator {
-  enumerate(vaultId: string, rootKey: CryptoKey): Promise<StorageReliefEstimate>;
+  enumerate(vaultId: string, keyring: VaultKeyring): Promise<StorageReliefEstimate>;
 }
 
 interface StartStorageReliefInput {
   readonly vaultId: string;
-  readonly rootKey: CryptoKey;
+  readonly keyring: VaultKeyring;
   readonly accountId: string;
   readonly serverOrigin: string;
   readonly candidateArtifacts: number;
@@ -46,15 +47,15 @@ export class StorageReliefService {
     private readonly faults: StorageReliefCreationFaults = {},
   ) {}
 
-  estimate(vaultId: string, rootKey: CryptoKey): Promise<StorageReliefEstimate> {
-    return this.enumerator.enumerate(vaultId, rootKey);
+  estimate(vaultId: string, keyring: VaultKeyring): Promise<StorageReliefEstimate> {
+    return this.enumerator.enumerate(vaultId, keyring);
   }
 
   async start(input: StartStorageReliefInput): Promise<{ readonly jobId: string }> {
     const [head, availability, estimate] = await Promise.all([
       this.repository.getVaultHead(),
       this.repository.listRemoteOnlyArtifacts(input.vaultId),
-      this.enumerator.enumerate(input.vaultId, input.rootKey),
+      this.enumerator.enumerate(input.vaultId, input.keyring),
     ]);
     if (head === undefined || head.vaultId !== input.vaultId)
       throw storageReliefError("VAULT_CONTEXT_CHANGED", "The active Vault head is unavailable.");
@@ -92,6 +93,7 @@ export class StorageReliefService {
       vaultId: input.vaultId,
       jobId,
       artifactObjectId: candidate.object.objectId,
+      keyEpochId: candidate.object.keyEpochId,
       envelopeByteLength: candidate.object.envelopeByteLength,
       envelopeChecksum: candidate.object.envelopeChecksum,
       state: "Candidate",

@@ -32,19 +32,31 @@ describe("Account Coordination Server selection", () => {
 
   it("requests only the exact origin, rejects redirects, and commits after a compatible probe", async () => {
     const requestPermission = vi.fn(async () => true);
-    const probe = vi.fn(async () => ({
-      status: 200,
-      redirected: false,
-      body: {
-        service: "AWSM Coordination Server",
-        protocolVersion: "1",
-        capabilities: {
-          accountPassword: true,
-          accountVaultLimit: 1,
-          completeReplicaSynchronization: true,
+    const probe = vi.fn(
+      async (): Promise<{
+        status: number;
+        redirected: boolean;
+        body: unknown;
+      }> => ({
+        status: 200,
+        redirected: false,
+        body: {
+          service: "AWSM Coordination Server",
+          protocolVersion: "1",
+          capabilities: {
+            accountPassword: true,
+            accountVaultLimit: 1,
+            completeReplicaSynchronization: true,
+            deviceEnrollment: "RecoveryPhrase",
+            deviceRevocation: true,
+          },
+          registration: {
+            enabled: true,
+            signUpUrl: "https://sync.example.test/sign_up",
+          },
         },
-      },
-    }));
+      }),
+    );
     const commit = vi.fn(async () => undefined);
 
     await configureSyncServer("https://sync.example.test", {
@@ -59,6 +71,10 @@ describe("Account Coordination Server selection", () => {
       version: 1,
       mode: "Configured",
       serverOrigin: "https://sync.example.test",
+      registration: {
+        enabled: true,
+        signUpUrl: "https://sync.example.test/sign_up",
+      },
     });
 
     probe.mockResolvedValueOnce({
@@ -71,7 +87,10 @@ describe("Account Coordination Server selection", () => {
           accountPassword: true,
           accountVaultLimit: 1,
           completeReplicaSynchronization: true,
+          deviceEnrollment: "RecoveryPhrase",
+          deviceRevocation: true,
         },
+        registration: { enabled: false },
       },
     });
     await expect(
@@ -150,8 +169,11 @@ describe("Account Coordination Server selection", () => {
         accountPassword: true,
         accountVaultLimit: 1,
         completeReplicaSynchronization: true,
+        deviceEnrollment: "RecoveryPhrase",
+        deviceRevocation: true,
         unexpected: true,
       },
+      registration: { enabled: false },
     },
   ])("rejects malformed or incompatible server information %#", async (body) => {
     const commit = vi.fn();

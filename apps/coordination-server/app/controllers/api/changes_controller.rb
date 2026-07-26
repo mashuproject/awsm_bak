@@ -1,7 +1,7 @@
 module Api
   class ChangesController < BaseController
     def index
-      vault = current_account.vault_replicas.find_by!(vault_id: params[:vault_id])
+      vault = bound_vault!
       generation = vault.active_generation
       unless generation
         raise Coordination::OutcomeError.new("VAULT_NOT_READY", status: :conflict)

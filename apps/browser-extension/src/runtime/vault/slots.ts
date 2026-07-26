@@ -14,6 +14,7 @@ export function deviceSlotAad(slot: DeviceKeySlotV1): Uint8Array {
   return encodeCanonicalCbor([
     slot.version,
     slot.vaultId,
+    slot.keyEpochId,
     slot.deviceId,
     slot.slotId,
     slot.algorithm,
@@ -23,6 +24,7 @@ export function deviceSlotAad(slot: DeviceKeySlotV1): Uint8Array {
 export async function createDeviceSlot(
   rootKey: CryptoKey,
   vaultId: string,
+  keyEpochId: string,
   deviceId: string,
 ): Promise<{ readonly slot: DeviceKeySlotV1; readonly deviceKey: CryptoKey }> {
   const slotId = crypto.randomUUID();
@@ -36,6 +38,7 @@ export async function createDeviceSlot(
       version: 1,
       slotId,
       vaultId,
+      keyEpochId,
       deviceId,
       algorithm: "wrap:aes-kw-256:device:v1",
       wrappedRootKey: new Uint8Array(wrapped),
@@ -63,6 +66,7 @@ export async function unwrapDeviceSlot(
 async function verifierKey(rootKey: CryptoKey, slot: DeviceKeySlotV1): Promise<Uint8Array> {
   return deriveContextKeyFromCryptoKey(rootKey, {
     vaultId: slot.vaultId,
+    keyEpochId: slot.keyEpochId,
     domain: "vault:verifier:v1",
     contextId: slot.slotId,
     keyVersion: 1,
@@ -77,6 +81,7 @@ export async function createVerifier(
   const key = await deriveContextKey({
     rootKey: rawRootKey,
     vaultId: slot.vaultId,
+    keyEpochId: slot.keyEpochId,
     domain: "vault:verifier:v1",
     contextId: slot.slotId,
     keyVersion: 1,

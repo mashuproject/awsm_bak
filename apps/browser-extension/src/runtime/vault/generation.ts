@@ -18,10 +18,12 @@ import {
   uuid,
 } from "../../domain/validation";
 import type { StoredVaultGenerationV1, StoredVaultHeadV1 } from "../../drivers/indexeddb/schema";
+import type { VaultKeyring } from "./keyring";
 
 export interface PrepareVaultGenerationInput {
   readonly rootKey: CryptoKey;
   readonly vaultId: string;
+  readonly keyEpochId: string;
   readonly deviceId: string;
   readonly generationId: string;
   readonly generationNumber: number;
@@ -57,6 +59,7 @@ export async function prepareVaultGeneration(input: PrepareVaultGenerationInput)
   });
   const key = await deriveContextKeyFromCryptoKey(input.rootKey, {
     vaultId: input.vaultId,
+    keyEpochId: input.keyEpochId,
     domain: "vault:generation:v1",
     contextId: input.generationId,
     keyVersion: 1,
@@ -67,6 +70,7 @@ export async function prepareVaultGeneration(input: PrepareVaultGenerationInput)
       await encryptEnvelope({
         objectType: "VaultGeneration",
         objectId: input.generationId,
+        keyEpochId: input.keyEpochId,
         plaintext,
         key,
       }),
@@ -96,26 +100,28 @@ export async function prepareVaultGeneration(input: PrepareVaultGenerationInput)
 }
 
 export async function verifyVaultGeneration(
-  rootKey: CryptoKey,
+  keyring: VaultKeyring,
   vaultId: string,
   stored: StoredVaultGenerationV1,
 ): Promise<{
   readonly retainedObjectIds: readonly string[];
   readonly retainedEventIds: readonly string[];
 }> {
-  const key = await deriveContextKeyFromCryptoKey(rootKey, {
+  const envelope = decodeEncryptedEnvelopeBytes(stored.envelopeBytes);
+  const epoch = keyring.require(envelope.keyEpochId);
+  const key = await deriveContextKeyFromCryptoKey(epoch.rootKey, {
     vaultId,
+    keyEpochId: epoch.keyEpochId,
     domain: "vault:generation:v1",
     contextId: stored.generationId,
     keyVersion: 1,
   });
   try {
-    const envelope = decodeEncryptedEnvelopeBytes(stored.envelopeBytes);
     if (envelope.objectType !== "VaultGeneration" || envelope.objectId !== stored.generationId) {
       throw new Error("Vault Generation envelope mismatch");
     }
     const manifest = canonicalRecord(
-      decodeCanonicalCbor(await decryptEnvelope(envelope, key)),
+      decodeCanonicalCbor(await decryptEnvelope(envelope, key, epoch.keyEpochId)),
       "generation",
       [
         "version",

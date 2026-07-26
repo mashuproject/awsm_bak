@@ -14,6 +14,7 @@ export class TestingFaultCheckpoint implements RuntimeFaultCheckpoint {
   private armed: ArmedCheckpoint | undefined;
   private lastFailure:
     | {
+        readonly name: string;
         readonly message: string;
         readonly id?: string;
         readonly status?: number;
@@ -24,7 +25,7 @@ export class TestingFaultCheckpoint implements RuntimeFaultCheckpoint {
 
   recordFailure(value: unknown): void {
     if (!(value instanceof Error)) {
-      this.lastFailure = { message: "Non-Error synchronization failure" };
+      this.lastFailure = { name: "UnknownError", message: "Non-Error synchronization failure" };
       return;
     }
     const id = "id" in value && typeof value.id === "string" ? value.id : undefined;
@@ -32,6 +33,7 @@ export class TestingFaultCheckpoint implements RuntimeFaultCheckpoint {
     const method = "method" in value && typeof value.method === "string" ? value.method : undefined;
     const path = "path" in value && typeof value.path === "string" ? value.path : undefined;
     this.lastFailure = {
+      name: value.name,
       message: value.message,
       ...(id === undefined ? {} : { id }),
       ...(status === undefined ? {} : { status }),
@@ -65,6 +67,7 @@ export class TestingFaultCheckpoint implements RuntimeFaultCheckpoint {
       (input.action === "arm" || input.action === "arm-authentication-expiry") &&
       typeof input.checkpoint === "string"
     ) {
+      this.lastFailure = undefined;
       let release!: () => void;
       const promise = new Promise<void>((resolve) => {
         release = resolve;

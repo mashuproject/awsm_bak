@@ -11,6 +11,7 @@ module Api
       body = request.request_parameters
       generation = eligible_generation!(vault, body.fetch("targetGenerationId"))
       validate_upload_body!(body)
+      key_epoch = active_key_epoch!(vault, body.fetch("keyEpochId"))
       if (existing = OpaqueRecord.find_by(object_id: body.fetch("objectId")))
         return handle_existing!(existing, vault, body)
       end
@@ -22,6 +23,7 @@ module Api
           object_type: body.fetch("objectType"), byte_length: body.fetch("byteLength"),
           sha256: Coordination::ProtocolEncoding.decode_sha256(body.fetch("sha256")),
           state: "Uploading", target_generation_id: generation.generation_id,
+          vault_key_epoch: key_epoch,
           event_ordering_timestamp: event_metadata && Time.iso8601(event_metadata.fetch("orderingTimestamp")))
         dependencies_for!(vault, generation, event_metadata).each_with_index do |dependency, ordinal|
           record.record_dependencies.create!(dependency_record: dependency, ordinal:)
@@ -95,9 +97,7 @@ module Api
     private
 
     def account_vault!
-      current_account.vault_replicas.find_by!(vault_id: params[:vault_id])
-    rescue ActiveRecord::RecordNotFound
-      raise Coordination::OutcomeError.new("VAULT_NOT_FOUND", status: :not_found)
+      bound_vault!
     end
 
     def account_upload!
@@ -134,6 +134,14 @@ module Api
       end
     end
 
+    def active_key_epoch!(vault, key_epoch_id)
+      return vault.vault_key_epochs.find(key_epoch_id) if key_epoch_id == vault.active_key_epoch_id
+
+      raise Coordination::OutcomeError.new("KEY_EPOCH_CHANGED", status: :conflict)
+    rescue ActiveRecord::RecordNotFound
+      raise Coordination::OutcomeError.new("KEY_EPOCH_CHANGED", status: :conflict)
+    end
+
     def dependencies_for!(vault, generation, event_metadata)
       return [] unless event_metadata
       ids = event_metadata.fetch("dependencyObjectIds")
@@ -153,6 +161,7 @@ module Api
 
     def handle_existing!(record, vault, body)
       matching = record.vault_replica == vault && record.object_type == body.fetch("objectType") &&
+        record.vault_key_epoch_id == body.fetch("keyEpochId") &&
         record.byte_length == body.fetch("byteLength") &&
         ActiveSupport::SecurityUtils.secure_compare(record.sha256,
           Coordination::ProtocolEncoding.decode_sha256(body.fetch("sha256")))
@@ -174,6 +183,7 @@ module Api
 
     def record_json(record)
       result = { objectId: record.object_id, objectType: record.object_type,
+                keyEpochId: record.vault_key_epoch_id,
                 byteLength: record.byte_length,
                 sha256: Coordination::ProtocolEncoding.encode_sha256(record.sha256), state: record.state }
       result[:orderingTimestamp] = Coordination::ProtocolEncoding.timestamp(record.event_ordering_timestamp) if record.object_type == "Event"

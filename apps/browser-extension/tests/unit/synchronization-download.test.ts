@@ -6,6 +6,7 @@ import {
 } from "../../src/runtime/synchronization/download";
 import { prepareVaultGeneration } from "../../src/runtime/vault/generation";
 import { prepareVaultNameChange } from "../../src/runtime/vault/name-crypto";
+import { TEST_KEY_EPOCH_ID, testKeyring } from "../helpers/keyring";
 
 const vaultId = "01900000-0000-7000-8000-000000000101";
 const generationId = "01900000-0000-7000-8000-000000000102";
@@ -16,6 +17,7 @@ async function fixture(predecessorGenerationId?: string) {
   const prepared = await prepareVaultGeneration({
     rootKey,
     vaultId,
+    keyEpochId: TEST_KEY_EPOCH_ID,
     deviceId: "01900000-0000-7000-8000-000000000103",
     generationId,
     generationNumber: predecessorGenerationId === undefined ? 0 : 1,
@@ -31,11 +33,12 @@ async function fixture(predecessorGenerationId?: string) {
   const record = {
     objectId: generationId,
     objectType: "VaultGeneration",
+    keyEpochId: TEST_KEY_EPOCH_ID,
     byteLength: prepared.generation.envelopeBytes.byteLength,
     sha256: bytesToBase64Url(digest),
     state: "Committed",
   };
-  return { rootKey, prepared, record };
+  return { rootKey, keyring: testKeyring(rootKey), prepared, record };
 }
 
 function stream(bytes: Uint8Array): ReadableStream<Uint8Array> {
@@ -52,7 +55,7 @@ describe("remote Complete Replica download", () => {
     const value = await fixture();
     const eventId = "01900000-0000-7000-8000-000000000104";
     const created = await prepareVaultNameChange({
-      rootKey: value.rootKey,
+      keyring: value.keyring,
       eventType: "VaultCreated",
       vaultId,
       deviceId: "01900000-0000-7000-8000-000000000103",
@@ -63,7 +66,7 @@ describe("remote Complete Replica download", () => {
 
     const verified = await verifyPreparedRemoteReplica({
       vaultId,
-      rootKey: value.rootKey,
+      keyring: value.keyring,
       prepared: {
         generation: value.prepared.generation,
         head: { ...value.prepared.head, appendedEventIds: [eventId] },
@@ -130,7 +133,7 @@ describe("remote Complete Replica download", () => {
         retryCount: 0,
         attachIdempotencyKey: crypto.randomUUID(),
       },
-      value.rootKey,
+      value.keyring,
     );
 
     expect(replica.generation.envelopeBytes).toEqual(value.prepared.generation.envelopeBytes);
@@ -181,7 +184,7 @@ describe("remote Complete Replica download", () => {
         retryCount: 0,
         attachIdempotencyKey: crypto.randomUUID(),
       },
-      value.rootKey,
+      value.keyring,
       {
         generation: {
           ...value.prepared.generation,
@@ -229,7 +232,7 @@ describe("remote Complete Replica download", () => {
       attachIdempotencyKey: crypto.randomUUID(),
     };
 
-    await expect(downloader.prepare(job, value.rootKey)).rejects.toMatchObject({
+    await expect(downloader.prepare(job, value.keyring)).rejects.toMatchObject({
       id: "SYNCHRONIZATION_INTEGRITY_FAILED",
     });
   });
@@ -242,6 +245,7 @@ describe("remote Complete Replica download", () => {
     const prepared = await prepareVaultGeneration({
       rootKey,
       vaultId,
+      keyEpochId: TEST_KEY_EPOCH_ID,
       deviceId: "01900000-0000-7000-8000-000000000103",
       generationId,
       generationNumber: 0,
@@ -257,6 +261,7 @@ describe("remote Complete Replica download", () => {
     const generationRecord = {
       objectId: generationId,
       objectType: "VaultGeneration",
+      keyEpochId: TEST_KEY_EPOCH_ID,
       byteLength: prepared.generation.envelopeBytes.byteLength,
       sha256: bytesToBase64Url(generationDigest),
       state: "Committed",
@@ -264,6 +269,7 @@ describe("remote Complete Replica download", () => {
     const artifactRecord = {
       objectId: artifactId,
       objectType: "Artifact",
+      keyEpochId: TEST_KEY_EPOCH_ID,
       byteLength: advertisedBytes,
       sha256: bytesToBase64Url(artifactDigest),
       state: "Committed",
@@ -320,7 +326,7 @@ describe("remote Complete Replica download", () => {
         retryCount: 0,
         attachIdempotencyKey: crypto.randomUUID(),
       },
-      rootKey,
+      testKeyring(rootKey),
     );
 
     expect(received).toEqual({ byteLength: advertisedBytes, stream: artifactStream });

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { IndexedDbDriver } from "../../src/drivers/indexeddb";
 import type { WorkspaceRecordsV1 } from "../../src/drivers/indexeddb/schema";
 import type { VaultService } from "../../src/runtime/vault";
+import type { VaultKeyring } from "../../src/runtime/vault/keyring";
 import { WorkspaceContextManager } from "../../src/runtime/vault/workspace-context";
 
 const workspaceId = "00000000-0000-4000-8000-000000000001";
@@ -306,7 +307,7 @@ describe("WorkspaceContextManager Rename", () => {
     const activeVault = {
       ...vaultService(firstVaultId),
       isUnlocked: vi.fn(() => true),
-      requireRootKey: vi.fn(() => ({}) as CryptoKey),
+      requireKeyring: vi.fn(() => ({}) as VaultKeyring),
       repository: {
         load: vi.fn(async () => ({
           metadata: { deviceId: "00000000-0000-4000-8000-000000000103" },
@@ -365,7 +366,7 @@ describe("WorkspaceContextManager Rename", () => {
       },
       createVaultPreparer: () => ({}) as VaultService,
       createVaultService: () =>
-        ({ ...vaultService(firstVaultId), requireRootKey: vi.fn() }) as unknown as VaultService,
+        ({ ...vaultService(firstVaultId), requireKeyring: vi.fn() }) as unknown as VaultService,
       createDriver: () => ({ close: vi.fn(async () => undefined) }) as unknown as IndexedDbDriver,
       notify,
       now: () => "2026-07-18T12:02:00.000Z",
@@ -391,7 +392,7 @@ describe("WorkspaceContextManager unlock", () => {
     const activeVault = {
       ...vaultService(firstVaultId),
       unlockWithDevice: vi.fn(async () => undefined),
-      requireRootKey: vi.fn(() => ({}) as CryptoKey),
+      requireKeyring: vi.fn(() => ({}) as VaultKeyring),
     };
     const storedProjection = {
       version: 1 as const,

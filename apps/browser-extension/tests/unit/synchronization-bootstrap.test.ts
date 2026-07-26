@@ -1,25 +1,24 @@
 import { describe, expect, it } from "vitest";
 import type { SynchronizationJobV1 } from "../../src/drivers/indexeddb/schema";
 import type { AtomicRemoteBootstrap } from "../../src/drivers/indexeddb/workspace-repository";
-import { createAccountVaultSlot } from "../../src/runtime/account/crypto";
-import { bytesToBase64Url } from "../../src/runtime/account/wire";
 import { RemoteBootstrapRunner } from "../../src/runtime/synchronization/bootstrap";
 import { prepareVaultGeneration } from "../../src/runtime/vault/generation";
 import { prepareVaultNameChange } from "../../src/runtime/vault/name-crypto";
+import { testKeyring } from "../helpers/keyring";
 
 const accountId = "01900000-0000-7000-8000-000000000201";
-const accountKeyId = "01900000-0000-7000-8000-000000000202";
+const keyEpochId = "01900000-0000-7000-8000-000000000202";
 const vaultId = "01900000-0000-7000-8000-000000000203";
 const generationId = "01900000-0000-7000-8000-000000000204";
 
 describe("remote Replica bootstrap", () => {
   it("prepares a fresh device slot and atomically activates verified authority", async () => {
-    const accountEncryptionKey = new Uint8Array(32).fill(5);
     const rawRootKey = new Uint8Array(32).fill(6);
     const rootKey = await crypto.subtle.importKey("raw", rawRootKey, "HKDF", false, ["deriveBits"]);
     const generation = await prepareVaultGeneration({
       rootKey,
       vaultId,
+      keyEpochId,
       deviceId: "01900000-0000-7000-8000-000000000205",
       generationId,
       generationNumber: 0,
@@ -30,19 +29,13 @@ describe("remote Replica bootstrap", () => {
     });
     const eventId = "01900000-0000-7000-8000-000000000206";
     const created = await prepareVaultNameChange({
-      rootKey,
+      keyring: testKeyring(rootKey, keyEpochId),
       eventType: "VaultCreated",
       vaultId,
       deviceId: "01900000-0000-7000-8000-000000000205",
       eventId,
       timestamp: "2026-07-19T12:00:00.000Z",
       name: "Downloaded Vault",
-    });
-    const slot = await createAccountVaultSlot({
-      vaultId,
-      accountKeyId,
-      accountEncryptionKey,
-      vaultRootKey: rawRootKey,
     });
     let job: SynchronizationJobV1 = {
       version: 1 as const,
@@ -71,20 +64,33 @@ describe("remote Replica bootstrap", () => {
           version: 1,
           accountId,
           vaultId,
-          accountKeyId,
-          accountSlot: {
-            ...slot,
-            nonce: bytesToBase64Url(slot.nonce),
-            ciphertext: bytesToBase64Url(slot.ciphertext),
-          },
+          activeRecoveryGenerationId: "01900000-0000-7000-8000-000000000208",
+          activeKeyEpochId: keyEpochId,
           remoteGenerationId: generationId,
           remoteGenerationNumber: 0,
           deliveryCursor: 2,
         }),
-        loadAccountEncryptionKey: async () => Uint8Array.from(accountEncryptionKey),
         saveSynchronizationJob: async (next) => {
           job = next;
         },
+      },
+      {
+        loadDeviceAuthority: async () =>
+          ({
+            accountId,
+            vaultId,
+            recoveryGenerationId: "01900000-0000-7000-8000-000000000208",
+            identity: {
+              deviceId: "01900000-0000-7000-8000-000000000209",
+              signingPublicKey: new Uint8Array(32),
+              signingSecretKey: new Uint8Array(64),
+              wrappingPublicKey: new Uint8Array(32),
+              wrappingSecretKey: new Uint8Array(32),
+            },
+            certificate: {},
+            envelopes: [],
+            keyEpochs: [{ keyEpochId, ordinal: 0, rootKey: Uint8Array.from(rawRootKey) }],
+          }) as never,
       },
       {
         load: async () => ({

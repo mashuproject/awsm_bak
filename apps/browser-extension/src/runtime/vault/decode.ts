@@ -14,6 +14,7 @@ export function decodeVaultMetadata(value: unknown): VaultMetadataV1 {
   const input = canonicalRecord(value, "vaultMetadata", [
     "version",
     "vaultId",
+    "activeKeyEpochId",
     "deviceId",
     "createdAt",
     "manuallyLocked",
@@ -27,6 +28,7 @@ export function decodeVaultMetadata(value: unknown): VaultMetadataV1 {
   return {
     version: literal(input.version, 1, "vaultMetadata.version"),
     vaultId: uuid(input.vaultId, "vaultMetadata.vaultId"),
+    activeKeyEpochId: uuid(input.activeKeyEpochId, "vaultMetadata.activeKeyEpochId"),
     deviceId: uuid(input.deviceId, "vaultMetadata.deviceId"),
     createdAt: timestamp(input.createdAt, "vaultMetadata.createdAt"),
     manuallyLocked: boolean(input.manuallyLocked, "vaultMetadata.manuallyLocked"),
@@ -43,6 +45,7 @@ export function decodeDeviceSlot(value: unknown): DeviceKeySlotV1 {
     "version",
     "slotId",
     "vaultId",
+    "keyEpochId",
     "deviceId",
     "algorithm",
     "wrappedRootKey",
@@ -51,6 +54,7 @@ export function decodeDeviceSlot(value: unknown): DeviceKeySlotV1 {
     version: literal(input.version, 1, "deviceSlot.version"),
     slotId: uuid(input.slotId, "deviceSlot.slotId"),
     vaultId: uuid(input.vaultId, "deviceSlot.vaultId"),
+    keyEpochId: uuid(input.keyEpochId, "deviceSlot.keyEpochId"),
     deviceId: uuid(input.deviceId, "deviceSlot.deviceId"),
     algorithm: literal(input.algorithm, "wrap:aes-kw-256:device:v1", "deviceSlot.algorithm"),
     wrappedRootKey: bytes(input.wrappedRootKey, 40, "deviceSlot.wrappedRootKey"),

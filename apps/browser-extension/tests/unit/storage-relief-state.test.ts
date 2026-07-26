@@ -25,6 +25,7 @@ function checkpoint(
     vaultId: IDS.vault,
     jobId: IDS.job,
     artifactObjectId,
+    keyEpochId: "00000000-0000-4000-8000-000000000009",
     envelopeByteLength: artifactObjectId === IDS.artifactA ? 100 : 300,
     envelopeChecksum: new Uint8Array(32),
   } as const;

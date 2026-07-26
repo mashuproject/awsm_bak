@@ -26,22 +26,25 @@ transactional publication, delivery bookkeeping, advisory wake-up hints, and rec
 
 # Current Boundary
 
-An Account authenticates with a normalized email and a client-derived authentication secret; the
-server never receives the password. Signup has no email verification or delivery. Rotating opaque
-access and refresh credentials are digest-only at rest, and reuse of a consumed refresh credential
-revokes its logical session. Each Account owns at most one Vault replica record. That record stores
-one opaque Account-wrapped Vault slot and exactly one active Generation.
+An Account signs up on the Rails web surface and authenticates with normalized email and password.
+Rails receives the password over TLS and stores only its password digest. Rotating opaque access and
+refresh credentials are digest-only at rest, and reuse of a consumed refresh credential revokes its
+logical session. Each Account owns at most one synchronized Vault record with one active Recovery
+Generation, one active Key Epoch, certified Devices, opaque Device key envelopes, and exactly one
+active Vault Generation.
 
 An empty Account may attach a Vault at its current nonnegative Generation number. The Coordination
 Server preserves that supplied identity and number as the Replica's first known active Generation;
 it does not renumber the Generation, synthesize predecessor rows, or infer ancestry from encrypted
 Generation contents.
 
-The server does not authorize Devices or possess the Account Encryption Key, Vault Root Key, or
-device-local slot. Shared Vaults, roles, invitations, Device signing/revocation, billing, quotas,
-password change, and Account Recovery Keys remain outside the current boundary. The black-box proof
-uses the same public Account/session resources as the extension; `AWSM_SYNC_PROOF` selects test
-adapters only and never changes authentication semantics.
+The server validates Device certificates, enrollment proofs, revocation state, Recovery Generation
+compare-and-swap, and Key Epoch fences, but possesses no Recovery Phrase, recovery private material,
+Vault root key, or Device secret. Shared Vaults, roles, invitations, billing, and quotas remain
+outside the current boundary. Password change is a Rails identity operation that revokes all
+Account and VaultDevice sessions without changing Vault cryptography. The black-box proof uses the
+same public Account/session resources as the extension; `AWSM_SYNC_PROOF` selects test adapters only
+and never changes authentication semantics.
 
 # Server-Visible Metadata Budget
 

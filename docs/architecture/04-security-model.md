@@ -99,9 +99,9 @@ authorization model may add:
 - delegated access
 
 Account authentication does not establish Device trust or by itself grant cryptographic Vault
-access. The client derives an authentication secret and Account-key wrapping key from the password,
-unwraps the Account Encryption Key locally, and then unwraps the Vault Root Key's Account slot. The
-server never receives the password or unwrapped keys. The isolated black-box proof creates and
+access. Rails receives the Account password over TLS and verifies its digest. The extension then
+uses a certified Device and locally protected key envelopes to access Vault content. The server
+never receives a Recovery Phrase or unwrapped Vault key. The isolated black-box proof creates and
 authenticates an ordinary test Account through the same public Account/session contract as clients;
 there is no alternate credential path.
 
@@ -220,7 +220,8 @@ This keeps the storage layer unaware of plaintext semantics.
 
 # Device Enrollment
 
-Adding a new device requires authorization from an existing trusted device.
+Adding a new Device requires the Account password and the current 12-word Recovery Phrase. It does
+not require another Device to be online.
 
 ```text
 New Device
@@ -235,11 +236,11 @@ Request Access
 
 ↓
 
-Existing Device Approves
+Enter And Confirm Recovery Phrase
 
 ↓
 
-Vault Root Key Wrapped For New Device
+Recovery Authority Certifies Device And Wraps Key Epochs
 
 ↓
 
@@ -268,7 +269,9 @@ Revoking a device:
 
 Revocation **does not** erase previously synchronized local data.
 
-If a device is believed to be compromised, users should rotate the Vault Root Key.
+If a Device is believed to be compromised, ordinary removal blocks future server access. Future
+Protection additionally creates a new Recovery Generation, Recovery Phrase, and Key Epoch so the
+removed Device cannot decrypt subsequently accepted content.
 
 ---
 
@@ -323,24 +326,20 @@ Archive Platform deliberately separates:
 - account recovery
 - vault recovery
 
-Losing Account credentials does not erase an already enrolled device's local access because its
-device slot remains sufficient. No email, administrator, or server-side reset can recover an Account
-Encryption Key. If all enrolled local credentials and the password are lost, synchronized content
-is unrecoverable in the current product.
+Losing Account credentials does not erase an already enrolled Device's local access because its
+Device material remains sufficient. Account password reset and Vault recovery remain separate: no
+email, administrator, or server-side Account reset can derive a Recovery Phrase or Vault key. A
+fresh installation can recover the synchronized Vault with the Account password and current
+Recovery Phrase even when no enrolled Device remains.
 
 Stale-Replica discard is different: it keeps the stale Vault read-only, offers a Complete Export,
 requires explicit loss acknowledgement, verifies the complete active server Replica, and atomically
 replaces the original synchronized Vault without creating another Vault.
 
-Future Account recovery mechanisms may include:
-
-- recovery keys
-- recovery devices
-- exported vault key packages
-
-No recovery mechanism should require backend access to plaintext vault keys.
-
-Account Recovery Keys and recovery Devices remain future design work.
+Vault replacement is the explicit response when Recovery Phrase authority may be compromised. It
+requires a verified Complete Export, rewrites the exact active Vault closure under a new Vault
+identity and keys, atomically promotes that candidate, revokes the source Devices, and purges the
+old synchronized ciphertext. It cannot erase an adversary's independent copies.
 
 ---
 

@@ -20,8 +20,9 @@ RSpec.describe "One-Event closure commits", type: :request do
   let!(:vault) { active_vault }
 
   before do
+    principal = create_vault_device_principal(account:, vault:)
     allow(Coordination::AccountAuthenticator).to receive(:authenticate).and_return(
-      Coordination::AccountPrincipal.new(account:, confirmed_at: Time.current)
+      principal
     )
   end
 
@@ -30,6 +31,7 @@ RSpec.describe "One-Event closure commits", type: :request do
     event_bytes = "event"
     post "/api/vaults/#{vault_id}/uploads", params: {
       objectId: event_id, objectType: "Event", byteLength: event_bytes.bytesize,
+      keyEpochId: vault.active_key_epoch_id,
       sha256: encoded_sha(event_bytes), targetGenerationId: generation_id,
       eventMetadata: { orderingTimestamp: "2026-07-19T12:00:00.000Z",
                       dependencyObjectIds: [ artifact_id ] }
@@ -47,6 +49,7 @@ RSpec.describe "One-Event closure commits", type: :request do
 
     post "/api/vaults/#{vault_id}/uploads", params: {
       objectId: event_id, objectType: "Event", byteLength: 5,
+      keyEpochId: vault.active_key_epoch_id,
       sha256: encoded_sha("event"), targetGenerationId: generation_id,
       eventMetadata: { orderingTimestamp: "2026-07-19T12:00:00.000Z",
                       dependencyObjectIds: [ second_id, artifact_id ] }
@@ -54,6 +57,25 @@ RSpec.describe "One-Event closure commits", type: :request do
 
     expect(response).to have_http_status(:unprocessable_content)
     expect(response.parsed_body.fetch("outcome")).to eq("DEPENDENCY_INVALID")
+    expect(OpaqueRecord.find_by(object_id: event_id)).to be_nil
+  end
+
+  it "rejects an upload declared under a stale or unknown key epoch" do
+    post "/api/vaults/#{vault_id}/uploads", params: {
+      objectId: event_id,
+      objectType: "Event",
+      keyEpochId: "01900000-0000-7000-8000-000000000099",
+      byteLength: 5,
+      sha256: encoded_sha("event"),
+      targetGenerationId: generation_id,
+      eventMetadata: {
+        orderingTimestamp: "2026-07-19T12:00:00.000Z",
+        dependencyObjectIds: []
+      }
+    }.to_json, headers: headers
+
+    expect(response).to have_http_status(:conflict)
+    expect(response.parsed_body.fetch("outcome")).to eq("KEY_EPOCH_CHANGED")
     expect(OpaqueRecord.find_by(object_id: event_id)).to be_nil
   end
 
@@ -154,6 +176,7 @@ RSpec.describe "One-Event closure commits", type: :request do
     record = vault.opaque_records.create!(object_id:, object_type:, byte_length: 5,
       sha256: Digest::SHA256.digest(object_id), state: "DurableUncommitted",
       target_generation_id: generation_id, durable_at: Time.current,
+      vault_key_epoch_id: vault.active_key_epoch_id,
       storage_key: "objects/#{object_id}",
       event_ordering_timestamp: object_type == "Event" ? Time.utc(2026, 7, 19, 12) : nil)
     dependencies.each_with_index do |dependency, ordinal|

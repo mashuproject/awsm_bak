@@ -16,32 +16,11 @@ RSpec.describe "Opaque upload transfers", type: :request do
     }
   end
 
-  before do
-    allow(Coordination::AccountAuthenticator).to receive(:authenticate).and_return(
-      Coordination::AccountPrincipal.new(account:, confirmed_at: Time.current)
-    )
-  end
-
   it "accepts, verifies, atomically installs, and finalizes opaque bytes" do
-    post "/api/vaults", params: {
-      vaultId: vault_id, generationId: generation_id, generationNumber: 0,
-      accountSlot: {
-        version: 1, slotId: "01900000-0000-7000-8000-000000000028", vaultId: vault_id,
-        accountKeyId: account.account_key_id, algorithm: Account::VAULT_SLOT_ALGORITHM,
-        nonce: Base64.urlsafe_encode64("n" * 24, padding: false),
-        ciphertext: Base64.urlsafe_encode64("c" * 48, padding: false)
-      },
-      generationObject: { objectId: generation_id, objectType: "VaultGeneration",
-                         byteLength: bytes.bytesize, sha256: checksum }
-    }.to_json, headers: base_headers.merge(
-      "Content-Type" => "application/json",
-      "Idempotency-Key" => "01900000-0000-7000-8000-000000000023"
-    )
-    expect(response).to have_http_status(:created)
-    upload_id = response.parsed_body.dig("upload", "uploadId")
-    transfer_path = response.parsed_body.dig("ticket", "url").sub("{partNumber}", "0")
+    upload, token, principal = create_upload_and_token
+    allow(Coordination::AccountAuthenticator).to receive(:authenticate).and_return(principal)
 
-    put transfer_path, params: bytes, headers: {
+    put "/api/transfers/#{token}/parts/0", params: bytes, headers: {
       "Awsm-Protocol-Version" => "1",
       "Awsm-Request-ID" => "01900000-0000-7000-8000-000000000024",
       "Content-Type" => "application/octet-stream",
@@ -50,7 +29,7 @@ RSpec.describe "Opaque upload transfers", type: :request do
     }
     expect(response).to have_http_status(:no_content)
 
-    post "/api/vaults/#{vault_id}/uploads/#{upload_id}/complete", headers: base_headers.merge(
+    post "/api/vaults/#{vault_id}/uploads/#{upload.id}/complete", headers: base_headers.merge(
       "Awsm-Request-ID" => "01900000-0000-7000-8000-000000000025",
       "Idempotency-Key" => "01900000-0000-7000-8000-000000000026"
     )
@@ -64,7 +43,7 @@ RSpec.describe "Opaque upload transfers", type: :request do
   end
 
   it "rejects a part whose advertised checksum does not match its bytes" do
-    upload, token = create_upload_and_token
+    upload, token, = create_upload_and_token
 
     put "/api/transfers/#{token}/parts/0", params: bytes, headers: {
       "Awsm-Protocol-Version" => "1",
@@ -85,15 +64,16 @@ RSpec.describe "Opaque upload transfers", type: :request do
     vault = account.vault_replicas.create!(vault_id:, **vault_slot_attributes(account:, vault_id:),
       state: "Provisional", head_cursor: 0,
       provisional_expires_at: 1.day.from_now)
+    principal = create_vault_device_principal(account:, vault:)
     generation = vault.vault_generations.create!(generation_id:, generation_number: 0,
       state: "Candidate")
     record = vault.opaque_records.create!(object_id: generation_id, object_type: "VaultGeneration",
       byte_length: bytes.bytesize, sha256: Digest::SHA256.digest(bytes), state: "Uploading",
-      target_generation_id: generation_id)
+      target_generation_id: generation_id, vault_key_epoch_id: vault.active_key_epoch_id)
     upload = record.create_upload!(state: "Open", part_size: bytes.bytesize, part_count: 1,
       expires_at: 1.day.from_now, last_activity_at: Time.current)
     generation.update!(generation_record: record)
     ticket = Coordination::TransferTicketIssuer.upload(account:, vault:, upload:)
-    [ upload, ticket.fetch(:url).split("/")[3] ]
+    [ upload, ticket.fetch(:url).split("/")[3], principal ]
   end
 end

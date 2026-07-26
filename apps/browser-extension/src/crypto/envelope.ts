@@ -7,6 +7,7 @@ import { xchachaDecrypt, xchachaEncrypt } from "./xchacha";
 export interface EncryptEnvelopeInput {
   readonly objectType: EncryptedEnvelopeV1["objectType"];
   readonly objectId: string;
+  readonly keyEpochId: string;
   readonly plaintext: Uint8Array;
   readonly key: Uint8Array;
   readonly nonce?: Uint8Array;
@@ -17,6 +18,7 @@ function header(envelope: EncryptedEnvelopeV1): Readonly<Record<string, unknown>
     formatVersion: envelope.formatVersion,
     objectType: envelope.objectType,
     algorithm: envelope.algorithm,
+    keyEpochId: envelope.keyEpochId,
     objectId: envelope.objectId,
     payloadLength: envelope.payloadLength,
   };
@@ -32,6 +34,7 @@ export async function encryptEnvelope(input: EncryptEnvelopeInput): Promise<Encr
     formatVersion: 1,
     objectType: input.objectType,
     algorithm: "enc:xchacha20poly1305:v1",
+    keyEpochId: input.keyEpochId,
     objectId: input.objectId,
     payloadLength: input.plaintext.byteLength,
     nonce,
@@ -49,9 +52,11 @@ export async function encryptEnvelope(input: EncryptEnvelopeInput): Promise<Encr
 export async function decryptEnvelope(
   value: EncryptedEnvelopeV1,
   key: Uint8Array,
+  expectedKeyEpochId: string,
 ): Promise<Uint8Array> {
   try {
     const envelope = decodeEncryptedEnvelope(value);
+    if (envelope.keyEpochId !== expectedKeyEpochId) throw new CryptoOperationError();
     return await xchachaDecrypt({
       ciphertext: envelope.ciphertext,
       aad: encodeCanonicalCbor(header(envelope)),

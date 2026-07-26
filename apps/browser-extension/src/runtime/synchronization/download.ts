@@ -13,6 +13,7 @@ import type { ArtifactStore } from "../artifact";
 import type { ExportEntryDescriptorV1, ExportManifestV1 } from "../export/contracts";
 import { verifyAuthoritativeVaultPackage } from "../export/verify";
 import { verifyVaultGeneration } from "../vault/generation";
+import type { VaultKeyring } from "../vault/keyring";
 
 const MAXIMUM_INLINE_BYTES = 16 * 1024 * 1024;
 
@@ -29,6 +30,7 @@ interface DownloadTransport {
 interface RemoteRecord {
   readonly objectId: string;
   readonly objectType: "VaultGeneration" | "Event" | "BundleDescriptor" | "Artifact";
+  readonly keyEpochId: string;
   readonly byteLength: number;
   readonly sha256: Uint8Array;
   readonly orderingTimestamp?: string;
@@ -92,6 +94,7 @@ function metadata(value: unknown): RemoteRecord {
   return {
     objectId: string(input.objectId, "record ID"),
     objectType,
+    keyEpochId: string(input.keyEpochId, "record key epoch ID"),
     byteLength: counter(input.byteLength, "record byte length"),
     sha256: base64UrlToBytes(string(input.sha256, "record checksum"), 32),
     ...(event
@@ -107,6 +110,7 @@ function sameMetadata(left: RemoteRecord, right: RemoteRecord): boolean {
   return (
     left.objectId === right.objectId &&
     left.objectType === right.objectType &&
+    left.keyEpochId === right.keyEpochId &&
     left.byteLength === right.byteLength &&
     left.orderingTimestamp === right.orderingTimestamp &&
     left.dependencyObjectIds.join("\n") === right.dependencyObjectIds.join("\n") &&
@@ -155,7 +159,7 @@ export class RemoteReplicaDownloader {
 
   async prepare(
     job: SynchronizationJobV1,
-    rootKey: CryptoKey,
+    keyring: VaultKeyring,
     existing?: {
       readonly generation: StoredVaultGenerationV1;
       readonly events: readonly StoredEvent[];
@@ -227,6 +231,7 @@ export class RemoteReplicaDownloader {
             version: 1,
             objectId: advertised.objectId,
             objectType: "Artifact",
+            keyEpochId: advertised.keyEpochId,
             envelopeFormat: "artifact:xchacha20poly1305-chunked:v1",
             envelopeByteLength: advertised.byteLength,
             envelopeChecksumAlgorithm: "hash:sha256:v1",
@@ -277,7 +282,7 @@ export class RemoteReplicaDownloader {
         ...(predecessorGenerationId === undefined ? {} : { predecessorGenerationId }),
         envelopeBytes: generationBytes,
       };
-      const retained = await verifyVaultGeneration(rootKey, job.vaultId, generation);
+      const retained = await verifyVaultGeneration(keyring, job.vaultId, generation);
       const retainedObjects = new Set(retained.retainedObjectIds);
       const retainedEvents = new Set(retained.retainedEventIds);
       const downloadedObjectIds = objects.map((entry) => entry.objectId).toSorted();
@@ -307,7 +312,11 @@ export class RemoteReplicaDownloader {
     } catch (error) {
       throw error instanceof Error && "id" in error
         ? error
-        : integrity("Remote Replica validation failed");
+        : integrity(
+            `Remote Replica validation failed (${
+              error instanceof Error ? `${error.name}: ${error.message}` : "unknown error"
+            })`,
+          );
     }
   }
 
@@ -394,7 +403,7 @@ export class RemoteReplicaDownloader {
 export async function verifyPreparedRemoteReplica(input: {
   readonly vaultId: string;
   readonly prepared: PreparedRemoteReplica;
-  readonly rootKey: CryptoKey;
+  readonly keyring: VaultKeyring;
   readonly artifacts: Pick<ArtifactStore, "openEncrypted">;
   readonly openArtifact?: (object: StoredArtifactObjectV1) => Promise<ReadableStream<Uint8Array>>;
 }): Promise<VerifiedRemoteReplica> {
@@ -461,7 +470,7 @@ export async function verifyPreparedRemoteReplica(input: {
   try {
     const verified = await verifyAuthoritativeVaultPackage({
       manifest,
-      rootKey: input.rootKey,
+      keyring: input.keyring,
       read: async (path, maximum) => {
         const bytes = files.get(path);
         if (bytes === undefined || bytes.byteLength > maximum)

@@ -9,6 +9,7 @@ import {
 import { decodeCanonicalCbor } from "../../src/domain/cbor";
 import type { StoredArtifactObjectV1 } from "../../src/drivers/indexeddb";
 import { prepareCaptureRegistration } from "../../src/runtime/capture/registration";
+import { TEST_KEY_EPOCH_ID, testKeyring } from "../helpers/keyring";
 
 const id = (value: number): string => `00000000-0000-4000-8000-${String(value).padStart(12, "0")}`;
 const capturedAt = "2026-07-16T17:00:00.000Z";
@@ -43,6 +44,7 @@ function artifact(
       version: 1,
       objectId,
       objectType: "Artifact",
+      keyEpochId: "00000000-0000-4000-8000-000000000009",
       envelopeFormat: "artifact:xchacha20poly1305-chunked:v1",
       envelopeByteLength: 128,
       envelopeChecksumAlgorithm: "hash:sha256:v1",
@@ -73,7 +75,7 @@ describe("encrypted Artifact graph registration", () => {
       artifact(id(24), "CONTENT_STRUCTURED", "STRUCTURED_CONTENT", "application/cbor-seq"),
     ];
     const registration = await prepareCaptureRegistration({
-      rootKey: key,
+      keyring: testKeyring(key),
       vaultId: id(1),
       deviceId: id(2),
       commandId: id(3),
@@ -110,6 +112,7 @@ describe("encrypted Artifact graph registration", () => {
     if (descriptorRecord?.objectType !== "BundleDescriptor") throw new Error("missing descriptor");
     const descriptorKey = await deriveContextKeyFromCryptoKey(key, {
       vaultId: id(1),
+      keyEpochId: TEST_KEY_EPOCH_ID,
       domain: "vault:bundle-descriptor:v1",
       contextId: id(4),
       keyVersion: 1,
@@ -118,6 +121,7 @@ describe("encrypted Artifact graph registration", () => {
       await decryptEnvelope(
         decodeEncryptedEnvelopeBytes(descriptorRecord.envelopeBytes),
         descriptorKey,
+        TEST_KEY_EPOCH_ID,
       ),
     );
     expect(descriptor.metadata.title).toBe("Private page title");
@@ -131,6 +135,7 @@ describe("encrypted Artifact graph registration", () => {
 
     const eventKey = await deriveContextKeyFromCryptoKey(key, {
       vaultId: id(1),
+      keyEpochId: TEST_KEY_EPOCH_ID,
       domain: "vault:event:v1",
       contextId: id(6),
       keyVersion: 1,
@@ -140,6 +145,7 @@ describe("encrypted Artifact graph registration", () => {
         await decryptEnvelope(
           decodeEncryptedEnvelopeBytes(registration.event.envelopeBytes),
           eventKey,
+          TEST_KEY_EPOCH_ID,
         ),
       ),
     ).toMatchObject({
@@ -154,7 +160,7 @@ describe("encrypted Artifact graph registration", () => {
     mismatched.reference = { ...mismatched.reference, artifactObjectId: id(21) };
     await expect(
       prepareCaptureRegistration({
-        rootKey: await rootKey(),
+        keyring: testKeyring(await rootKey()),
         vaultId: id(1),
         deviceId: id(2),
         commandId: id(3),

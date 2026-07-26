@@ -222,11 +222,13 @@ Old keys remain valid for decryption of existing objects.
 
 # 16. Device Trust
 
-Devices MAY hold wrapped Vault Root Keys.
+Every synchronized Device SHALL have independent signing and wrapping key pairs and a certificate
+signed by the active recovery administrator.
 
-Devices MAY be revoked via Events.
+Every readable Key Epoch SHALL be delivered in a signed envelope bound to that Device certificate.
 
-Revoked devices MUST lose ability to unwrap future keys.
+Revoked Devices MUST lose server authorization. Future Protection MUST withhold the new Key Epoch
+from removed Devices while retained Devices keep historical epoch access.
 
 ---
 

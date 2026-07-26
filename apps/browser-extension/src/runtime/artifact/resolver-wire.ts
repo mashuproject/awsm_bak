@@ -18,6 +18,7 @@ export function decodeArtifactDownload(
       "state",
       "objectId",
       "objectType",
+      "keyEpochId",
       "byteLength",
       "sha256",
     ]);
@@ -35,6 +36,7 @@ export function decodeArtifactDownload(
       record.state !== "Committed" ||
       record.objectId !== expected.objectId ||
       record.objectType !== "Artifact" ||
+      record.keyEpochId !== expected.keyEpochId ||
       integer(record.byteLength, "Artifact record byte length") !== expected.envelopeByteLength ||
       !bytesEqual(checksum, expected.envelopeChecksum)
     )

@@ -66,6 +66,7 @@ function record(value: unknown): readonly [string, StorageReliefRemoteRecord] {
   const allowed = new Set([
     "objectId",
     "objectType",
+    "keyEpochId",
     "byteLength",
     "sha256",
     "state",
@@ -81,6 +82,7 @@ function record(value: unknown): readonly [string, StorageReliefRemoteRecord] {
     objectId,
     {
       objectType,
+      keyEpochId: string(input.keyEpochId, "record key epoch ID"),
       byteLength: counter(input.byteLength, "record byte length"),
       sha256: base64UrlToBytes(string(input.sha256, "record checksum"), 32),
       ...(event

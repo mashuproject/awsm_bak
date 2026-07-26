@@ -1,5 +1,19 @@
 import { describe, expect, it, vi } from "vitest";
+import { encodeEncryptedEnvelope } from "../../src/crypto/envelope";
 import { SynchronizedVacuumActivator } from "../../src/runtime/synchronization/vacuum";
+
+function generationEnvelope(objectId: string): Uint8Array {
+  return encodeEncryptedEnvelope({
+    formatVersion: 1,
+    objectType: "VaultGeneration",
+    algorithm: "enc:xchacha20poly1305:v1",
+    keyEpochId: "01900000-0000-7000-8000-000000000500",
+    objectId,
+    payloadLength: 0,
+    nonce: new Uint8Array(24),
+    ciphertext: new Uint8Array(16),
+  });
+}
 
 describe("synchronized Vault Vacuum", () => {
   it("activates the fenced server successor before committing local authority", async () => {
@@ -72,7 +86,7 @@ describe("synchronized Vault Vacuum", () => {
         generationId: successor,
         generationNumber: 1,
         predecessorGenerationId: predecessor,
-        envelopeBytes: new Uint8Array([1, 2, 3]),
+        envelopeBytes: generationEnvelope(successor),
       },
       head: {
         version: 1,
@@ -163,7 +177,7 @@ describe("synchronized Vault Vacuum", () => {
             generationId: successor,
             generationNumber: 1,
             predecessorGenerationId: predecessor,
-            envelopeBytes: new Uint8Array([1]),
+            envelopeBytes: generationEnvelope(successor),
           },
           head: {
             version: 1,

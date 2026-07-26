@@ -4,6 +4,7 @@ import {
   applyUnionWithVisuals,
   appRequest,
   archiveFixture,
+  createRailsAccount,
   createSynchronizedClient,
   extractNewestCapture,
   faultControl,
@@ -71,6 +72,7 @@ test("publishes a live source Vault to an empty candidate server", async ({
       sourceEmail,
       password,
     );
+    const activeObserver = observer;
     const observerLibrary = await observer.context.newPage();
     await observerLibrary.goto(`chrome-extension://${observer.extensionId}/library.html`);
 
@@ -107,21 +109,24 @@ test("publishes a live source Vault to an empty candidate server", async ({
     await archiveFixture(source, fixture, 3);
     await waitForSynchronizedState(library, "http://127.0.0.1:3300");
     await waitForSynchronizedState(observerLibrary, "http://127.0.0.1:3300");
-    const observerBeforePromotion = await appRequest<readonly { captures: readonly unknown[] }[]>(
-      observerLibrary,
-      {
-        type: "ListLibrary",
-        expectedVaultId: observer.vaultId,
-      },
-    );
-    expect(observerBeforePromotion.reduce((total, group) => total + group.captures.length, 0)).toBe(
-      3,
-    );
+    await expect
+      .poll(
+        async () =>
+          (
+            await appRequest<readonly { captures: readonly unknown[] }[]>(observerLibrary, {
+              type: "ListLibrary",
+              expectedVaultId: activeObserver.vaultId,
+            })
+          ).reduce((total, group) => total + group.captures.length, 0),
+        { timeout: 120_000 },
+      )
+      .toBe(3);
 
+    await createRailsAccount(source.context, "http://127.0.0.1:3301", candidateEmail, password);
     await settings.getByRole("textbox", { name: "Email" }).fill(candidateEmail);
     await settings.getByLabel("Password").fill(password);
     await faultControl(library, "arm", "server-switch:after-classification");
-    await settings.getByRole("button", { name: "Create account" }).click();
+    await settings.getByRole("button", { name: "Sign in" }).click();
     await expect
       .poll(async () => (await faultControl(library, "status")).reached, {
         timeout: 120_000,

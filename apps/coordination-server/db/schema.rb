@@ -15,35 +15,35 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_19_000000) do
   enable_extension "pg_catalog.plpgsql"
   enable_extension "pgcrypto"
 
-  create_table "account_sessions", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
+  create_table "accounts", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.string "email", null: false
+    t.string "password_digest", null: false
+    t.datetime "updated_at", null: false
+    t.index ["email"], name: "index_accounts_on_email", unique: true
+    t.check_constraint "email::text = lower(email::text)", name: "accounts_normalized_email"
+  end
+
+  create_table "api_sessions", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
     t.uuid "account_id", null: false
     t.datetime "confirmed_at", null: false
     t.datetime "created_at", null: false
     t.datetime "revoked_at"
+    t.string "scope", null: false
     t.datetime "updated_at", null: false
-    t.index ["account_id"], name: "index_account_sessions_on_account_id"
+    t.uuid "vault_device_id"
+    t.index ["account_id"], name: "index_api_sessions_on_account_id"
+    t.check_constraint "scope::text = 'Account'::text AND vault_device_id IS NULL OR scope::text = 'VaultDevice'::text AND vault_device_id IS NOT NULL", name: "api_sessions_scope_binding"
+    t.check_constraint "scope::text = ANY (ARRAY['Account'::character varying, 'VaultDevice'::character varying]::text[])", name: "api_sessions_scope"
   end
 
-  create_table "accounts", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
-    t.uuid "account_key_id", null: false
-    t.string "authentication_secret_digest", null: false
+  create_table "browser_sessions", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
+    t.uuid "account_id", null: false
     t.datetime "created_at", null: false
-    t.string "email", null: false
-    t.bigint "kdf_memory_bytes", default: 67108864, null: false
-    t.integer "kdf_operations", default: 3, null: false
-    t.binary "kdf_salt", null: false
-    t.string "key_envelope_algorithm", default: "wrap:xchacha20poly1305:account-password:v1", null: false
-    t.binary "key_envelope_ciphertext", null: false
-    t.binary "key_envelope_nonce", null: false
+    t.string "ip_address"
     t.datetime "updated_at", null: false
-    t.index ["account_key_id"], name: "index_accounts_on_account_key_id", unique: true
-    t.index ["email"], name: "index_accounts_on_email", unique: true
-    t.check_constraint "email::text = lower(email::text)", name: "accounts_normalized_email"
-    t.check_constraint "kdf_memory_bytes = 67108864", name: "accounts_kdf_memory"
-    t.check_constraint "kdf_operations = 3", name: "accounts_kdf_operations"
-    t.check_constraint "octet_length(kdf_salt) = 16", name: "accounts_kdf_salt"
-    t.check_constraint "octet_length(key_envelope_ciphertext) >= 48", name: "accounts_key_envelope_ciphertext"
-    t.check_constraint "octet_length(key_envelope_nonce) = 24", name: "accounts_key_envelope_nonce"
+    t.string "user_agent"
+    t.index ["account_id"], name: "index_browser_sessions_on_account_id"
   end
 
   create_table "delivery_changes", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
@@ -60,7 +60,32 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_19_000000) do
     t.index ["vault_replica_id", "cursor"], name: "index_delivery_changes_on_vault_replica_id_and_cursor", unique: true
     t.index ["vault_replica_id"], name: "index_delivery_changes_on_vault_replica_id"
     t.check_constraint "cursor > 0", name: "delivery_changes_cursor"
-    t.check_constraint "kind::text = ANY (ARRAY['EventCommitted'::character varying::text, 'GenerationActivated'::character varying::text])", name: "delivery_changes_kind"
+    t.check_constraint "kind::text = ANY (ARRAY['EventCommitted'::character varying, 'GenerationActivated'::character varying]::text[])", name: "delivery_changes_kind"
+  end
+
+  create_table "device_key_envelopes", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
+    t.binary "administrator_signature", null: false
+    t.string "algorithm", null: false
+    t.binary "ciphertext", null: false
+    t.binary "ciphertext_sha256", null: false
+    t.datetime "created_at", null: false
+    t.binary "ephemeral_public_key", null: false
+    t.binary "nonce", null: false
+    t.uuid "recovery_generation_id", null: false
+    t.binary "signed_metadata", null: false
+    t.datetime "updated_at", null: false
+    t.uuid "vault_device_id", null: false
+    t.uuid "vault_key_epoch_id", null: false
+    t.index ["recovery_generation_id"], name: "index_device_key_envelopes_on_recovery_generation_id"
+    t.index ["vault_device_id", "vault_key_epoch_id"], name: "index_device_envelopes_on_device_and_epoch", unique: true
+    t.index ["vault_device_id"], name: "index_device_key_envelopes_on_vault_device_id"
+    t.index ["vault_key_epoch_id"], name: "index_device_key_envelopes_on_vault_key_epoch_id"
+    t.check_constraint "algorithm::text = 'wrap:x25519-hkdf-sha256-xchacha20poly1305:device:v1'::text", name: "device_key_envelopes_algorithm"
+    t.check_constraint "octet_length(administrator_signature) = 64", name: "device_key_envelopes_administrator_signature"
+    t.check_constraint "octet_length(ciphertext) = 48", name: "device_key_envelopes_ciphertext"
+    t.check_constraint "octet_length(ciphertext_sha256) = 32", name: "device_key_envelopes_ciphertext_sha256"
+    t.check_constraint "octet_length(ephemeral_public_key) = 32", name: "device_key_envelopes_ephemeral_public_key"
+    t.check_constraint "octet_length(nonce) = 24", name: "device_key_envelopes_nonce"
   end
 
   create_table "event_commits", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
@@ -135,7 +160,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_19_000000) do
     t.index ["account_id", "operation", "idempotency_key"], name: "index_idempotency_records_on_account_operation_key", unique: true
     t.index ["account_id"], name: "index_idempotency_records_on_account_id"
     t.check_constraint "octet_length(request_sha256) = 32", name: "idempotency_records_request_sha256"
-    t.check_constraint "status::text = ANY (ARRAY['InProgress'::character varying::text, 'Succeeded'::character varying::text])", name: "idempotency_records_status"
+    t.check_constraint "status::text = ANY (ARRAY['InProgress'::character varying, 'Succeeded'::character varying]::text[])", name: "idempotency_records_status"
   end
 
   create_table "opaque_records", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
@@ -152,16 +177,18 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_19_000000) do
     t.string "storage_key"
     t.uuid "target_generation_id", null: false
     t.datetime "updated_at", null: false
+    t.uuid "vault_key_epoch_id", null: false
     t.uuid "vault_replica_id", null: false
     t.index ["object_id"], name: "index_opaque_records_on_object_id", unique: true
+    t.index ["vault_key_epoch_id"], name: "index_opaque_records_on_vault_key_epoch_id"
     t.index ["vault_replica_id", "state"], name: "index_opaque_records_on_vault_replica_id_and_state"
     t.index ["vault_replica_id", "target_generation_id"], name: "idx_on_vault_replica_id_target_generation_id_ff5b12380a"
     t.index ["vault_replica_id"], name: "index_opaque_records_on_vault_replica_id"
     t.check_constraint "byte_length > 0", name: "opaque_records_byte_length"
     t.check_constraint "object_type::text = 'Event'::text AND event_ordering_timestamp IS NOT NULL OR object_type::text <> 'Event'::text AND event_ordering_timestamp IS NULL", name: "opaque_records_event_metadata"
-    t.check_constraint "object_type::text = ANY (ARRAY['Event'::character varying::text, 'BundleDescriptor'::character varying::text, 'Artifact'::character varying::text, 'VaultGeneration'::character varying::text])", name: "opaque_records_type"
+    t.check_constraint "object_type::text = ANY (ARRAY['Event'::character varying, 'BundleDescriptor'::character varying, 'Artifact'::character varying, 'VaultGeneration'::character varying]::text[])", name: "opaque_records_type"
     t.check_constraint "octet_length(sha256) = 32", name: "opaque_records_sha256"
-    t.check_constraint "state::text = ANY (ARRAY['Uploading'::character varying::text, 'DurableUncommitted'::character varying::text, 'Committed'::character varying::text, 'Purged'::character varying::text])", name: "opaque_records_state"
+    t.check_constraint "state::text = ANY (ARRAY['Uploading'::character varying, 'DurableUncommitted'::character varying, 'Committed'::character varying, 'Purged'::character varying]::text[])", name: "opaque_records_state"
   end
 
   create_table "purge_job_generations", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
@@ -190,12 +217,12 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_19_000000) do
     t.bigint "total_bytes", default: 0, null: false
     t.datetime "updated_at", null: false
     t.uuid "vault_replica_id", null: false
-    t.index ["vault_replica_id"], name: "index_one_active_purge_per_vault", unique: true, where: "((state)::text = ANY (ARRAY[('Pending'::character varying)::text, ('Running'::character varying)::text, ('FailedRetryable'::character varying)::text]))"
+    t.index ["vault_replica_id"], name: "index_one_active_purge_per_vault", unique: true, where: "((state)::text = ANY ((ARRAY['Pending'::character varying, 'Running'::character varying, 'FailedRetryable'::character varying])::text[]))"
     t.index ["vault_replica_id"], name: "index_purge_jobs_on_vault_replica_id"
     t.check_constraint "generation_count >= 0 AND record_count >= 0 AND processed_bytes >= 0 AND total_bytes >= 0 AND retry_count >= 0", name: "purge_jobs_counters"
-    t.check_constraint "reason::text = ANY (ARRAY['Automatic'::character varying::text, 'Manual'::character varying::text])", name: "purge_jobs_reason"
-    t.check_constraint "stage::text = ANY (ARRAY['Snapshot'::character varying::text, 'Detach'::character varying::text, 'Analyze'::character varying::text, 'DeleteBytes'::character varying::text, 'Tombstone'::character varying::text, 'Complete'::character varying::text])", name: "purge_jobs_stage"
-    t.check_constraint "state::text = ANY (ARRAY['Pending'::character varying::text, 'Running'::character varying::text, 'Succeeded'::character varying::text, 'FailedRetryable'::character varying::text])", name: "purge_jobs_state"
+    t.check_constraint "reason::text = ANY (ARRAY['Automatic'::character varying, 'Manual'::character varying, 'VaultReplacement'::character varying]::text[])", name: "purge_jobs_reason"
+    t.check_constraint "stage::text = ANY (ARRAY['Snapshot'::character varying, 'Detach'::character varying, 'Analyze'::character varying, 'DeleteBytes'::character varying, 'Tombstone'::character varying, 'Complete'::character varying]::text[])", name: "purge_jobs_stage"
+    t.check_constraint "state::text = ANY (ARRAY['Pending'::character varying, 'Running'::character varying, 'Succeeded'::character varying, 'FailedRetryable'::character varying]::text[])", name: "purge_jobs_state"
   end
 
   create_table "record_dependencies", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
@@ -211,8 +238,38 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_19_000000) do
     t.check_constraint "ordinal >= 0", name: "record_dependencies_ordinal"
   end
 
+  create_table "recovery_generations", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
+    t.datetime "activated_at"
+    t.binary "administrator_public_key", null: false
+    t.string "administrator_signing_algorithm", null: false
+    t.datetime "created_at", null: false
+    t.string "derivation_algorithm", null: false
+    t.binary "kit_ciphertext"
+    t.bigint "kit_ciphertext_length", null: false
+    t.binary "kit_ciphertext_sha256", null: false
+    t.binary "kit_nonce", null: false
+    t.bigint "ordinal", null: false
+    t.datetime "retired_at"
+    t.datetime "updated_at", null: false
+    t.uuid "vault_replica_id", null: false
+    t.string "wrapping_algorithm", null: false
+    t.index ["vault_replica_id", "ordinal"], name: "index_recovery_generations_on_vault_replica_id_and_ordinal", unique: true
+    t.index ["vault_replica_id"], name: "index_one_active_recovery_generation_per_vault", unique: true, where: "((activated_at IS NOT NULL) AND (retired_at IS NULL))"
+    t.index ["vault_replica_id"], name: "index_recovery_generations_on_vault_replica_id"
+    t.check_constraint "administrator_signing_algorithm::text = 'sign:ed25519:recovery-administrator:v1'::text", name: "recovery_generations_signing"
+    t.check_constraint "derivation_algorithm::text = 'kdf:hkdf-sha256:recovery-entropy:v1'::text", name: "recovery_generations_derivation"
+    t.check_constraint "kit_ciphertext IS NULL OR octet_length(kit_ciphertext) = kit_ciphertext_length", name: "recovery_generations_ciphertext"
+    t.check_constraint "kit_ciphertext_length >= 16", name: "recovery_generations_ciphertext_length"
+    t.check_constraint "octet_length(administrator_public_key) = 32", name: "recovery_generations_public_key"
+    t.check_constraint "octet_length(kit_ciphertext_sha256) = 32", name: "recovery_generations_ciphertext_sha256"
+    t.check_constraint "octet_length(kit_nonce) = 24", name: "recovery_generations_nonce"
+    t.check_constraint "ordinal >= 0", name: "recovery_generations_ordinal"
+    t.check_constraint "retired_at IS NULL AND kit_ciphertext IS NOT NULL OR retired_at IS NOT NULL", name: "recovery_generations_retired_ciphertext"
+    t.check_constraint "wrapping_algorithm::text = 'wrap:xchacha20poly1305:recovery-kit:v1'::text", name: "recovery_generations_wrapping"
+  end
+
   create_table "session_credentials", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
-    t.uuid "account_session_id", null: false
+    t.uuid "api_session_id", null: false
     t.datetime "consumed_at"
     t.datetime "created_at", null: false
     t.datetime "expires_at", null: false
@@ -220,21 +277,10 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_19_000000) do
     t.datetime "revoked_at"
     t.binary "secret_digest", null: false
     t.datetime "updated_at", null: false
-    t.index ["account_session_id", "kind"], name: "index_session_credentials_on_account_session_id_and_kind"
-    t.index ["account_session_id"], name: "index_session_credentials_on_account_session_id"
-    t.check_constraint "kind::text = ANY (ARRAY['Access'::character varying::text, 'Refresh'::character varying::text])", name: "session_credentials_kind"
+    t.index ["api_session_id", "kind"], name: "index_session_credentials_on_api_session_id_and_kind"
+    t.index ["api_session_id"], name: "index_session_credentials_on_api_session_id"
+    t.check_constraint "kind::text = ANY (ARRAY['Access'::character varying, 'Refresh'::character varying]::text[])", name: "session_credentials_kind"
     t.check_constraint "octet_length(secret_digest) = 32", name: "session_credentials_digest"
-  end
-
-  create_table "signup_registrations", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
-    t.uuid "account_id", null: false
-    t.datetime "created_at", null: false
-    t.uuid "idempotency_key", null: false
-    t.binary "request_sha256", null: false
-    t.datetime "updated_at", null: false
-    t.index ["account_id"], name: "index_signup_registrations_on_account_id"
-    t.index ["idempotency_key"], name: "index_signup_registrations_on_idempotency_key", unique: true
-    t.check_constraint "octet_length(request_sha256) = 32", name: "signup_registrations_request_sha256"
   end
 
   create_table "transfer_tickets", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
@@ -256,7 +302,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_19_000000) do
     t.index ["vault_generation_id"], name: "index_transfer_tickets_on_vault_generation_id"
     t.index ["vault_replica_id"], name: "index_transfer_tickets_on_vault_replica_id"
     t.check_constraint "octet_length(token_sha256) = 32", name: "transfer_tickets_token_sha256"
-    t.check_constraint "purpose::text = ANY (ARRAY['UploadPart'::character varying::text, 'ActiveDownload'::character varying::text, 'RecoveryDownload'::character varying::text])", name: "transfer_tickets_purpose"
+    t.check_constraint "purpose::text = ANY (ARRAY['UploadPart'::character varying, 'ActiveDownload'::character varying, 'RecoveryDownload'::character varying]::text[])", name: "transfer_tickets_purpose"
   end
 
   create_table "upload_parts", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
@@ -291,7 +337,37 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_19_000000) do
     t.check_constraint "observed_sha256 IS NULL OR octet_length(observed_sha256) = 32", name: "uploads_observed_sha256"
     t.check_constraint "part_count > 0", name: "uploads_part_count"
     t.check_constraint "part_size > 0", name: "uploads_part_size"
-    t.check_constraint "state::text = ANY (ARRAY['Open'::character varying::text, 'Assembling'::character varying::text, 'Completed'::character varying::text, 'Expired'::character varying::text])", name: "uploads_state"
+    t.check_constraint "state::text = ANY (ARRAY['Open'::character varying, 'Assembling'::character varying, 'Completed'::character varying, 'Expired'::character varying]::text[])", name: "uploads_state"
+  end
+
+  create_table "vault_devices", primary_key: "device_id", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
+    t.binary "certificate_cbor", null: false
+    t.uuid "certificate_id", null: false
+    t.binary "certificate_signature", null: false
+    t.string "client_kind", null: false
+    t.datetime "created_at", null: false
+    t.string "display_name", null: false
+    t.datetime "enrolled_at", null: false
+    t.uuid "recovery_generation_id", null: false
+    t.string "revocation_reason"
+    t.datetime "revoked_at"
+    t.string "signing_algorithm", null: false
+    t.binary "signing_public_key", null: false
+    t.datetime "updated_at", null: false
+    t.uuid "vault_replica_id", null: false
+    t.string "wrapping_algorithm", null: false
+    t.binary "wrapping_public_key", null: false
+    t.index ["certificate_id"], name: "index_vault_devices_on_certificate_id", unique: true
+    t.index ["recovery_generation_id"], name: "index_vault_devices_on_recovery_generation_id"
+    t.index ["vault_replica_id", "device_id"], name: "index_vault_devices_on_vault_replica_id_and_device_id", unique: true
+    t.index ["vault_replica_id"], name: "index_vault_devices_on_vault_replica_id"
+    t.check_constraint "client_kind::text = ANY (ARRAY['ChromeExtension'::character varying, 'FirefoxExtension'::character varying]::text[])", name: "vault_devices_client_kind"
+    t.check_constraint "octet_length(certificate_signature) = 64", name: "vault_devices_certificate_signature"
+    t.check_constraint "octet_length(signing_public_key) = 32", name: "vault_devices_signing_public_key"
+    t.check_constraint "octet_length(wrapping_public_key) = 32", name: "vault_devices_wrapping_public_key"
+    t.check_constraint "revoked_at IS NULL AND revocation_reason IS NULL OR revoked_at IS NOT NULL AND (revocation_reason::text = ANY (ARRAY['Removed'::character varying, 'FutureProtection'::character varying, 'VaultReencrypted'::character varying]::text[]))", name: "vault_devices_revocation"
+    t.check_constraint "signing_algorithm::text = 'sign:ed25519:device:v1'::text", name: "vault_devices_signing_algorithm"
+    t.check_constraint "wrapping_algorithm::text = 'wrap:x25519-hkdf-sha256-xchacha20poly1305:device:v1'::text", name: "vault_devices_wrapping_algorithm"
   end
 
   create_table "vault_generations", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
@@ -321,39 +397,55 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_19_000000) do
     t.index ["vault_replica_id"], name: "index_vault_generations_on_vault_replica_id"
     t.check_constraint "generation_number >= 0", name: "vault_generations_number"
     t.check_constraint "reachability_sha256 IS NULL OR octet_length(reachability_sha256) = 32", name: "vault_generations_reachability_sha256"
-    t.check_constraint "state::text = ANY (ARRAY['Candidate'::character varying::text, 'Active'::character varying::text, 'Superseded'::character varying::text, 'Purging'::character varying::text, 'Purged'::character varying::text])", name: "vault_generations_state"
+    t.check_constraint "state::text = ANY (ARRAY['Candidate'::character varying, 'Active'::character varying, 'Superseded'::character varying, 'Purging'::character varying, 'Purged'::character varying]::text[])", name: "vault_generations_state"
+  end
+
+  create_table "vault_key_epochs", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
+    t.datetime "activated_at", null: false
+    t.datetime "created_at", null: false
+    t.bigint "ordinal", null: false
+    t.uuid "recovery_generation_id", null: false
+    t.datetime "retired_at"
+    t.datetime "updated_at", null: false
+    t.uuid "vault_replica_id", null: false
+    t.index ["recovery_generation_id"], name: "index_vault_key_epochs_on_recovery_generation_id"
+    t.index ["vault_replica_id", "ordinal"], name: "index_vault_key_epochs_on_vault_replica_id_and_ordinal", unique: true
+    t.index ["vault_replica_id"], name: "index_one_active_key_epoch_per_vault", unique: true, where: "(retired_at IS NULL)"
+    t.index ["vault_replica_id"], name: "index_vault_key_epochs_on_vault_replica_id"
+    t.check_constraint "ordinal >= 0", name: "vault_key_epochs_ordinal"
   end
 
   create_table "vault_replicas", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
     t.uuid "account_id", null: false
-    t.uuid "account_key_id", null: false
-    t.string "account_slot_algorithm", default: "wrap:xchacha20poly1305:account:v1", null: false
-    t.binary "account_slot_ciphertext", null: false
-    t.uuid "account_slot_id", null: false
-    t.binary "account_slot_nonce", null: false
     t.uuid "active_generation_id"
     t.bigint "active_generation_number"
+    t.uuid "active_key_epoch_id"
+    t.uuid "active_recovery_generation_id"
     t.datetime "created_at", null: false
     t.bigint "head_cursor", default: 0, null: false
     t.datetime "provisional_expires_at"
+    t.datetime "replaced_at"
     t.string "state", null: false
     t.datetime "updated_at", null: false
     t.uuid "vault_id", null: false
-    t.index ["account_id"], name: "index_vault_replicas_on_account_id", unique: true
-    t.index ["account_slot_id"], name: "index_vault_replicas_on_account_slot_id", unique: true
+    t.index ["account_id"], name: "index_one_active_vault_per_account", unique: true, where: "((state)::text = 'Active'::text)"
+    t.index ["account_id"], name: "index_one_provisional_vault_per_account", unique: true, where: "((state)::text = 'Provisional'::text)"
+    t.index ["account_id"], name: "index_vault_replicas_on_account_id"
     t.index ["vault_id"], name: "index_vault_replicas_on_vault_id", unique: true
-    t.check_constraint "account_slot_algorithm::text = 'wrap:xchacha20poly1305:account:v1'::text", name: "vault_replicas_account_slot_algorithm"
     t.check_constraint "active_generation_number IS NULL OR active_generation_number >= 0", name: "vault_replicas_generation_number"
     t.check_constraint "head_cursor >= 0", name: "vault_replicas_head_cursor"
-    t.check_constraint "octet_length(account_slot_ciphertext) >= 48", name: "vault_replicas_account_slot_ciphertext"
-    t.check_constraint "octet_length(account_slot_nonce) = 24", name: "vault_replicas_account_slot_nonce"
-    t.check_constraint "state::text = ANY (ARRAY['Provisional'::character varying::text, 'Active'::character varying::text])", name: "vault_replicas_state"
+    t.check_constraint "state::text = ANY (ARRAY['Provisional'::character varying, 'Active'::character varying, 'Replaced'::character varying]::text[])", name: "vault_replicas_state"
   end
 
-  add_foreign_key "account_sessions", "accounts"
+  add_foreign_key "api_sessions", "accounts"
+  add_foreign_key "api_sessions", "vault_devices", primary_key: "device_id"
+  add_foreign_key "browser_sessions", "accounts"
   add_foreign_key "delivery_changes", "event_commits"
   add_foreign_key "delivery_changes", "vault_generations"
   add_foreign_key "delivery_changes", "vault_replicas"
+  add_foreign_key "device_key_envelopes", "recovery_generations"
+  add_foreign_key "device_key_envelopes", "vault_devices", primary_key: "device_id"
+  add_foreign_key "device_key_envelopes", "vault_key_epochs"
   add_foreign_key "event_commits", "opaque_records", column: "event_record_id"
   add_foreign_key "event_commits", "vault_generations"
   add_foreign_key "event_commits", "vault_replicas"
@@ -365,14 +457,15 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_19_000000) do
   add_foreign_key "generation_reachability_pages", "vault_generations"
   add_foreign_key "idempotency_records", "accounts"
   add_foreign_key "opaque_records", "vault_generations", column: "target_generation_id", primary_key: "generation_id"
+  add_foreign_key "opaque_records", "vault_key_epochs"
   add_foreign_key "opaque_records", "vault_replicas"
   add_foreign_key "purge_job_generations", "purge_jobs"
   add_foreign_key "purge_job_generations", "vault_generations"
   add_foreign_key "purge_jobs", "vault_replicas"
   add_foreign_key "record_dependencies", "opaque_records", column: "dependency_record_id"
   add_foreign_key "record_dependencies", "opaque_records", column: "event_record_id"
-  add_foreign_key "session_credentials", "account_sessions"
-  add_foreign_key "signup_registrations", "accounts"
+  add_foreign_key "recovery_generations", "vault_replicas"
+  add_foreign_key "session_credentials", "api_sessions"
   add_foreign_key "transfer_tickets", "accounts"
   add_foreign_key "transfer_tickets", "opaque_records"
   add_foreign_key "transfer_tickets", "uploads"
@@ -380,9 +473,13 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_19_000000) do
   add_foreign_key "transfer_tickets", "vault_replicas"
   add_foreign_key "upload_parts", "uploads"
   add_foreign_key "uploads", "opaque_records"
+  add_foreign_key "vault_devices", "recovery_generations"
+  add_foreign_key "vault_devices", "vault_replicas"
   add_foreign_key "vault_generations", "opaque_records", column: "generation_record_id"
   add_foreign_key "vault_generations", "vault_generations", column: "predecessor_generation_id"
   add_foreign_key "vault_generations", "vault_replicas"
+  add_foreign_key "vault_key_epochs", "recovery_generations"
+  add_foreign_key "vault_key_epochs", "vault_replicas"
   add_foreign_key "vault_replicas", "accounts"
   add_foreign_key "vault_replicas", "vault_generations", column: "active_generation_id"
 end
