@@ -12,7 +12,8 @@ const execFileAsync = promisify(execFile);
 const supportedLanes = new Set(["stable", "esr"]);
 
 export function requestedFirefoxLanes(arguments_) {
-  const lanes = arguments_.length === 0 ? ["stable", "esr"] : arguments_;
+  const explicitLanes = arguments_.filter((argument) => argument !== "--");
+  const lanes = explicitLanes.length === 0 ? ["stable", "esr"] : explicitLanes;
   if (lanes.some((lane) => !supportedLanes.has(lane))) {
     throw new Error("Firefox lanes must be stable and/or esr");
   }

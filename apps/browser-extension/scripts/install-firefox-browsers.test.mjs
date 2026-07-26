@@ -10,6 +10,10 @@ test("deduplicates explicitly requested Firefox lanes", () => {
   assert.deepEqual(requestedFirefoxLanes(["stable", "stable"]), ["stable"]);
 });
 
+test("accepts pnpm's script argument separator", () => {
+  assert.deepEqual(requestedFirefoxLanes(["--", "stable"]), ["stable"]);
+});
+
 test("rejects an unpinned Firefox lane", () => {
   assert.throws(() => requestedFirefoxLanes(["nightly"]), /stable and\/or esr/);
 });
