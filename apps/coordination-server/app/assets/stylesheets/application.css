@@ -130,9 +130,9 @@ body {
 }
 
 .hero__assurances {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--awsm-space-3) var(--awsm-space-8);
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--awsm-space-3);
   padding: 0;
   margin: var(--awsm-space-6) 0 0;
   font-size: 0.875rem;
@@ -142,7 +142,7 @@ body {
 
 .hero__assurances li {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--awsm-space-2);
 }
 
