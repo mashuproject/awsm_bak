@@ -142,7 +142,7 @@ test("renders packaged popup and Library design states", async ({ browserName },
   const client = await packagedExtension(testInfo, "product-surfaces");
   try {
     const popup = await popupForActiveTab(client);
-    await expect(popup.getByRole("heading", { name: "Choose how AWSM starts" })).toBeVisible();
+    await expect(popup.getByRole("heading", { name: "Archive what should matter" })).toBeVisible();
     await assertInteractiveTargets(popup);
     await expectReadableContrast(popup);
     await expect(popup).toHaveScreenshot("popup-first-use.png", {

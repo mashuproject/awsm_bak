@@ -12,13 +12,25 @@ test("renders the complete landing at desktop, narrow, and reduced motion", asyn
   await page.goto("/");
   await expect(
     page.getByRole("heading", {
-      name: "Keep what matters. Even when the web moves on.",
+      name: "Archive what should matter.",
+      exact: true,
     }),
   ).toBeVisible();
-  await expect(page.getByRole("link", { name: "Install AWSM" }).first()).toHaveCSS(
-    "min-height",
-    "44px",
-  );
+  const getAwsm = page.getByRole("link", { name: "Get AWSM" }).first();
+  await expect(getAwsm).toHaveCSS("min-height", "44px");
+  await getAwsm.hover();
+  await expect(getAwsm).toHaveCSS("translate", "-2px -2px");
+  await expect(getAwsm).toHaveScreenshot("get-awsm-hover.png");
+  await page.mouse.down();
+  await expect(getAwsm).toHaveCSS("translate", "3px 3px");
+  await expect(getAwsm).toHaveScreenshot("get-awsm-pressed.png");
+  await page.mouse.move(0, 0);
+  await page.mouse.up();
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await getAwsm.focus();
+  await expect(getAwsm).toHaveCSS("outline-width", "3px");
+  await expect(getAwsm).toHaveScreenshot("get-awsm-focus.png");
+  await page.locator("h1").hover();
   await expectReadableContrast(page);
   await expect(page).toHaveScreenshot("landing-desktop.png", {
     fullPage: true,
@@ -40,6 +52,9 @@ test("renders the complete landing at desktop, narrow, and reduced motion", asyn
   });
   await reduced.goto(localOrigin);
   await expect(reduced.locator(".hero-art__keeper")).toHaveCSS("animation-duration", "0s");
+  const reducedGetAwsm = reduced.getByRole("link", { name: "Get AWSM" }).first();
+  await reducedGetAwsm.hover();
+  await expect(reducedGetAwsm).toHaveCSS("translate", "0px");
   await expectReadableContrast(reduced);
   await expect(reduced).toHaveScreenshot("landing-reduced-motion.png", {
     fullPage: true,
@@ -62,8 +77,10 @@ test("keeps installation guidance complete with and without JavaScript", async (
   await expect(page).toHaveScreenshot("install-firefox.png", {
     fullPage: true,
   });
-  await page.getByText("Can the Coordination Server read a Vault?").click();
-  await page.getByText("Account password or Recovery Phrase?").click();
+  await expect(page.getByText("What can the Coordination Server see?")).toBeVisible();
+  await expect(
+    page.getByText("Why do I need both an Account password and a Recovery Phrase?"),
+  ).toBeVisible();
   await expectReadableContrast(page);
   await expect(page).toHaveScreenshot("landing-expanded-trust-faq.png", {
     fullPage: true,
@@ -74,7 +91,9 @@ test("keeps installation guidance complete with and without JavaScript", async (
   await staticPage.goto(`${localOrigin}/`);
   await expect(staticPage.getByText("Chrome and Chromium browsers")).toBeVisible();
   await expect(staticPage.getByRole("heading", { name: "Firefox" })).toBeVisible();
-  await expect(staticPage.getByText("Account password or Recovery Phrase?")).toBeVisible();
+  await expect(
+    staticPage.getByText("Why do I need both an Account password and a Recovery Phrase?"),
+  ).toBeVisible();
   await noJavaScript.close();
 });
 
@@ -83,6 +102,7 @@ test("renders trust, Account, validation, and design-reference surfaces", async 
   for (const [path, heading, screenshot] of [
     ["/privacy", "What stays local. What a server can see.", "privacy.png"],
     ["/security", "The server coordinates. The client holds the keys.", "security.png"],
+    ["/glossary", "The language of your archive.", "glossary.png"],
     ["/session/new", "Sign in", "sign-in.png"],
     ["/design-system", "AWSM Bright Utility Kit", "design-system.png"],
   ] as const) {
@@ -91,6 +111,34 @@ test("renders trust, Account, validation, and design-reference surfaces", async 
     await expectReadableContrast(page);
     await expect(page).toHaveScreenshot(screenshot, { fullPage: true });
   }
+
+  await page.goto("/glossary");
+  await page.locator('.glossary-index a[href="#complete-export"]').hover();
+  await expect(page.locator("#complete-export")).toHaveCSS(
+    "background-color",
+    "rgb(244, 235, 216)",
+  );
+  await page.mouse.move(0, 0);
+  await expect(page.locator("#complete-export")).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+
+  await page.goto("/");
+  await page.locator('a.term-link[href="/glossary#complete-export"]').click();
+  await expect(page).toHaveURL(/\/glossary#complete-export$/);
+  await expect
+    .poll(async () => {
+      const stickyHeaderBottom = await page.locator(".site-header").evaluate((element) => {
+        return element.getBoundingClientRect().bottom;
+      });
+      const definitionTop = await page.locator("#complete-export").evaluate((element) => {
+        return element.getBoundingClientRect().top;
+      });
+      return definitionTop > stickyHeaderBottom && definitionTop < stickyHeaderBottom + 64;
+    })
+    .toBe(true);
+  await expect(page.locator("#complete-export")).toHaveCSS(
+    "background-color",
+    "rgb(255, 240, 184)",
+  );
 
   await page.goto("/sign_up");
   await expect(page.getByRole("heading", { name: "Create your Account" })).toBeVisible();

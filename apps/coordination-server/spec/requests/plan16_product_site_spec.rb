@@ -6,9 +6,16 @@ RSpec.describe "Plan 16 product site", type: :request do
 
     expect(response).to have_http_status(:ok)
     expect(response.body).to include(
-      "Keep what matters. Even when the web moves on.",
+      "Archive what should matter.",
+      "Keep useful pages available offline, even when the web moves on.",
+      "AWSM preservation features",
       "Public preview",
-      "Install AWSM",
+      "Get AWSM",
+      "A bookmark points back. A Capture stays with you.",
+      "Keeps the Capture together",
+      "Take your Vault with you",
+      "What works today",
+      "Why not just use the Wayback Machine?",
       "Continue without sync",
       "Sign in"
     )
@@ -16,6 +23,7 @@ RSpec.describe "Plan 16 product site", type: :request do
       "google-analytics",
       "googletagmanager",
       "fonts.googleapis.com",
+      "Proof, not promises",
       "pricing",
       "waitlist"
     )
@@ -42,6 +50,20 @@ RSpec.describe "Plan 16 product site", type: :request do
     expect(response.body).to include("Account password", "Recovery Phrase")
   end
 
+  it "defines capitalized product concepts in a public glossary" do
+    get "/glossary"
+
+    expect(response).to have_http_status(:ok)
+    expect(response.body).to include(
+      "The language of your archive.",
+      "Capture",
+      "Complete Export",
+      "Vault",
+      "Recovery Phrase",
+      "Coordination Server"
+    )
+  end
+
   it "keeps the landing visible after browser authentication and adds a sync banner" do
     Account.create!(
       email: "reader@example.test",
@@ -57,7 +79,7 @@ RSpec.describe "Plan 16 product site", type: :request do
 
     expect(response).to have_http_status(:ok)
     expect(response.body).to include(
-      "Keep what matters. Even when the web moves on.",
+      "Archive what should matter.",
       "Signed in as",
       "reader@example.test",
       "Set up sync"

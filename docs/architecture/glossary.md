@@ -157,6 +157,24 @@ Collection membership and redirects are derived by replaying immutable Events. A
 
 ---
 
+## Capture
+
+An immutable snapshot of information at a specific moment.
+
+Every successful Capture produces exactly one immutable Bundle. A Capture retains its source,
+timestamp, and preservation context; later changes produce another Capture rather than modifying
+the original.
+
+---
+
+## Library
+
+The user-facing Projection through which Captures and Collections are browsed and managed.
+
+The Library is rebuildable. It is not an authoritative container and does not own Capture content.
+
+---
+
 ## Bundle
 
 An immutable Capture package represented by Object semantics.
@@ -460,6 +478,16 @@ A Runtime component responsible for executing Jobs.
 ---
 
 # 9. Backup Concepts
+
+## Complete Export
+
+A portable, client-held export of one authenticated Vault Generation containing the complete
+authoritative inventory and every referenced Artifact wrapper.
+
+Complete Export excludes rebuildable Projections, Materializations, caches, local Device secrets,
+and operational state.
+
+---
 
 ## Snapshot
 

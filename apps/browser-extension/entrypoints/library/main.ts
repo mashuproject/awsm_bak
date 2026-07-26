@@ -2198,7 +2198,7 @@ async function loadList(expandedSection?: "Active" | "Deleted"): Promise<void> {
     content.append(libraryPresentationControls());
     if (loadedActiveGroups.length === 0) {
       content.append(
-        element("p", "No captures yet. Use the toolbar popup to archive a page.", "notice"),
+        element("p", "Save something AWSM. Use the toolbar popup to archive a page.", "notice"),
       );
     } else {
       content.append(groupGrid(loadedActiveGroups, "Active"));

@@ -1,4 +1,4 @@
-<% content_for :title, "AWSM — Keep what matters" %>
+<% content_for :title, "AWSM. Archive What Should Matter." %>
 <% content_for :body_class, "public-site" %>
 
 <%= render "shared/public_header" %>
@@ -25,50 +25,82 @@
     <div class="site-container hero__grid">
       <div>
         <p class="eyebrow"><span class="awsm-badge">Public preview</span></p>
-        <h1>Keep what matters. Even when the web moves on.</h1>
+        <h1>Archive what should matter.</h1>
         <p class="hero__lede">
-          AWSM saves the page—not just the link—into a private archive on your device. Keep it
-          available offline, export it, and optionally synchronize encrypted copies across
-          browsers.
+          Keep useful pages available offline, even when the web moves on.
         </p>
         <div class="button-row">
-          <%= link_to "Install AWSM", "#install-awsm", class: "awsm-button" %>
+          <%= link_to "Get AWSM", "#install-awsm", class: "awsm-button awsm-button--cta" %>
           <%= link_to "How it works", "#how-it-works", class: "awsm-button awsm-button--secondary" %>
         </div>
+        <ul class="hero__assurances" aria-label="AWSM preservation features">
+          <li>Encrypted <%= link_to "Vault", glossary_path(anchor: "vault"), class: "term-link", data: { turbo: false } %></li>
+          <li>Locally available offline</li>
+          <li><%= link_to "Complete Export", glossary_path(anchor: "complete-export"), class: "term-link", data: { turbo: false } %></li>
+        </ul>
       </div>
       <div class="hero-art" aria-hidden="true">
-        <span class="hero-art__page hero-art__page--one"></span>
-        <span class="hero-art__page hero-art__page--two"></span>
+        <div class="hero-art__browser">
+          <span class="hero-art__browser-bar"><i></i><i></i><i></i></span>
+          <strong>A useful page</strong>
+          <span class="hero-art__line hero-art__line--long"></span>
+          <span class="hero-art__line"></span>
+          <span class="hero-art__line hero-art__line--short"></span>
+        </div>
+        <span class="hero-art__arrow">↓</span>
         <%= keeper_image variant: "keeper-open", class: "hero-art__keeper" %>
-      </div>
+        <span class="hero-art__stamp">Kept in your Vault</span>
     </div>
   </section>
 
   <section class="story-section story-section--paper" id="how-it-works">
     <div class="site-container">
-      <p class="eyebrow">A bookmark remembers where</p>
-      <h2 class="section-heading">AWSM remembers what was there.</h2>
-      <div class="comparison">
-        <article class="awsm-card comparison__card comparison__card--faded">
-          <p class="eyebrow">Ordinary bookmark</p>
-          <h3>A pointer back to the web</h3>
-          <p>If the page changes, disappears, or becomes unavailable, the address may be all that remains.</p>
-        </article>
-        <article class="awsm-card awsm-card--expressive comparison__card">
-          <p class="eyebrow">AWSM Capture</p>
-          <h3>A private copy in your Vault</h3>
-          <p>
-            AWSM preserves an authoritative browser-independent page snapshot and, when capture
-            succeeds, useful representations such as a full-page screenshot and extracted content.
-          </p>
-        </article>
+      <p class="eyebrow">More than a bookmark</p>
+      <h2 class="section-heading">A bookmark points back. A Capture stays with you.</h2>
+      <div class="comparison-stack">
+        <div class="comparison comparison-row">
+          <article class="awsm-card comparison__card comparison__card--faded">
+            <p class="eyebrow">Ordinary bookmark</p>
+            <h3>Leaves you with just the address</h3>
+            <p>If the page changes, disappears, or becomes unavailable, the address may be all that remains.</p>
+          </article>
+          <article class="awsm-card comparison__card comparison__card--awsm">
+            <p class="eyebrow">AWSM Capture</p>
+            <h3>Keeps the page</h3>
+            <p>An authoritative browser-independent page snapshot stays with the Capture in your Vault.</p>
+          </article>
+        </div>
+        <div class="comparison comparison-row">
+          <article class="awsm-card comparison__card comparison__card--faded">
+            <p class="eyebrow">Screenshot alone</p>
+            <h3>Leaves you with just the pixels</h3>
+            <p>A screenshot records how a page looked, but not the page snapshot or its useful structure.</p>
+          </article>
+          <article class="awsm-card comparison__card comparison__card--awsm">
+            <p class="eyebrow">AWSM Library</p>
+            <h3>Keeps the Capture together</h3>
+            <p>The authoritative page snapshot stays connected to its source address, Capture history, and available screenshot and extracted content.</p>
+          </article>
+        </div>
+        <div class="comparison comparison-row">
+          <article class="awsm-card comparison__card comparison__card--faded">
+            <p class="eyebrow">Hosted-only archive</p>
+            <h3>Leaves your archive with the provider</h3>
+            <p>Access depends on the service remaining available and on your connection to it.</p>
+          </article>
+          <article class="awsm-card comparison__card comparison__card--awsm">
+            <p class="eyebrow">AWSM Vault</p>
+            <h3>Keeps your Vault portable</h3>
+            <p>Locally available content works offline, while Complete Export and verified Import keep the Vault portable.</p>
+          </article>
+        </div>
       </div>
     </div>
   </section>
 
   <section class="story-section">
     <div class="site-container">
-      <p class="eyebrow">Proof, not promises</p>
+      <p class="eyebrow">What works today</p>
       <h2 class="section-heading">A working archive on your device.</h2>
       <p class="section-lede">
         Capture useful HTTP(S) pages, return to them offline, organize them into Collections, and
@@ -77,7 +109,7 @@
       <div class="card-grid">
         <article class="awsm-card story-card"><h3>Save the page</h3><p>The authoritative page snapshot stays with the Capture, not with a fragile address.</p></article>
         <article class="awsm-card story-card"><h3>Use it offline</h3><p>Your local encrypted Vault remains useful without a network connection or Account.</p></article>
-        <article class="awsm-card story-card"><h3>Keep your way out</h3><p>Complete Export and Import let you preserve the Vault beyond one browser installation.</p></article>
+        <article class="awsm-card story-card"><h3>Take your Vault with you</h3><p>Complete Export and verified Import keep your Vault portable beyond one browser installation.</p></article>
       </div>
     </div>
   </section>
@@ -85,7 +117,7 @@
   <section class="story-section story-section--cobalt" id="optional-sync">
     <div class="site-container">
       <p class="eyebrow">Synchronization is optional. Encryption is not.</p>
-      <h2 class="section-heading">Across browsers without handing over the keys.</h2>
+      <h2 class="section-heading">Synchronize across browsers. Keep control of the keys.</h2>
       <p class="section-lede">
         If you enable synchronization, Vault content stays end-to-end encrypted. The Account
         identifies a client for synchronization, quotas, and future billing. The Recovery Phrase
@@ -96,7 +128,7 @@
         <div class="flow-node"><strong>Web page</strong><span>captured locally</span></div>
         <div class="flow-node"><%= keeper_image %><strong>Local Vault</strong><span>encrypted and usable offline</span></div>
         <div class="flow-node"><span class="flow-node__opaque"></span><strong>Opaque package</strong><span>no readable title or page content</span></div>
-        <div class="flow-node flow-node--server"><span class="flow-node__opaque"></span><strong>Coordination Server</strong><span>cannot decrypt Vault content</span></div>
+        <div class="flow-node flow-node--server"><span class="flow-node__courier" aria-hidden="true"></span><strong>Coordination Server</strong><span>routes sealed encrypted packages; cannot open them</span></div>
         <div class="flow-node"><%= keeper_image variant: "keeper-protected" %><strong>Another browser</strong><span>Account + Recovery Phrase</span></div>
       </div>
     </div>
@@ -115,9 +147,9 @@
           provider lock-in.
         </p>
         <p>
-          AWSM source is available under the AGPL, and the Coordination Server can be self-hosted.
-          A self-hosted operator still controls its deployment and can observe its own traffic and
-          access logs.
+          The AWSM source code is available under the AGPL, and the Coordination Server can be
+          self-hosted. A self-hosted operator still controls its deployment and can observe its own
+          traffic and access logs.
         </p>
         <div class="button-row">
           <%= link_to "View source", public_product_links[:source], class: "awsm-button awsm-button--secondary" %>
@@ -131,7 +163,7 @@
   <section class="story-section" id="install-awsm" data-controller="install-selector">
     <div class="site-container">
       <p class="eyebrow">Start local</p>
-      <h2 class="section-heading">Install the public preview.</h2>
+      <h2 class="section-heading">Get the public preview.</h2>
       <p class="section-lede">
         Create a local Vault first. You can add encrypted synchronization later if you want the
         same Vault on another browser.
@@ -193,26 +225,27 @@
   <section class="story-section story-section--paper">
     <div class="site-container">
       <p class="eyebrow">Questions, answered plainly</p>
-      <h2 class="section-heading">Know what AWSM does—and what it doesn't.</h2>
+      <h2 class="section-heading">Know what AWSM does. And what it doesn't.</h2>
       <div class="faq-list">
-        <details><summary>Does AWSM save the page or only the link?</summary><p>AWSM saves an authoritative browser-independent page snapshot, not only its address. Other useful representations are best-effort.</p></details>
-        <details><summary>Does AWSM require an Account?</summary><p>No. Capture, Library, local encrypted Vaults, and Export/Import work locally. An Account is needed only for optional synchronization.</p></details>
-        <details><summary>Can the Coordination Server read a Vault?</summary><p>No. It stores encrypted opaque records and operational metadata, but does not receive the Vault decryption keys.</p></details>
-        <details><summary>Account password or Recovery Phrase?</summary><p>The Account password proves identity to one Coordination Server. The Recovery Phrase is client-held Vault recovery material. They are separate secrets.</p></details>
-        <details><summary>Does AWSM work offline?</summary><p>The local Library and locally available Capture content remain usable offline. Synchronization waits for connectivity.</p></details>
-        <details><summary>Which browsers are supported today?</summary><p>Chrome has a downloadable unpacked preview. Firefox is tested but unsigned and development-only, with temporary installation ending on restart.</p></details>
-        <details><summary>Can AWSM be self-hosted?</summary><p>Yes. A self-hosted Coordination Server still sees operational metadata and controls its own access logs.</p></details>
-        <details><summary>Can data be exported?</summary><p>Yes. Complete Export and verified Import provide a portable preservation path outside one browser installation.</p></details>
-        <details><summary>Is Search or AI available today?</summary><p>No. AWSM does not present Search or AI as a shipped feature in this public preview.</p></details>
+        <article class="faq-item"><h3>How is AWSM different from a bookmark manager?</h3><p>A bookmark manager keeps an address. AWSM keeps an authoritative browser-independent snapshot of the page with its Capture. Other useful representations are best-effort.</p></article>
+        <article class="faq-item"><h3>Why not just use the Wayback Machine?</h3><p>The Wayback Machine preserves public web history. AWSM gives you a personal copy of what matters, available offline and portable with a Complete Export. It also works for private research, account-only documents, bank statements, and anything else that should never enter a public archive. Every Capture stays in your encrypted Vault. If you choose synchronization, the Coordination Server receives sealed encrypted data, not the contents of your Capture.</p></article>
+        <article class="faq-item"><h3>Can I use AWSM without creating an Account?</h3><p>Yes. Capture, Library, local encrypted Vaults, and Export/Import work locally. An Account is needed only for optional synchronization.</p></article>
+        <article class="faq-item"><h3>What can the Coordination Server see?</h3><p>It stores encrypted opaque records and operational metadata, but does not receive the Vault decryption keys.</p></article>
+        <article class="faq-item"><h3>Why do I need both an Account password and a Recovery Phrase?</h3><p>The Account password proves identity to one Coordination Server. The Recovery Phrase is client-held Vault recovery material. They are separate secrets.</p></article>
+        <article class="faq-item"><h3>What happens when I lose internet access?</h3><p>The local Library and locally available Capture content remain usable offline. Synchronization waits for connectivity.</p></article>
+        <article class="faq-item"><h3>Where can I install AWSM today?</h3><p>Chrome has a downloadable unpacked preview. Firefox is tested but unsigned and development-only, with temporary installation ending on restart.</p></article>
+        <article class="faq-item"><h3>Can I host synchronization myself?</h3><p>Yes. A self-hosted Coordination Server still sees operational metadata and controls its own access logs.</p></article>
+        <article class="faq-item"><h3>How do I take my archive with me?</h3><p>Complete Export and verified Import provide a portable preservation path outside one browser installation.</p></article>
+        <article class="faq-item"><h3>Can AWSM search or summarize what I save?</h3><p>No. AWSM does not present Search or AI as a shipped feature in this public preview.</p></article>
       </div>
     </div>
   </section>
 
   <section class="story-section">
     <div class="site-container final-cta">
-      <h2 class="section-heading">Keep the useful web in reach.</h2>
+      <h2 class="section-heading">Archive what should matter. On your terms.</h2>
       <p class="section-lede">Start with a local Vault. Add encrypted synchronization only when it serves you.</p>
-      <%= link_to "Install AWSM", "#install-awsm", class: "awsm-button" %>
+      <%= link_to "Get AWSM", "#install-awsm", class: "awsm-button awsm-button--cta" %>
     </div>
   </section>
 </main>

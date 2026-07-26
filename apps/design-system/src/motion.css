@@ -28,4 +28,10 @@
     animation-delay: 0ms !important;
     transition-duration: 0ms !important;
   }
+
+  .awsm-button:hover:not(:disabled, [aria-disabled="true"]),
+  .awsm-button:active:not(:disabled, [aria-disabled="true"]),
+  .awsm-button--cta::after {
+    translate: 0;
+  }
 }

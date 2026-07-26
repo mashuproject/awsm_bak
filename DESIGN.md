@@ -294,6 +294,28 @@ Display type may wrap dramatically but must remain readable at 200% zoom. Workin
 prioritizes stable rhythm and scanability. Use sentence case. Reserve uppercase for the compact
 AWSM wordmark and short eyebrow labels.
 
+## Voice
+
+AWSM carries two meanings: it sounds like “awesome,” and it expands to “Archive What Should
+Matter.” Use that double meaning deliberately rather than continuously.
+
+- Brand and invitation moments may use one AWSM/awesome turn of phrase per page or workflow.
+  Prefer natural phrases such as “Get AWSM,” “Keep the AWSM parts of the web,” and “Save something
+  AWSM.”
+- Routine controls remain literal and task-oriented: “Archive this page,” “Open Library,” and
+  “Create your Vault.”
+- Trust, encryption, Recovery Phrase, permissions, billing, deletion, error, and destructive copy
+  stays precise and serious. Never let wordplay obscure a boundary, consequence, limitation, or
+  recovery instruction.
+- “Archive What Should Matter” is the explanatory brand signature. Use it where the name needs
+  decoding, especially titles, onboarding, and the footer.
+- Prefer short sentences and periods in public copy. Do not use em dashes or en dashes as rhetorical
+  punctuation. Keep ordinary grammatical hyphens in compounds such as “end-to-end” and
+  “self-hosted.”
+
+The governing rhythm is: delight before the decision, clarity at the decision, and precision
+wherever consequences appear.
+
 ## Layout
 
 Use only the `4, 8, 12, 16, 24, 32, 48, 64, 96px` spacing scale. Public sections use generous
@@ -308,11 +330,15 @@ Every interactive target is at least 44px by 44px.
 ## Elevation & Depth
 
 The signature expressive elevation is a `2px` ink outline with a `4px 4px 0` ink hard shadow.
-Primary brand cards and buttons use no blurred shadow. Repeated workspace rows use an outline,
-divider, or no elevation so dense content does not become a wall of floating cards.
+Primary brand cards and buttons use no blurred shadow. On hover, tactile buttons lift `2px` up and
+left while their hard shadow grows to `6px`. On press, they move `3px` down and right into a `1px`
+shadow. This physical lift-and-compress behavior is the canonical button interaction. Repeated
+workspace rows use an outline, divider, or no elevation so dense content does not become a wall of
+floating cards.
 
-Pressed expressive controls translate by `2px` and reduce their hard shadow. Dialogs may use a
-quiet backdrop, but the dialog itself retains the same outline language.
+Quiet actions use an underline rather than physical travel. Destructive actions remain restrained
+and do not bounce, lift, or reveal playful decoration. Dialogs may use a quiet backdrop, but the
+dialog itself retains the same outline language.
 
 ## Shapes
 
@@ -338,6 +364,10 @@ Motion uses immediate press feedback, ordinary component transitions, expressive
 long hero composition. Motion may tilt, squash, open, close, and move the keeper bookmark, but may
 not scroll-jack, replace the cursor, delay reading, or block input. Reduced motion removes travel,
 rotation, scale, stagger, parallax, and loops and displays the final state immediately.
+
+Primary acquisition CTAs may reveal a short right arrow on hover and keyboard focus. Reserve the
+arrow's appearance for an invitation such as “Get AWSM”; ordinary task controls keep stable literal
+labels. The arrow is decorative and must not change the accessible name.
 
 The keeper appears in branding, onboarding, empty, capture progress and success, offline, and
 recovery moments. It is not repeated on every Capture card and is not a persistent companion.

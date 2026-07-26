@@ -193,7 +193,7 @@ function render(state: AppState, transientError?: string): void {
   content.append(
     heading(
       view.screen === "server-choice"
-        ? "Choose how AWSM starts"
+        ? "Archive what should matter"
         : view.screen === "permission-required"
           ? "Allow synchronization"
           : view.screen === "login"

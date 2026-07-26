@@ -63,6 +63,7 @@ Rails.application.routes.draw do
   patch "account/password", to: "account_passwords#update"
   get "privacy", to: "home#privacy"
   get "security", to: "home#security"
+  get "glossary", to: "home#glossary"
   get "design-system", to: "home#design_system" unless Rails.env.production?
   root "home#show"
 end

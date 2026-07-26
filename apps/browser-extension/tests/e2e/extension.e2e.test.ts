@@ -2972,7 +2972,7 @@ test("captures a page snapshot and full-page screenshot, then derives MHTML offl
       await dialog.accept();
     });
     await library.getByRole("button", { name: "Delete AWSM tall fixture collection" }).click();
-    await expect(library.getByText(/No captures yet/u)).toBeVisible();
+    await expect(library.getByText(/Save something AWSM/u)).toBeVisible();
     await library.getByText("Deleted (2)", { exact: true }).click();
     await expect(library.getByText("2 captures", { exact: false })).toBeVisible();
     await library.locator(".card").click();

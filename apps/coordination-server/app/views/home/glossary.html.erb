@@ -1,0 +1,71 @@
+<% content_for :title, "AWSM Glossary" %>
+<% content_for :body_class, "public-site" %>
+<%= render "shared/public_header" %>
+
+<main class="site-container glossary-page" data-controller="glossary">
+  <header class="glossary-page__header">
+    <p class="eyebrow">AWSM Glossary</p>
+    <h1>The language of your archive.</h1>
+    <p>
+      Reference definitions for AWSM's preservation, ownership, and synchronization model.
+    </p>
+  </header>
+
+  <div class="glossary-reference">
+    <nav class="glossary-index"
+         aria-label="Glossary terms"
+         data-turbo="false"
+         data-action="pointerover->glossary#preview pointerout->glossary#clearPreview focusin->glossary#preview focusout->glossary#clearPreview">
+      <%= link_to "Account", "#account" %>
+      <%= link_to "Capture", "#capture" %>
+      <%= link_to "Complete Export", "#complete-export" %>
+      <%= link_to "Coordination Server", "#coordination-server" %>
+      <%= link_to "Device", "#device" %>
+      <%= link_to "Library", "#library" %>
+      <%= link_to "Recovery Phrase", "#recovery-phrase" %>
+      <%= link_to "Synchronization Cycle", "#synchronization-cycle" %>
+      <%= link_to "Vault", "#vault" %>
+    </nav>
+
+    <dl class="glossary-list">
+      <div id="account">
+        <dt>Account</dt>
+        <dd>Your identity at one Coordination Server. It supports authentication, quotas, and future billing, but signing in does not decrypt a Vault.</dd>
+      </div>
+      <div id="capture">
+        <dt>Capture</dt>
+        <dd>An immutable snapshot of information at a specific moment. Saving the same page later creates another Capture instead of changing the original.</dd>
+      </div>
+      <div id="complete-export">
+        <dt>Complete Export</dt>
+        <dd>A portable, client-held package containing everything required to reconstruct one Vault. It is the path out of a browser installation or service.</dd>
+      </div>
+      <div id="coordination-server">
+        <dt>Coordination Server</dt>
+        <dd>The courier for synchronization. It coordinates opaque encrypted records and sees necessary operational metadata, but it does not receive Vault decryption keys.</dd>
+      </div>
+      <div id="device">
+        <dt>Device</dt>
+        <dd>A browser installation certified for a Vault. Its signing, wrapping, and locally protected Vault secrets remain in the trusted client environment.</dd>
+      </div>
+      <div id="library">
+        <dt>Library</dt>
+        <dd>The view where you browse and manage Captures and Collections. It is rebuilt from authoritative Vault history rather than owning the preserved content itself.</dd>
+      </div>
+      <div id="recovery-phrase">
+        <dt>Recovery Phrase</dt>
+        <dd>Twelve client-generated words that recover encrypted Vault key material and authorize a new Device. The phrase never goes to the Coordination Server.</dd>
+      </div>
+      <div id="synchronization-cycle">
+        <dt>Synchronization Cycle</dt>
+        <dd>One reconciliation pass between Vault replicas. It moves encrypted records while the client remains responsible for understanding and decrypting them.</dd>
+      </div>
+      <div id="vault">
+        <dt>Vault</dt>
+        <dd>Your complete authoritative archive. It is the ownership and cryptographic boundary around Captures, history, and the data needed to reconstruct them.</dd>
+      </div>
+    </dl>
+  </div>
+</main>
+
+<%= render "shared/public_footer" %>

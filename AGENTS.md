@@ -133,6 +133,27 @@ Explicitly approved plans supersede stale Draft documentation; reconcile every a
 - Automated UI tests for visible behavior must assert visibility, not only existence or element count. Add layout or dimension assertions when geometry is part of the requirement.
 - Capture and inspect screenshots with the available image-inspection tooling. If the changed states have not actually been viewed, the visual task is incomplete and must not be reported as finished.
 
+## PRODUCT COPY AND VOICE POLICY
+
+- Read the `Voice` section of `DESIGN.md` before writing or revising user-visible copy. It owns the
+  canonical balance between AWSM’s “awesome” sound and its “Archive What Should Matter” expansion.
+- Classify the surface before drafting:
+  - brand and invitation moments may be playful;
+  - routine product actions must be literal and task-oriented; and
+  - trust, encryption, Recovery Phrase, permissions, billing, deletion, errors, and destructive
+    actions must be precise and serious.
+- For a brand or invitation moment, draft at least three concise alternatives: one using the AWSM
+  sound, one using “Archive What Should Matter,” and one plain-language control. Select the version
+  that reads naturally in context; never force a pun merely because the product name permits it.
+- Use no more than one prominent AWSM/awesome turn of phrase per page or workflow. Do not rename
+  canonical concepts or obscure an action, boundary, limitation, consequence, or recovery step for
+  personality.
+- Audit neighboring copy after every change so the playful line is followed by a plain explanation
+  of the product behavior. Verify factual marketing claims against current code, tests, browser
+  distribution status, and canonical documentation.
+- Update affected assertions and screenshot baselines, run the rendered design E2E lane, and inspect
+  the changed copy at primary and narrow widths. Copy is part of the rendered product design.
+
 ## LIVE UI STATE POLICY
 
 - Every long-lived UI surface must remain a live Projection of authoritative Runtime state. Treat initial render data as a snapshot that can become stale immediately; never require a reload, reopen, or navigation to observe a successful state change.

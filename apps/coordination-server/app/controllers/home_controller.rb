@@ -13,6 +13,10 @@ class HomeController < ApplicationController
     assign_public_context
   end
 
+  def glossary
+    assign_public_context
+  end
+
   def design_system
     raise ActionController::RoutingError, "Not Found" if Rails.env.production?
 
