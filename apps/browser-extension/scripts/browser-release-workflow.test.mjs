@@ -24,29 +24,14 @@ test("keeps Chrome tags publishable while AMO signing is deferred", () => {
   assert.doesNotMatch(workflow, /Require the protected Firefox signing gate for tags/u);
 });
 
-test("runs Firefox parity on main and nightly without entering release jobs", () => {
+test("keeps hosted CI free of real-browser lanes", () => {
   assert.match(workflow, /branches:\s+- main/u);
-  assert.match(
-    workflow,
-    /firefox-nightly:[\s\S]*?if: github\.event_name == 'schedule' \|\| \(github\.event_name == 'push' && github\.ref == 'refs\/heads\/main'\)/u,
-  );
   assert.match(
     workflow,
     /build:[\s\S]*?if: github\.event_name == 'workflow_dispatch' \|\| \(github\.event_name == 'push' && startsWith\(github\.ref, 'refs\/tags\/v'\)\)/u,
   );
-});
-
-test("provisions exact browsers before release and parity gates", () => {
-  assert.match(
-    workflow,
-    /build:[\s\S]*?playwright install-deps chromium firefox[\s\S]*?playwright install chromium[\s\S]*?install:firefox:test -- stable[\s\S]*?test:e2e:cross-browser/u,
-  );
-  assert.match(
-    workflow,
-    /firefox-nightly:[\s\S]*?install:firefox:test -- \$\{\{ matrix\.lane \}\}[\s\S]*?Run production smoke/u,
-  );
-  assert.match(
-    workflow,
-    /sign-firefox:[\s\S]*?playwright install-deps chromium firefox[\s\S]*?playwright install chromium[\s\S]*?install:firefox:test[\s\S]*?Reproduce and verify/u,
-  );
+  assert.doesNotMatch(workflow, /playwright install/u);
+  assert.doesNotMatch(workflow, /test:e2e/u);
+  assert.doesNotMatch(workflow, /firefox-nightly:|cross-browser-nightly:/u);
+  assert.doesNotMatch(workflow, /^\s+schedule:/mu);
 });

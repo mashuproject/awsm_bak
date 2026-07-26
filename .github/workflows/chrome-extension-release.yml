@@ -8,8 +8,6 @@ on:
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
-  schedule:
-    - cron: "23 4 * * *"
   push:
     branches:
       - main
@@ -25,7 +23,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  firefox-pr-smoke:
+  firefox-pr-validation:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -44,12 +42,6 @@ jobs:
       - name: Install dependencies
         run: corepack pnpm install --frozen-lockfile
 
-      - name: Install Firefox system dependencies
-        run: corepack pnpm --filter @awsm/browser-extension exec playwright install-deps firefox
-
-      - name: Install pinned Firefox Stable
-        run: corepack pnpm --filter @awsm/browser-extension install:firefox:test -- stable
-
       - name: Lint and typecheck
         run: |
           corepack pnpm lint
@@ -62,90 +54,6 @@ jobs:
         run: |
           corepack pnpm --filter @awsm/browser-extension build:firefox
           corepack pnpm --filter @awsm/browser-extension exec web-ext lint --source-dir .output/firefox-mv3
-
-      - name: Run Firefox Stable production smoke
-        env:
-          AWSM_FIREFOX_LANE: stable
-        run: corepack pnpm --filter @awsm/browser-extension exec playwright test -c tests/firefox-production/playwright.config.mjs
-
-  firefox-nightly:
-    if: github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    strategy:
-      fail-fast: false
-      matrix:
-        lane: [stable, esr]
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 22
-
-      - name: Enable Corepack
-        run: corepack enable
-
-      - name: Install dependencies
-        run: corepack pnpm install --frozen-lockfile
-
-      - name: Install Firefox system dependencies
-        run: corepack pnpm --filter @awsm/browser-extension exec playwright install-deps firefox
-
-      - name: Install pinned Firefox
-        run: corepack pnpm --filter @awsm/browser-extension install:firefox:test -- ${{ matrix.lane }}
-
-      - name: Build and validate Firefox MV3
-        run: |
-          corepack pnpm --filter @awsm/browser-extension build:firefox
-          corepack pnpm --filter @awsm/browser-extension exec web-ext lint --source-dir .output/firefox-mv3
-
-      - name: Run production smoke
-        env:
-          AWSM_FIREFOX_LANE: ${{ matrix.lane }}
-        run: corepack pnpm --filter @awsm/browser-extension exec playwright test -c tests/firefox-production/playwright.config.mjs
-
-      - name: Run Export and Import parity
-        env:
-          AWSM_FIREFOX_LANE: ${{ matrix.lane }}
-          AWSM_FIREFOX_EXTENSION_BUILD: .output/firefox-mv3-e2e
-          AWSM_FIREFOX_EXPORT: "true"
-        run: |
-          corepack pnpm --filter @awsm/browser-extension exec wxt build -b firefox --mv3 --mode e2e
-          corepack pnpm --filter @awsm/browser-extension exec playwright test -c tests/firefox-production/playwright.config.mjs
-
-  cross-browser-nightly:
-    if: github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    runs-on: ubuntu-latest
-    timeout-minutes: 35
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 22
-
-      - name: Enable Corepack
-        run: corepack enable
-
-      - name: Install dependencies
-        run: corepack pnpm install --frozen-lockfile
-
-      - name: Install browser system dependencies
-        run: corepack pnpm --filter @awsm/browser-extension exec playwright install-deps chromium firefox
-
-      - name: Install Chromium
-        run: corepack pnpm --filter @awsm/browser-extension exec playwright install chromium
-
-      - name: Install pinned Firefox Stable
-        run: corepack pnpm --filter @awsm/browser-extension install:firefox:test -- stable
-
-      - name: Prove live Chrome and Firefox synchronization in both directions
-        run: corepack pnpm --filter @awsm/browser-extension test:e2e:cross-browser
 
   build:
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
@@ -177,15 +85,6 @@ jobs:
       - name: Install dependencies
         run: corepack pnpm install --frozen-lockfile
 
-      - name: Install browser system dependencies
-        run: corepack pnpm --filter @awsm/browser-extension exec playwright install-deps chromium firefox
-
-      - name: Install Chromium
-        run: corepack pnpm --filter @awsm/browser-extension exec playwright install chromium
-
-      - name: Install pinned Firefox Stable
-        run: corepack pnpm --filter @awsm/browser-extension install:firefox:test -- stable
-
       - name: Prepare release output
         run: mkdir dist
 
@@ -211,9 +110,6 @@ jobs:
 
       - name: Run unit tests
         run: corepack pnpm test
-
-      - name: Prove live Chrome and Firefox synchronization in both directions
-        run: corepack pnpm --filter @awsm/browser-extension test:e2e:cross-browser
 
       - name: Build production extension
         run: corepack pnpm build
@@ -293,15 +189,6 @@ jobs:
       - name: Install dependencies
         run: corepack pnpm install --frozen-lockfile
 
-      - name: Install browser system dependencies
-        run: corepack pnpm --filter @awsm/browser-extension exec playwright install-deps chromium firefox
-
-      - name: Install Chromium
-        run: corepack pnpm --filter @awsm/browser-extension exec playwright install chromium
-
-      - name: Install pinned Firefox Stable and ESR
-        run: corepack pnpm --filter @awsm/browser-extension install:firefox:test
-
       - name: Download validated browser release inputs
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -364,23 +251,6 @@ jobs:
           cd dist
           sha256sum "$FIREFOX_XPI_NAME" > "$FIREFOX_CHECKSUM_NAME"
           sha256sum --check "$FIREFOX_CHECKSUM_NAME"
-
-      - name: Run signed Firefox Stable parity
-        env:
-          AWSM_FIREFOX_LANE: stable
-          AWSM_FIREFOX_SIGNED_XPI: ../../dist/${{ needs.build.outputs.firefox_xpi_name }}
-        run: corepack pnpm --filter @awsm/browser-extension exec playwright test -c tests/firefox-production/playwright.config.mjs
-
-      - name: Run signed Firefox ESR parity
-        env:
-          AWSM_FIREFOX_LANE: esr
-          AWSM_FIREFOX_SIGNED_XPI: ../../dist/${{ needs.build.outputs.firefox_xpi_name }}
-        run: corepack pnpm --filter @awsm/browser-extension exec playwright test -c tests/firefox-production/playwright.config.mjs
-
-      - name: Run signed live cross-browser synchronization
-        env:
-          AWSM_FIREFOX_SIGNED_XPI: ../../dist/${{ needs.build.outputs.firefox_xpi_name }}
-        run: corepack pnpm --filter @awsm/browser-extension test:e2e:cross-browser
 
       - name: Upload signed Firefox release assets
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

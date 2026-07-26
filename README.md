@@ -287,9 +287,14 @@ and Import, and future locally derived capabilities.
 Maintainers publish validated Chrome artifacts from version tags:
 
 1. Update `version` in `apps/browser-extension/package.json`.
-2. Commit and push the change to `main`.
-3. Create and push the matching `v<version>` tag.
-4. Wait for the Chrome Extension Release workflow to validate and publish the Release.
+2. Run `corepack pnpm --filter @awsm/browser-extension test:e2e:cross-browser` locally.
+3. Commit and push the change to `main`.
+4. Create and push the matching `v<version>` tag.
+5. Wait for the Chrome Extension Release workflow to lint, typecheck, run unit tests, validate
+   both production builds, and publish the checksummed Release.
+
+Real-browser release proof runs locally to avoid consuming hosted CI minutes. Do not create the tag
+unless that local gate passes on the exact commit being tagged.
 
 Versions ending in `-alpha.N`, `-beta.N`, or `-rc.N` create prereleases. Plain versions create
 stable Releases. The workflow does not move or overwrite an existing tag or Release.
