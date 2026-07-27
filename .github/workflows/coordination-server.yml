@@ -47,20 +47,6 @@ jobs:
       - run: bin/rails db:prepare
       - run: bin/ci
 
-  sync-proof:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - run: docker compose -f compose.sync-proof.yml up --build --abort-on-container-exit --exit-code-from replica-proof
-      - if: always()
-        run: docker compose -f compose.sync-proof.yml down --volumes --remove-orphans
-
-  coordination-e2e:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - run: CI=true corepack pnpm test:e2e:coordination
-
   production-image:
     runs-on: ubuntu-latest
     steps:

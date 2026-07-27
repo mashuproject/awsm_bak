@@ -69,7 +69,7 @@ docker compose exec -e RAILS_ENV=test coordination-server bundle exec rspec
 From the repository root, run the isolated operational resilience proof with:
 
 ```bash
-CI=true corepack pnpm test:e2e:coordination
+corepack pnpm test:e2e:coordination
 ```
 
 This Coordination Server E2E suite starts two Rails processes, stops its disposable Redis service, verifies
@@ -77,7 +77,8 @@ degraded readiness and authoritative HTTP polling, restarts Redis, and verifies 
 issuance and cross-process hint delivery recover. It uses its own Compose project, loopback ports,
 temporary PostgreSQL storage, and disposable opaque-byte volume; its cleanup removes all of that
 state. Its first scenario covers outage and recovery independently from packaged-extension browser
-E2E and from the broader synchronization proof.
+E2E and from the broader synchronization proof. It and `corepack pnpm test:sync-proof` are
+heavyweight local verification gates and do not run in hosted CI.
 
 Stop the services while retaining development data:
 

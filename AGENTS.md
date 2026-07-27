@@ -181,6 +181,18 @@ Discover current build, test, lint, and development commands from repository man
 
 Invoke the repository-pinned pnpm through Corepack: use `corepack pnpm`, not a bare `pnpm` command.
 
+Every new or revised implementation plan must include both heavyweight local Coordination Server
+proofs in its final verification matrix:
+
+```bash
+corepack pnpm test:sync-proof
+corepack pnpm test:e2e:coordination
+```
+
+These proofs are local-only and must not be added to hosted CI. A plan must also include the
+repository-declared lint, typecheck, unit, integration, build, package, and affected-package checks
+applicable to its scope. Do not omit a required proof merely because hosted CI does not run it.
+
 The repository uses a shared 100-column code-formatting style in root Biome and Prettier
 configuration; Markdown retains its 80-column prose style. The browser-extension package owns its
 JavaScript, TypeScript, JSON, and CSS formatting through Biome. Run

@@ -31,6 +31,10 @@ execution:
 corepack pnpm test:sync-proof
 ```
 
+This heavyweight proof is a local verification gate. Hosted CI does not run it. Run it before
+publishing changes to synchronization, protocol, Redis coordination, opaque storage, Generation,
+or multi-replica behavior.
+
 # Public Product Surface
 
 Every hosted or self-hosted Coordination Server serves the same public-preview AWSM landing page at
@@ -65,6 +69,16 @@ health checks, and cache entries even when colocated.
 The isolated client creates and authenticates an ordinary test Account through the public API.
 `AWSM_SYNC_PROOF=true` selects proof-only origin and request-forgery behavior; both Rails processes
 use the production Redis Action Cable adapter contract and no alternate authenticator.
+
+The separate operational resilience suite is also a local verification gate:
+
+```bash
+corepack pnpm test:e2e:coordination
+```
+
+It runs two Rails processes and exercises Redis outage and recovery. Hosted CI retains the Rails
+unit, static-analysis, security, and production-image jobs, but does not run either heavyweight
+Docker proof.
 
 # Storage
 
