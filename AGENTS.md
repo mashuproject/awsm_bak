@@ -203,6 +203,15 @@ complete signed cross-browser suite before creating a tag or Release. Mozilla si
 exact final bytes; it is not the first functional Firefox test and it never substitutes for local
 proof before publication.
 
+A failed signed candidate triggers defect-class closure before another AMO submission. Do not patch
+only the first failing call site or treat one now-green scenario as sufficient. State the underlying
+browser, storage, lifecycle, permission, packaging, or harness failure class; search every production
+implementation and test helper for the same unsafe pattern; inspect sibling flows that cross the same
+restart or persistence boundary; fix every affected site in scope; and add regression evidence at the
+lowest useful layer plus the complete user-level scenario. Record the audit scope and why remaining
+matches are safe. Only after that closure audit and the entire unsigned matrix pass may the next
+immutable version be submitted to AMO.
+
 The repository uses a shared 100-column code-formatting style in root Biome and Prettier
 configuration; Markdown retains its 80-column prose style. The browser-extension package owns its
 JavaScript, TypeScript, JSON, and CSS formatting through Biome. Run

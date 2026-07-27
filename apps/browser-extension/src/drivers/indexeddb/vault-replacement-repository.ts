@@ -261,6 +261,10 @@ export class IndexedDbVaultReplacementRepository {
     )
       throw new DomainValidationError("vaultReplacementJob", "must begin at the Export gate");
     const database = await this.databasePromise;
+    const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, [
+      "encrypt",
+      "decrypt",
+    ]);
     const transaction = database.transaction(
       [STORES.vaultReplacementJobs, STORES.deviceLocalKeys],
       "readwrite",
@@ -284,10 +288,6 @@ export class IndexedDbVaultReplacementRepository {
         throw Object.assign(new Error("A Vault replacement is already active."), {
           id: "VAULT_BUSY",
         });
-      const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, [
-        "encrypt",
-        "decrypt",
-      ]);
       transaction
         .objectStore(STORES.deviceLocalKeys)
         .add(key, vaultKey(decoded.sourceVaultId, keyId(decoded.jobId)));
@@ -374,8 +374,58 @@ export class IndexedDbVaultReplacementRepository {
         "differs from the Job",
       );
     const database = await this.databasePromise;
+    const readTransaction = database.transaction(
+      [STORES.vaultReplacementJobs, STORES.deviceLocalKeys],
+      "readonly",
+    );
+    let key: CryptoKey;
+    try {
+      const storedJob = await requestValue(
+        readTransaction
+          .objectStore(STORES.vaultReplacementJobs)
+          .get(vaultKey(job.sourceVaultId, job.jobId)),
+      );
+      if (
+        storedJob === undefined ||
+        decodeVaultReplacementJob(storedJob).updatedAt !== job.updatedAt
+      )
+        throw Object.assign(new Error("Vault Replacement Job changed."), {
+          id: "VAULT_CONTEXT_CHANGED",
+        });
+      const rawKey = await requestValue(
+        readTransaction
+          .objectStore(STORES.deviceLocalKeys)
+          .get(vaultKey(job.sourceVaultId, keyId(job.jobId))),
+      );
+      key = checkpointKey(rawKey);
+      await transactionDone(readTransaction);
+    } catch (error) {
+      abortTransaction(readTransaction);
+      throw storageError(error);
+    }
+    const nonce = crypto.getRandomValues(new Uint8Array(12));
+    const checkpoint: VaultReplacementCheckpointV1 = {
+      version: 1,
+      jobId: job.jobId,
+      sourceVaultId: job.sourceVaultId,
+      targetVaultId: input.targetVaultId,
+      nonce,
+      ciphertext: new Uint8Array(
+        await crypto.subtle.encrypt(
+          {
+            name: "AES-GCM",
+            iv: nonce,
+            additionalData: Uint8Array.from(aad(job.jobId, job.sourceVaultId, input.targetVaultId)),
+            tagLength: 128,
+          },
+          key,
+          Uint8Array.from(input.plaintext),
+        ),
+      ),
+      updatedAt: input.updatedAt,
+    };
     const transaction = database.transaction(
-      [STORES.vaultReplacementJobs, STORES.vaultReplacementCheckpoints, STORES.deviceLocalKeys],
+      [STORES.vaultReplacementJobs, STORES.vaultReplacementCheckpoints],
       "readwrite",
     );
     try {
@@ -391,35 +441,6 @@ export class IndexedDbVaultReplacementRepository {
         throw Object.assign(new Error("Vault Replacement Job changed."), {
           id: "VAULT_CONTEXT_CHANGED",
         });
-      const rawKey = await requestValue(
-        transaction
-          .objectStore(STORES.deviceLocalKeys)
-          .get(vaultKey(job.sourceVaultId, keyId(job.jobId))),
-      );
-      const key = checkpointKey(rawKey);
-      const nonce = crypto.getRandomValues(new Uint8Array(12));
-      const checkpoint: VaultReplacementCheckpointV1 = {
-        version: 1,
-        jobId: job.jobId,
-        sourceVaultId: job.sourceVaultId,
-        targetVaultId: input.targetVaultId,
-        nonce,
-        ciphertext: new Uint8Array(
-          await crypto.subtle.encrypt(
-            {
-              name: "AES-GCM",
-              iv: nonce,
-              additionalData: Uint8Array.from(
-                aad(job.jobId, job.sourceVaultId, input.targetVaultId),
-              ),
-              tagLength: 128,
-            },
-            key,
-            Uint8Array.from(input.plaintext),
-          ),
-        ),
-        updatedAt: input.updatedAt,
-      };
       transaction
         .objectStore(STORES.vaultReplacementCheckpoints)
         .put(checkpoint, vaultKey(job.sourceVaultId, job.jobId));

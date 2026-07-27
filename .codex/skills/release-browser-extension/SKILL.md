@@ -75,6 +75,19 @@ signed candidate's retained-profile restart and returning-Device flows and run t
 cross-browser suite before creating a tag or Release. Signing validates final bytes; it is not the
 first functional Firefox test or a substitute for local proof.
 
+When signed proof fails, close the entire defect class before consuming another AMO version:
+
+1. identify the underlying browser/runtime boundary instead of naming only the observed symptom;
+2. search all production code and test harnesses for analogous operations and sibling call paths;
+3. inspect every match and document why it is affected or safe;
+4. fix all affected sites, not merely the first stack location;
+5. add the lowest-layer regression that exposes the mechanism and an end-to-end regression that
+   crosses the exact persistence, restart, permission, or packaging boundary; and
+6. rerun the complete unsigned matrix from rebuilt bytes.
+
+One repaired scenario, a Chrome-only pass, or a unit test with mocked browser storage is not closure
+evidence. Do not submit the next immutable candidate until the audit and all unsigned gates pass.
+
 Inspect all changed rendered states at primary and narrow widths. Run applicable formatters,
 static checks, and skill validation. Stage only intended files, review the complete staged diff,
 commit, push the exact candidate, fetch, and prove local `HEAD` equals the authorized remote branch.

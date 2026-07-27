@@ -5584,7 +5584,18 @@ async function storageReliefFaultMatrixScenario(): Promise<unknown> {
 }
 
 async function run(): Promise<void> {
-  const scenario = new URL(location.href).searchParams.get("scenario");
+  const parameters = new URL(location.href).searchParams;
+  const scenario = parameters.get("scenario");
+  if (parameters.get("delayCrypto") === "true") {
+    const encrypt = crypto.subtle.encrypt.bind(crypto.subtle);
+    Object.defineProperty(crypto.subtle, "encrypt", {
+      configurable: true,
+      value: async (...input: Parameters<SubtleCrypto["encrypt"]>) => {
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        return encrypt(...input);
+      },
+    });
+  }
   const result =
     scenario === "ui-preferences"
       ? await uiPreferencesScenario()

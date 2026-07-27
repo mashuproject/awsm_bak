@@ -102,7 +102,7 @@ bypassing the real Host in release builds.
 Execute the decision-complete two-phase candidate-signing, local proof-status, and exact-artifact
 publication contract in
 [Plan 19](docs/plans/19-two-phase-firefox-signing-and-distribution.md). Publish the Mozilla-signed
-unlisted Linux Firefox beta with the joint `v0.1.11` browser-extension Release, then verify the
+unlisted Linux Firefox beta with the joint `v0.1.12` browser-extension Release, then verify the
 tagged public site in staging. Remove this entry only after the Release assets and staging rollout
 are independently verified.
 

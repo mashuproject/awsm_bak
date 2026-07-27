@@ -293,6 +293,17 @@ test("protects restart-safe Vault replacement state and rejects tampering", asyn
   });
 });
 
+test("finishes protected writes after browser cryptography yields the event loop", async ({
+  page,
+}) => {
+  await expect(
+    scenario(page, "vault-replacement-persistence&delayCrypto=true"),
+  ).resolves.toMatchObject({
+    state: "Running",
+    plaintextRestored: true,
+  });
+});
+
 test("stages a restart-safe replacement without changing the active Workspace", async ({
   page,
 }) => {

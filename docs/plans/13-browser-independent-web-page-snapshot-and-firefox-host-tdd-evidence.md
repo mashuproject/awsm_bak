@@ -276,32 +276,35 @@ Plan 19 supersedes that prepared tag-time contract. The current workflow separat
 untagged candidate-signing dispatch from tag publication, binds the signed XPI to strict
 run-scoped provenance, and permits joint publication only after the exact commit has successful
 local-proof status. Tag publication performs no AMO request and cannot select replacement bytes.
-The live `v0.1.11` execution and final results belong to Plan 19's completion evidence. The first
+The live `v0.1.12` execution and final results belong to Plan 19's completion evidence. The first
 real `v0.1.8` candidate demonstrated that AMO reserializes `manifest.json` without changing its
 parsed value. The verifier now permits only semantic-equivalent manifest serialization while
 retaining byte equality for every other payload file. Signed retained-profile proof withheld
 `v0.1.9`, and source-archive reproduction exposed nondeterministic bytes. Signed `v0.1.10` proof
 then exposed Firefox's inability to replace a non-exportable credential-wrapping key after restart.
-Each source-changing correction advanced the release version rather than reusing a signed
-candidate.
+Signed `v0.1.11` proof subsequently exposed WebCrypto work keeping the Device-authority IndexedDB
+write transaction open long enough for Firefox to make it inactive. Each source-changing correction
+advanced the release version rather than reusing a signed candidate.
 
 Current-worktree verification:
 
-| Command                                                                | Result                                                                                      |
-| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `corepack pnpm lint`                                                   | PASS — 285 files.                                                                           |
-| `corepack pnpm typecheck`                                              | PASS.                                                                                       |
-| `corepack pnpm test`                                                   | PASS — 80 Vitest files, 385 tests, and 29 release/signing script tests.                     |
-| `corepack pnpm build`                                                  | PASS — Chrome and Firefox production MV3.                                                   |
-| `corepack pnpm test:integration`                                       | PASS — 45 browser integration tests.                                                        |
-| `corepack pnpm test:e2e:chrome`                                        | PASS — complete packaged matrix, 25 tests in 6.3 minutes.                                   |
-| Firefox production consent/Capture/MHTML lanes                         | PASS — Stable and ESR, two tests per lane.                                                  |
-| Firefox E2E Export/Import lanes                                        | PASS — Stable and ESR through authenticated Import.                                         |
-| `corepack pnpm test:e2e:cross-browser`                                 | PASS — live Chrome-to-Firefox and Firefox-to-Chrome updates without reload in 18.6 seconds. |
-| `corepack pnpm test:sync-proof`                                        | PASS — two Replicas converged and recovered.                                                |
-| `corepack pnpm zip`                                                    | PASS — both browser packages.                                                               |
-| Deterministic Firefox package comparison                               | PASS — consecutive complete builds were byte-identical.                                     |
-| Signed-XPI verifier synthetic positive and payload-mutation regression | PASS.                                                                                       |
-| Non-submitting workflow metadata/credential gate                       | PASS — exact asset names; missing credentials fail before any AMO request.                  |
-| `node apps/browser-extension/scripts/verify-firefox-archive.mjs`       | PASS — unsigned Firefox ZIP and source archive.                                             |
-| `web-ext lint --source-dir apps/browser-extension/.output/firefox-mv3` | PASS with the documented desktop-only Android warning.                                      |
+| Command                                                                | Result                                                                              |
+| ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `corepack pnpm lint`                                                   | PASS — 399 browser-extension files plus the design contract.                        |
+| `corepack pnpm typecheck`                                              | PASS.                                                                               |
+| `corepack pnpm test`                                                   | PASS — 123 Vitest files, 512 tests, and 44 release/signing script tests.            |
+| `corepack pnpm build`                                                  | PASS — Chrome and Firefox production MV3.                                           |
+| `corepack pnpm test:integration`                                       | PASS — 58 browser integration tests plus one optional model test skipped.           |
+| `corepack pnpm test:e2e:chrome`                                        | PASS — complete packaged matrix, 23 tests in 8.7 minutes.                           |
+| Firefox production consent/Capture/MHTML lanes                         | PASS — Stable and ESR, two tests per lane.                                          |
+| Firefox E2E Export/Import lanes                                        | PASS — Stable and ESR through authenticated Import.                                 |
+| `corepack pnpm test:e2e:cross-browser`                                 | PASS — all eight unsigned cross-browser scenarios in 6.2 minutes.                   |
+| `corepack pnpm test:e2e:design`                                        | PASS — seven packaged extension and public-site scenarios.                          |
+| `corepack pnpm test:sync-proof`                                        | PASS — two Replicas converged and recovered.                                        |
+| `corepack pnpm test:e2e:coordination`                                  | PASS — polling and ticket issuance survived Redis loss; Cable delivery recovered.   |
+| `corepack pnpm zip`                                                    | PASS — both browser packages.                                                       |
+| Deterministic Firefox package comparison                               | PASS — runtime and source ZIPs were byte-identical across UTC and Pacific/Auckland. |
+| Signed-XPI verifier synthetic positive and payload-mutation regression | PASS.                                                                               |
+| Non-submitting workflow metadata/credential gate                       | PASS — exact asset names; missing credentials fail before any AMO request.          |
+| `node apps/browser-extension/scripts/verify-firefox-archive.mjs`       | PASS — unsigned Firefox ZIP and source archive.                                     |
+| `web-ext lint --source-dir apps/browser-extension/.output/firefox-mv3` | PASS with the documented desktop-only Android warning.                              |

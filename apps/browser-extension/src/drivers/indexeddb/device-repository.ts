@@ -547,52 +547,71 @@ export class IndexedDbDeviceRepository {
     if (session.scope !== "VaultDevice")
       throw new DomainValidationError("deviceSession", "has the wrong authority scope");
     const database = await this.databasePromise;
-    const transaction = database.transaction(
+    const readTransaction = database.transaction(
       [STORES.deviceSessions, STORES.deviceLocalKeys],
-      "readwrite",
+      "readonly",
     );
+    let stored: StoredDeviceSession;
+    let key: CryptoKey;
     try {
       const [storedValue, keyValue] = await Promise.all([
-        requestValue(transaction.objectStore(STORES.deviceSessions).get(vaultId)),
-        requestValue(transaction.objectStore(STORES.deviceLocalKeys).get(`${vaultId}:session`)),
+        requestValue(readTransaction.objectStore(STORES.deviceSessions).get(vaultId)),
+        requestValue(readTransaction.objectStore(STORES.deviceLocalKeys).get(`${vaultId}:session`)),
       ]);
       if (storedValue === undefined || keyValue === undefined) {
-        transaction.abort();
+        readTransaction.abort();
         throw new DomainValidationError("deviceSession", "is not initialized");
       }
-      const stored = storedValue as StoredDeviceSession;
+      stored = storedValue as StoredDeviceSession;
       if (
         stored.accountId !== session.account.accountId ||
         stored.email !== session.account.email
       ) {
-        transaction.abort();
+        readTransaction.abort();
         throw new DomainValidationError("deviceSession", "changed Account identity");
       }
-      const key = nonExtractableKey(keyValue, "AES-GCM", ["encrypt", "decrypt"]);
-      const refreshNonce = crypto.getRandomValues(new Uint8Array(12));
-      const next: StoredDeviceSession = {
-        ...stored,
-        sessionId: session.sessionId,
-        refreshNonce,
-        refreshCiphertext: new Uint8Array(
-          await crypto.subtle.encrypt(
-            {
-              name: "AES-GCM",
-              iv: Uint8Array.from(refreshNonce),
-              additionalData: Uint8Array.from(
-                deviceAad({
-                  accountId: stored.accountId,
-                  vaultId,
-                  deviceId: stored.deviceId,
-                  sessionId: session.sessionId,
-                }),
-              ),
-            },
-            key,
-            encoder.encode(session.refreshToken),
-          ),
+      key = nonExtractableKey(keyValue, "AES-GCM", ["encrypt", "decrypt"]);
+      await transactionDone(readTransaction);
+    } catch (error) {
+      readTransaction.abort();
+      throw storageError(error);
+    }
+    const refreshNonce = crypto.getRandomValues(new Uint8Array(12));
+    const next: StoredDeviceSession = {
+      ...stored,
+      sessionId: session.sessionId,
+      refreshNonce,
+      refreshCiphertext: new Uint8Array(
+        await crypto.subtle.encrypt(
+          {
+            name: "AES-GCM",
+            iv: Uint8Array.from(refreshNonce),
+            additionalData: Uint8Array.from(
+              deviceAad({
+                accountId: stored.accountId,
+                vaultId,
+                deviceId: stored.deviceId,
+                sessionId: session.sessionId,
+              }),
+            ),
+          },
+          key,
+          encoder.encode(session.refreshToken),
         ),
-      };
+      ),
+    };
+    const transaction = database.transaction(STORES.deviceSessions, "readwrite");
+    try {
+      const currentValue = await requestValue(
+        transaction.objectStore(STORES.deviceSessions).get(vaultId),
+      );
+      if (
+        currentValue === undefined ||
+        (currentValue as StoredDeviceSession).sessionId !== stored.sessionId
+      ) {
+        transaction.abort();
+        throw new DomainValidationError("deviceSession", "changed concurrently");
+      }
       transaction.objectStore(STORES.deviceSessions).put(next, vaultId);
       await transactionDone(transaction);
     } catch (error) {
@@ -608,48 +627,67 @@ export class IndexedDbDeviceRepository {
     if (session.scope !== "VaultDevice")
       throw new DomainValidationError("deviceSession", "has the wrong authority scope");
     const database = await this.databasePromise;
-    const transaction = database.transaction(
+    const readTransaction = database.transaction(
       [STORES.deviceSessions, STORES.deviceLocalKeys],
-      "readwrite",
+      "readonly",
     );
+    let identity: StoredDeviceSession;
+    let key: CryptoKey;
     try {
       const [identityValue, keyValue] = await Promise.all([
-        requestValue(transaction.objectStore(STORES.deviceSessions).get(vaultId)),
-        requestValue(transaction.objectStore(STORES.deviceLocalKeys).get(`${vaultId}:session`)),
+        requestValue(readTransaction.objectStore(STORES.deviceSessions).get(vaultId)),
+        requestValue(readTransaction.objectStore(STORES.deviceLocalKeys).get(`${vaultId}:session`)),
       ]);
       if (identityValue === undefined || keyValue === undefined)
         throw new DomainValidationError("deviceSession", "is not initialized");
-      const identity = identityValue as StoredDeviceSession;
-      const key = nonExtractableKey(keyValue, "AES-GCM", ["encrypt", "decrypt"]);
-      const refreshNonce = crypto.getRandomValues(new Uint8Array(12));
-      const candidate: StoredDeviceSession = {
-        version: 1,
-        accountId: session.account.accountId,
-        vaultId,
-        deviceId: identity.deviceId,
-        sessionId: session.sessionId,
-        email: session.account.email,
-        scope: "VaultDevice",
-        refreshNonce,
-        refreshCiphertext: new Uint8Array(
-          await crypto.subtle.encrypt(
-            {
-              name: "AES-GCM",
-              iv: Uint8Array.from(refreshNonce),
-              additionalData: Uint8Array.from(
-                deviceAad({
-                  accountId: session.account.accountId,
-                  vaultId,
-                  deviceId: identity.deviceId,
-                  sessionId: session.sessionId,
-                }),
-              ),
-            },
-            key,
-            encoder.encode(session.refreshToken),
-          ),
+      identity = identityValue as StoredDeviceSession;
+      key = nonExtractableKey(keyValue, "AES-GCM", ["encrypt", "decrypt"]);
+      await transactionDone(readTransaction);
+    } catch (error) {
+      readTransaction.abort();
+      throw storageError(error);
+    }
+    const refreshNonce = crypto.getRandomValues(new Uint8Array(12));
+    const candidate: StoredDeviceSession = {
+      version: 1,
+      accountId: session.account.accountId,
+      vaultId,
+      deviceId: identity.deviceId,
+      sessionId: session.sessionId,
+      email: session.account.email,
+      scope: "VaultDevice",
+      refreshNonce,
+      refreshCiphertext: new Uint8Array(
+        await crypto.subtle.encrypt(
+          {
+            name: "AES-GCM",
+            iv: Uint8Array.from(refreshNonce),
+            additionalData: Uint8Array.from(
+              deviceAad({
+                accountId: session.account.accountId,
+                vaultId,
+                deviceId: identity.deviceId,
+                sessionId: session.sessionId,
+              }),
+            ),
+          },
+          key,
+          encoder.encode(session.refreshToken),
         ),
-      };
+      ),
+    };
+    const transaction = database.transaction(STORES.deviceSessions, "readwrite");
+    try {
+      const currentValue = await requestValue(
+        transaction.objectStore(STORES.deviceSessions).get(vaultId),
+      );
+      if (
+        currentValue === undefined ||
+        (currentValue as StoredDeviceSession).sessionId !== identity.sessionId
+      ) {
+        transaction.abort();
+        throw new DomainValidationError("deviceSession", "changed concurrently");
+      }
       transaction
         .objectStore(STORES.deviceSessions)
         .put(candidate, `${vaultId}:server-switch-candidate`);
@@ -684,10 +722,108 @@ export class IndexedDbDeviceRepository {
     );
     const localVerifier = await createVerifier(authority.keyEpoch.rootKey, localAuthority.slot);
     const database = await this.databasePromise;
-    const transaction = database.transaction(
+    const readTransaction = database.transaction(
       [
         STORES.deviceIdentities,
         STORES.deviceLocalKeys,
+        STORES.vaultSyncState,
+        STORES.vaultMetadata,
+      ],
+      "readonly",
+    );
+    let identity: StoredDeviceIdentity;
+    let sync: import("./schema").StoredAccountVaultV1;
+    let localMetadata: import("../../runtime/vault/contracts").VaultMetadataV1;
+    let wrappingKey: CryptoKey;
+    let sessionKey: CryptoKey;
+    try {
+      const [identityValue, wrappingKeyValue, sessionKeyValue, syncValue, localMetadataValue] =
+        await Promise.all([
+          requestValue(readTransaction.objectStore(STORES.deviceIdentities).get(authority.vaultId)),
+          requestValue(
+            readTransaction.objectStore(STORES.deviceLocalKeys).get(`${authority.vaultId}:wrap`),
+          ),
+          requestValue(
+            readTransaction.objectStore(STORES.deviceLocalKeys).get(`${authority.vaultId}:session`),
+          ),
+          requestValue(readTransaction.objectStore(STORES.vaultSyncState).get("active")),
+          requestValue(
+            readTransaction
+              .objectStore(STORES.vaultMetadata)
+              .get(vaultSingletonKey(authority.vaultId, "metadata")),
+          ),
+        ]);
+      if (
+        identityValue === undefined ||
+        wrappingKeyValue === undefined ||
+        sessionKeyValue === undefined ||
+        syncValue === undefined ||
+        localMetadataValue === undefined
+      ) {
+        readTransaction.abort();
+        throw new DomainValidationError("deviceAuthority", "is not initialized");
+      }
+      identity = identityValue as StoredDeviceIdentity;
+      sync = syncValue as import("./schema").StoredAccountVaultV1;
+      if (
+        identity.accountId !== authority.accountId ||
+        identity.deviceId !== authority.certificate.content.deviceId ||
+        sync.accountId !== authority.accountId ||
+        sync.vaultId !== authority.vaultId
+      ) {
+        readTransaction.abort();
+        throw new DomainValidationError("deviceAuthority", "changed identity");
+      }
+      localMetadata = localMetadataValue as import("../../runtime/vault/contracts").VaultMetadataV1;
+      wrappingKey = nonExtractableKey(wrappingKeyValue, "AES-KW", ["wrapKey", "unwrapKey"]);
+      sessionKey = nonExtractableKey(sessionKeyValue, "AES-GCM", ["encrypt", "decrypt"]);
+      await transactionDone(readTransaction);
+    } catch (error) {
+      readTransaction.abort();
+      throw storageError(error);
+    }
+
+    // Firefox may make an IndexedDB transaction inactive while WebCrypto is pending. Prepare all
+    // encrypted values before opening the atomic write transaction.
+    const refreshNonce = crypto.getRandomValues(new Uint8Array(12));
+    const session: StoredDeviceSession = {
+      version: 1,
+      accountId: authority.accountId,
+      vaultId: authority.vaultId,
+      deviceId: identity.deviceId,
+      sessionId: authority.session.sessionId,
+      email: authority.session.account.email,
+      scope: "VaultDevice",
+      refreshNonce,
+      refreshCiphertext: new Uint8Array(
+        await crypto.subtle.encrypt(
+          {
+            name: "AES-GCM",
+            iv: Uint8Array.from(refreshNonce),
+            additionalData: Uint8Array.from(
+              deviceAad({
+                accountId: authority.accountId,
+                vaultId: authority.vaultId,
+                deviceId: identity.deviceId,
+                sessionId: authority.session.sessionId,
+              }),
+            ),
+          },
+          sessionKey,
+          encoder.encode(authority.session.refreshToken),
+        ),
+      ),
+    };
+    const epoch: StoredEpochKey = {
+      version: 1,
+      vaultId: authority.vaultId,
+      keyEpochId: authority.keyEpoch.keyEpochId,
+      ordinal: authority.keyEpoch.ordinal,
+      wrappedRootKey: await wrapRaw(authority.keyEpoch.rootKey, wrappingKey),
+    };
+    const transaction = database.transaction(
+      [
+        STORES.deviceIdentities,
         STORES.epochKeys,
         STORES.deviceSessions,
         STORES.vaultSyncState,
@@ -698,81 +834,6 @@ export class IndexedDbDeviceRepository {
       "readwrite",
     );
     try {
-      const [identityValue, wrappingKeyValue, sessionKeyValue, syncValue, localMetadata] =
-        await Promise.all([
-          requestValue(transaction.objectStore(STORES.deviceIdentities).get(authority.vaultId)),
-          requestValue(
-            transaction.objectStore(STORES.deviceLocalKeys).get(`${authority.vaultId}:wrap`),
-          ),
-          requestValue(
-            transaction.objectStore(STORES.deviceLocalKeys).get(`${authority.vaultId}:session`),
-          ),
-          requestValue(transaction.objectStore(STORES.vaultSyncState).get("active")),
-          requestValue(
-            transaction
-              .objectStore(STORES.vaultMetadata)
-              .get(vaultSingletonKey(authority.vaultId, "metadata")),
-          ),
-        ]);
-      if (
-        identityValue === undefined ||
-        wrappingKeyValue === undefined ||
-        sessionKeyValue === undefined ||
-        syncValue === undefined ||
-        localMetadata === undefined
-      ) {
-        transaction.abort();
-        throw new DomainValidationError("deviceAuthority", "is not initialized");
-      }
-      const identity = identityValue as StoredDeviceIdentity;
-      const sync = syncValue as import("./schema").StoredAccountVaultV1;
-      if (
-        identity.accountId !== authority.accountId ||
-        identity.deviceId !== authority.certificate.content.deviceId ||
-        sync.accountId !== authority.accountId ||
-        sync.vaultId !== authority.vaultId
-      ) {
-        transaction.abort();
-        throw new DomainValidationError("deviceAuthority", "changed identity");
-      }
-      const wrappingKey = nonExtractableKey(wrappingKeyValue, "AES-KW", ["wrapKey", "unwrapKey"]);
-      const sessionKey = nonExtractableKey(sessionKeyValue, "AES-GCM", ["encrypt", "decrypt"]);
-      const refreshNonce = crypto.getRandomValues(new Uint8Array(12));
-      const session: StoredDeviceSession = {
-        version: 1,
-        accountId: authority.accountId,
-        vaultId: authority.vaultId,
-        deviceId: identity.deviceId,
-        sessionId: authority.session.sessionId,
-        email: authority.session.account.email,
-        scope: "VaultDevice",
-        refreshNonce,
-        refreshCiphertext: new Uint8Array(
-          await crypto.subtle.encrypt(
-            {
-              name: "AES-GCM",
-              iv: Uint8Array.from(refreshNonce),
-              additionalData: Uint8Array.from(
-                deviceAad({
-                  accountId: authority.accountId,
-                  vaultId: authority.vaultId,
-                  deviceId: identity.deviceId,
-                  sessionId: authority.session.sessionId,
-                }),
-              ),
-            },
-            sessionKey,
-            encoder.encode(authority.session.refreshToken),
-          ),
-        ),
-      };
-      const epoch: StoredEpochKey = {
-        version: 1,
-        vaultId: authority.vaultId,
-        keyEpochId: authority.keyEpoch.keyEpochId,
-        ordinal: authority.keyEpoch.ordinal,
-        wrappedRootKey: await wrapRaw(authority.keyEpoch.rootKey, wrappingKey),
-      };
       transaction.objectStore(STORES.deviceIdentities).put(
         {
           ...identity,
@@ -801,7 +862,7 @@ export class IndexedDbDeviceRepository {
       );
       transaction.objectStore(STORES.vaultMetadata).put(
         {
-          ...(localMetadata as import("../../runtime/vault/contracts").VaultMetadataV1),
+          ...localMetadata,
           activeKeyEpochId: authority.keyEpoch.keyEpochId,
           deviceId: authority.certificate.content.deviceId,
           verifier: localVerifier,
