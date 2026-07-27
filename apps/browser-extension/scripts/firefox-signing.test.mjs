@@ -1,8 +1,19 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { classifyAmoVersion, versionEndpoint } from "./sign-firefox-unlisted.mjs";
+import { classifyAmoVersion, versionEndpoint, webExtCommand } from "./sign-firefox-unlisted.mjs";
 
 const id = "{f6f49704-8d53-4eda-aef7-619ab88dda5f}";
+
+test("runs web-ext through the package that owns it", () => {
+  assert.deepEqual(webExtCommand(["lint"]), [
+    "pnpm",
+    "--filter",
+    "@awsm/browser-extension",
+    "exec",
+    "web-ext",
+    "lint",
+  ]);
+});
 
 test("addresses one exact encoded AMO add-on version", () => {
   assert.equal(

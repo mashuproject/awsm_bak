@@ -74,9 +74,13 @@ async function queryVersion(addonId, version, issuer, secret) {
   return classifyAmoVersion(await response.json(), version);
 }
 
+export function webExtCommand(arguments_) {
+  return ["pnpm", "--filter", "@awsm/browser-extension", "exec", "web-ext", ...arguments_];
+}
+
 function runWebExt(arguments_, environment) {
   return new Promise((resolvePromise, reject) => {
-    const child = spawn("corepack", ["pnpm", "exec", "web-ext", ...arguments_], {
+    const child = spawn("corepack", webExtCommand(arguments_), {
       stdio: "inherit",
       env: environment,
     });
