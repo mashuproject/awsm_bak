@@ -1,0 +1,39 @@
+<% content_for :title, "Delete AWSM Account" %>
+
+<%= render layout: "shared/account_shell",
+           locals: {
+             story_heading: "Account deletion is permanent.",
+             story_copy: "Confirm only when you intend to remove this server-side Account and its encrypted Replica."
+           } do %>
+  <p class="eyebrow">Delete Account</p>
+  <h1>Permanently delete this Account</h1>
+  <p>
+    Permanently deleting this Account removes its server-side Vault Replica, encrypted objects,
+    Recovery Kit ciphertext, Devices, and sessions. It does not delete data stored in your browser
+    or in Exports. There is no recovery period and AWSM cannot restore the Account.
+  </p>
+
+  <%= form_with url: start_account_deletion_path,
+                scope: :account_deletion,
+                class: "account-form" do |form| %>
+    <div class="field">
+      <%= form.label :current_password, "Current password" %>
+      <%= form.password_field :current_password,
+                              required: true,
+                              autocomplete: "current-password",
+                              maxlength: 72 %>
+    </div>
+    <div class="field">
+      <%= form.label :username_confirmation, "Type #{@account.username} to confirm" %>
+      <%= form.text_field :username_confirmation,
+                          required: true,
+                          autocomplete: "off",
+                          maxlength: 32 %>
+    </div>
+    <div class="actions">
+      <%= form.submit "Permanently delete Account", class: "awsm-button awsm-button--danger" %>
+    </div>
+  <% end %>
+
+  <p><%= link_to "Cancel", account_path(anchor: "delete-account") %></p>
+<% end %>

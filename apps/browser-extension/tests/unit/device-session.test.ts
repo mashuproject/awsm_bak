@@ -10,7 +10,8 @@ const stored = {
     vaultId,
     deviceId: "01900000-0000-7000-8000-000000000303",
     sessionId: "01900000-0000-7000-8000-000000000304",
-    email: "owner@example.test",
+    username: "owner_test",
+    inactiveDeletionAt: "2027-07-27T12:00:00.000Z",
     scope: "VaultDevice" as const,
     refreshNonce: new Uint8Array(12),
     refreshCiphertext: new Uint8Array(32),
@@ -21,7 +22,11 @@ const stored = {
 describe("Device session manager", () => {
   it("refreshes only VaultDevice authority and atomically persists the rotated credential", async () => {
     const session = {
-      account: { accountId: stored.metadata.accountId, email: stored.metadata.email },
+      account: {
+        accountId: stored.metadata.accountId,
+        username: stored.metadata.username,
+        inactiveDeletionAt: stored.metadata.inactiveDeletionAt,
+      },
       sessionId: "01900000-0000-7000-8000-000000000305",
       scope: "VaultDevice" as const,
       accessToken: "new-device-access",
@@ -54,7 +59,11 @@ describe("Device session manager", () => {
     const manager = new DeviceSessionManager(
       {
         refresh: vi.fn(async () => ({
-          account: { accountId: stored.metadata.accountId, email: stored.metadata.email },
+          account: {
+            accountId: stored.metadata.accountId,
+            username: stored.metadata.username,
+            inactiveDeletionAt: stored.metadata.inactiveDeletionAt,
+          },
           sessionId: "01900000-0000-7000-8000-000000000305",
           scope: "Account" as const,
           accessToken: "account-access",

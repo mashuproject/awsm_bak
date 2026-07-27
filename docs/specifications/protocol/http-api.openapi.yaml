@@ -950,7 +950,7 @@ components:
     ServerInformation:
       type: object
       additionalProperties: false
-      required: [service, protocolVersion, capabilities, registration]
+      required: [service, protocolVersion, capabilities, registration, accountPolicy]
       properties:
         service:
           type: string
@@ -1004,11 +1004,20 @@ components:
                 enabled:
                   type: boolean
                   enum: [false]
-    Email:
+        accountPolicy:
+          type: object
+          additionalProperties: false
+          required: [inactiveRetentionDays]
+          properties:
+            inactiveRetentionDays:
+              type: integer
+              minimum: 1
+              maximum: 36500
+    Username:
       type: string
       minLength: 3
-      maxLength: 254
-      pattern: "^[^\\s@]+@[^\\s@]+$"
+      maxLength: 32
+      pattern: "^[a-z0-9](?:[a-z0-9_-]{1,30}[a-z0-9])?$"
     Base64Url32:
       type: string
       pattern: "^[A-Za-z0-9_-]{43}$"
@@ -1031,12 +1040,15 @@ components:
     AccountSummary:
       type: object
       additionalProperties: false
-      required: [accountId, email]
+      required: [accountId, username, inactiveDeletionAt]
       properties:
         accountId:
           $ref: "#/components/schemas/Uuid"
-        email:
-          $ref: "#/components/schemas/Email"
+        username:
+          $ref: "#/components/schemas/Username"
+        inactiveDeletionAt:
+          type: string
+          format: date-time
     CableTicket:
       type: object
       additionalProperties: false
@@ -1051,10 +1063,10 @@ components:
     CreateSessionRequest:
       type: object
       additionalProperties: false
-      required: [email, password]
+      required: [username, password]
       properties:
-        email:
-          $ref: "#/components/schemas/Email"
+        username:
+          $ref: "#/components/schemas/Username"
         password:
           type: string
           minLength: 1
@@ -1157,9 +1169,10 @@ components:
           generationNumber,
           generationObject,
           recoveryGeneration,
-          keyEpoch,
+          keyEpochs,
+          activeKeyEpochId,
           deviceCertificate,
-          deviceKeyEnvelope,
+          deviceKeyEnvelopes,
           deviceProofSignature,
         ]
       properties:
@@ -1173,12 +1186,20 @@ components:
           $ref: "#/components/schemas/ObjectMetadata"
         recoveryGeneration:
           $ref: "#/components/schemas/RecoveryKit"
-        keyEpoch:
-          $ref: "#/components/schemas/InitialKeyEpoch"
+        keyEpochs:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/AttachmentKeyEpoch"
+        activeKeyEpochId:
+          $ref: "#/components/schemas/Uuid"
         deviceCertificate:
           $ref: "#/components/schemas/DeviceCertificate"
-        deviceKeyEnvelope:
-          $ref: "#/components/schemas/DeviceKeyEnvelope"
+        deviceKeyEnvelopes:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/DeviceKeyEnvelope"
         deviceProofSignature:
           $ref: "#/components/schemas/Base64Url64"
     AccountVaultEnrollment:
@@ -1410,16 +1431,19 @@ components:
           $ref: "#/components/schemas/Sha256"
         ciphertext:
           $ref: "#/components/schemas/Base64UrlBytes"
-    InitialKeyEpoch:
+    AttachmentKeyEpoch:
       type: object
       additionalProperties: false
-      required: [keyEpochId, ordinal]
+      required: [keyEpochId, ordinal, activatedAt]
       properties:
         keyEpochId:
           $ref: "#/components/schemas/Uuid"
         ordinal:
           type: integer
-          enum: [0]
+          minimum: 0
+        activatedAt:
+          type: string
+          format: date-time
     NextKeyEpoch:
       type: object
       additionalProperties: false
@@ -2019,6 +2043,7 @@ components:
       type: object
       additionalProperties: false
       required:
+        - inactiveAccountRetentionDays
         - recoveryRetentionDays
         - uploadStagingExpiryHours
         - transferTicketLifetimeSeconds
@@ -2029,6 +2054,10 @@ components:
         - maximumRecordPageSize
         - notifications
       properties:
+        inactiveAccountRetentionDays:
+          type: integer
+          minimum: 1
+          maximum: 36500
         recoveryRetentionDays:
           type: integer
           minimum: 0

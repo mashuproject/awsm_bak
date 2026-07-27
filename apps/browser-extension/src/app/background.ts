@@ -5,6 +5,7 @@ import { RUNTIME_ERROR_IDS, type RuntimeErrorId } from "../domain/contracts";
 import { canonicalRecord, integer, uuid } from "../domain/validation";
 import {
   IndexedDbAccountRepository,
+  IndexedDbDetachmentRepository,
   IndexedDbDeviceRepository,
   IndexedDbDriver,
   IndexedDbImportRepository,
@@ -66,6 +67,7 @@ import {
 } from "../runtime/library/vacuum";
 import { validatePageSnapshot, writePageSnapshot } from "../runtime/page-snapshot";
 import { DeviceAuthorityRefreshService } from "../runtime/recovery/authority-refresh";
+import { DetachedVaultAttachmentService } from "../runtime/recovery/detached-attachment";
 import {
   createDeviceEnrollmentProof,
   deviceCertificateToWire,
@@ -148,6 +150,7 @@ const databaseName = "awsm-client";
 const vaultRepository = new IndexedDbVaultRepository();
 const workspaceRepository = new IndexedDbWorkspaceRepository();
 const accountRepository = new IndexedDbAccountRepository();
+const detachmentRepository = new IndexedDbDetachmentRepository();
 const deviceRepository = new IndexedDbDeviceRepository();
 const serverSwitchRepository = new IndexedDbServerSwitchRepository();
 const storageReliefRepository = new IndexedDbStorageReliefRepository();
@@ -372,6 +375,10 @@ const initialAttachment = new InitialVaultAttachmentService(
   initialAttachmentTransport,
   deviceRepository,
 );
+const detachedAttachment = new DetachedVaultAttachmentService(
+  initialAttachmentTransport,
+  deviceRepository,
+);
 const futureProtection = new FutureProtectionService(
   {
     async deviceRequest(method, path, body, idempotencyKey) {
@@ -417,16 +424,15 @@ const deviceAuthorityRefresh = new DeviceAuthorityRefreshService(
         body,
       );
     },
-    async deviceRequest(method, path) {
+    async deviceRequest(method, path, accessToken) {
       const configuration = await accountRepository.loadConfiguration();
       if (configuration.mode !== "Configured")
         throw Object.assign(new Error("No synchronization server is configured."), {
           id: "SERVER_INCOMPATIBLE",
         });
-      return new SynchronizationHttp(
-        configuration.serverOrigin,
-        await deviceSessionManager(),
-      ).request(method, path);
+      return new SynchronizationHttp(configuration.serverOrigin, {
+        accessToken: async () => accessToken,
+      }).request(method, path);
     },
     useDeviceAccessToken(accessToken) {
       activeDeviceSessionManager?.setAccessToken(accessToken);
@@ -1306,6 +1312,7 @@ async function resetLocalDevice(): Promise<void> {
     await contexts.shutdown();
     await Promise.all([
       accountRepository.close(),
+      detachmentRepository.close(),
       deviceRepository.close(),
       serverSwitchRepository.close(),
       storageReliefRepository.close(),
@@ -1873,12 +1880,20 @@ function sourceArtifactReader(
   };
 }
 
-async function serverSwitchAttachmentAuthority(vaultId: string, activeKeyEpochId: string) {
-  const [candidateAccount, authority, recoveryKit] = await Promise.all([
-    accountRepository.loadMetadata("server-switch-candidate"),
-    deviceRepository.loadDeviceAuthority(vaultId),
-    accountRepository.loadRecoveryKit(vaultId),
-  ]);
+async function serverSwitchAttachmentAuthority(
+  vaultId: string,
+  activeKeyEpochId: string,
+  firstEpochActivatedAt: string,
+) {
+  const [candidateAccount, boundAuthority, detachedAuthority, storedRecoveryKit] =
+    await Promise.all([
+      accountRepository.loadMetadata("server-switch-candidate"),
+      deviceRepository.loadDeviceAuthority(vaultId),
+      deviceRepository.loadDetachedVaultAuthority(vaultId),
+      accountRepository.loadRecoveryKit(vaultId),
+    ]);
+  const authority = boundAuthority ?? detachedAuthority;
+  const recoveryKit = detachedAuthority?.recoveryKit ?? storedRecoveryKit;
   if (
     candidateAccount === undefined ||
     candidateAccount.scope !== "Account" ||
@@ -1890,18 +1905,38 @@ async function serverSwitchAttachmentAuthority(vaultId: string, activeKeyEpochId
     throw Object.assign(new Error("Server Switch attachment authority is unavailable."), {
       id: "SYNCHRONIZATION_INTEGRITY_FAILED",
     });
-  const envelope = authority.envelopes.find(
-    (candidate) => candidate.metadata.keyEpochId === activeKeyEpochId,
+  const envelopes = authority.keyEpochs.map((epoch) =>
+    authority.envelopes.find((candidate) => candidate.metadata.keyEpochId === epoch.keyEpochId),
   );
-  if (envelope === undefined)
-    throw Object.assign(new Error("Server Switch active Key Epoch envelope is unavailable."), {
+  if (
+    authority.keyEpochs.at(-1)?.keyEpochId !== activeKeyEpochId ||
+    envelopes.some((envelope) => envelope === undefined)
+  )
+    throw Object.assign(new Error("Server Switch Key Epoch envelopes are unavailable."), {
+      id: "SYNCHRONIZATION_INTEGRITY_FAILED",
+    });
+  const firstActivation = Date.parse(firstEpochActivatedAt);
+  if (!Number.isFinite(firstActivation))
+    throw Object.assign(new Error("Server Switch Key Epoch activation is invalid."), {
       id: "SYNCHRONIZATION_INTEGRITY_FAILED",
     });
   try {
     return {
       recoveryGeneration: recoveryKitToWire(recoveryKit),
+      keyEpochs: authority.keyEpochs.map((epoch) => ({
+        keyEpochId: epoch.keyEpochId,
+        ordinal: epoch.ordinal,
+        activatedAt: new Date(firstActivation + epoch.ordinal).toISOString(),
+      })),
+      activeKeyEpochId,
       deviceCertificate: deviceCertificateToWire(authority.certificate),
-      deviceKeyEnvelope: deviceKeyEnvelopeToWire(envelope),
+      deviceKeyEnvelopes: envelopes.map((envelope) => {
+        if (envelope === undefined)
+          throw Object.assign(new Error("Server Switch Key Epoch envelope is unavailable."), {
+            id: "SYNCHRONIZATION_INTEGRITY_FAILED",
+          });
+        return deviceKeyEnvelopeToWire(envelope);
+      }),
       deviceProofSignature: bytesToBase64Url(
         await createDeviceEnrollmentProof({
           certificate: authority.certificate,
@@ -2799,6 +2834,8 @@ function safeError(error: unknown): AppResponse {
     VAULT_NOT_FOUND: "The selected Vault no longer exists.",
     VAULT_CONTEXT_CHANGED: "The active Vault changed. Refresh and try again.",
     VAULT_BUSY: "Wait for the active Vault operation to finish.",
+    VAULT_LOCAL_COPY_INCOMPLETE:
+      "This Vault is not fully stored on this browser. Reconnect to the synchronization server and retrieve the missing items before stopping synchronization.",
     LIBRARY_STATE_CHANGED: "The Library changed. Refresh it and try again.",
     INVALID_EXPORT_PASSPHRASE: "Use at least 12 characters for the Export passphrase.",
     EXPORT_AUTHENTICATION_FAILED: "The Export could not be authenticated.",
@@ -2815,8 +2852,8 @@ function safeError(error: unknown): AppResponse {
     STORAGE_QUOTA_EXCEEDED: "There is not enough local storage to import this Vault.",
     ACCOUNT_INPUT_INVALID: "Review the Account details and try again.",
     ACCOUNT_UNAVAILABLE:
-      "This Account cannot be created. It may already exist; try signing in instead or use a different email.",
-    AUTHENTICATION_FAILED: "The email or password was not accepted.",
+      "This Account cannot be created. It may already exist; try signing in instead or use a different username.",
+    AUTHENTICATION_FAILED: "The username or password was not accepted.",
     AUTHORIZATION_FAILED: "This session is not authorized for that operation.",
     REGISTRATION_DISABLED: "Account creation is disabled on this server.",
     SESSION_EXPIRED: "Your session expired. Sign in again.",
@@ -2960,7 +2997,12 @@ async function state(): Promise<AppState> {
               registration: accountConfiguration.registration,
             }
           : { mode: accountConfiguration.mode },
-      ...(accountMetadata === undefined ? {} : { email: accountMetadata.email }),
+      ...(accountMetadata === undefined
+        ? {}
+        : {
+            username: accountMetadata.username,
+            inactiveDeletionAt: accountMetadata.inactiveDeletionAt,
+          }),
       accountState: authenticated ? "Authenticated" : "SignedOut",
       vaultSyncState:
         accountConfiguration.mode === "Configured"
@@ -3109,12 +3151,18 @@ async function accountService(): Promise<AccountAuthenticationService> {
 async function prepareAccountVault(input: {
   readonly existingVaultId?: string;
   readonly newVaultName?: string;
-}): Promise<{
-  readonly setupId: string;
-  readonly recoveryPhrase: string;
-  readonly recoveryFileBase64: string;
-  readonly recoveryFilename: string;
-}> {
+}): Promise<
+  | {
+      readonly kind: "RecoverySetup";
+      readonly setupId: string;
+      readonly recoveryPhrase: string;
+      readonly recoveryFileBase64: string;
+      readonly recoveryFilename: string;
+    }
+  | {
+      readonly kind: "Reattached";
+    }
+> {
   if (input.newVaultName !== undefined) {
     const current = contexts.active();
     await contexts.create({
@@ -3142,14 +3190,58 @@ async function prepareAccountVault(input: {
     throw Object.assign(new Error("Vault not found"), {
       id: "VAULT_NOT_FOUND",
     });
-  const [metadata, records] = await Promise.all([
+  const [metadata, records, detachedAuthority, registration] = await Promise.all([
     accountRepository.loadMetadata(),
     vaultRepository.load(synchronized.vaultId),
+    deviceRepository.loadDetachedVaultAuthority(synchronized.vaultId),
+    accountRepository.loadAccountVault(),
   ]);
   if (metadata === undefined || records === undefined || metadata.scope !== "Account")
     throw Object.assign(new Error("Initial synchronization context is incomplete"), {
       id: "SYNCHRONIZATION_INTEGRITY_FAILED",
     });
+  if (detachedAuthority !== undefined) {
+    if (input.existingVaultId !== synchronized.vaultId || registration !== undefined)
+      throw Object.assign(new Error("Detached Vault attachment context is invalid"), {
+        id: "SYNCHRONIZATION_INTEGRITY_FAILED",
+      });
+    const [objects, remoteOnly, busy] = await Promise.all([
+      synchronized.driver.listStoredObjects(),
+      storageReliefRepository.listRemoteOnlyArtifacts(synchronized.vaultId),
+      synchronized.driver.managementBusy(),
+    ]);
+    if (busy !== undefined)
+      throw Object.assign(new Error("Finish other Vault operations first."), {
+        id: "VAULT_BUSY",
+      });
+    const artifacts = objects.filter(
+      (object): object is import("../drivers/indexeddb").StoredArtifactObjectV1 =>
+        object.objectType === "Artifact",
+    );
+    const verified = await Promise.all(
+      artifacts.map(async (object) => {
+        try {
+          return await artifactStore.verifyEncrypted(synchronized.vaultId, object);
+        } catch {
+          return false;
+        }
+      }),
+    );
+    if (remoteOnly.length !== 0 || verified.some((present) => !present))
+      throw Object.assign(new Error("The complete local Vault is unavailable."), {
+        id: "VAULT_LOCAL_COPY_INCOMPLETE",
+        missingArtifactCount: remoteOnly.length + verified.filter((present) => !present).length,
+      });
+    initialAttachmentTransport.reset();
+    const session = await detachedAttachment.attach({
+      account: metadata,
+      records,
+      authority: detachedAuthority,
+    });
+    (await deviceSessionManager(synchronized.vaultId)).setAccessToken(session.accessToken);
+    initialDeviceAccessToken = undefined;
+    return { kind: "Reattached" };
+  }
   initialAttachmentTransport.reset();
   const prepared = await initialAttachment.prepare({
     metadata,
@@ -3158,6 +3250,7 @@ async function prepareAccountVault(input: {
     clientKind: firefoxHost ? "FirefoxExtension" : "ChromeExtension",
   });
   return {
+    kind: "RecoverySetup",
     setupId: prepared.setupId,
     recoveryPhrase: prepared.phrase,
     recoveryFileBase64: bytesToBase64(prepared.recoveryFile),
@@ -4555,6 +4648,113 @@ async function handle(request: AppRequest): Promise<AppResponse> {
         });
         await notifyAppStateChanged();
         return { ok: true, value: await state() };
+      case "StopUsingSynchronizationServer": {
+        const configuration = await accountRepository.loadConfiguration();
+        if (configuration.mode !== "Configured")
+          throw Object.assign(new Error("No synchronization server is configured."), {
+            id: "VAULT_CONTEXT_CHANGED",
+          });
+        const context = contexts.snapshot(request.expectedVaultId);
+        if (!context.vault.isUnlocked())
+          throw Object.assign(new Error("Unlock the Vault before stopping synchronization."), {
+            id: "VAULT_LOCKED",
+          });
+        await assertVaultMutationAllowed(context.vaultId);
+        const [
+          busy,
+          synchronizationJob,
+          serverSwitchJob,
+          replacementJob,
+          importJob,
+          remoteOnly,
+          objects,
+          prepared,
+          deviceAuthority,
+        ] = await Promise.all([
+          context.driver.managementBusy(),
+          accountRepository.latestSynchronizationJob(),
+          serverSwitchRepository.loadJob(),
+          vaultReplacementRepository.latestForVault(context.vaultId),
+          importRepository.latest(),
+          storageReliefRepository.listRemoteOnlyArtifacts(context.vaultId),
+          context.driver.listStoredObjects(),
+          detachmentRepository.prepare(context.vaultId),
+          deviceRepository.loadDeviceAuthority(context.vaultId),
+        ]);
+        const hasActiveImport =
+          importJob !== undefined &&
+          (importJob.state === "Created" || importJob.state === "Running");
+        const hasActiveReplacement =
+          replacementJob !== undefined &&
+          !["Succeeded", "Failed", "Aborted"].includes(replacementJob.state);
+        const hasActiveServerSwitch =
+          serverSwitchJob !== undefined &&
+          !["Succeeded", "Failed", "Conflict"].includes(serverSwitchJob.state);
+        const hasActiveSync =
+          synchronizationJob !== undefined &&
+          !["Succeeded", "Failed", "Conflict"].includes(synchronizationJob.state);
+        if (
+          busy !== undefined ||
+          hasActiveImport ||
+          hasActiveReplacement ||
+          hasActiveServerSwitch ||
+          hasActiveSync ||
+          [...artifactSessions.values()].some((session) => session.vaultId === context.vaultId)
+        )
+          throw Object.assign(new Error("Finish other Vault operations first."), {
+            id: "VAULT_BUSY",
+          });
+        const artifactObjects = objects.filter(
+          (object): object is import("../drivers/indexeddb").StoredArtifactObjectV1 =>
+            object.objectType === "Artifact",
+        );
+        const localArtifacts = await Promise.all(
+          artifactObjects.map(async (object) => {
+            try {
+              return await artifactStore.verifyEncrypted(context.vaultId, object);
+            } catch {
+              return false;
+            }
+          }),
+        );
+        const missingArtifactCount =
+          remoteOnly.length + localArtifacts.filter((present) => !present).length;
+        if (missingArtifactCount !== 0)
+          throw Object.assign(new Error("The complete local Vault is unavailable."), {
+            id: "VAULT_LOCAL_COPY_INCOMPLETE",
+            missingArtifactCount,
+          });
+        if (
+          deviceAuthority === undefined ||
+          deviceAuthority.accountId !== prepared.account.accountId ||
+          deviceAuthority.vaultId !== context.vaultId ||
+          deviceAuthority.recoveryGenerationId !== prepared.authority.activeRecoveryGenerationId ||
+          deviceAuthority.keyEpochs.length !== prepared.authority.epochKeys.length ||
+          deviceAuthority.keyEpochs.at(-1)?.keyEpochId !== prepared.authority.activeKeyEpochId
+        )
+          throw Object.assign(new Error("The local Vault authority is incomplete."), {
+            id: "SYNCHRONIZATION_INTEGRITY_FAILED",
+          });
+        contexts.assertCurrent(context);
+        await synchronizationCoordinator.replaceContext(async () => {
+          activeCable?.disconnect();
+          activeCable = undefined;
+          activeCableContext = undefined;
+          await detachmentRepository.commit({
+            expectedAccountId: prepared.account.accountId,
+            expectedVaultId: context.vaultId,
+            authority: prepared.authority,
+          });
+        });
+        activeSessionManager = undefined;
+        activeSessionOrigin = undefined;
+        activeDeviceSessionManager = undefined;
+        activeDeviceSessionContext = undefined;
+        candidateSessionManager = undefined;
+        candidateSessionOrigin = undefined;
+        await notifyAppStateChanged();
+        return { ok: true, value: await state() };
+      }
       case "ConfigureSyncServer":
         await assertNoApplyingServerSwitch();
         await configureSyncServer(request.serverOrigin, accountServerHost);
@@ -4694,7 +4894,7 @@ async function handle(request: AppRequest): Promise<AppResponse> {
         await assertNoApplyingServerSwitch();
         {
           const access = await (await accountService()).login({
-            email: request.email,
+            username: request.username,
             password: request.password,
           });
           (await sessionManager()).setAccessToken(access);
@@ -4707,9 +4907,11 @@ async function handle(request: AppRequest): Promise<AppResponse> {
           ]);
           if (account !== undefined && account.scope === "Account" && registration !== undefined) {
             try {
+              const recoveryKit = await accountRepository.loadRecoveryKit(registration.vaultId);
               const deviceAccess = await deviceAuthorityRefresh.refresh({
                 account,
                 registration,
+                ...(recoveryKit === undefined ? {} : { recoveryKit }),
               });
               if (deviceAccess !== undefined) {
                 (await deviceSessionManager(registration.vaultId)).setAccessToken(deviceAccess);
@@ -4753,6 +4955,7 @@ async function handle(request: AppRequest): Promise<AppResponse> {
         {
           const prepared = await prepareAccountVault(request);
           await notifyAppStateChanged();
+          if (prepared.kind === "Reattached") void synchronizationCoordinator.interactiveWake();
           return { ok: true, value: prepared };
         }
       case "ConfirmInitialVault":

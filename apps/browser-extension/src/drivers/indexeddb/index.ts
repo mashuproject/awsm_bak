@@ -4,6 +4,7 @@ export {
   type ServerSwitchReplicaPromotion,
 } from "./account-repository";
 export type { CreateStorageReliefJobInput } from "./create-storage-relief-job";
+export { IndexedDbDetachmentRepository } from "./detachment-repository";
 export {
   IndexedDbDeviceRepository,
   type LoadedDeviceAuthority,
@@ -20,6 +21,7 @@ export type {
   AccountConfigurationV1,
   AtomicRegistrationV1,
   CommandOutcomeV1,
+  DetachedVaultAuthorityV1,
   ImportJobStage,
   ImportJobState,
   ImportJobV1,

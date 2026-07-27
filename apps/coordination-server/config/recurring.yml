@@ -10,6 +10,10 @@
 #     schedule: at 5am every day
 
 production:
+  dispatch_account_deletions:
+    class: DispatchAccountDeletionsJob
+    queue: default
+    schedule: every hour
   dispatch_expired_recoveries:
     class: DispatchExpiredPurgesJob
     queue: default

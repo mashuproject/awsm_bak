@@ -7,60 +7,84 @@ module Api
 
     def put_part
       ticket = upload_ticket!
-      upload = ticket.upload
-      validate_open!(upload)
-      part_number = Integer(params[:part_number], 10)
-      expected_length = expected_part_length(upload, part_number)
-      advertised_length = Integer(request.headers["Content-Length"], 10)
-      advertised_sha = Coordination::ProtocolEncoding.decode_sha256(request.headers["Content-SHA256"])
-      raise Coordination::OutcomeError.new("OBJECT_LENGTH_MISMATCH", status: :unprocessable_content) unless advertised_length == expected_length
-
-      existing = upload.upload_parts.find_by(part_number:)
-      if existing
-        matching = existing.byte_length == expected_length &&
-          ActiveSupport::SecurityUtils.secure_compare(existing.sha256, actual_sha)
-        raise Coordination::OutcomeError.new("UPLOAD_PART_CONFLICT", status: :conflict) unless matching
-        return head :no_content
-      end
-
-      key, actual_length, actual_sha = Coordination::DiskStore.write_part(
-        upload_id: upload.id, part_number:, io: request.body
-      ) do |length, sha256|
-        unless length == expected_length
-          raise Coordination::OutcomeError.new("OBJECT_LENGTH_MISMATCH", status: :unprocessable_content)
+      with_active_ticket_account(ticket) do
+        upload = ticket.upload
+        validate_open!(upload)
+        part_number = Integer(params[:part_number], 10)
+        expected_length = expected_part_length(upload, part_number)
+        advertised_length = Integer(request.headers["Content-Length"], 10)
+        advertised_sha = Coordination::ProtocolEncoding.decode_sha256(
+          request.headers["Content-SHA256"]
+        )
+        unless advertised_length == expected_length
+          raise Coordination::OutcomeError.new(
+            "OBJECT_LENGTH_MISMATCH", status: :unprocessable_content
+          )
         end
-        unless ActiveSupport::SecurityUtils.secure_compare(advertised_sha, sha256)
-          raise Coordination::OutcomeError.new("OBJECT_CHECKSUM_MISMATCH", status: :unprocessable_content)
+
+        existing = upload.upload_parts.find_by(part_number:)
+        if existing
+          matching = existing.byte_length == expected_length &&
+            ActiveSupport::SecurityUtils.secure_compare(existing.sha256, advertised_sha)
+          unless matching
+            raise Coordination::OutcomeError.new("UPLOAD_PART_CONFLICT", status: :conflict)
+          end
+          next head :no_content
         end
+
+        key, actual_length, actual_sha = Coordination::DiskStore.write_part(
+          upload_id: upload.id, part_number:, io: request.body
+        ) do |length, sha256|
+          unless length == expected_length
+            raise Coordination::OutcomeError.new(
+              "OBJECT_LENGTH_MISMATCH", status: :unprocessable_content
+            )
+          end
+          unless ActiveSupport::SecurityUtils.secure_compare(advertised_sha, sha256)
+            raise Coordination::OutcomeError.new(
+              "OBJECT_CHECKSUM_MISMATCH", status: :unprocessable_content
+            )
+          end
+        end
+        upload.upload_parts.create!(
+          part_number:, byte_length: actual_length, sha256: actual_sha,
+          storage_key: key, received_at: Time.current
+        )
+        upload.update!(last_activity_at: Time.current)
+        head :no_content
       end
-      upload.upload_parts.create!(part_number:, byte_length: actual_length, sha256: actual_sha,
-        storage_key: key, received_at: Time.current)
-      upload.update!(last_activity_at: Time.current)
-      head :no_content
     rescue ArgumentError, TypeError
       raise Coordination::OutcomeError.new("REQUEST_INVALID", status: :bad_request)
     end
 
     def show
       ticket = download_ticket!
-      record = ticket.opaque_record
-      source_path = Coordination::DiskStore.path(record.storage_key)
-      unless record.state == "Committed" && File.file?(source_path)
-        raise Coordination::OutcomeError.new("STORAGE_UNAVAILABLE", status: :service_unavailable,
-          retryable: true)
+      with_active_ticket_account(ticket) do
+        record = ticket.opaque_record
+        source_path = Coordination::DiskStore.path(record.storage_key)
+        unless record.state == "Committed" && File.file?(source_path)
+          raise Coordination::OutcomeError.new(
+            "STORAGE_UNAVAILABLE", status: :service_unavailable, retryable: true
+          )
+        end
+        start_byte, end_byte = byte_range(record.byte_length)
+        length = end_byte - start_byte + 1
+        response.set_header("Accept-Ranges", "bytes")
+        response.set_header("Content-Length", length.to_s)
+        response.set_header(
+          "ETag", %("#{Coordination::ProtocolEncoding.encode_sha256(record.sha256)}")
+        )
+        if request.headers["Range"].present?
+          response.set_header(
+            "Content-Range", "bytes #{start_byte}-#{end_byte}/#{record.byte_length}"
+          )
+        end
+        response.status = request.headers["Range"].present? ? :partial_content : :ok
+        response.content_type = "application/octet-stream"
+        self.response_body = Coordination::DiskStore.read_range(
+          record.storage_key, offset: start_byte, length:
+        )
       end
-      start_byte, end_byte = byte_range(record.byte_length)
-      length = end_byte - start_byte + 1
-      response.set_header("Accept-Ranges", "bytes")
-      response.set_header("Content-Length", length.to_s)
-      response.set_header("ETag", %("#{Coordination::ProtocolEncoding.encode_sha256(record.sha256)}"))
-      if request.headers["Range"].present?
-        response.set_header("Content-Range", "bytes #{start_byte}-#{end_byte}/#{record.byte_length}")
-      end
-      response.status = request.headers["Range"].present? ? :partial_content : :ok
-      response.content_type = "application/octet-stream"
-      self.response_body = Coordination::DiskStore.read_range(record.storage_key,
-        offset: start_byte, length:)
     end
 
     private
@@ -82,6 +106,16 @@ module Api
         raise Coordination::OutcomeError.new("TRANSFER_TICKET_INVALID", status: :not_found)
       end
       ticket
+    end
+
+    def with_active_ticket_account(ticket)
+      ticket.account.with_lock do
+        unless ticket.account.active?
+          raise Coordination::OutcomeError.new("TRANSFER_TICKET_INVALID", status: :not_found)
+        end
+        Coordination::AccountActivity.touch!(account: ticket.account)
+        yield
+      end
     end
 
     def byte_range(total)

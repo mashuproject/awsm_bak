@@ -539,7 +539,7 @@ test("renders every synchronization setup step in the packaged extension", async
   test.setTimeout(300_000);
   expect(browserName).toBe("chromium");
   const client = await packagedExtension(testInfo, "synchronization-steps");
-  const email = "design-system@example.test";
+  const username = "design-system_test";
   const password = "correct horse design battery";
   try {
     const setup = await extensionPage(client, "sync-setup.html", {
@@ -562,13 +562,13 @@ test("renders every synchronization setup step in the packaged extension", async
 
     const registration = await client.context.newPage();
     await registration.goto("http://127.0.0.1:3300/sign_up");
-    await registration.getByLabel("Email").fill(email);
+    await registration.getByLabel("Username").fill(username);
     await registration.getByLabel("Password", { exact: true }).fill(password);
     await registration.getByLabel("Confirm password").fill(password);
     await registration.getByRole("button", { name: "Create Account" }).click();
     await expect(registration.getByRole("heading", { name: "Your Account" })).toBeVisible();
 
-    await setup.getByLabel("Email").fill(email);
+    await setup.getByLabel("Username").fill(username);
     await setup.getByLabel("Password").fill(password);
     await setup.getByRole("button", { name: "Log in" }).click();
     await expect(setup.getByRole("button", { name: "Continue to Recovery Phrase" })).toBeVisible();

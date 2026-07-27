@@ -18,13 +18,18 @@ const account: StoredAccountMetadataV1 = {
   version: 1,
   accountId: id(1),
   sessionId: id(2),
-  email: "owner@example.test",
+  username: "owner_test",
+  inactiveDeletionAt: "2027-07-27T12:00:00.000Z",
   scope: "Account",
 };
 
 function session(accessToken: string) {
   return {
-    account: { accountId: account.accountId, email: account.email },
+    account: {
+      accountId: account.accountId,
+      username: account.username,
+      inactiveDeletionAt: account.inactiveDeletionAt,
+    },
     sessionId: id(3),
     scope: "VaultDevice" as const,
     accessToken,
@@ -196,10 +201,14 @@ describe("replacement Vault remote handoff", () => {
           vaultId: target.records.metadata.vaultId,
           generationId: target.records.generation.generationId,
           generationNumber: 0,
-          keyEpoch: {
-            keyEpochId: target.records.metadata.activeKeyEpochId,
-            ordinal: 0,
-          },
+          keyEpochs: [
+            {
+              keyEpochId: target.records.metadata.activeKeyEpochId,
+              ordinal: 0,
+              activatedAt: target.records.metadata.createdAt,
+            },
+          ],
+          activeKeyEpochId: target.records.metadata.activeKeyEpochId,
         },
       },
     });

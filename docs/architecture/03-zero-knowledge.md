@@ -130,12 +130,12 @@ The Runtime is responsible for:
 
 # Server Responsibilities
 
-The Coordination Server is responsible for Rails email/password Account authentication, one-Vault
+The Coordination Server is responsible for Rails username/password Account authentication, one-Vault
 Account authorization, certified Device authorization, opaque Recovery Kits and Device key
 envelopes, opaque byte durability, exact declared Event closure publication, independent per-Vault
 Delivery Cursors, Generation and Key Epoch fencing, explicit recovery retention, safe purge, and
 advisory notifications. It receives the Account password over TLS but never a Recovery Phrase,
-unwrapped Vault key, or Device secret. Quotas, abuse controls, and shared Vault authority remain
+unwrapped Vault key, Device secret, or email address. Quotas, abuse controls, and shared Vault authority remain
 deferred.
 
 The server never reconstructs Vault state from plaintext. It may validate protocol structure, signatures, permissions, quotas, and object integrity metadata.

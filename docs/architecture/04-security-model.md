@@ -327,8 +327,8 @@ Archive Platform deliberately separates:
 - vault recovery
 
 Losing Account credentials does not erase an already enrolled Device's local access because its
-Device material remains sufficient. Account password reset and Vault recovery remain separate: no
-email, administrator, or server-side Account reset can derive a Recovery Phrase or Vault key. A
+Device material remains sufficient. AWSM collects no email address and provides no Account password
+reset. No administrator or server-side Account action can derive a Recovery Phrase or Vault key. A
 fresh installation can recover the synchronized Vault with the Account password and current
 Recovery Phrase even when no enrolled Device remains.
 

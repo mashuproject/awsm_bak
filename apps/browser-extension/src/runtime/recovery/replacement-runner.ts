@@ -135,6 +135,7 @@ export class VaultReplacementRunner {
           const authority: ReplacementCandidateAuthority = {
             account,
             target: graph.target,
+            keyEpochActivatedAt: graph.target.records.metadata.createdAt,
             certificate: checkpoint.certificate,
             envelope: checkpoint.envelope,
             recoveryKit: checkpoint.recoveryKit,
@@ -294,7 +295,8 @@ export class VaultReplacementRunner {
     if (
       job.targetVaultId === undefined ||
       job.targetGenerationId === undefined ||
-      job.targetGenerationNumber === undefined
+      job.targetGenerationNumber === undefined ||
+      job.targetHeadCursor === undefined
     )
       throw integrity("Replacement promotion authority is incomplete.");
     return {
@@ -314,6 +316,7 @@ export class VaultReplacementRunner {
       recoveryKit: checkpoint.recoveryKit,
       remoteGenerationId: job.targetGenerationId,
       remoteGenerationNumber: job.targetGenerationNumber,
+      remoteHeadCursor: job.targetHeadCursor,
       session: checkpoint.session,
     };
   }

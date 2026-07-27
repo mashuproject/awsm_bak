@@ -58,7 +58,11 @@ describe("fresh Device recovery enrollment", () => {
       return {
         status: 201,
         body: {
-          account: { accountId, email: "reader@example.test" },
+          account: {
+            accountId,
+            username: "reader_test",
+            inactiveDeletionAt: "2027-07-27T12:00:00.000Z",
+          },
           sessionId: "01900000-0000-7000-8000-000000000079",
           scope: "VaultDevice",
           accessToken: "device-access",

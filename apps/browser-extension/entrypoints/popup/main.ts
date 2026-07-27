@@ -272,13 +272,15 @@ function render(state: AppState, transientError?: string): void {
   } else if (view.screen === "login") {
     content.append(element("p", `Sign in to synchronize through ${view.serverOrigin}.`));
     const login = element("form");
-    const emailLabel = element("label", "Email");
-    const email = element("input");
-    email.type = "email";
-    email.name = "email";
-    email.autocomplete = "email";
-    email.required = true;
-    emailLabel.append(email);
+    const usernameLabel = element("label", "Username");
+    const username = element("input");
+    username.type = "text";
+    username.name = "username";
+    username.autocomplete = "username";
+    username.required = true;
+    username.minLength = 3;
+    username.maxLength = 32;
+    usernameLabel.append(username);
     const passwordLabel = element("label", "Password");
     const password = element("input");
     password.type = "password";
@@ -288,13 +290,13 @@ function render(state: AppState, transientError?: string): void {
     passwordLabel.append(password);
     const signIn = element("button", "Sign in", "primary");
     signIn.type = "submit";
-    login.append(emailLabel, passwordLabel, signIn);
+    login.append(usernameLabel, passwordLabel, signIn);
     login.addEventListener("submit", (event) => {
       event.preventDefault();
       signIn.disabled = true;
       const pending = sendRequest<AppState>({
         type: "LoginAccount",
-        email: email.value,
+        username: username.value,
         password: password.value,
       });
       password.value = "";

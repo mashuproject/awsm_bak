@@ -44,6 +44,7 @@ export interface ReplacementRemoteIdempotency {
 export interface ReplacementCandidateAuthority {
   readonly account: StoredAccountMetadataV1;
   readonly target: PreparedVault;
+  readonly keyEpochActivatedAt: string;
   readonly certificate: DeviceCertificateV1;
   readonly envelope: DeviceKeyEnvelopeV1;
   readonly recoveryKit: RecoveryKitV1;
@@ -167,9 +168,16 @@ export class VaultReplacementRemote {
               generationId: replacement.generation.generationId,
               generationNumber: replacement.generation.generationNumber,
               recoveryGeneration: recoveryKitToWire(authority.recoveryKit),
-              keyEpoch: { keyEpochId: targetKeyEpochId, ordinal: 0 },
+              keyEpochs: [
+                {
+                  keyEpochId: targetKeyEpochId,
+                  ordinal: 0,
+                  activatedAt: authority.keyEpochActivatedAt,
+                },
+              ],
+              activeKeyEpochId: targetKeyEpochId,
               deviceCertificate: deviceCertificateToWire(authority.certificate),
-              deviceKeyEnvelope: deviceKeyEnvelopeToWire(authority.envelope),
+              deviceKeyEnvelopes: [deviceKeyEnvelopeToWire(authority.envelope)],
               deviceProofSignature: bytesToBase64Url(authority.deviceProofSignature),
               generationObject: {
                 objectId: replacement.generation.generationId,

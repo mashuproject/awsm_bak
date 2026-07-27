@@ -357,7 +357,7 @@ async function initialize(): Promise<void> {
         state.account.configuration.mode === "Configured"
           ? state.account.configuration.serverOrigin
           : "Not configured";
-      dashboardAccount.textContent = state.account.email ?? "Not signed in";
+      dashboardAccount.textContent = state.account.username ?? "Not signed in";
       dashboardVault.textContent = activeVault?.name ?? "Unavailable";
       dashboardSync.textContent =
         state.account.vaultSyncState === "UpToDate" ? "Up to date" : state.account.vaultSyncState;
@@ -421,7 +421,7 @@ loginForm.addEventListener("submit", (event) => {
   showStatus("Logging in…");
   const pending = sendRequest<AppState>({
     type: "LoginAccount",
-    email: String(data.get("email") ?? ""),
+    username: String(data.get("username") ?? ""),
     password: String(data.get("password") ?? ""),
   });
   password.value = "";
@@ -439,14 +439,27 @@ vaultForm.addEventListener("submit", (event) => {
   const selected = String(new FormData(vaultForm).get("vault-choice") ?? "");
   const choice =
     selected === "new" ? { newVaultName: vaultNameInput.value } : { existingVaultId: selected };
-  showStatus("Preparing Recovery Phrase setup…");
-  void sendRequest<{
-    readonly setupId: string;
-    readonly recoveryPhrase: string;
-    readonly recoveryFileBase64: string;
-    readonly recoveryFilename: string;
-  }>({ type: "PrepareAccountVault", ...choice }).then(
+  showStatus(
+    selected === "new"
+      ? "Preparing Recovery Phrase setup…"
+      : "Preparing the local Vault for synchronization…",
+  );
+  void sendRequest<
+    | {
+        readonly kind: "RecoverySetup";
+        readonly setupId: string;
+        readonly recoveryPhrase: string;
+        readonly recoveryFileBase64: string;
+        readonly recoveryFilename: string;
+      }
+    | { readonly kind: "Reattached" }
+  >({ type: "PrepareAccountVault", ...choice }).then(
     (result) => {
+      if (result.kind === "Reattached") {
+        showStatus("The complete local Vault is attached. Uploading encrypted history…");
+        void initialize();
+        return;
+      }
       prepared = {
         setupId: result.setupId,
         recoveryFileBase64: result.recoveryFileBase64,

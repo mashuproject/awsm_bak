@@ -56,6 +56,7 @@ export interface FutureProtectedDeviceAuthority {
   readonly recoveryKit: RecoveryKitV1;
   readonly remoteGenerationId: string;
   readonly remoteGenerationNumber: number;
+  readonly remoteHeadCursor: number;
   readonly session: AuthenticatedSession;
 }
 
@@ -469,6 +470,7 @@ export class FutureProtectionService {
           rotated.generationNumber,
           "futureProtectionResult.generationNumber",
         ),
+        remoteHeadCursor: integer(rotated.headCursor, "futureProtectionResult.headCursor"),
         session,
       });
       return session.accessToken;

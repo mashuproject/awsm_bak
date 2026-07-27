@@ -358,8 +358,8 @@ Future AI capabilities should integrate through a provider abstraction.
 
 The platform shall synchronize immutable Bundles, Vault Events, wrapped keys, and coordination metadata between trusted devices.
 
-Implementation status: the Chrome extension and untrusted Coordination Server implement
-email/password Account authentication, client-only Account-key enrollment, one Complete
+Implementation status: the Chrome extension and untrusted Coordination Server implement private
+username/password Account authentication, client-only Account-key enrollment, one Complete
 synchronized Vault, background convergence, synchronized Vacuum, manual heavy-Artifact storage
 relief with on-demand retrieval, and export-first stale-Replica discard.
 The Linux Firefox Host provides the same optional synchronization after native data-collection and

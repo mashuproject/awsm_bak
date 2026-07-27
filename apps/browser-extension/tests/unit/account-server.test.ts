@@ -50,6 +50,7 @@ describe("Account Coordination Server selection", () => {
             deviceEnrollment: "RecoveryPhrase",
             deviceRevocation: true,
           },
+          accountPolicy: { inactiveRetentionDays: 365 },
           registration: {
             enabled: true,
             signUpUrl: "https://sync.example.test/sign_up",
@@ -90,6 +91,7 @@ describe("Account Coordination Server selection", () => {
           deviceEnrollment: "RecoveryPhrase",
           deviceRevocation: true,
         },
+        accountPolicy: { inactiveRetentionDays: 365 },
         registration: { enabled: false },
       },
     });
@@ -173,6 +175,20 @@ describe("Account Coordination Server selection", () => {
         deviceRevocation: true,
         unexpected: true,
       },
+      accountPolicy: { inactiveRetentionDays: 365 },
+      registration: { enabled: false },
+    },
+    {
+      service: "AWSM Coordination Server",
+      protocolVersion: "1",
+      capabilities: {
+        accountPassword: true,
+        accountVaultLimit: 1,
+        completeReplicaSynchronization: true,
+        deviceEnrollment: "RecoveryPhrase",
+        deviceRevocation: true,
+      },
+      accountPolicy: { inactiveRetentionDays: 0 },
       registration: { enabled: false },
     },
   ])("rejects malformed or incompatible server information %#", async (body) => {

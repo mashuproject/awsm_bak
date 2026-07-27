@@ -23,14 +23,16 @@ const account: StoredAccountMetadataV1 = {
   version: 1,
   accountId: id(1),
   sessionId: id(2),
-  email: "owner@example.test",
+  username: "owner_test",
+  inactiveDeletionAt: "2027-07-27T12:00:00.000Z",
   scope: "Account",
 };
 
 const session: AuthenticatedSession = {
   account: {
     accountId: account.accountId,
-    email: account.email,
+    username: account.username,
+    inactiveDeletionAt: "2027-07-27T12:00:00.000Z",
   },
   sessionId: id(3),
   scope: "VaultDevice",

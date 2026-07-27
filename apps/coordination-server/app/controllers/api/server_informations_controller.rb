@@ -11,7 +11,10 @@ module Api
           deviceEnrollment: "RecoveryPhrase",
           deviceRevocation: true
         },
-        registration: registration
+        registration: registration,
+        accountPolicy: {
+          inactiveRetentionDays: Coordination::ServicePolicy.current.inactive_account_retention_days
+        }
       }
     end
 

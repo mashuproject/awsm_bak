@@ -9,6 +9,8 @@
   <p class="eyebrow">Optional synchronization</p>
   <h1>Create your Account</h1>
   <p>Your Account identifies you to this Coordination Server. Its password cannot decrypt your Vault.</p>
+  <p>Choose a private username that does not identify you. Your username cannot be changed.</p>
+  <p>AWSM does not collect an email address and cannot reset this Account password.</p>
 
   <% if @account.errors.any? %>
     <div class="awsm-notice awsm-notice--danger" role="alert" tabindex="-1" data-controller="form-errors">
@@ -23,9 +25,9 @@
 
   <%= form_with model: @account, url: sign_up_path, class: "account-form" do |form| %>
     <div class="field">
-      <%= form.label :email %>
-      <%= form.email_field :email, required: true, autocomplete: "email", aria: { invalid: @account.errors[:email].any?, describedby: (@account.errors[:email].any? ? "account_email_error" : nil) } %>
-      <% if @account.errors[:email].any? %><p class="field-error" id="account_email_error"><%= @account.errors.full_messages_for(:email).join(". ") %></p><% end %>
+      <%= form.label :username %>
+      <%= form.text_field :username, required: true, autocomplete: "username", minlength: 3, maxlength: 32, pattern: "[a-zA-Z0-9](?:[a-zA-Z0-9_-]{1,30}[a-zA-Z0-9])?", aria: { invalid: @account.errors[:username].any?, describedby: (@account.errors[:username].any? ? "account_username_error" : nil) } %>
+      <% if @account.errors[:username].any? %><p class="field-error" id="account_username_error"><%= @account.errors.full_messages_for(:username).join(". ") %></p><% end %>
     </div>
     <div class="field">
       <%= form.label :password %>

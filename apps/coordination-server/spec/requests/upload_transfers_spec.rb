@@ -58,6 +58,23 @@ RSpec.describe "Opaque upload transfers", type: :request do
     expect(upload.upload_parts).to be_empty
   end
 
+  it "rejects a previously issued transfer ticket after its Account starts deletion" do
+    upload, token, = create_upload_and_token
+    account.update!(state: "Deleting")
+
+    put "/api/transfers/#{token}/parts/0", params: bytes, headers: {
+      "Awsm-Protocol-Version" => "1",
+      "Awsm-Request-ID" => "01900000-0000-7000-8000-000000000028",
+      "Content-Type" => "application/octet-stream",
+      "Content-Length" => bytes.bytesize.to_s,
+      "Content-SHA256" => checksum
+    }
+
+    expect(response).to have_http_status(:not_found)
+    expect(response.parsed_body.fetch("outcome")).to eq("TRANSFER_TICKET_INVALID")
+    expect(upload.upload_parts).to be_empty
+  end
+
   private
 
   def create_upload_and_token

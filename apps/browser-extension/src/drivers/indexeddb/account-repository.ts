@@ -95,11 +95,13 @@ function metadata(value: unknown): StoredAccountMetadataV1 {
     "version",
     "accountId",
     "sessionId",
-    "email",
+    "username",
+    "inactiveDeletionAt",
     "scope",
   ]);
   if (
-    typeof input.email !== "string" ||
+    typeof input.username !== "string" ||
+    typeof input.inactiveDeletionAt !== "string" ||
     (input.scope !== "Account" && input.scope !== "VaultDevice")
   ) {
     throw new DomainValidationError("accountMetadata", "contains invalid Account metadata");
@@ -108,7 +110,8 @@ function metadata(value: unknown): StoredAccountMetadataV1 {
     version: literal(input.version, 1, "accountMetadata.version"),
     accountId: uuid(input.accountId, "accountMetadata.accountId"),
     sessionId: uuid(input.sessionId, "accountMetadata.sessionId"),
-    email: input.email,
+    username: input.username,
+    inactiveDeletionAt: input.inactiveDeletionAt,
     scope: input.scope,
   };
 }

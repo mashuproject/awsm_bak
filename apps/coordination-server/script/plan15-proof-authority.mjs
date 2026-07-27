@@ -1,10 +1,4 @@
-import {
-  createHash,
-  generateKeyPairSync,
-  randomBytes,
-  randomUUID,
-  sign,
-} from "node:crypto";
+import { createHash, generateKeyPairSync, randomBytes, randomUUID, sign } from "node:crypto";
 
 function header(major, length) {
   if (length < 24) return Buffer.from([(major << 5) | length]);
@@ -32,18 +26,12 @@ function canonicalCbor(value) {
   }
   if (Number.isSafeInteger(value) && value >= 0) return header(0, value);
   if (Array.isArray(value)) {
-    return Buffer.concat([
-      header(4, value.length),
-      ...value.map(canonicalCbor),
-    ]);
+    return Buffer.concat([header(4, value.length), ...value.map(canonicalCbor)]);
   }
   if (typeof value === "object" && value !== null) {
     const entries = Object.entries(value)
       .map(([key, item]) => [canonicalCbor(key), canonicalCbor(item)])
-      .sort(
-        ([left], [right]) =>
-          left.length - right.length || Buffer.compare(left, right),
-      );
+      .sort(([left], [right]) => left.length - right.length || Buffer.compare(left, right));
     return Buffer.concat([
       header(5, entries.length),
       ...entries.flatMap(([key, item]) => [key, item]),
@@ -75,6 +63,7 @@ export function createInitialVaultAuthority(
   const device = generateKeyPairSync("ed25519");
   const administratorPublicKey = rawEd25519PublicKey(administrator.publicKey);
   const devicePublicKey = rawEd25519PublicKey(device.publicKey);
+  const activatedAt = new Date().toISOString();
   const certificateContent = canonicalCbor({
     version: 1,
     certificateId,
@@ -87,13 +76,9 @@ export function createInitialVaultAuthority(
     signingPublicKey: devicePublicKey,
     wrappingAlgorithm: "wrap:x25519-hkdf-sha256-xchacha20poly1305:device:v1",
     wrappingPublicKey: randomBytes(32),
-    issuedAt: new Date().toISOString(),
+    issuedAt: activatedAt,
   });
-  const certificateSignature = sign(
-    null,
-    certificateContent,
-    administrator.privateKey,
-  );
+  const certificateSignature = sign(null, certificateContent, administrator.privateKey);
   const envelopeCiphertext = randomBytes(48);
   const envelopeMetadata = {
     version: 1,
@@ -134,30 +119,31 @@ export function createInitialVaultAuthority(
         ciphertextSha256: encode(digest(recoveryCiphertext)),
         ciphertext: encode(recoveryCiphertext),
       },
-      keyEpoch: { keyEpochId, ordinal: 0 },
+      keyEpochs: [{ keyEpochId, ordinal: 0, activatedAt }],
+      activeKeyEpochId: keyEpochId,
       deviceCertificate: {
         content: encode(certificateContent),
         recoveryAdministratorPublicKey: encode(administratorPublicKey),
         signature: encode(certificateSignature),
       },
-      deviceKeyEnvelope: {
-        metadata: encode(canonicalCbor(envelopeMetadata)),
-        ciphertext: encode(envelopeCiphertext),
-        ciphertextSha256: encode(envelopeDigest),
-        administratorSignature: encode(
-          sign(
-            null,
-            canonicalCbor({
-              metadata: envelopeMetadata,
-              ciphertextSha256: envelopeDigest,
-            }),
-            administrator.privateKey,
+      deviceKeyEnvelopes: [
+        {
+          metadata: encode(canonicalCbor(envelopeMetadata)),
+          ciphertext: encode(envelopeCiphertext),
+          ciphertextSha256: encode(envelopeDigest),
+          administratorSignature: encode(
+            sign(
+              null,
+              canonicalCbor({
+                metadata: envelopeMetadata,
+                ciphertextSha256: envelopeDigest,
+              }),
+              administrator.privateKey,
+            ),
           ),
-        ),
-      },
-      deviceProofSignature: encode(
-        sign(null, enrollmentTranscript, device.privateKey),
-      ),
+        },
+      ],
+      deviceProofSignature: encode(sign(null, enrollmentTranscript, device.privateKey)),
       generationId,
       generationNumber: 0,
       generationObject: {

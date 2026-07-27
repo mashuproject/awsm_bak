@@ -26,8 +26,9 @@ transactional publication, delivery bookkeeping, advisory wake-up hints, and rec
 
 # Current Boundary
 
-An Account signs up on the Rails web surface and authenticates with normalized email and password.
-Rails receives the password over TLS and stores only its password digest. Rotating opaque access and
+An Account signs up on the Rails web surface and authenticates with a normalized private username
+and password. Usernames are permanent Account login identifiers, not public identities. Rails
+receives the password over TLS and stores only its password digest. Rotating opaque access and
 refresh credentials are digest-only at rest, and reuse of a consumed refresh credential revokes its
 logical session. Each Account owns at most one synchronized Vault record with one active Recovery
 Generation, one active Key Epoch, certified Devices, opaque Device key envelopes, and exactly one
@@ -99,7 +100,10 @@ currently superseded Generations. Automatic expiry creates the same durable Job.
 
 Purge detaches only targeted memberships, preserves every record referenced by an active, candidate,
 or other retained Generation, revokes recovery tickets, verifies byte absence, and finally leaves a
-permanent immutable tombstone. Missing committed bytes are integrity incidents, never cleanup hints.
+permanent immutable tombstone. Account deletion uses the same verified opaque-byte deletion
+primitives, fences all Account-owned mutations with the Account lifecycle row, and removes the
+Account only after byte absence is proven. Missing committed bytes are integrity incidents, never
+cleanup hints.
 
 A client may rely on the active server as the sole holder of selected encrypted heavy wrappers only
 after it independently verifies active membership plus exact committed type, length, and checksum.

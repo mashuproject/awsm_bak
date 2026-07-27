@@ -127,7 +127,7 @@ download.
 Normal logs may contain request ID, internal operational row IDs, operation, stable outcome, broad
 Object type, counters, duration, and retry count. They MUST NOT contain bearer credentials, transfer
 tickets, Cable credentials, request/response bodies, ciphertext, storage paths, plaintext-derived
-metadata, keys, or full recovery memberships. Parameter filtering covers email/password variants,
+metadata, keys, or full recovery memberships. Parameter filtering covers username/password fields,
 Recovery Phrase fields, authorization, credentials, tokens, tickets, Device secrets, key
 envelopes, Recovery Kits, ciphertext, and salts. Cable ticket consumption removes the raw ticket
 from retained request parameters and URL state.
@@ -144,7 +144,7 @@ Redis ephemeral coordination is deliberately excluded from backup and restore.
 
 Production promotion still requires quotas and abuse controls, a shared storage Driver, shared
 notifications, backup/restore exercises, alerting, incident response, metadata/traffic analysis,
-and independent security review of Device/recovery authorization. Email/password Account
+and independent security review of Device/recovery authorization. Username/password Account
 authentication, Recovery Phrase enrollment, Device revocation and Future Protection, one-Vault
 synchronization, recurring Jobs, extension onboarding/settings, manual encrypted-wrapper storage
 relief, on-demand retrieval, stale-Replica discard, and full Vault replacement are implemented.

@@ -69,6 +69,47 @@ JSON field inventories once the generated OpenAPI artifact owns those exact wire
 
 ---
 
+## Repository Implementation and Impact Map
+
+**Status:** Candidate
+
+Create a maintained repository map that lets an agent starting from a cold checkout locate the
+authoritative implementation, tests, contracts, generated artifacts, documentation, and
+verification commands for each product area without repeating broad source searches. Cover at
+least Account identity and lifecycle, Vault persistence, Capture, Library, Search, synchronization,
+Device and recovery authority, server switching, storage, public Rails surfaces, browser Hosts,
+release automation, and reference deployment operations.
+
+The numbered implementation plan must first inventory the current repository and define which
+mapping facts are hand-maintained, derived, or verified. Add:
+
+- one concise human-readable implementation map with exact source, test, specification,
+  architecture, and operational entry points for each area;
+- an affected-files section template for future numbered plans;
+- one canonical subsystem-to-command table covering formatting, lint, typecheck, unit,
+  integration, browser, Rails, synchronization-proof, packaging, and release checks;
+- generated-file ownership and regeneration commands;
+- a terminology-to-code map for foundational concepts such as Account, Vault, Device, Host,
+  Replica, Runtime, Object, and Artifact;
+- explicit dependency links beside foundational schemas and API contracts; and
+- a lightweight repository-owned impact command, such as `script/impact-map <area>`, that prints
+  the known implementation, test, contract, documentation, and generated consumers for an exact
+  area.
+
+Keep the map navigational rather than independently normative: design principles, glossary, formal
+specifications, and approved plans retain their existing authority. Do not infer dependencies from
+filenames alone, copy host-local paths or deployment secrets into tracked files, or claim that a
+map proves completeness merely because a search returned no additional matches.
+
+Acceptance requires a cold-agent exercise across at least Account, synchronization, and release
+work; deterministic output and actionable errors for unknown/stale areas; link and path validation;
+stale-map detection in CI; documentation for adding and renaming areas; and proof that the map
+reduces discovery to a bounded confirmation pass while still requiring current-state verification.
+Define an owner and review trigger so foundational moves, new contracts, generated artifacts, or
+test-command changes update the map in the same change.
+
+---
+
 ## Preserve-First Stale Replica Recovery
 
 **Status:** Candidate
@@ -238,10 +279,11 @@ Vacuum, server switching, and stale-Replica recovery before promotion.
 
 **Status:** Discovery
 
-Define optional Account identity methods such as passkeys, WebAuthn, OAuth, or SSO, plus a
-server-side password-reset ceremony. Account reset must remain separate from Recovery Phrase-based
-Vault recovery: no email, administrator, identity provider, or Coordination Server reset may gain
-access to plaintext Vault keys or silently enroll a Device.
+Define optional Account identity methods such as passkeys, WebAuthn, OAuth, or SSO, plus whether a
+privacy-preserving server-side password-reset ceremony is possible without introducing email
+identity. Account reset must remain separate from Recovery Phrase-based Vault recovery: no
+administrator, identity provider, or Coordination Server reset may gain access to plaintext Vault
+keys or silently enroll a Device.
 
 ---
 
@@ -304,7 +346,7 @@ lifecycle, abuse controls, and whether a waitlist is useful before collecting an
 Resolve legal copy, consent, retention, support expectations, self-hosted differentiation, and
 failure behavior without weakening local-only use or granting billing systems access to Vault
 content. Until approved and implemented, the public website must not display pricing, plan teasers,
-or collect waitlist email.
+or collect visitor contact details.
 
 ---
 

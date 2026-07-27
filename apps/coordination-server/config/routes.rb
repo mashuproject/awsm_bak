@@ -60,8 +60,15 @@ Rails.application.routes.draw do
   post "session", to: "sessions#create"
   delete "session", to: "sessions#destroy"
   get "account", to: "accounts#show"
+  delete "account/browser-sessions", to: "browser_sessions#destroy_others",
+    as: :account_browser_sessions
+  delete "account/browser-sessions/:id", to: "browser_sessions#destroy",
+    as: :account_browser_session
   get "account/password", to: "account_passwords#edit", as: :edit_account_password
   patch "account/password", to: "account_passwords#update"
+  get "account/deletion/new", to: "account_deletions#new", as: :new_account_deletion
+  post "account/deletion", to: "account_deletions#create", as: :start_account_deletion
+  get "account/deletion", to: "account_deletions#show", as: :account_deletion
   get "privacy", to: "home#privacy"
   get "security", to: "home#security"
   get "glossary", to: "home#glossary"

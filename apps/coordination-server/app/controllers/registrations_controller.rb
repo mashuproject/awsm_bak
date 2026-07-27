@@ -8,6 +8,7 @@ class RegistrationsController < ApplicationController
 
   def create
     @account = Account.new(account_params)
+    @account.last_activity_at = Time.current
     if @account.save
       start_new_session_for(@account)
       redirect_to account_path
@@ -24,6 +25,6 @@ class RegistrationsController < ApplicationController
   end
 
   def account_params
-    params.expect(account: [ :email, :password, :password_confirmation ])
+    params.expect(account: [ :username, :password, :password_confirmation ])
   end
 end

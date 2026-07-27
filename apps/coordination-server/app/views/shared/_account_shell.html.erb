@@ -1,6 +1,6 @@
 <div class="account-page">
   <main class="account-main">
-    <section class="account-card">
+    <section class="account-card <%= local_assigns[:card_class] %>">
       <%= yield %>
     </section>
   </main>

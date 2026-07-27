@@ -173,7 +173,7 @@ test("renders trust, Account, validation, and design-reference surfaces", async 
   await expect(page).toHaveScreenshot("sign-up-resting.png", {
     fullPage: true,
   });
-  await page.getByLabel("Email").fill("reader@example.test");
+  await page.getByLabel("Username").fill("reader_test");
   await page.getByLabel("Password", { exact: true }).fill("short");
   await page.getByLabel("Confirm password").fill("different");
   await page.getByRole("button", { name: "Create Account" }).click();
@@ -192,12 +192,40 @@ test("renders trust, Account, validation, and design-reference surfaces", async 
   await page.getByLabel("Confirm password").fill(accountPassword);
   await page.getByRole("button", { name: "Create Account" }).click();
   await expect(page.getByRole("heading", { name: "Your Account" })).toBeVisible();
-  await page.locator("time").evaluate((node) => {
-    node.textContent = "Preview account";
+  await page.locator("time").evaluateAll((nodes) => {
+    const labels = [
+      "July 27, 2026 12:00",
+      "July 27, 2027 12:00",
+      "July 27, 2026 12:00",
+      "July 27, 2026",
+    ];
+    nodes.forEach((node, index) => {
+      node.textContent = labels[index] ?? "July 27, 2026";
+    });
   });
   await expectReadableContrast(page);
   await expect(page).toHaveScreenshot("account.png", { fullPage: true });
 
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expectReadableContrast(page);
+  await expect(page).toHaveScreenshot("account-narrow.png", { fullPage: true });
+
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto("/account/deletion/new");
+  await expect(
+    page.getByRole("heading", { name: "Permanently delete this Account" }),
+  ).toBeVisible();
+  await expectReadableContrast(page);
+  await expect(page).toHaveScreenshot("account-deletion.png", { fullPage: true });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expectReadableContrast(page);
+  await expect(page).toHaveScreenshot("account-deletion-narrow.png", {
+    fullPage: true,
+  });
+
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto("/account");
   await page.getByRole("link", { name: "Change password" }).click();
   await expect(page.getByRole("heading", { name: "Change password" })).toBeVisible();
   await expectReadableContrast(page);
@@ -207,8 +235,8 @@ test("renders trust, Account, validation, and design-reference surfaces", async 
 
   await page.goto("/");
   await expect(page.getByText("Signed in as")).toBeVisible();
-  await expect(page.getByText("reader@example.test")).toBeVisible();
-  await expect(page.getByRole("link", { name: "Account for reader@example.test" })).toHaveCount(2);
+  await expect(page.getByText("reader_test")).toBeVisible();
+  await expect(page.getByRole("link", { name: "Account for reader_test" })).toHaveCount(2);
   await expect(page.getByRole("link", { name: "Set up sync" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
   expect(sessionStatusRequests).toBe(1);
@@ -219,7 +247,7 @@ test("renders trust, Account, validation, and design-reference surfaces", async 
       name: "What stays local. What a server can see.",
     }),
   ).toBeVisible();
-  await expect(page.getByRole("link", { name: "Account for reader@example.test" })).toHaveCount(2);
+  await expect(page.getByRole("link", { name: "Account for reader_test" })).toHaveCount(2);
   expect(sessionStatusRequests).toBe(1);
 
   await page.goto("/");
@@ -317,7 +345,7 @@ test("fails closed when the public session hint is stale or status is unavailabl
         route.fulfill({
           status: 200,
           contentType: "application/json",
-          body: '{"authenticated":true,"account":{"email":"<img src=x>"}}',
+          body: '{"authenticated":true,"account":{"username":"<img src=x>"}}',
         }),
       );
     }

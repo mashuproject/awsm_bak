@@ -12,6 +12,24 @@ const vaultId = "01900000-0000-7000-8000-000000000001";
 const generationId = "01900000-0000-7000-8000-000000000002";
 const jobId = "01900000-0000-7000-8000-000000000003";
 const accountId = "01900000-0000-7000-8000-000000000004";
+const activeKeyEpochId = "01900000-0000-7000-8000-000000000009";
+
+async function attachmentAuthority() {
+  return {
+    recoveryGeneration: { recoveryGenerationId: "recovery" },
+    keyEpochs: [
+      {
+        keyEpochId: activeKeyEpochId,
+        ordinal: 0,
+        activatedAt: "2026-07-20T00:00:00.000Z",
+      },
+    ],
+    activeKeyEpochId,
+    deviceCertificate: { certificateId: "certificate" },
+    deviceKeyEnvelopes: [{ keyEpochId: activeKeyEpochId }],
+    deviceProofSignature: "proof",
+  };
+}
 
 describe("Server Switch remote application", () => {
   it("exposes source reads and durable candidate parts to relay fault controls", async () => {
@@ -71,6 +89,7 @@ describe("Server Switch remote application", () => {
               receivedParts: [],
             },
             ticket: { url: "/generation/{partNumber}" },
+            session: { accessToken: "device-access" },
           },
         };
       if (path.endsWith("/uploads"))
@@ -143,6 +162,7 @@ describe("Server Switch remote application", () => {
       { request, putTransfer: async () => undefined },
       undefined,
       faults,
+      attachmentAuthority,
     );
 
     await expect(
@@ -260,16 +280,32 @@ describe("Server Switch remote application", () => {
       undefined,
       async () => ({
         recoveryGeneration: { recoveryGenerationId: "recovery" },
+        keyEpochs: [
+          {
+            keyEpochId: "01900000-0000-7000-8000-000000000009",
+            ordinal: 0,
+            activatedAt: "2026-07-20T00:00:00.000Z",
+          },
+        ],
+        activeKeyEpochId: "01900000-0000-7000-8000-000000000009",
         deviceCertificate: { certificateId: "certificate" },
-        deviceKeyEnvelope: { keyEpochId: "epoch" },
+        deviceKeyEnvelopes: [{ keyEpochId: "epoch" }],
         deviceProofSignature: "proof",
       }),
     ).publishLocal(records, "2026-07-20T00:01:00.000Z");
 
     expect(transport.request.mock.calls[0]?.[2]).toMatchObject({
       recoveryGeneration: { recoveryGenerationId: "recovery" },
+      keyEpochs: [
+        {
+          keyEpochId: "01900000-0000-7000-8000-000000000009",
+          ordinal: 0,
+          activatedAt: "2026-07-20T00:00:00.000Z",
+        },
+      ],
+      activeKeyEpochId: "01900000-0000-7000-8000-000000000009",
       deviceCertificate: { certificateId: "certificate" },
-      deviceKeyEnvelope: { keyEpochId: "epoch" },
+      deviceKeyEnvelopes: [{ keyEpochId: "epoch" }],
       deviceProofSignature: "proof",
     });
     expect(transport.useAccessToken).toHaveBeenCalledWith("device-access");
@@ -341,6 +377,7 @@ describe("Server Switch remote application", () => {
               receivedParts: [],
             },
             ticket: { url: "/generation/{partNumber}" },
+            session: { accessToken: "device-access" },
           },
         };
       if (path.endsWith("/uploads"))
@@ -412,6 +449,7 @@ describe("Server Switch remote application", () => {
           reached.push("candidate");
         },
       },
+      attachmentAuthority,
     ).publishLocal(
       {
         metadata: { vaultId },

@@ -25,8 +25,8 @@ function validStatusPayload(payload) {
     typeof account === "object" &&
     !Array.isArray(account) &&
     Object.keys(account).length === 1 &&
-    typeof account.email === "string" &&
-    account.email.length > 0 &&
+    typeof account.username === "string" &&
+    account.username.length > 0 &&
     typeof payload.csrfToken === "string" &&
     payload.csrfToken.length > 0
   );
@@ -60,7 +60,7 @@ export default class extends Controller {
     "headerAccountLink",
     "footerAccountLink",
     "banner",
-    "email",
+    "username",
     "accountLink",
     "setupSyncLink",
     "signOutForm",
@@ -110,7 +110,7 @@ export default class extends Controller {
     this.bannerTarget.setAttribute("aria-hidden", "true");
     this.bannerTarget.removeAttribute("aria-busy");
     this.bannerTarget.classList.remove("signed-in-banner--loading");
-    if (this.hasEmailTarget) this.emailTarget.textContent = "";
+    if (this.hasUsernameTarget) this.usernameTarget.textContent = "";
     if (this.hasSignOutFormTarget) this.signOutFormTarget.replaceChildren();
   }
 
@@ -118,11 +118,11 @@ export default class extends Controller {
     for (const target of [this.headerAccountLinkTarget, this.footerAccountLinkTarget]) {
       target.textContent = "Account";
       target.href = "/account";
-      target.setAttribute("aria-label", `Account for ${payload.account.email}`);
+      target.setAttribute("aria-label", `Account for ${payload.account.username}`);
     }
 
     if (!this.hasBannerTarget) return;
-    this.emailTarget.textContent = payload.account.email;
+    this.usernameTarget.textContent = payload.account.username;
     this.signOutFormTarget.replaceChildren(this.buildSignOutForm(payload.csrfToken));
     this.bannerTarget.hidden = false;
     this.bannerTarget.setAttribute("aria-hidden", "false");

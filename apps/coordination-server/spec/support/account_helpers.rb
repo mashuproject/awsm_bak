@@ -1,12 +1,13 @@
 require "digest"
 
 module AccountHelpers
-  def account_attributes(email: nil)
+  def account_attributes(username: nil)
     sequence = SecureRandom.uuid
     {
-      email: email || "reader-#{sequence}@example.test",
+      username: username || "reader_#{sequence.delete("-").first(16)}",
       password: "test password #{sequence}",
-      password_confirmation: "test password #{sequence}"
+      password_confirmation: "test password #{sequence}",
+      last_activity_at: Time.current
     }
   end
 

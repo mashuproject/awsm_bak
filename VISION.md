@@ -165,7 +165,7 @@ Storage
 
 Authentication
 
-- email/password
+- private username/password
 - OAuth
 - enterprise SSO
 

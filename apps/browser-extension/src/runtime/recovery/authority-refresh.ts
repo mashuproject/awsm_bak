@@ -1,10 +1,15 @@
 import { wipe } from "../../crypto/sodium";
-import { canonicalRecord, integer } from "../../domain/validation";
+import { canonicalRecord, integer, uuid } from "../../domain/validation";
 import type {
   IndexedDbDeviceRepository,
+  LoadedDetachedVaultAuthority,
   LoadedDeviceAuthority,
 } from "../../drivers/indexeddb/device-repository";
-import type { StoredAccountMetadataV1, StoredAccountVaultV1 } from "../../drivers/indexeddb/schema";
+import type {
+  StoredAccountMetadataV1,
+  StoredAccountVaultV1,
+  StoredRecoveryKitV1,
+} from "../../drivers/indexeddb/schema";
 import { establishDeviceSession } from "../account/device-session";
 import {
   deviceCertificateFromWire,
@@ -22,6 +27,7 @@ interface AuthorityRefreshTransport {
   deviceRequest(
     method: string,
     path: string,
+    accessToken: string,
   ): Promise<{ readonly status: number; readonly body: unknown }>;
   useDeviceAccessToken(accessToken: string): void;
 }
@@ -38,7 +44,9 @@ function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
   return difference === 0;
 }
 
-async function wipeAuthority(authority: LoadedDeviceAuthority): Promise<void> {
+async function wipeAuthority(
+  authority: LoadedDeviceAuthority | LoadedDetachedVaultAuthority,
+): Promise<void> {
   await Promise.all([
     wipe(authority.identity.signingSecretKey),
     wipe(authority.identity.wrappingSecretKey),
@@ -55,18 +63,24 @@ export class DeviceAuthorityRefreshService {
   async refresh(input: {
     readonly account: StoredAccountMetadataV1;
     readonly registration: StoredAccountVaultV1;
+    readonly recoveryKit?: StoredRecoveryKitV1;
   }): Promise<string | undefined> {
     if (
       input.account.scope !== "Account" ||
       input.registration.accountId !== input.account.accountId
     )
       throw integrity("Account authority is incomplete");
-    const authority = await this.repository.loadDeviceAuthority(input.registration.vaultId);
+    const boundAuthority = await this.repository.loadDeviceAuthority(input.registration.vaultId);
+    const detachedAuthority =
+      boundAuthority === undefined
+        ? await this.repository.loadDetachedVaultAuthority(input.registration.vaultId)
+        : undefined;
+    const authority = boundAuthority ?? detachedAuthority;
     if (authority === undefined) return undefined;
     let rootKey: Uint8Array | undefined;
     try {
       if (
-        authority.accountId !== input.account.accountId ||
+        (boundAuthority !== undefined && boundAuthority.accountId !== input.account.accountId) ||
         authority.vaultId !== input.registration.vaultId
       )
         throw integrity("Local Device authority changed");
@@ -84,6 +98,7 @@ export class DeviceAuthorityRefreshService {
           await this.transport.deviceRequest(
             "GET",
             `/api/vaults/${authority.vaultId}/device-authority`,
+            session.accessToken,
           )
         ).body,
         "currentDeviceAuthority",
@@ -124,19 +139,96 @@ export class DeviceAuthorityRefreshService {
         (existing === undefined && ordinal !== authority.keyEpochs.length)
       )
         throw integrity("Renewed epoch sequence changed");
-      await this.repository.saveRenewedDeviceAuthority({
-        accountId: input.account.accountId,
-        vaultId: authority.vaultId,
-        recoveryGenerationId: certificate.content.recoveryGenerationId,
-        certificate,
-        envelope,
-        keyEpoch: {
-          keyEpochId: envelope.metadata.keyEpochId,
-          ordinal,
-          rootKey,
-        },
-        session,
-      });
+      const installedRoot = rootKey;
+      if (detachedAuthority === undefined) {
+        await this.repository.saveRenewedDeviceAuthority({
+          accountId: input.account.accountId,
+          vaultId: authority.vaultId,
+          recoveryGenerationId: certificate.content.recoveryGenerationId,
+          certificate,
+          envelope,
+          keyEpoch: {
+            keyEpochId: envelope.metadata.keyEpochId,
+            ordinal,
+            rootKey: installedRoot,
+          },
+          session,
+        });
+      } else {
+        if (
+          input.recoveryKit === undefined ||
+          input.recoveryKit.vaultId !== authority.vaultId ||
+          input.recoveryKit.recoveryGenerationId !== certificate.content.recoveryGenerationId ||
+          detachedAuthority.recoveryGenerationId !== certificate.content.recoveryGenerationId
+        )
+          throw integrity("Detached Vault Recovery authority changed");
+        const remote = canonicalRecord(
+          (
+            await this.transport.deviceRequest(
+              "GET",
+              `/api/vaults/${authority.vaultId}`,
+              session.accessToken,
+            )
+          ).body,
+          "detachedRemoteVault",
+          [
+            "vaultId",
+            "state",
+            "generationId",
+            "generationNumber",
+            "headCursor",
+            "activeKeyEpochId",
+            "predecessorGenerationId",
+          ],
+        );
+        if (
+          remote.state !== "Active" ||
+          uuid(remote.vaultId, "detachedRemoteVault.vaultId") !== authority.vaultId ||
+          uuid(remote.activeKeyEpochId, "detachedRemoteVault.activeKeyEpochId") !==
+            envelope.metadata.keyEpochId
+        )
+          throw integrity("Detached remote Vault authority changed");
+        const keyEpochs = authority.keyEpochs.map((epoch) =>
+          epoch.keyEpochId === envelope.metadata.keyEpochId
+            ? { ...epoch, rootKey: Uint8Array.from(installedRoot) }
+            : epoch,
+        );
+        if (existing === undefined)
+          keyEpochs.push({
+            keyEpochId: envelope.metadata.keyEpochId,
+            ordinal,
+            rootKey: Uint8Array.from(installedRoot),
+          });
+        const envelopes = authority.keyEpochs.map((epoch) => {
+          if (epoch.keyEpochId === envelope.metadata.keyEpochId) return envelope;
+          const retained = authority.envelopes.find(
+            (candidate) => candidate.metadata.keyEpochId === epoch.keyEpochId,
+          );
+          if (retained === undefined) throw integrity("Detached Vault Key Epoch envelope changed");
+          return retained;
+        });
+        if (existing === undefined) envelopes.push(envelope);
+        await this.repository.saveReattachedDevice({
+          accountId: input.account.accountId,
+          vaultId: authority.vaultId,
+          recoveryGenerationId: certificate.content.recoveryGenerationId,
+          identity: authority.identity,
+          certificate,
+          envelopes,
+          keyEpochs,
+          recoveryKit: {
+            metadata: input.recoveryKit.metadata,
+            ciphertext: input.recoveryKit.ciphertext,
+          },
+          remoteGenerationId: uuid(remote.generationId, "detachedRemoteVault.generationId"),
+          remoteGenerationNumber: integer(
+            remote.generationNumber,
+            "detachedRemoteVault.generationNumber",
+          ),
+          remoteHeadCursor: integer(remote.headCursor, "detachedRemoteVault.headCursor"),
+          session,
+        });
+      }
       return session.accessToken;
     } finally {
       if (rootKey !== undefined) await wipe(rootKey);

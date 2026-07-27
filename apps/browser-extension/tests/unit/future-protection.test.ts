@@ -143,7 +143,11 @@ describe("Future Protection ceremony", () => {
         return {
           status: 200,
           body: {
-            account: { accountId, email: "owner@example.test" },
+            account: {
+              accountId,
+              username: "owner_test",
+              inactiveDeletionAt: "2027-07-27T12:00:00.000Z",
+            },
             sessionId: ids[10],
             scope: "VaultDevice",
             accessToken: "renewed-device-access",
@@ -190,7 +194,8 @@ describe("Future Protection ceremony", () => {
         version: 1,
         accountId,
         sessionId: accountSessionId,
-        email: "owner@example.test",
+        username: "owner_test",
+        inactiveDeletionAt: "2027-07-27T12:00:00.000Z",
         scope: "Account",
       },
       registration: {

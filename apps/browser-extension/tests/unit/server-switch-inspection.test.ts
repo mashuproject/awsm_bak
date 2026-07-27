@@ -43,7 +43,8 @@ async function inspector(
         version: 1,
         accountId,
         sessionId: "01900000-0000-7000-8000-000000000006",
-        email: "candidate@example.test",
+        username: "candidate_test",
+        inactiveDeletionAt: "2027-07-27T12:00:00.000Z",
         scope: "Account",
       }),
       loadRecoveryKit: async () => ({

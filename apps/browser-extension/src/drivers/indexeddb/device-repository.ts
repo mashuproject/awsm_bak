@@ -1,11 +1,13 @@
 import { encodeCanonicalCbor } from "../../domain/cbor";
 import { DomainValidationError } from "../../domain/errors";
+import { uuid } from "../../domain/validation";
 import type { AuthenticatedSession } from "../../runtime/account/http";
 import type {
   DeviceCertificateV1,
   DeviceIdentity,
   DeviceKeyEnvelopeV1,
 } from "../../runtime/recovery/device";
+import { openDeviceKeyEnvelope, verifyDeviceCertificate } from "../../runtime/recovery/device";
 import type { RecoveredDeviceAuthority } from "../../runtime/recovery/enrollment";
 import type { FutureProtectedDeviceAuthority } from "../../runtime/recovery/future-protection";
 import type { InitialDeviceAuthority } from "../../runtime/recovery/initial-attachment";
@@ -13,7 +15,7 @@ import { createDeviceSlot, createVerifier } from "../../runtime/vault/slots";
 import { openDatabase, requestValue, transactionDone } from "./database";
 import { storageError } from "./errors";
 import { vaultKeyRange, vaultSingletonKey } from "./keys";
-import { DATABASE_NAME, STORES } from "./schema";
+import { DATABASE_NAME, type DetachedVaultAuthorityV1, STORES } from "./schema";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true });
@@ -46,7 +48,7 @@ export interface StoredDeviceSession {
   readonly vaultId: string;
   readonly deviceId: string;
   readonly sessionId: string;
-  readonly email: string;
+  readonly username: string;
   readonly scope: "VaultDevice";
   readonly refreshNonce: Uint8Array;
   readonly refreshCiphertext: Uint8Array;
@@ -65,6 +67,10 @@ export interface LoadedDeviceAuthority {
     readonly rootKey: Uint8Array;
   }[];
 }
+
+export type LoadedDetachedVaultAuthority = Omit<LoadedDeviceAuthority, "accountId"> & {
+  readonly recoveryKit: DetachedVaultAuthorityV1["recoveryKit"];
+};
 
 export interface RenewedDeviceAuthority {
   readonly accountId: string;
@@ -134,6 +140,14 @@ async function unwrapRaw(value: Uint8Array, key: CryptoKey): Promise<Uint8Array>
   return new Uint8Array(await crypto.subtle.exportKey("raw", carrier));
 }
 
+function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.byteLength !== right.byteLength) return false;
+  let difference = 0;
+  for (let index = 0; index < left.byteLength; index += 1)
+    difference |= (left[index] ?? 0) ^ (right[index] ?? 0);
+  return difference === 0;
+}
+
 export interface PreparedDeviceAuthorityStorage {
   readonly identity: StoredDeviceIdentity;
   readonly wrappingKey: CryptoKey;
@@ -146,7 +160,6 @@ export interface PreparedDeviceAuthorityStorage {
 
 export async function prepareDeviceAuthorityStorage(
   authority: InitialDeviceAuthority,
-  deliveryCursor: number,
 ): Promise<PreparedDeviceAuthorityStorage> {
   if (
     authority.session.scope !== "VaultDevice" ||
@@ -157,8 +170,8 @@ export async function prepareDeviceAuthorityStorage(
     authority.recoveryKit.metadata.recoveryGenerationId !== authority.recoveryGenerationId ||
     authority.keyEpochs.length === 0 ||
     authority.envelopes.length !== authority.keyEpochs.length ||
-    !Number.isSafeInteger(deliveryCursor) ||
-    deliveryCursor < 1
+    !Number.isSafeInteger(authority.remoteHeadCursor) ||
+    authority.remoteHeadCursor < 1
   )
     throw new DomainValidationError("replacementDeviceAuthority", "contains mismatched authority");
   const wrappingKey = await crypto.subtle.generateKey({ name: "AES-KW", length: 256 }, false, [
@@ -200,7 +213,7 @@ export async function prepareDeviceAuthorityStorage(
     vaultId: authority.vaultId,
     deviceId: authority.identity.deviceId,
     sessionId: authority.session.sessionId,
-    email: authority.session.account.email,
+    username: authority.session.account.username,
     scope: "VaultDevice",
     refreshNonce,
     refreshCiphertext: new Uint8Array(
@@ -246,7 +259,7 @@ export async function prepareDeviceAuthorityStorage(
       activeKeyEpochId: activeEpoch.keyEpochId,
       remoteGenerationId: authority.remoteGenerationId,
       remoteGenerationNumber: authority.remoteGenerationNumber,
-      deliveryCursor,
+      deliveryCursor: authority.remoteHeadCursor,
     },
   };
 }
@@ -270,6 +283,10 @@ export class IndexedDbDeviceRepository {
     await this.saveDeviceAuthority(authority, false, true);
   }
 
+  async saveReattachedDevice(authority: InitialDeviceAuthority): Promise<void> {
+    await this.saveDeviceAuthority(authority, false, true, true);
+  }
+
   async saveFutureProtectedDevice(authority: FutureProtectedDeviceAuthority): Promise<void> {
     await this.saveDeviceAuthority(authority, true);
   }
@@ -278,6 +295,7 @@ export class IndexedDbDeviceRepository {
     authority: RecoveredDeviceAuthority | InitialDeviceAuthority | FutureProtectedDeviceAuthority,
     rotateLocalVaultAuthority = false,
     clearSynchronizationSetup = false,
+    requireDetachedAuthority = false,
   ): Promise<void> {
     if (
       authority.session.scope !== "VaultDevice" ||
@@ -324,7 +342,7 @@ export class IndexedDbDeviceRepository {
       vaultId: authority.vaultId,
       deviceId: authority.identity.deviceId,
       sessionId: authority.session.sessionId,
-      email: authority.session.account.email,
+      username: authority.session.account.username,
       scope: "VaultDevice",
       refreshNonce,
       refreshCiphertext: new Uint8Array(
@@ -378,6 +396,7 @@ export class IndexedDbDeviceRepository {
         STORES.deviceLocalKeys,
         STORES.epochKeys,
         STORES.deviceSessions,
+        ...(requireDetachedAuthority ? [STORES.detachedVaultAuthorities] : []),
         STORES.recoveryKits,
         STORES.vaultSyncState,
         STORES.synchronizationJobs,
@@ -388,6 +407,24 @@ export class IndexedDbDeviceRepository {
       "readwrite",
     );
     try {
+      const detachedAuthority = requireDetachedAuthority
+        ? ((await requestValue(
+            transaction.objectStore(STORES.detachedVaultAuthorities).get(authority.vaultId),
+          )) as DetachedVaultAuthorityV1 | undefined)
+        : undefined;
+      if (
+        requireDetachedAuthority &&
+        (detachedAuthority === undefined ||
+          detachedAuthority.vaultId !== authority.vaultId ||
+          detachedAuthority.activeRecoveryGenerationId !== authority.recoveryGenerationId ||
+          detachedAuthority.activeKeyEpochId !== authority.keyEpochs.at(-1)?.keyEpochId)
+      ) {
+        transaction.abort();
+        throw new DomainValidationError(
+          "detachedVaultAuthority",
+          "changed before reattachment commit",
+        );
+      }
       const localMetadata =
         localAuthority === undefined
           ? undefined
@@ -432,7 +469,7 @@ export class IndexedDbDeviceRepository {
             activeKeyEpochId: activeEpoch.keyEpochId,
             remoteGenerationId: authority.remoteGenerationId,
             remoteGenerationNumber: authority.remoteGenerationNumber,
-            deliveryCursor: 1,
+            deliveryCursor: authority.remoteHeadCursor,
           },
           "active",
         );
@@ -450,7 +487,7 @@ export class IndexedDbDeviceRepository {
               stage: "UploadObjects",
               createdAt: now,
               updatedAt: now,
-              snapshotCursor: 1,
+              snapshotCursor: authority.remoteHeadCursor,
               completedItems: 0,
               totalItems: 0,
               processedBytes: 0,
@@ -502,6 +539,8 @@ export class IndexedDbDeviceRepository {
           .objectStore(STORES.deviceKeys)
           .put(localAuthority.deviceKey, vaultSingletonKey(authority.vaultId, "device"));
       }
+      if (requireDetachedAuthority)
+        transaction.objectStore(STORES.detachedVaultAuthorities).delete(authority.vaultId);
       await transactionDone(transaction);
     } catch (error) {
       transaction.abort();
@@ -565,7 +604,7 @@ export class IndexedDbDeviceRepository {
       stored = storedValue as StoredDeviceSession;
       if (
         stored.accountId !== session.account.accountId ||
-        stored.email !== session.account.email
+        stored.username !== session.account.username
       ) {
         readTransaction.abort();
         throw new DomainValidationError("deviceSession", "changed Account identity");
@@ -654,7 +693,7 @@ export class IndexedDbDeviceRepository {
       vaultId,
       deviceId: identity.deviceId,
       sessionId: session.sessionId,
-      email: session.account.email,
+      username: session.account.username,
       scope: "VaultDevice",
       refreshNonce,
       refreshCiphertext: new Uint8Array(
@@ -792,7 +831,7 @@ export class IndexedDbDeviceRepository {
       vaultId: authority.vaultId,
       deviceId: identity.deviceId,
       sessionId: authority.session.sessionId,
-      email: authority.session.account.email,
+      username: authority.session.account.username,
       scope: "VaultDevice",
       refreshNonce,
       refreshCiphertext: new Uint8Array(
@@ -901,8 +940,8 @@ export class IndexedDbDeviceRepository {
       requestValue(transaction.objectStore(STORES.epochKeys).getAll()),
     ]);
     await transactionDone(transaction);
-    if (stored === undefined && keyValue === undefined) return undefined;
-    if (stored === undefined || keyValue === undefined)
+    if (stored === undefined) return undefined;
+    if (keyValue === undefined)
       throw new DomainValidationError("deviceIdentity", "is partially initialized");
     const identity = stored as StoredDeviceIdentity;
     const key = nonExtractableKey(keyValue, "AES-KW", ["wrapKey", "unwrapKey"]);
@@ -930,6 +969,124 @@ export class IndexedDbDeviceRepository {
         })),
       ),
     };
+  }
+
+  async loadDetachedVaultAuthority(
+    vaultId: string,
+  ): Promise<LoadedDetachedVaultAuthority | undefined> {
+    const scopedVaultId = uuid(vaultId, "detachedVaultAuthority.vaultId");
+    const database = await this.databasePromise;
+    const transaction = database.transaction(
+      [STORES.detachedVaultAuthorities, STORES.deviceLocalKeys],
+      "readonly",
+    );
+    const [storedValue, keyValue] = await Promise.all([
+      requestValue(transaction.objectStore(STORES.detachedVaultAuthorities).get(scopedVaultId)),
+      requestValue(transaction.objectStore(STORES.deviceLocalKeys).get(`${scopedVaultId}:wrap`)),
+    ]);
+    await transactionDone(transaction);
+    if (storedValue === undefined) return undefined;
+    if (keyValue === undefined)
+      throw new DomainValidationError("detachedVaultAuthority", "is partially initialized");
+    const stored = storedValue as DetachedVaultAuthorityV1;
+    const identity = stored.deviceIdentity;
+    const epochs = [...stored.epochKeys].sort((left, right) => left.ordinal - right.ordinal);
+    if (
+      stored.version !== 1 ||
+      uuid(stored.vaultId, "detachedVaultAuthority.vaultId") !== scopedVaultId ||
+      uuid(
+        stored.activeRecoveryGenerationId,
+        "detachedVaultAuthority.activeRecoveryGenerationId",
+      ) !== stored.activeRecoveryGenerationId ||
+      uuid(stored.activeKeyEpochId, "detachedVaultAuthority.activeKeyEpochId") !==
+        stored.activeKeyEpochId ||
+      uuid(identity.deviceId, "detachedVaultAuthority.deviceId") !== identity.deviceId ||
+      identity.recoveryGenerationId !== stored.activeRecoveryGenerationId ||
+      identity.certificate.content.vaultId !== scopedVaultId ||
+      identity.certificate.content.deviceId !== identity.deviceId ||
+      identity.certificate.content.recoveryGenerationId !== stored.activeRecoveryGenerationId ||
+      !sameBytes(identity.signingPublicKey, identity.certificate.content.signingPublicKey) ||
+      !sameBytes(identity.wrappingPublicKey, identity.certificate.content.wrappingPublicKey) ||
+      !(identity.wrappedSigningSecretKey instanceof Uint8Array) ||
+      !(identity.wrappedWrappingSecretKey instanceof Uint8Array) ||
+      epochs.length === 0 ||
+      epochs.some(
+        (epoch, ordinal) =>
+          epoch.version !== 1 ||
+          epoch.vaultId !== scopedVaultId ||
+          uuid(epoch.keyEpochId, "detachedVaultAuthority.keyEpochId") !== epoch.keyEpochId ||
+          epoch.ordinal !== ordinal ||
+          !(epoch.wrappedRootKey instanceof Uint8Array),
+      ) ||
+      new Set(epochs.map((epoch) => epoch.keyEpochId)).size !== epochs.length ||
+      epochs.at(-1)?.keyEpochId !== stored.activeKeyEpochId ||
+      identity.envelopes.length !== epochs.length ||
+      stored.recoveryKit.version !== 1 ||
+      stored.recoveryKit.vaultId !== scopedVaultId ||
+      stored.recoveryKit.recoveryGenerationId !== stored.activeRecoveryGenerationId ||
+      stored.recoveryKit.metadata.vaultId !== scopedVaultId ||
+      stored.recoveryKit.metadata.recoveryGenerationId !== stored.activeRecoveryGenerationId ||
+      !(stored.recoveryKit.ciphertext instanceof Uint8Array)
+    )
+      throw new DomainValidationError("detachedVaultAuthority", "contains invalid authority");
+
+    const wrappingKey = nonExtractableKey(keyValue, "AES-KW", ["wrapKey", "unwrapKey"]);
+    const signingSecretKey = await unwrapRaw(identity.wrappedSigningSecretKey, wrappingKey);
+    const wrappingSecretKey = await unwrapRaw(identity.wrappedWrappingSecretKey, wrappingKey);
+    const keyEpochs = await Promise.all(
+      epochs.map(async (epoch) => ({
+        keyEpochId: epoch.keyEpochId,
+        ordinal: epoch.ordinal,
+        rootKey: await unwrapRaw(epoch.wrappedRootKey, wrappingKey),
+      })),
+    );
+    try {
+      await verifyDeviceCertificate(identity.certificate);
+      for (const epoch of keyEpochs) {
+        const envelope = identity.envelopes.find(
+          (candidate) => candidate.metadata.keyEpochId === epoch.keyEpochId,
+        );
+        if (envelope === undefined)
+          throw new DomainValidationError(
+            "detachedVaultAuthority",
+            "is missing a Key Epoch envelope",
+          );
+        const opened = await openDeviceKeyEnvelope({
+          envelope,
+          certificate: identity.certificate,
+          deviceWrappingSecretKey: wrappingSecretKey,
+        });
+        try {
+          if (!sameBytes(opened, epoch.rootKey))
+            throw new DomainValidationError(
+              "detachedVaultAuthority",
+              "contains a mismatched Key Epoch envelope",
+            );
+        } finally {
+          opened.fill(0);
+        }
+      }
+      return {
+        vaultId: scopedVaultId,
+        recoveryGenerationId: stored.activeRecoveryGenerationId,
+        identity: {
+          deviceId: identity.deviceId,
+          signingPublicKey: Uint8Array.from(identity.signingPublicKey),
+          signingSecretKey,
+          wrappingPublicKey: Uint8Array.from(identity.wrappingPublicKey),
+          wrappingSecretKey,
+        },
+        certificate: identity.certificate,
+        envelopes: identity.envelopes,
+        keyEpochs,
+        recoveryKit: stored.recoveryKit,
+      };
+    } catch (error) {
+      signingSecretKey.fill(0);
+      wrappingSecretKey.fill(0);
+      for (const epoch of keyEpochs) epoch.rootKey.fill(0);
+      throw error;
+    }
   }
 
   async loadEpochKeys(vaultId: string): Promise<

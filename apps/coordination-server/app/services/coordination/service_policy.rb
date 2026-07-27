@@ -1,6 +1,7 @@
 module Coordination
   class ServicePolicy
     DEFAULTS = {
+      inactive_account_retention_days: 365,
       recovery_retention_days: 90,
       upload_staging_expiry_hours: 24,
       transfer_ticket_lifetime_seconds: 900,
@@ -13,6 +14,10 @@ module Coordination
 
     def self.current
       new(
+        inactive_account_retention_days: integer(
+          "AWSM_INACTIVE_ACCOUNT_RETENTION_DAYS",
+          1..36_500
+        ),
         recovery_retention_days: integer("AWSM_RECOVERY_RETENTION_DAYS", 0..36_500),
         upload_staging_expiry_hours: integer("AWSM_UPLOAD_STAGING_EXPIRY_HOURS", 1..8_760),
         transfer_ticket_lifetime_seconds: integer("AWSM_TRANSFER_TICKET_LIFETIME_SECONDS", 1..86_400),
@@ -39,6 +44,7 @@ module Coordination
 
     def as_json(*)
       {
+        inactiveAccountRetentionDays: inactive_account_retention_days,
         recoveryRetentionDays: recovery_retention_days,
         uploadStagingExpiryHours: upload_staging_expiry_hours,
         transferTicketLifetimeSeconds: transfer_ticket_lifetime_seconds,

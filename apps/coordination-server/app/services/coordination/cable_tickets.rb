@@ -20,21 +20,24 @@ module Coordination
 
     def issue(principal)
       session = principal.session
-      unless principal.scope == "VaultDevice" &&
-          session&.vault_device&.active?
-        invalid!
-      end
-      authority = JSON.generate(
-        "accountId" => principal.account.id,
-        "sessionId" => session.id,
-        "deviceId" => session.vault_device_id
-      )
-      ATTEMPTS.times do
-        raw_ticket = ProtocolEncoding.encode_base64url(SecureRandom.random_bytes(32))
-        stored = EphemeralCoordination.with_redis do |redis|
-          redis.set(EphemeralCoordination.ticket_key(raw_ticket), authority, nx: true, ex: 60)
+      principal.account.with_lock do
+        unless principal.scope == "VaultDevice" &&
+            principal.account.active? &&
+            session&.vault_device&.active?
+          invalid!
         end
-        return [ raw_ticket, LIFETIME.from_now ] if stored
+        authority = JSON.generate(
+          "accountId" => principal.account.id,
+          "sessionId" => session.id,
+          "deviceId" => session.vault_device_id
+        )
+        ATTEMPTS.times do
+          raw_ticket = ProtocolEncoding.encode_base64url(SecureRandom.random_bytes(32))
+          stored = EphemeralCoordination.with_redis do |redis|
+            redis.set(EphemeralCoordination.ticket_key(raw_ticket), authority, nx: true, ex: 60)
+          end
+          return [ raw_ticket, LIFETIME.from_now ] if stored
+        end
       end
 
       error = CollisionBudgetExhausted.new
@@ -67,9 +70,12 @@ module Coordination
         scope: "VaultDevice",
         revoked_at: nil
       )
-      invalid! unless session&.vault_device&.active?
-
-      session.account
+      invalid! unless session
+      session.account.with_lock do
+        invalid! unless session.account.active? && session.vault_device&.active?
+        AccountActivity.touch!(account: session.account)
+        session.account
+      end
     rescue ArgumentError, JSON::ParserError
       invalid!
     rescue Redis::BaseError

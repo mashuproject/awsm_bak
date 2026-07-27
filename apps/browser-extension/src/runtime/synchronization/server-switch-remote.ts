@@ -56,8 +56,14 @@ interface SwitchTransport {
 
 export interface ServerSwitchAttachmentAuthority {
   readonly recoveryGeneration: unknown;
+  readonly keyEpochs: readonly {
+    readonly keyEpochId: string;
+    readonly ordinal: number;
+    readonly activatedAt: string;
+  }[];
+  readonly activeKeyEpochId: string;
   readonly deviceCertificate: unknown;
-  readonly deviceKeyEnvelope: unknown;
+  readonly deviceKeyEnvelopes: readonly unknown[];
   readonly deviceProofSignature: string;
   readonly acceptDeviceSession?: (session: unknown) => Promise<void>;
 }
@@ -101,6 +107,7 @@ export class ServerSwitchRemoteApplicator {
     private readonly attachmentAuthority?: (
       vaultId: string,
       activeKeyEpochId: string,
+      firstEpochActivatedAt: string,
     ) => Promise<ServerSwitchAttachmentAuthority>,
   ) {}
 
@@ -541,7 +548,12 @@ export class ServerSwitchRemoteApplicator {
     );
     const activeKeyEpochId = registration.activeKeyEpochId;
     if (activeKeyEpochId === undefined) throw integrity("Candidate Key Epoch is missing");
-    const authority = await this.attachmentAuthority?.(job.vaultId, activeKeyEpochId);
+    const authority = await this.attachmentAuthority?.(
+      job.vaultId,
+      activeKeyEpochId,
+      records.metadata.createdAt,
+    );
+    if (authority === undefined) throw integrity("Vault attachment authority is missing");
     const attached = record(
       (
         await this.transport.request(
@@ -551,18 +563,12 @@ export class ServerSwitchRemoteApplicator {
             vaultId: job.vaultId,
             generationId: generation.generationId,
             generationNumber: generation.generationNumber,
-            keyEpoch: {
-              keyEpochId: registration.activeKeyEpochId,
-              ordinal: 0,
-            },
-            ...(authority === undefined
-              ? {}
-              : {
-                  recoveryGeneration: authority.recoveryGeneration,
-                  deviceCertificate: authority.deviceCertificate,
-                  deviceKeyEnvelope: authority.deviceKeyEnvelope,
-                  deviceProofSignature: authority.deviceProofSignature,
-                }),
+            keyEpochs: authority.keyEpochs,
+            activeKeyEpochId: authority.activeKeyEpochId,
+            recoveryGeneration: authority.recoveryGeneration,
+            deviceCertificate: authority.deviceCertificate,
+            deviceKeyEnvelopes: authority.deviceKeyEnvelopes,
+            deviceProofSignature: authority.deviceProofSignature,
             generationObject: {
               objectId: generation.generationId,
               objectType: "VaultGeneration",
@@ -578,13 +584,11 @@ export class ServerSwitchRemoteApplicator {
     );
     const upload = record(attached.upload, "Vault attachment upload");
     const ticket = record(attached.ticket, "Vault attachment ticket");
-    if (authority !== undefined) {
-      const session = record(attached.session, "Vault attachment session");
-      if (typeof session.accessToken !== "string")
-        throw integrity("Vault attachment Device session is invalid");
-      this.transport.useAccessToken?.(session.accessToken);
-      await authority.acceptDeviceSession?.(session);
-    }
+    const session = record(attached.session, "Vault attachment session");
+    if (typeof session.accessToken !== "string")
+      throw integrity("Vault attachment Device session is invalid");
+    this.transport.useAccessToken?.(session.accessToken);
+    await authority.acceptDeviceSession?.(session);
     if (
       typeof upload.uploadId !== "string" ||
       typeof upload.partSizeBytes !== "number" ||

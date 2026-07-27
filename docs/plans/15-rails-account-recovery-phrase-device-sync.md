@@ -2,11 +2,11 @@
 
 **Document:** `docs/plans/15-rails-account-recovery-phrase-device-sync.md`
 
-**Status:** Approved implementation plan
+**Status:** Implemented foundation; Account identity, dashboard, and lifecycle superseded by Plan 20
 
 **Owner:** Engineering
 
-**Last Updated:** 2026-07-25
+**Last Updated:** 2026-07-27
 
 **Depends On:** `docs/plans/09-account-authentication-and-full-vault-synchronization.md`,
 `docs/plans/10-git-like-synchronization-server-switching.md`,
@@ -18,6 +18,14 @@
 `docs/specifications/crypto/object-encryption.md`,
 `docs/specifications/protocol/http-api.openapi.yaml`,
 `docs/specifications/runtime/synchronization.md`, and `ROADMAP.md`
+
+> **Current-contract notice:** Plan 20 replaces this plan's email-based Account identity, Account
+> and session dashboard, retained session metadata, Account deletion deferral, and related
+> authentication payloads with the sole canonical username-only Account and lifecycle contract.
+> The Device, Recovery Phrase, Vault authority, and cryptographic separation decisions that Plan 20
+> does not replace remain implemented foundation. See
+> [Plan 20](20-username-account-and-devices-dashboard.md). Email-era passages below are historical
+> implementation context, not accepted fields, compatibility behavior, or current instructions.
 
 ---
 

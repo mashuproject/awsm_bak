@@ -76,12 +76,13 @@ RSpec.describe "Plan 16 product site", type: :request do
 
   it "keeps the landing cache-safe after browser authentication and exposes enhancement targets" do
     Account.create!(
-      email: "reader@example.test",
+      username: "reader",
       password: "test account password",
-      password_confirmation: "test account password"
+      password_confirmation: "test account password",
+      last_activity_at: Time.current
     )
     post "/session", params: {
-      email: "reader@example.test",
+      username: "reader",
       password: "test account password"
     }
 
@@ -94,7 +95,7 @@ RSpec.describe "Plan 16 product site", type: :request do
       "Set up sync",
       'data-public-session-target="banner"'
     )
-    expect(response.body).not_to include("reader@example.test", "authenticity_token")
+    expect(response.body).not_to include("reader", "authenticity_token")
   end
 
   it "exposes the rendered design fixture in test" do

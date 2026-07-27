@@ -35,6 +35,23 @@ describe("application request routing", () => {
     expect(isAppRequest({ type: "WakeSynchronization", reason: "poll" })).toBe(false);
   });
 
+  it("accepts only a strict unversioned synchronization-server detachment Command", () => {
+    expect(
+      isAppRequest({
+        type: "StopUsingSynchronizationServer",
+        expectedVaultId: "01900000-0000-7000-8000-000000000001",
+      }),
+    ).toBe(true);
+    expect(isAppRequest({ type: "StopUsingSynchronizationServer" })).toBe(false);
+    expect(
+      isAppRequest({
+        type: "StopUsingSynchronizationServer",
+        expectedVaultId: "01900000-0000-7000-8000-000000000001",
+        contactServer: true,
+      }),
+    ).toBe(false);
+  });
+
   it("accepts only the fieldless local-device reset", () => {
     expect(isAppRequest({ type: "ResetLocalDevice" })).toBe(true);
     expect(isAppRequest({ type: "ResetLocalDevice", deleteServerData: true })).toBe(false);
@@ -51,14 +68,14 @@ describe("application request routing", () => {
     expect(
       isAppRequest({
         type: "LoginServerSwitchCandidate",
-        email: "reader@example.test",
+        username: "reader_test",
         password: "secret",
       }),
     ).toBe(true);
     expect(
       isAppRequest({
         type: "SignupServerSwitchCandidate",
-        email: "reader@example.test",
+        username: "reader_test",
         password: "secret",
       }),
     ).toBe(false);

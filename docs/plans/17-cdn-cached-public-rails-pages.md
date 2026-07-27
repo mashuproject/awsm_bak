@@ -2,11 +2,11 @@
 
 **Document:** `docs/plans/17-cdn-cached-public-rails-pages.md`
 
-**Status:** Approved implementation plan
+**Status:** Implemented; Account identity payload reconciled by Plan 20
 
 **Owner:** Engineering
 
-**Last Updated:** 2026-07-26
+**Last Updated:** 2026-07-27
 
 **Depends On:** `AGENTS.md`, `DESIGN.md`, `README.md`, `ROADMAP.md`,
 `docs/plans/16-product-design-system-landing-and-surface-redesign.md`,
@@ -14,6 +14,11 @@
 `docs/architecture/19-testing-strategy.md`,
 `docs/architecture/20-deployment-and-operations.md`, and
 `apps/coordination-server/README.md`
+
+> **Current-contract notice:** Plan 20 replaces the private session-status Account field and
+> personalized landing-page label in this plan with `username`. The cache boundary and anonymous
+> shared-representation contract remain current. See
+> [Plan 20](20-username-account-and-devices-dashboard.md).
 
 ---
 
@@ -195,7 +200,7 @@ The cacheable page representation may include state that is identical for the de
 It must not include:
 
 - a current Account;
-- an email address or other user metadata;
+- an Account username or other user metadata;
 - whether the request carried a valid browser session;
 - a CSRF token;
 - a flash message;
@@ -297,7 +302,7 @@ Each successful public-page response SHALL:
 - contain the canonical public origin;
 - contain the configured registration state;
 - contain anonymous fallback navigation;
-- omit every Account email and personalized action; and
+- omit every Account username and personalized action; and
 - use fingerprinted production asset URLs.
 
 Rails/Rack may continue to provide `ETag` or `Last-Modified` validators. Do not remove a validator
@@ -353,7 +358,7 @@ The authenticated response is status `200` with exactly:
 {
   "authenticated": true,
   "account": {
-    "email": "reader@example.test"
+    "username": "reader"
   },
   "csrfToken": "rails-generated-token"
 }
@@ -435,12 +440,12 @@ The HTML provides inert targets for:
 - header Account/sign-in link;
 - footer Account/sign-in link;
 - signed-in banner container;
-- signed-in email text;
+- signed-in username text;
 - Account link;
 - setup-sync link; and
 - sign-out form container.
 
-Do not place an email, CSRF token, or hidden personalized HTML in the cacheable markup.
+Do not place a username, CSRF token, or hidden personalized HTML in the cacheable markup.
 
 On connect, the controller SHALL:
 
@@ -468,7 +473,7 @@ must be keyed by the exact hint value:
 - clearing the hint prevents reuse after logout; and
 - failures are not retained indefinitely: a later full connection may retry.
 
-Do not store the email or CSRF token in `localStorage`, `sessionStorage`, IndexedDB, the URL, or
+Do not store the username or CSRF token in `localStorage`, `sessionStorage`, IndexedDB, the URL, or
 diagnostics. Module memory for the current document is sufficient.
 
 Disconnect must abort target-specific DOM work safely. A response from an older controller
@@ -527,7 +532,7 @@ Add request examples proving:
 - public output contains no CSRF meta tag or authenticity token;
 - a valid signed-in browser request receives the same shared HTML representation as an anonymous
   request;
-- the shared representation contains no Account email, signed-in banner, sign-out form, or
+- the shared representation contains no Account username, signed-in banner, sign-out form, or
   Account-specific accessible label;
 - public output still contains origin, registration state, content, navigation, and fingerprinted
   assets;
@@ -617,7 +622,7 @@ Extend the Rails design E2E lane to prove:
 
 - anonymous public loading issues no `/session/status` request;
 - the anonymous page is complete with JavaScript disabled;
-- after signup/sign-in, visiting `/` requests status and displays the current email;
+- after signup/sign-in, visiting `/` requests status and displays the current username;
 - header and footer links change to `Account`;
 - the signed-in banner exposes `Account`, `Set up sync`, and `Sign out`;
 - sign-out uses the returned CSRF token and succeeds;
@@ -949,7 +954,7 @@ Before GREEN completion, explicitly verify:
 - the production route, process, CDN state, and mutable data were not changed by staging rollout;
 - staging PostgreSQL, Redis, queue, storage, environment, and logs are distinct from production;
 - the shared body is byte-equivalent across Account sessions;
-- no signed-in email can enter the shared CDN;
+- no signed-in username can enter the shared CDN;
 - no CSRF token can enter the shared CDN;
 - no `Set-Cookie` can be replayed from the shared CDN;
 - the public layout does not force Rails to create a session;
@@ -957,7 +962,7 @@ Before GREEN completion, explicitly verify:
 - the hint cannot authorize Account, API, Vault, Device, transfer, or Cable access;
 - session status is same-origin, private, and no-store;
 - sign-out remains a CSRF-protected state-changing request;
-- email insertion uses `textContent`;
+- username insertion uses `textContent`;
 - a forged status payload cannot inject markup;
 - query variants remain representation-equivalent and, on reference staging, use distinct default
   cache keys rather than an unsupported custom override;
@@ -989,7 +994,7 @@ For each state verify:
 - header, footer, and banner links have correct accessible names;
 - controls retain at least 44px interactive dimensions;
 - focus remains visible;
-- no email wraps into or overlaps another control;
+- no username wraps into or overlaps another control;
 - the banner does not create avoidable layout shift after the loading shell appears;
 - there is no horizontal overflow or clipping;
 - Turbo navigation does not leave stale authenticated DOM on a new page;

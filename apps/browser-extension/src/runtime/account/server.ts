@@ -73,14 +73,19 @@ function compatibleInformation(
   const body = value as Record<string, unknown>;
   if (
     Object.keys(body).toSorted().join("\n") !==
-      ["capabilities", "protocolVersion", "registration", "service"].toSorted().join("\n") ||
+      ["accountPolicy", "capabilities", "protocolVersion", "registration", "service"]
+        .toSorted()
+        .join("\n") ||
     body.service !== "AWSM Coordination Server" ||
     body.protocolVersion !== "1" ||
     typeof body.capabilities !== "object" ||
-    body.capabilities === null
+    body.capabilities === null ||
+    typeof body.accountPolicy !== "object" ||
+    body.accountPolicy === null
   )
     return undefined;
   const capabilities = body.capabilities as Record<string, unknown>;
+  const accountPolicy = body.accountPolicy as Record<string, unknown>;
   if (
     Object.keys(capabilities).toSorted().join("\n") !==
       [
@@ -97,6 +102,10 @@ function compatibleInformation(
     capabilities.completeReplicaSynchronization !== true ||
     capabilities.deviceEnrollment !== "RecoveryPhrase" ||
     capabilities.deviceRevocation !== true ||
+    Object.keys(accountPolicy).toSorted().join("\n") !== "inactiveRetentionDays" ||
+    !Number.isSafeInteger(accountPolicy.inactiveRetentionDays) ||
+    (accountPolicy.inactiveRetentionDays as number) < 1 ||
+    (accountPolicy.inactiveRetentionDays as number) > 36_500 ||
     typeof body.registration !== "object" ||
     body.registration === null
   )

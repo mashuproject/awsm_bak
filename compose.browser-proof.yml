@@ -1,6 +1,7 @@
 services:
   coordination-proof:
     environment:
+      AWSM_JOB_QUEUE_ADAPTER: inline
       AWSM_PUBLIC_ORIGIN: http://127.0.0.1:3300
     ports:
       - "127.0.0.1:3300:3000"
@@ -12,8 +13,7 @@ services:
       POSTGRES_PASSWORD: proof-only
       POSTGRES_USER: proof
     healthcheck:
-      test:
-        ["CMD-SHELL", "pg_isready -U proof -d coordination_server_proof_two"]
+      test: ["CMD-SHELL", "pg_isready -U proof -d coordination_server_proof_two"]
       interval: 2s
       timeout: 5s
       retries: 20
@@ -35,7 +35,7 @@ services:
         condition: service_healthy
     environment:
       AWSM_CABLE_ADAPTER: async
-      AWSM_JOB_QUEUE_ADAPTER: async
+      AWSM_JOB_QUEUE_ADAPTER: inline
       AWSM_OPENAPI_PATH: /docs/specifications/protocol/http-api.openapi.yaml
       AWSM_OPAQUE_STORAGE_PATH: /opaque-storage-two
       AWSM_PUBLIC_ORIGIN: http://127.0.0.1:3301

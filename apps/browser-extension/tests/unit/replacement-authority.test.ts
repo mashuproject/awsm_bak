@@ -19,7 +19,8 @@ const account: StoredAccountMetadataV1 = {
   version: 1,
   accountId: "00000000-0000-4000-8000-000000000001",
   sessionId: "00000000-0000-4000-8000-000000000002",
-  email: "archive@example.test",
+  username: "archive_test",
+  inactiveDeletionAt: "2027-07-27T12:00:00.000Z",
   scope: "Account",
 };
 

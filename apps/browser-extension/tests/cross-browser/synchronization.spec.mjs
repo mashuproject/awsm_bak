@@ -228,11 +228,11 @@ async function configureFirefox(driver, popupUrl) {
     2e4,
   );
 }
-async function createRailsAccount(context, email, password) {
+async function createRailsAccount(context, username, password) {
   const signup = await context.newPage();
   try {
     await signup.goto(`${serverOrigin}/sign_up`);
-    await signup.getByLabel("Email").fill(email);
+    await signup.getByLabel("Username").fill(username);
     await signup.getByLabel("Password", { exact: true }).fill(password);
     await signup.getByLabel("Confirm password").fill(password);
     await Promise.all([
@@ -243,9 +243,9 @@ async function createRailsAccount(context, email, password) {
     await signup.close();
   }
 }
-async function createRailsAccountFirefox(driver, email, password) {
+async function createRailsAccountFirefox(driver, username, password) {
   await driver.get(`${serverOrigin}/sign_up`);
-  await driver.findElement(By.id("account_email")).sendKeys(email);
+  await driver.findElement(By.id("account_username")).sendKeys(username);
   await driver.findElement(By.id("account_password")).sendKeys(password);
   await driver.findElement(By.id("account_password_confirmation")).sendKeys(password);
   await driver.findElement(By.css('input[type="submit"]')).click();
@@ -547,16 +547,16 @@ test("recovers a fresh Chrome Device and converges in both directions", async ({
   const freshProfile = testInfo.outputPath("chrome-fresh");
   let source = await launchChrome(sourceProfile);
   let fresh = await launchChrome(freshProfile);
-  const email = `chrome-pair-${crypto.randomUUID()}@example.test`;
+  const username = `${crypto.randomUUID().replaceAll("-", "").slice(0, 24)}_test`;
   const password = "cross browser archive password";
   try {
-    await createRailsAccount(source.context, email, password);
+    await createRailsAccount(source.context, username, password);
     for (const client of [source, fresh])
       await chromeRequest(client.popup, {
         type: "ConfigureSyncServer",
         serverOrigin,
       });
-    await chromeRequest(source.popup, { type: "LoginAccount", email, password });
+    await chromeRequest(source.popup, { type: "LoginAccount", username, password });
     const prepared = await chromeRequest(source.popup, {
       type: "PrepareAccountVault",
       newVaultName: "Chrome pairing Vault",
@@ -570,7 +570,7 @@ test("recovers a fresh Chrome Device and converges in both directions", async ({
     await captureInChrome(source, sourceVaultId);
     await waitForChromeSync(source.popup);
 
-    await chromeRequest(fresh.popup, { type: "LoginAccount", email, password });
+    await chromeRequest(fresh.popup, { type: "LoginAccount", username, password });
     await expect(
       chromeRequest(fresh.popup, {
         type: "RecoverAccountVault",
@@ -619,7 +619,7 @@ test("recovers a fresh Chrome Device and converges in both directions", async ({
     source = await launchChrome(sourceProfile);
     fresh = await launchChrome(freshProfile);
     for (const client of [source, fresh]) {
-      await chromeRequest(client.popup, { type: "LoginAccount", email, password });
+      await chromeRequest(client.popup, { type: "LoginAccount", username, password });
       await chromeRequest(client.popup, {
         type: "UnlockDevice",
         expectedVaultId: sourceVaultId,
@@ -646,16 +646,16 @@ test("removes and future-protects synchronized Devices", async ({
   const reenrolled = await launchChrome(testInfo.outputPath("chrome-reenrolled"));
   const protectedFresh = await launchChrome(testInfo.outputPath("chrome-protected-fresh"));
   const clients = [source, removed, reenrolled, protectedFresh];
-  const email = `chrome-revocation-${crypto.randomUUID()}@example.test`;
+  const username = `${crypto.randomUUID().replaceAll("-", "").slice(0, 24)}_test`;
   const password = "cross browser archive password";
   try {
-    await createRailsAccount(source.context, email, password);
+    await createRailsAccount(source.context, username, password);
     for (const client of clients)
       await chromeRequest(client.popup, {
         type: "ConfigureSyncServer",
         serverOrigin,
       });
-    await chromeRequest(source.popup, { type: "LoginAccount", email, password });
+    await chromeRequest(source.popup, { type: "LoginAccount", username, password });
     const prepared = await chromeRequest(source.popup, {
       type: "PrepareAccountVault",
       newVaultName: "Device revocation Vault",
@@ -669,7 +669,7 @@ test("removes and future-protects synchronized Devices", async ({
     await captureInChrome(source, vaultId);
     await waitForChromeSync(source.popup);
 
-    await chromeRequest(removed.popup, { type: "LoginAccount", email, password });
+    await chromeRequest(removed.popup, { type: "LoginAccount", username, password });
     await chromeRequest(removed.popup, {
       type: "RecoverAccountVault",
       recoveryPhrase: prepared.recoveryPhrase,
@@ -696,7 +696,7 @@ test("removes and future-protects synchronized Devices", async ({
     expect(blockedResponse.response ?? blockedResponse.lastError).toBeDefined();
     await waitForChromeLibrary(removed.popup, vaultId, "Chrome cross-browser capture");
 
-    await chromeRequest(reenrolled.popup, { type: "LoginAccount", email, password });
+    await chromeRequest(reenrolled.popup, { type: "LoginAccount", username, password });
     await chromeRequest(reenrolled.popup, {
       type: "RecoverAccountVault",
       recoveryPhrase: prepared.recoveryPhrase,
@@ -729,7 +729,7 @@ test("removes and future-protects synchronized Devices", async ({
     }
     await waitForChromeSync(source.popup);
 
-    await chromeRequest(protectedFresh.popup, { type: "LoginAccount", email, password });
+    await chromeRequest(protectedFresh.popup, { type: "LoginAccount", username, password });
     await expect(
       chromeRequest(protectedFresh.popup, {
         type: "RecoverAccountVault",
@@ -792,14 +792,14 @@ test("replays offline unpublished work after Future Protection", async ({
   const offline = await launchChrome(testInfo.outputPath("chrome-offline"));
   const target = await launchChrome(testInfo.outputPath("chrome-target"));
   const clients = [source, offline, target];
-  const email = `chrome-stale-epoch-${crypto.randomUUID()}@example.test`;
+  const username = `${crypto.randomUUID().replaceAll("-", "").slice(0, 24)}_test`;
   const password = "cross browser archive password";
   let offlineNetwork = false;
   try {
-    await createRailsAccount(source.context, email, password);
+    await createRailsAccount(source.context, username, password);
     for (const client of clients)
       await chromeRequest(client.popup, { type: "ConfigureSyncServer", serverOrigin });
-    await chromeRequest(source.popup, { type: "LoginAccount", email, password });
+    await chromeRequest(source.popup, { type: "LoginAccount", username, password });
     const prepared = await chromeRequest(source.popup, {
       type: "PrepareAccountVault",
       newVaultName: "Offline replay Vault",
@@ -810,7 +810,7 @@ test("replays offline unpublished work after Future Protection", async ({
       recoveryPhrase: prepared.recoveryPhrase,
     });
     const vaultId = await waitForChromeSync(source.popup);
-    await chromeRequest(offline.popup, { type: "LoginAccount", email, password });
+    await chromeRequest(offline.popup, { type: "LoginAccount", username, password });
     await chromeRequest(offline.popup, {
       type: "RecoverAccountVault",
       recoveryPhrase: prepared.recoveryPhrase,
@@ -821,7 +821,7 @@ test("replays offline unpublished work after Future Protection", async ({
       type: "ListVaultDevices",
       expectedVaultId: vaultId,
     });
-    await chromeRequest(target.popup, { type: "LoginAccount", email, password });
+    await chromeRequest(target.popup, { type: "LoginAccount", username, password });
     await chromeRequest(target.popup, {
       type: "RecoverAccountVault",
       recoveryPhrase: prepared.recoveryPhrase,
@@ -930,13 +930,13 @@ test("loses concurrent Future Protection safely through compare-and-swap", async
   const second = await launchChrome(testInfo.outputPath("chrome-second"));
   const target = await launchChrome(testInfo.outputPath("chrome-target"));
   const clients = [first, second, target];
-  const email = `chrome-rotation-cas-${crypto.randomUUID()}@example.test`;
+  const username = `${crypto.randomUUID().replaceAll("-", "").slice(0, 24)}_test`;
   const password = "cross browser archive password";
   try {
-    await createRailsAccount(first.context, email, password);
+    await createRailsAccount(first.context, username, password);
     for (const client of clients)
       await chromeRequest(client.popup, { type: "ConfigureSyncServer", serverOrigin });
-    await chromeRequest(first.popup, { type: "LoginAccount", email, password });
+    await chromeRequest(first.popup, { type: "LoginAccount", username, password });
     const prepared = await chromeRequest(first.popup, {
       type: "PrepareAccountVault",
       newVaultName: "Rotation CAS Vault",
@@ -947,7 +947,7 @@ test("loses concurrent Future Protection safely through compare-and-swap", async
       recoveryPhrase: prepared.recoveryPhrase,
     });
     const vaultId = await waitForChromeSync(first.popup);
-    await chromeRequest(second.popup, { type: "LoginAccount", email, password });
+    await chromeRequest(second.popup, { type: "LoginAccount", username, password });
     await chromeRequest(second.popup, {
       type: "RecoverAccountVault",
       recoveryPhrase: prepared.recoveryPhrase,
@@ -962,7 +962,7 @@ test("loses concurrent Future Protection safely through compare-and-swap", async
         })
       ).map((device) => device.deviceId),
     );
-    await chromeRequest(target.popup, { type: "LoginAccount", email, password });
+    await chromeRequest(target.popup, { type: "LoginAccount", username, password });
     await chromeRequest(target.popup, {
       type: "RecoverAccountVault",
       recoveryPhrase: prepared.recoveryPhrase,
@@ -1019,13 +1019,13 @@ test("replaces a synchronized Vault behind the Complete Export gate", async ({
   const stale = await launchChrome(testInfo.outputPath("chrome-stale"));
   const fresh = await launchChrome(testInfo.outputPath("chrome-fresh"));
   const clients = [source, stale, fresh];
-  const email = `chrome-replacement-${crypto.randomUUID()}@example.test`;
+  const username = `${crypto.randomUUID().replaceAll("-", "").slice(0, 24)}_test`;
   const password = "cross browser archive password";
   try {
-    await createRailsAccount(source.context, email, password);
+    await createRailsAccount(source.context, username, password);
     for (const client of clients)
       await chromeRequest(client.popup, { type: "ConfigureSyncServer", serverOrigin });
-    await chromeRequest(source.popup, { type: "LoginAccount", email, password });
+    await chromeRequest(source.popup, { type: "LoginAccount", username, password });
     const initial = await chromeRequest(source.popup, {
       type: "PrepareAccountVault",
       newVaultName: "Replacement source Vault",
@@ -1038,7 +1038,7 @@ test("replaces a synchronized Vault behind the Complete Export gate", async ({
     const sourceVaultId = await waitForChromeSync(source.popup);
     await captureInChrome(source, sourceVaultId);
     await waitForChromeSync(source.popup);
-    await chromeRequest(stale.popup, { type: "LoginAccount", email, password });
+    await chromeRequest(stale.popup, { type: "LoginAccount", username, password });
     await chromeRequest(stale.popup, {
       type: "RecoverAccountVault",
       recoveryPhrase: initial.recoveryPhrase,
@@ -1101,17 +1101,29 @@ test("replaces a synchronized Vault behind the Complete Export gate", async ({
     const replacementVaultId = replacedState.workspace.activeVaultId;
     expect(replacementVaultId).toBe(replacedState.vaultReplacement?.targetVaultId);
     expect(replacementVaultId).not.toBe(sourceVaultId);
-    await expect
-      .poll(async () => {
-        const state = await chromeRequest(source.popup, { type: "GetState" });
-        if (state.vaultReplacement?.state === "Running")
-          await chromeRequest(source.popup, {
-            type: "RetryVaultReplacement",
-            expectedVaultId: replacementVaultId,
-          });
-        return (await chromeRequest(source.popup, { type: "GetState" })).vaultReplacement?.state;
-      })
-      .toBe("Succeeded");
+    let replacementProgress;
+    try {
+      await expect
+        .poll(async () => {
+          const state = await chromeRequest(source.popup, { type: "GetState" });
+          if (state.vaultReplacement?.state === "Running")
+            await chromeRequest(source.popup, {
+              type: "RetryVaultReplacement",
+              expectedVaultId: replacementVaultId,
+            });
+          replacementProgress = (
+            await chromeRequest(source.popup, {
+              type: "GetState",
+            })
+          ).vaultReplacement;
+          return replacementProgress?.state;
+        })
+        .toBe("Succeeded");
+    } catch (error) {
+      throw new Error(`Vault replacement did not finish: ${JSON.stringify(replacementProgress)}`, {
+        cause: error,
+      });
+    }
     await waitForChromeLibrary(source.popup, replacementVaultId, "Chrome cross-browser capture");
 
     const staleBlocked = await chromeRawRequest(stale.popup, {
@@ -1121,7 +1133,7 @@ test("replaces a synchronized Vault behind the Complete Export gate", async ({
     expect(staleBlocked.response ?? staleBlocked.lastError).toBeDefined();
     await waitForChromeLibrary(stale.popup, sourceVaultId, "Chrome cross-browser capture");
 
-    await chromeRequest(fresh.popup, { type: "LoginAccount", email, password });
+    await chromeRequest(fresh.popup, { type: "LoginAccount", username, password });
     await expect(
       chromeRequest(fresh.popup, {
         type: "RecoverAccountVault",
@@ -1152,13 +1164,13 @@ test("recovers a fresh Firefox Device and converges in both directions", async (
   const freshProfile = testInfo.outputPath("firefox-fresh");
   let source = await installedFirefox(sourceProfile);
   let fresh = await installedFirefox(freshProfile);
-  const email = `firefox-pair-${crypto.randomUUID()}@example.test`;
+  const username = `${crypto.randomUUID().replaceAll("-", "").slice(0, 24)}_test`;
   const password = "cross browser archive password";
   try {
-    await createRailsAccountFirefox(source.driver, email, password);
+    await createRailsAccountFirefox(source.driver, username, password);
     await configureFirefox(source.driver, source.popupUrl);
     await configureFirefox(fresh.driver, fresh.popupUrl);
-    await firefoxRequest(source.driver, { type: "LoginAccount", email, password });
+    await firefoxRequest(source.driver, { type: "LoginAccount", username, password });
     const prepared = await firefoxRequest(source.driver, {
       type: "PrepareAccountVault",
       newVaultName: "Firefox pairing Vault",
@@ -1172,7 +1184,7 @@ test("recovers a fresh Firefox Device and converges in both directions", async (
     await captureInFirefox(source.driver, source.popupUrl, sourceVaultId);
     await waitForFirefoxSync(source.driver);
 
-    await firefoxRequest(fresh.driver, { type: "LoginAccount", email, password });
+    await firefoxRequest(fresh.driver, { type: "LoginAccount", username, password });
     await expect(
       firefoxRequest(fresh.driver, {
         type: "RecoverAccountVault",
@@ -1222,7 +1234,7 @@ test("recovers a fresh Firefox Device and converges in both directions", async (
         return state.workspace.activeVaultId === sourceVaultId;
       }, 2e4);
       try {
-        await startFirefoxRequest(client.driver, { type: "LoginAccount", email, password });
+        await startFirefoxRequest(client.driver, { type: "LoginAccount", username, password });
         await client.driver.wait(async () => {
           const pending = await firefoxPendingRequest(client.driver);
           if (pending.state === "pending") return false;
@@ -1260,16 +1272,16 @@ test("recovers a fresh Chrome Device from Firefox authority", async ({
 }, testInfo) => {
   const source = await installedFirefox(testInfo.outputPath("firefox-source"));
   const fresh = await launchChrome(testInfo.outputPath("chrome-fresh"));
-  const email = `firefox-chrome-${crypto.randomUUID()}@example.test`;
+  const username = `${crypto.randomUUID().replaceAll("-", "").slice(0, 24)}_test`;
   const password = "cross browser archive password";
   try {
-    await createRailsAccountFirefox(source.driver, email, password);
+    await createRailsAccountFirefox(source.driver, username, password);
     await configureFirefox(source.driver, source.popupUrl);
     await chromeRequest(fresh.popup, {
       type: "ConfigureSyncServer",
       serverOrigin,
     });
-    await firefoxRequest(source.driver, { type: "LoginAccount", email, password });
+    await firefoxRequest(source.driver, { type: "LoginAccount", username, password });
     const prepared = await firefoxRequest(source.driver, {
       type: "PrepareAccountVault",
       newVaultName: "Firefox to Chrome Vault",
@@ -1283,7 +1295,7 @@ test("recovers a fresh Chrome Device from Firefox authority", async ({
     await captureInFirefox(source.driver, source.popupUrl, sourceVaultId);
     await waitForFirefoxSync(source.driver);
 
-    await chromeRequest(fresh.popup, { type: "LoginAccount", email, password });
+    await chromeRequest(fresh.popup, { type: "LoginAccount", username, password });
     await expect(
       chromeRequest(fresh.popup, {
         type: "RecoverAccountVault",
@@ -1317,7 +1329,7 @@ test("synchronizes live from Chrome to Firefox and Firefox to Chrome", async ({
 }, testInfo) => {
   const chromeProfile = testInfo.outputPath("chrome");
   const firefoxProfile = testInfo.outputPath("firefox");
-  const email = `cross-browser-${crypto.randomUUID()}@example.test`;
+  const username = `${crypto.randomUUID().replaceAll("-", "").slice(0, 24)}_test`;
   const password = "cross browser archive password";
   const chromeClient = await launchChrome(chromeProfile);
   const firefoxDriver = await launchFirefox(firefoxProfile);
@@ -1327,14 +1339,14 @@ test("synchronizes live from Chrome to Firefox and Firefox to Chrome", async ({
     );
     const popupUrl = await firefoxPopupUrl(firefoxDriver);
     await firefoxDriver.get(popupUrl);
-    await createRailsAccount(chromeClient.context, email, password);
+    await createRailsAccount(chromeClient.context, username, password);
     await chromeRequest(chromeClient.popup, {
       type: "ConfigureSyncServer",
       serverOrigin,
     });
     await chromeRequest(chromeClient.popup, {
       type: "LoginAccount",
-      email,
+      username,
       password,
     });
     const prepared = await chromeRequest(chromeClient.popup, {
@@ -1350,7 +1362,7 @@ test("synchronizes live from Chrome to Firefox and Firefox to Chrome", async ({
     await configureFirefox(firefoxDriver, popupUrl);
     await firefoxRequest(firefoxDriver, {
       type: "LoginAccount",
-      email,
+      username,
       password,
     });
     await expect(

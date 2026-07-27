@@ -34,6 +34,7 @@ export type AppRequest =
   | { readonly type: "GetState" }
   | { readonly type: "WakeSynchronization" }
   | { readonly type: "ChooseLocalOnly" }
+  | ({ readonly type: "StopUsingSynchronizationServer" } & ExpectedVault)
   | { readonly type: "ConfigureSyncServer"; readonly serverOrigin: string }
   | ({
       readonly type: "BeginServerSwitch";
@@ -41,7 +42,7 @@ export type AppRequest =
     } & ExpectedVault)
   | {
       readonly type: "LoginServerSwitchCandidate";
-      readonly email: string;
+      readonly username: string;
       readonly password: string;
     }
   | { readonly type: "CancelServerSwitch"; readonly jobId: string }
@@ -53,7 +54,7 @@ export type AppRequest =
     } & ExpectedVault)
   | {
       readonly type: "LoginAccount";
-      readonly email: string;
+      readonly username: string;
       readonly password: string;
     }
   | { readonly type: "LogoutAccount" }
@@ -207,6 +208,7 @@ const APP_REQUEST_TYPES: ReadonlySet<AppRequest["type"]> = new Set([
   "GetState",
   "WakeSynchronization",
   "ChooseLocalOnly",
+  "StopUsingSynchronizationServer",
   "ConfigureSyncServer",
   "BeginServerSwitch",
   "LoginServerSwitchCandidate",
@@ -282,9 +284,9 @@ export function isAppRequest(value: unknown): value is AppRequest {
     return isStorageReliefRequest(value);
   if (
     value.type === "LoginAccount" &&
-    (Object.keys(value).some((key) => key !== "type" && key !== "email" && key !== "password") ||
-      !("email" in value) ||
-      typeof value.email !== "string" ||
+    (Object.keys(value).some((key) => key !== "type" && key !== "username" && key !== "password") ||
+      !("username" in value) ||
+      typeof value.username !== "string" ||
       !("password" in value) ||
       typeof value.password !== "string")
   )
@@ -313,9 +315,9 @@ export function isAppRequest(value: unknown): value is AppRequest {
     return false;
   if (
     value.type === "LoginServerSwitchCandidate" &&
-    (Object.keys(value).some((key) => key !== "type" && key !== "email" && key !== "password") ||
-      !("email" in value) ||
-      typeof value.email !== "string" ||
+    (Object.keys(value).some((key) => key !== "type" && key !== "username" && key !== "password") ||
+      !("username" in value) ||
+      typeof value.username !== "string" ||
       !("password" in value) ||
       typeof value.password !== "string")
   )
@@ -328,6 +330,13 @@ export function isAppRequest(value: unknown): value is AppRequest {
   )
     return false;
   if (value.type === "ChooseLocalOnly" && Object.keys(value).some((key) => key !== "type"))
+    return false;
+  if (
+    value.type === "StopUsingSynchronizationServer" &&
+    (Object.keys(value).some((key) => key !== "type" && key !== "expectedVaultId") ||
+      !("expectedVaultId" in value) ||
+      typeof value.expectedVaultId !== "string")
+  )
     return false;
   if (value.type === "WakeSynchronization" && Object.keys(value).some((key) => key !== "type"))
     return false;
@@ -610,7 +619,8 @@ export interface AccountView {
           | { readonly enabled: false }
           | { readonly enabled: true; readonly signUpUrl: string };
       };
-  readonly email?: string;
+  readonly username?: string;
+  readonly inactiveDeletionAt?: string;
   readonly accountState: "SignedOut" | "Authenticating" | "Authenticated" | "Expired";
   readonly vaultSyncState:
     | "LocalOnly"
@@ -700,11 +710,13 @@ export type AppValue =
   | { readonly jobId: string }
   | { readonly jobId: string; readonly vaultId: string }
   | {
+      readonly kind: "RecoverySetup";
       readonly setupId: string;
       readonly recoveryPhrase: string;
       readonly recoveryFileBase64: string;
       readonly recoveryFilename: string;
     }
+  | { readonly kind: "Reattached" }
   | {
       readonly protectionId: string;
       readonly recoveryPhrase: string;

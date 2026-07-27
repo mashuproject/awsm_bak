@@ -38,7 +38,17 @@
       <section id="login-section" hidden>
         <p>Log in with the Account password for this synchronization server.</p>
         <form id="login-form">
-          <label>Email <input name="email" type="email" autocomplete="email" required /></label>
+          <label>
+            Username
+            <input
+              name="username"
+              type="text"
+              autocomplete="username"
+              minlength="3"
+              maxlength="32"
+              required
+            />
+          </label>
           <label
             >Password
             <input name="password" type="password" autocomplete="current-password" required

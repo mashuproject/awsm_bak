@@ -5,14 +5,16 @@ require "openssl"
 RSpec.describe "Plan 15 initial Vault attach", type: :request do
   let(:account) do
     Account.create!(
-      email: "reader@example.test",
+      username: "reader",
       password: "correct horse battery staple",
-      password_confirmation: "correct horse battery staple"
+      password_confirmation: "correct horse battery staple",
+      last_activity_at: Time.current
     )
   end
   let(:vault_id) { "01900000-0000-7000-8000-000000000011" }
   let(:recovery_generation_id) { "01900000-0000-7000-8000-000000000012" }
   let(:key_epoch_id) { "01900000-0000-7000-8000-000000000013" }
+  let(:activated_at) { Time.utc(2026, 7, 27, 12).iso8601(3) }
   let(:device_id) { "01900000-0000-7000-8000-000000000014" }
   let(:certificate_id) { "01900000-0000-7000-8000-000000000015" }
   let(:generation_id) { "01900000-0000-7000-8000-000000000017" }
@@ -35,7 +37,7 @@ RSpec.describe "Plan 15 initial Vault attach", type: :request do
 
   def login!
     post "/api/sessions",
-      params: { email: account.email, password: "correct horse battery staple" }.to_json,
+      params: { username: account.username, password: "correct horse battery staple" }.to_json,
       headers: {
         "Awsm-Protocol-Version" => "1",
         "Awsm-Request-ID" => "01900000-0000-7000-8000-000000000020",
@@ -115,14 +117,15 @@ RSpec.describe "Plan 15 initial Vault attach", type: :request do
         ciphertextSha256: encode(Digest::SHA256.digest(recovery_ciphertext)),
         ciphertext: encode(recovery_ciphertext)
       },
-      keyEpoch: { keyEpochId: key_epoch_id, ordinal: 0 },
+      keyEpochs: [ { keyEpochId: key_epoch_id, ordinal: 0, activatedAt: activated_at } ],
+      activeKeyEpochId: key_epoch_id,
       deviceCertificate: certificate,
-      deviceKeyEnvelope: {
+      deviceKeyEnvelopes: [ {
         metadata: encode(Coordination::CanonicalCbor.encode(envelope_metadata)),
         ciphertext: encode(envelope_ciphertext),
         ciphertextSha256: encode(envelope_sha256),
         administratorSignature: encode(administrator.sign(nil, envelope_signature_payload))
-      },
+      } ],
       deviceProofSignature: encode(device_signing.sign(nil, enrollment_transcript)),
       generationId: generation_id,
       generationNumber: 0,
@@ -144,7 +147,7 @@ RSpec.describe "Plan 15 initial Vault attach", type: :request do
   it "atomically creates recovery authority, the first Device, epoch envelope, and Device session" do
     post "/api/vaults", params: attach_body.to_json, headers: headers
 
-    expect(response).to have_http_status(:created)
+    expect(response).to have_http_status(:created), response.body
     expect(response.parsed_body.dig("session", "scope")).to eq("VaultDevice")
     vault = account.vault_replicas.find_by!(vault_id:)
     expect(vault).to have_attributes(
@@ -171,6 +174,82 @@ RSpec.describe "Plan 15 initial Vault attach", type: :request do
       vault_device_id: device_id
     )
     expect(OpaqueRecord.find_by!(object_id: generation_id).vault_key_epoch_id).to eq(key_epoch_id)
+  end
+
+  it "creates a complete contiguous multi-epoch authority and uses the active final epoch" do
+    second_epoch_id = "01900000-0000-7000-8000-000000000023"
+    body = attach_body
+    second_metadata = {
+      "version" => 1,
+      "vaultId" => vault_id,
+      "recoveryGenerationId" => recovery_generation_id,
+      "keyEpochId" => second_epoch_id,
+      "deviceId" => device_id,
+      "algorithm" => "wrap:x25519-hkdf-sha256-xchacha20poly1305:device:v1",
+      "ephemeralPublicKey" => "f" * 32,
+      "nonce" => "o" * 24,
+      "ciphertextLength" => 48
+    }
+    second_ciphertext = "d" * 48
+    second_sha256 = Digest::SHA256.digest(second_ciphertext)
+    second_signature_payload = Coordination::CanonicalCbor.encode(
+      "metadata" => second_metadata,
+      "ciphertextSha256" => second_sha256
+    )
+    body[:keyEpochs] << {
+      keyEpochId: second_epoch_id,
+      ordinal: 1,
+      activatedAt: Time.utc(2026, 7, 27, 13).iso8601(3)
+    }
+    body[:activeKeyEpochId] = second_epoch_id
+    body[:deviceKeyEnvelopes] << {
+      metadata: encode(Coordination::CanonicalCbor.encode(second_metadata)),
+      ciphertext: encode(second_ciphertext),
+      ciphertextSha256: encode(second_sha256),
+      administratorSignature: encode(administrator.sign(nil, second_signature_payload))
+    }
+    body[:generationObject][:keyEpochId] = second_epoch_id
+
+    post "/api/vaults", params: body.to_json, headers: headers
+
+    expect(response).to have_http_status(:created), response.body
+    vault = account.vault_replicas.find_by!(vault_id:)
+    expect(vault.active_key_epoch_id).to eq(second_epoch_id)
+    expect(vault.vault_key_epochs.order(:ordinal).pluck(:id, :ordinal)).to eq(
+      [ [ key_epoch_id, 0 ], [ second_epoch_id, 1 ] ]
+    )
+    expect(vault.vault_devices.find(device_id).device_key_envelopes.count).to eq(2)
+    expect(OpaqueRecord.find_by!(object_id: generation_id).vault_key_epoch_id).to eq(second_epoch_id)
+  end
+
+  it "rejects the discarded single-epoch attachment shape" do
+    body = attach_body
+    body[:keyEpoch] = body.delete(:keyEpochs).first.except(:activatedAt)
+    body[:deviceKeyEnvelope] = body.delete(:deviceKeyEnvelopes).first
+    body.delete(:activeKeyEpochId)
+
+    post "/api/vaults", params: body.to_json, headers: headers
+
+    expect(response).to have_http_status(:bad_request)
+    expect(response.parsed_body.fetch("outcome")).to eq("REQUEST_INVALID")
+    expect(account.vault_replicas).to be_empty
+  end
+
+  it "rejects noncontiguous epochs, missing envelopes, and a non-final active epoch" do
+    [
+      ->(body) { body[:keyEpochs].first[:ordinal] = 1 },
+      ->(body) { body[:deviceKeyEnvelopes] = [] },
+      ->(body) { body[:activeKeyEpochId] = SecureRandom.uuid }
+    ].each do |corrupt|
+      body = attach_body
+      corrupt.call(body)
+
+      post "/api/vaults", params: body.to_json, headers: headers
+
+      expect(response).to have_http_status(:bad_request)
+      expect(response.parsed_body.fetch("outcome")).to eq("REQUEST_INVALID")
+      expect(account.vault_replicas).to be_empty
+    end
   end
 
   it "rolls back every authority record when Device possession proof is invalid" do

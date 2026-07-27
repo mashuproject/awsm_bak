@@ -96,6 +96,18 @@ module Coordination
       end
     end
 
+    def delete(key)
+      target = path(key)
+      return :already_missing unless File.exist?(target)
+
+      File.delete(target)
+      :deleted
+    end
+
+    def exists?(key)
+      File.exist?(path(key))
+    end
+
     def reject_symlink_path!(candidate)
       relative = candidate.relative_path_from(root)
       current = root

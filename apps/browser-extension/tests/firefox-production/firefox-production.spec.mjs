@@ -44,6 +44,7 @@ async function startFixture() {
             deviceEnrollment: "RecoveryPhrase",
             deviceRevocation: true,
           },
+          accountPolicy: { inactiveRetentionDays: 365 },
           registration: { enabled: false },
         }),
       );

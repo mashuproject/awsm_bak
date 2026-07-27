@@ -30,7 +30,9 @@ module Authentication
   end
 
   def find_browser_session
-    BrowserSession.includes(:account).find_by(id: cookies.signed[BROWSER_SESSION_COOKIE])
+    BrowserSession.includes(:account).find_by(id: cookies.signed[BROWSER_SESSION_COOKIE]).then do |value|
+      value if value&.account&.active?
+    end
   end
 
   def request_authentication
@@ -43,21 +45,29 @@ module Authentication
   end
 
   def start_new_session_for(account)
-    account.browser_sessions.create!(
-      user_agent: request.user_agent,
-      ip_address: request.remote_ip
-    ).tap do |browser_session|
-      Current.browser_session = browser_session
-      cookies.signed.permanent[BROWSER_SESSION_COOKIE] = {
-        value: browser_session.id,
-        httponly: true,
-        **browser_cookie_options
-      }
-      cookies.permanent[BROWSER_SESSION_HINT_COOKIE] = {
-        value: SecureRandom.urlsafe_base64(32),
-        httponly: false,
-        **browser_cookie_options
-      }
+    now = Time.current
+    Account.transaction do
+      account.lock!
+      unless account.active?
+        raise Coordination::OutcomeError.new("AUTHENTICATION_FAILED", status: :unauthorized)
+      end
+      Coordination::AccountActivity.touch!(account:, at: now)
+      account.browser_sessions.create!(
+        client_family: Coordination::BrowserFamily.classify(request.user_agent),
+        last_activity_at: now
+      ).tap do |browser_session|
+        Current.browser_session = browser_session
+        cookies.signed.permanent[BROWSER_SESSION_COOKIE] = {
+          value: browser_session.id,
+          httponly: true,
+          **browser_cookie_options
+        }
+        cookies.permanent[BROWSER_SESSION_HINT_COOKIE] = {
+          value: SecureRandom.urlsafe_base64(32),
+          httponly: false,
+          **browser_cookie_options
+        }
+      end
     end
   end
 

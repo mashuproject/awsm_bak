@@ -10,6 +10,9 @@ module Coordination
     class << self
       def issue(account:, scope: "Account", vault_device_id: nil, confirmed_at: Time.current)
         ApiSession.transaction do
+          account.lock!
+          authentication_failed! unless account.active?
+
           session = account.api_sessions.create!(scope:, vault_device_id:, confirmed_at:)
           tokens_for(session)
         end
@@ -19,6 +22,10 @@ module Coordination
         credential, secret = find(token, kind: "Refresh")
         now = Time.current
         SessionCredential.transaction do
+          account = credential.api_session.account
+          account.lock!
+          authentication_failed! unless account.active?
+
           credential.lock!
           unless credential.usable?(at: now) && secure_equal?(credential.secret_digest, digest(secret))
             credential.api_session.revoke!(at: now) if credential.consumed_at.present?
@@ -34,11 +41,13 @@ module Coordination
       def authenticate(token)
         credential, secret = find(token, kind: "Access")
         unless credential.usable? && secure_equal?(credential.secret_digest, digest(secret))
-          raise OutcomeError.new("AUTHENTICATION_FAILED", status: :unauthorized)
+          authentication_failed!
         end
+        authentication_failed! unless credential.api_session.account.active?
+
         credential.api_session
       rescue ActiveRecord::RecordNotFound
-        raise OutcomeError.new("AUTHENTICATION_FAILED", status: :unauthorized)
+        authentication_failed!
       end
 
       private
@@ -73,6 +82,10 @@ module Coordination
 
       def secure_equal?(left, right)
         left.bytesize == right.bytesize && ActiveSupport::SecurityUtils.secure_compare(left, right)
+      end
+
+      def authentication_failed!
+        raise OutcomeError.new("AUTHENTICATION_FAILED", status: :unauthorized)
       end
     end
   end

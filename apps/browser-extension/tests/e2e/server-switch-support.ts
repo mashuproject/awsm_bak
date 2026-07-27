@@ -9,13 +9,13 @@ const recoveryPhrases = new Map<string, string>();
 export async function createRailsAccount(
   context: BrowserContext,
   serverOrigin: string,
-  email: string,
+  username: string,
   password: string,
 ): Promise<void> {
   const signup = await context.newPage();
   try {
     await signup.goto(`${serverOrigin}/sign_up`);
-    await signup.getByLabel("Email").fill(email);
+    await signup.getByLabel("Username").fill(username);
     await signup.getByLabel("Password", { exact: true }).fill(password);
     await signup.getByLabel("Confirm password").fill(password);
     await Promise.all([
@@ -346,18 +346,18 @@ export async function createSynchronizedClient(
   testInfo: TestInfo,
   name: string,
   serverOrigin: string,
-  email: string,
+  username: string,
   password: string,
 ): Promise<PackagedClient> {
   const client = await packagedContext(testInfo, name);
-  await createRailsAccount(client.context, serverOrigin, email, password);
+  await createRailsAccount(client.context, serverOrigin, username, password);
   await appRequest(client.popup, { type: "ConfigureSyncServer", serverOrigin });
-  await appRequest(client.popup, { type: "LoginAccount", email, password });
+  await appRequest(client.popup, { type: "LoginAccount", username, password });
   const prepared = await appRequest<{ setupId: string; recoveryPhrase: string }>(client.popup, {
     type: "PrepareAccountVault",
     newVaultName: name,
   });
-  recoveryPhrases.set(email, prepared.recoveryPhrase);
+  recoveryPhrases.set(username, prepared.recoveryPhrase);
   await appRequest(client.popup, {
     type: "ConfirmInitialVault",
     setupId: prepared.setupId,
@@ -373,15 +373,15 @@ export async function loginSynchronizedClient(
   testInfo: TestInfo,
   name: string,
   serverOrigin: string,
-  email: string,
+  username: string,
   password: string,
 ): Promise<PackagedClient> {
   const client = await packagedContext(testInfo, name);
   await appRequest(client.popup, { type: "ConfigureSyncServer", serverOrigin });
-  await appRequest(client.popup, { type: "LoginAccount", email, password });
-  const recoveryPhrase = recoveryPhrases.get(email);
+  await appRequest(client.popup, { type: "LoginAccount", username, password });
+  const recoveryPhrase = recoveryPhrases.get(username);
   if (recoveryPhrase === undefined)
-    throw new Error(`Recovery Phrase fixture for ${email} is unavailable.`);
+    throw new Error(`Recovery Phrase fixture for ${username} is unavailable.`);
   await appRequest(client.popup, {
     type: "RecoverAccountVault",
     recoveryPhrase,
@@ -503,7 +503,7 @@ export async function switchClient(
   page: Page,
   vaultId: string,
   candidateOrigin: string,
-  email: string,
+  username: string,
   password: string,
 ): Promise<void> {
   await appRequest(page, {
@@ -513,7 +513,7 @@ export async function switchClient(
   });
   await appRequest(page, {
     type: "LoginServerSwitchCandidate",
-    email,
+    username,
     password,
   });
   await waitForSynchronizedState(page, candidateOrigin);
@@ -592,13 +592,13 @@ export async function extractNewestCapture(page: Page, vaultId: string): Promise
 
 export async function sharedDeletedBase(testInfo: TestInfo, name: string) {
   const password = "correct horse archive battery";
-  const sourceEmail = `${name}-source-${crypto.randomUUID()}@example.test`;
-  const candidateEmail = `${name}-candidate-${crypto.randomUUID()}@example.test`;
+  const sourceUsername = `${crypto.randomUUID().replaceAll("-", "").slice(0, 24)}_test`;
+  const candidateUsername = `${crypto.randomUUID().replaceAll("-", "").slice(0, 24)}_test`;
   const client = await createSynchronizedClient(
     testInfo,
     `${name}-primary`,
     "http://127.0.0.1:3300",
-    sourceEmail,
+    sourceUsername,
     password,
   );
   const page = await client.context.newPage();
@@ -629,19 +629,19 @@ export async function sharedDeletedBase(testInfo: TestInfo, name: string) {
     bundleIds: [bundleIds[1]],
   });
   await waitForSynchronizedState(page, "http://127.0.0.1:3300");
-  await createRailsAccount(client.context, "http://127.0.0.1:3301", candidateEmail, password);
-  await switchClient(page, client.vaultId, "http://127.0.0.1:3301", candidateEmail, password);
-  const recoveryPhrase = recoveryPhrases.get(sourceEmail);
+  await createRailsAccount(client.context, "http://127.0.0.1:3301", candidateUsername, password);
+  await switchClient(page, client.vaultId, "http://127.0.0.1:3301", candidateUsername, password);
+  const recoveryPhrase = recoveryPhrases.get(sourceUsername);
   if (recoveryPhrase === undefined)
-    throw new Error(`Recovery Phrase fixture for ${sourceEmail} is unavailable.`);
-  recoveryPhrases.set(candidateEmail, recoveryPhrase);
+    throw new Error(`Recovery Phrase fixture for ${sourceUsername} is unavailable.`);
+  recoveryPhrases.set(candidateUsername, recoveryPhrase);
   return {
     client,
     page,
     fixture,
     password,
-    sourceEmail,
-    candidateEmail,
+    sourceUsername,
+    candidateUsername,
     bundleIds,
   };
 }
@@ -669,7 +669,7 @@ export async function interruptSwitch(
   testInfo: TestInfo,
   page: Page,
   candidateOrigin: string,
-  email: string,
+  username: string,
   password: string,
   checkpoint: string,
   screenshotName: string,
@@ -682,7 +682,7 @@ export async function interruptSwitch(
   await faultControl(page, "arm", checkpoint);
   const switching = appRequest(page, {
     type: "LoginServerSwitchCandidate",
-    email,
+    username,
     password,
   }).catch(() => undefined);
   await expect
@@ -712,7 +712,7 @@ export async function applyUnionWithVisuals(
   testInfo: TestInfo,
   page: Page,
   candidateOrigin: string,
-  email: string,
+  username: string,
   password: string,
 ): Promise<void> {
   await appRequest(page, {
@@ -723,7 +723,7 @@ export async function applyUnionWithVisuals(
   await faultControl(page, "arm", "server-switch:after-classification");
   const switching = appRequest(page, {
     type: "LoginServerSwitchCandidate",
-    email,
+    username,
     password,
   });
   await expect

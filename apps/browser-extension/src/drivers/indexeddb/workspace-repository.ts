@@ -1411,10 +1411,7 @@ export class IndexedDbWorkspaceRepository {
     )
       throw storageError(new Error("Vault replacement promotion authority is incomplete."));
     timestamp(input.promotedAt, "vaultReplacement.promotedAt");
-    const preparedAuthority = await prepareDeviceAuthorityStorage(
-      input.authority,
-      job.targetHeadCursor,
-    );
+    const preparedAuthority = await prepareDeviceAuthorityStorage(input.authority);
     if (
       preparedAuthority.registration.activeKeyEpochId !== job.targetKeyEpochId ||
       preparedAuthority.identity.deviceId !== job.targetDeviceId

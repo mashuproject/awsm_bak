@@ -5,7 +5,11 @@ module Coordination
         {
           account: {
             accountId: account.id,
-            email: account.email
+            username: account.username,
+            inactiveDeletionAt: (
+              account.last_activity_at +
+              ServicePolicy.current.inactive_account_retention_days.days
+            ).iso8601(3)
           },
           sessionId: issued.fetch(:session).id,
           scope: issued.fetch(:session).scope,

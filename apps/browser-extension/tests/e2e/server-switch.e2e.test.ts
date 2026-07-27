@@ -22,13 +22,13 @@ test("publishes a live source Vault to an empty candidate server", async ({
   test.setTimeout(900_000);
   expect(browserName).toBe("chromium");
   const password = "correct horse archive battery";
-  const sourceEmail = `empty-source-${crypto.randomUUID()}@example.test`;
-  const candidateEmail = `empty-candidate-${crypto.randomUUID()}@example.test`;
+  const sourceUsername = `${crypto.randomUUID().replaceAll("-", "").slice(0, 24)}_test`;
+  const candidateUsername = `${crypto.randomUUID().replaceAll("-", "").slice(0, 24)}_test`;
   const source = await createSynchronizedClient(
     testInfo,
     "empty-candidate-source",
     "http://127.0.0.1:3300",
-    sourceEmail,
+    sourceUsername,
     password,
   );
   let observer: Awaited<ReturnType<typeof loginSynchronizedClient>> | undefined;
@@ -69,7 +69,7 @@ test("publishes a live source Vault to an empty candidate server", async ({
       testInfo,
       "empty-candidate-source-observer",
       "http://127.0.0.1:3300",
-      sourceEmail,
+      sourceUsername,
       password,
     );
     const activeObserver = observer;
@@ -122,8 +122,8 @@ test("publishes a live source Vault to an empty candidate server", async ({
       )
       .toBe(3);
 
-    await createRailsAccount(source.context, "http://127.0.0.1:3301", candidateEmail, password);
-    await settings.getByRole("textbox", { name: "Email" }).fill(candidateEmail);
+    await createRailsAccount(source.context, "http://127.0.0.1:3301", candidateUsername, password);
+    await settings.getByRole("textbox", { name: "Username" }).fill(candidateUsername);
     await settings.getByLabel("Password").fill(password);
     await faultControl(library, "arm", "server-switch:after-classification");
     await settings.getByRole("button", { name: "Sign in" }).click();
@@ -206,7 +206,7 @@ test("fast-forwards a candidate server from an exact recovered predecessor", asy
       testInfo,
       setup.page,
       "http://127.0.0.1:3300",
-      setup.sourceEmail,
+      setup.sourceUsername,
       setup.password,
       "server-switch:after-remote-activation",
       "server-switch-fast-forward-candidate",
@@ -229,7 +229,7 @@ test("fast-forwards a stale local Replica from a candidate successor", async ({
       testInfo,
       "candidate-ahead-stale",
       "http://127.0.0.1:3300",
-      setup.sourceEmail,
+      setup.sourceUsername,
       setup.password,
     );
     const stalePage = await stale.context.newPage();
@@ -253,7 +253,7 @@ test("fast-forwards a stale local Replica from a candidate successor", async ({
       testInfo,
       stalePage,
       "http://127.0.0.1:3301",
-      setup.candidateEmail,
+      setup.candidateUsername,
       setup.password,
       "server-switch:before-local-activation",
       "server-switch-fast-forward-local",
@@ -284,7 +284,7 @@ test("unions independent append-only Events in the same Generation", async ({
       testInfo,
       "union-source-branch",
       "http://127.0.0.1:3300",
-      setup.sourceEmail,
+      setup.sourceUsername,
       setup.password,
     );
     const sourcePage = await source.context.newPage();
@@ -310,7 +310,7 @@ test("unions independent append-only Events in the same Generation", async ({
       testInfo,
       sourcePage,
       "http://127.0.0.1:3301",
-      setup.candidateEmail,
+      setup.candidateUsername,
       setup.password,
     );
     const groups = await appRequest<
@@ -322,7 +322,7 @@ test("unions independent append-only Events in the same Generation", async ({
       testInfo,
       "union-fresh-candidate",
       "http://127.0.0.1:3301",
-      setup.candidateEmail,
+      setup.candidateUsername,
       setup.password,
     );
     const freshPage = await freshCandidate.context.newPage();
@@ -354,7 +354,7 @@ test("reports sibling successor Generations as a conflict without changing serve
       testInfo,
       "sibling-conflict-source",
       "http://127.0.0.1:3300",
-      setup.sourceEmail,
+      setup.sourceUsername,
       setup.password,
     );
     const siblingPage = await sibling.context.newPage();
@@ -374,7 +374,7 @@ test("reports sibling successor Generations as a conflict without changing serve
       serverSwitch?: { state: string; reason?: string };
     }>(setup.page, {
       type: "LoginServerSwitchCandidate",
-      email: setup.sourceEmail,
+      username: setup.sourceUsername,
       password: setup.password,
     });
     expect(state).toMatchObject({

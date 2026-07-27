@@ -48,7 +48,7 @@ export class AccountSessionManager {
     const session = await this.http.refresh(stored.refreshToken);
     if (
       session.account.accountId !== stored.metadata.accountId ||
-      session.account.email !== stored.metadata.email ||
+      session.account.username !== stored.metadata.username ||
       session.scope !== stored.metadata.scope
     )
       throw Object.assign(new Error("Account identity changed"), {
@@ -60,7 +60,8 @@ export class AccountSessionManager {
           version: 1,
           accountId: session.account.accountId,
           sessionId: session.sessionId,
-          email: session.account.email,
+          username: session.account.username,
+          inactiveDeletionAt: session.account.inactiveDeletionAt,
           scope: session.scope,
         },
         refreshToken: session.refreshToken,

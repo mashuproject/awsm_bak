@@ -8,14 +8,15 @@ RSpec.describe "Plan 17 public page caching", type: :request do
 
   def create_account
     Account.create!(
-      email: "reader@example.test",
+      username: "reader",
       password: "correct horse battery staple",
-      password_confirmation: "correct horse battery staple"
+      password_confirmation: "correct horse battery staple",
+      last_activity_at: Time.current
     )
   end
 
   def sign_in(account = create_account)
-    post "/session", params: { email: account.email, password: "correct horse battery staple" }
+    post "/session", params: { username: account.username, password: "correct horse battery staple" }
     expect(response).to redirect_to("/account")
     account
   end
@@ -71,9 +72,9 @@ RSpec.describe "Plan 17 public page caching", type: :request do
 
     expect(authenticated_body).to eq(anonymous_body)
     expect(authenticated_body).not_to include(
-      "reader@example.test",
+      "reader",
       "Sign out",
-      "Account for reader@example.test"
+      "Account for reader"
     )
   end
 
@@ -124,7 +125,7 @@ RSpec.describe "Plan 17 public page caching", type: :request do
       expect(response.parsed_body.keys).to contain_exactly("authenticated", "account", "csrfToken")
       expect(response.parsed_body).to include(
         "authenticated" => true,
-        "account" => { "email" => "reader@example.test" }
+        "account" => { "username" => "reader" }
       )
       expect(response.parsed_body.fetch("csrfToken")).to be_present
       expect(response.body).not_to include(
@@ -162,7 +163,7 @@ RSpec.describe "Plan 17 public page caching", type: :request do
     it "sets a persistent readable random hint on signup and sign-in" do
       post "/sign_up", params: {
         account: {
-          email: "reader@example.test",
+          username: "reader",
           password: "correct horse battery staple",
           password_confirmation: "correct horse battery staple"
         }
@@ -183,7 +184,7 @@ RSpec.describe "Plan 17 public page caching", type: :request do
 
       delete "/session"
       post "/session", params: {
-        email: "reader@example.test",
+        username: "reader",
         password: "correct horse battery staple"
       }
 
@@ -194,7 +195,7 @@ RSpec.describe "Plan 17 public page caching", type: :request do
       allow(Rails.env).to receive(:production?).and_return(true)
 
       post "/session", params: {
-        email: create_account.email,
+        username: create_account.username,
         password: "correct horse battery staple"
       }, headers: { "HTTPS" => "on" }
 
@@ -216,7 +217,7 @@ RSpec.describe "Plan 17 public page caching", type: :request do
       )
 
       post "/session", params: {
-        email: account.email,
+        username: account.username,
         password: "correct horse battery staple"
       }
       patch "/account/password", params: {

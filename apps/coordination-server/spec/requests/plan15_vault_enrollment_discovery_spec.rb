@@ -4,9 +4,10 @@ require "digest"
 RSpec.describe "Plan 15 Account Vault enrollment discovery", type: :request do
   let(:account) do
     Account.create!(
-      email: "reader@example.test",
+      username: "reader",
       password: "correct horse battery staple",
-      password_confirmation: "correct horse battery staple"
+      password_confirmation: "correct horse battery staple",
+      last_activity_at: Time.current
     )
   end
   let(:issued) { Coordination::SessionCredentials.issue(account:, scope: "Account") }

@@ -39,7 +39,11 @@ describe("initial Vault attachment", () => {
           upload: { uploadId: uuids[2], partSizeBytes: 4 },
           ticket: { url: "/api/transfers/initial/{partNumber}" },
           session: {
-            account: { accountId, email: "owner@example.test" },
+            account: {
+              accountId,
+              username: "owner_test",
+              inactiveDeletionAt: "2027-07-27T12:00:00.000Z",
+            },
             sessionId: uuids[3],
             scope: "VaultDevice",
             accessToken: "device-access",
@@ -70,7 +74,8 @@ describe("initial Vault attachment", () => {
         version: 1,
         accountId,
         sessionId: accountSessionId,
-        email: "owner@example.test",
+        username: "owner_test",
+        inactiveDeletionAt: "2027-07-27T12:00:00.000Z",
         scope: "Account",
       },
       records: local,
@@ -95,7 +100,8 @@ describe("initial Vault attachment", () => {
         version: 1,
         accountId,
         sessionId: accountSessionId,
-        email: "owner@example.test",
+        username: "owner_test",
+        inactiveDeletionAt: "2027-07-27T12:00:00.000Z",
         scope: "Account",
       },
       records: local,
@@ -109,6 +115,19 @@ describe("initial Vault attachment", () => {
       ["POST", `/api/vaults/${local.metadata.vaultId}/uploads/${uuids[2]}/complete`],
       ["POST", `/api/vaults/${local.metadata.vaultId}/complete`],
     ]);
+    expect(request.mock.calls[0]?.[2]).toMatchObject({
+      keyEpochs: [
+        {
+          keyEpochId: local.metadata.activeKeyEpochId,
+          ordinal: 0,
+          activatedAt: local.metadata.createdAt,
+        },
+      ],
+      activeKeyEpochId: local.metadata.activeKeyEpochId,
+      deviceKeyEnvelopes: [expect.any(Object)],
+    });
+    expect(request.mock.calls[0]?.[2]).not.toHaveProperty("keyEpoch");
+    expect(request.mock.calls[0]?.[2]).not.toHaveProperty("deviceKeyEnvelope");
     expect(saveInitialDevice).toHaveBeenCalledOnce();
     expect(useDeviceAccessToken).toHaveBeenCalledWith("device-access");
     expect(putTransfer).toHaveBeenCalled();

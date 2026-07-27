@@ -197,11 +197,11 @@ test("restores credentials and retains only an unusable reauthentication key on 
   page,
 }) => {
   await expect(scenario(page, "account-persistence")).resolves.toEqual({
-    email: "reader@example.test",
+    username: "reader_test",
     refreshRestored: true,
     sessionKeyExtractable: false,
     signedOut: true,
-    retainedEmail: "reader@example.test",
+    retainedUsername: "reader_test",
     refreshReplaced: true,
     sessionKeyReused: true,
     localObjectCount: 1,
@@ -212,8 +212,8 @@ test("isolates active and candidate Account credentials across logout and restar
   page,
 }) => {
   await expect(scenario(page, "account-scope-isolation")).resolves.toEqual({
-    activeEmail: "active@example.test",
-    candidateEmail: "candidate@example.test",
+    activeUsername: "active_test",
+    candidateUsername: "candidate_test",
     activePresentBeforeLogout: true,
     candidatePresentBeforeLogout: true,
     activePresentAfterLogout: false,
@@ -333,16 +333,31 @@ test("atomically promotes candidate Account authority and retains prior revocati
 }) => {
   await expect(scenario(page, "server-switch-promotion")).resolves.toEqual({
     serverOrigin: "https://candidate.example",
-    activeEmail: "candidate@example.test",
-    activeRefresh: "refresh-candidate@example.test",
-    priorEmail: "source@example.test",
-    priorRefresh: "refresh-source@example.test",
+    activeUsername: "candidate_test",
+    activeRefresh: "refresh-candidate_test",
+    priorUsername: "source_test",
+    priorRefresh: "refresh-source_test",
     candidateRemoved: true,
     registrationAccountId: "00000000-0000-4000-8000-000000000850",
     synchronizationStage: "FetchChanges",
     synchronizationCursor: 21,
     switchStage: "RevokePriorSession",
   });
+});
+
+test("keeps detachment and reattachment atomic across every IndexedDB write failure and restart", async ({
+  page,
+}) => {
+  const result = (await scenario(page, "detached-authority-atomicity")) as {
+    detachmentWrites: number;
+    detachmentAtomic: boolean;
+    reattachmentWrites: number;
+    reattachmentAtomic: boolean;
+  };
+  expect(result.detachmentWrites).toBeGreaterThan(0);
+  expect(result.detachmentAtomic).toBe(true);
+  expect(result.reattachmentWrites).toBeGreaterThan(0);
+  expect(result.reattachmentAtomic).toBe(true);
 });
 
 test("rolls back every authoritative store write during Replica promotion", async ({ page }) => {

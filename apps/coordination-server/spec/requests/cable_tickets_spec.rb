@@ -46,6 +46,15 @@ RSpec.describe "Cable tickets", type: :request do
       .to raise_error(Coordination::OutcomeError, /AUTHENTICATION_FAILED/)
   end
 
+  it "rejects an unconsumed ticket after its Account starts deletion" do
+    post "/api/cable-tickets", headers: headers
+    raw_ticket = response.parsed_body.fetch("ticket")
+    account.update!(state: "Deleting")
+
+    expect { Coordination::CableTickets.consume(raw_ticket) }
+      .to raise_error(Coordination::OutcomeError, /AUTHENTICATION_FAILED/)
+  end
+
   it "returns the stable retryable outcome when ephemeral coordination is unavailable" do
     allow(Coordination::EphemeralCoordination).to receive(:with_redis)
       .and_raise(Redis::CannotConnectError, "credential-sentinel")

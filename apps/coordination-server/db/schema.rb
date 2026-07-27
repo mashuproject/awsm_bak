@@ -15,13 +15,44 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_19_000000) do
   enable_extension "pg_catalog.plpgsql"
   enable_extension "pgcrypto"
 
+  create_table "account_deletion_jobs", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
+    t.uuid "account_id"
+    t.datetime "completed_at"
+    t.datetime "created_at", null: false
+    t.string "error_outcome"
+    t.bigint "processed_bytes", default: 0, null: false
+    t.string "reason", null: false
+    t.binary "receipt_digest"
+    t.datetime "receipt_expires_at"
+    t.integer "retry_count", default: 0, null: false
+    t.string "stage", null: false
+    t.datetime "started_at"
+    t.string "state", null: false
+    t.bigint "total_bytes", default: 0, null: false
+    t.datetime "updated_at", null: false
+    t.index ["account_id"], name: "index_account_deletion_jobs_on_account_id"
+    t.index ["account_id"], name: "index_one_active_account_deletion", unique: true, where: "((account_id IS NOT NULL) AND ((state)::text <> 'Succeeded'::text))"
+    t.check_constraint "reason::text = 'Manual'::text OR receipt_digest IS NULL", name: "account_deletion_jobs_inactivity_receipt"
+    t.check_constraint "reason::text = ANY (ARRAY['Manual'::character varying, 'Inactivity'::character varying]::text[])", name: "account_deletion_jobs_reason"
+    t.check_constraint "receipt_digest IS NULL OR octet_length(receipt_digest) = 32", name: "account_deletion_jobs_receipt_digest"
+    t.check_constraint "stage::text = ANY (ARRAY['Freeze'::character varying, 'DeleteOpaqueBytes'::character varying, 'DeleteRelationalState'::character varying, 'Complete'::character varying]::text[])", name: "account_deletion_jobs_stage"
+    t.check_constraint "state::text <> 'Succeeded'::text OR stage::text = 'Complete'::text AND completed_at IS NOT NULL AND account_id IS NULL", name: "account_deletion_jobs_completion"
+    t.check_constraint "state::text = ANY (ARRAY['Pending'::character varying, 'Running'::character varying, 'FailedRetryable'::character varying, 'Succeeded'::character varying]::text[])", name: "account_deletion_jobs_state"
+    t.check_constraint "total_bytes >= 0 AND processed_bytes >= 0 AND processed_bytes <= total_bytes AND retry_count >= 0", name: "account_deletion_jobs_counters"
+  end
+
   create_table "accounts", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
     t.datetime "created_at", null: false
-    t.string "email", null: false
+    t.datetime "last_activity_at", null: false
     t.string "password_digest", null: false
+    t.string "state", default: "Active", null: false
     t.datetime "updated_at", null: false
-    t.index ["email"], name: "index_accounts_on_email", unique: true
-    t.check_constraint "email::text = lower(email::text)", name: "accounts_normalized_email"
+    t.string "username", null: false
+    t.index ["username"], name: "index_accounts_on_username", unique: true
+    t.check_constraint "char_length(username::text) >= 3 AND char_length(username::text) <= 32", name: "accounts_username_length"
+    t.check_constraint "state::text = ANY (ARRAY['Active'::character varying, 'Deleting'::character varying]::text[])", name: "accounts_state"
+    t.check_constraint "username::text = lower(username::text)", name: "accounts_normalized_username"
+    t.check_constraint "username::text ~ '^[a-z0-9](?:[a-z0-9_-]{1,30}[a-z0-9])?$'::text", name: "accounts_username_shape"
   end
 
   create_table "api_sessions", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
@@ -39,11 +70,13 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_19_000000) do
 
   create_table "browser_sessions", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
     t.uuid "account_id", null: false
+    t.string "client_family", null: false
     t.datetime "created_at", null: false
-    t.string "ip_address"
+    t.datetime "last_activity_at", null: false
     t.datetime "updated_at", null: false
-    t.string "user_agent"
+    t.index ["account_id", "last_activity_at"], name: "index_browser_sessions_on_account_id_and_last_activity_at"
     t.index ["account_id"], name: "index_browser_sessions_on_account_id"
+    t.check_constraint "client_family::text = ANY (ARRAY['Chrome'::character varying, 'Firefox'::character varying, 'Other'::character varying]::text[])", name: "browser_sessions_client_family"
   end
 
   create_table "delivery_changes", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
@@ -311,7 +344,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_19_000000) do
     t.integer "part_number", null: false
     t.datetime "received_at", null: false
     t.binary "sha256", null: false
-    t.string "storage_key", null: false
+    t.string "storage_key"
     t.datetime "updated_at", null: false
     t.uuid "upload_id", null: false
     t.index ["upload_id", "part_number"], name: "index_upload_parts_on_upload_id_and_part_number", unique: true
@@ -437,6 +470,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_19_000000) do
     t.check_constraint "state::text = ANY (ARRAY['Provisional'::character varying, 'Active'::character varying, 'Replaced'::character varying]::text[])", name: "vault_replicas_state"
   end
 
+  add_foreign_key "account_deletion_jobs", "accounts", on_delete: :nullify
   add_foreign_key "api_sessions", "accounts"
   add_foreign_key "api_sessions", "vault_devices", primary_key: "device_id"
   add_foreign_key "browser_sessions", "accounts"

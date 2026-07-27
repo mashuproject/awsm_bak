@@ -1,0 +1,24 @@
+<% content_for :title, "Deleting AWSM Account" %>
+
+<%= render layout: "shared/account_shell",
+           locals: {
+             story_heading: "Account deletion is in progress.",
+             story_copy: "The Account remains inaccessible while the server verifies removal of its encrypted bytes and records."
+           } do %>
+  <p class="eyebrow">Delete Account</p>
+  <h1>Deleting Account</h1>
+  <div aria-live="polite">
+    <p><strong>Status:</strong> <%= @deletion_job.public_state %></p>
+    <p><strong>Stage:</strong> <%= @deletion_job.stage %></p>
+    <p>
+      <strong>Progress:</strong>
+      <%= number_to_human_size @deletion_job.processed_bytes %> of
+      <%= number_to_human_size @deletion_job.total_bytes %>
+    </p>
+    <% if @deletion_job.error_outcome %>
+      <p class="awsm-notice awsm-notice--danger" role="alert">
+        Deletion will retry. Outcome: <%= @deletion_job.error_outcome %>
+      </p>
+    <% end %>
+  </div>
+<% end %>

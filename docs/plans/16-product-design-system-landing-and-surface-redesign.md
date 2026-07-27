@@ -2,11 +2,11 @@
 
 **Document:** `docs/plans/16-product-design-system-landing-and-surface-redesign.md`
 
-**Status:** Approved implementation plan
+**Status:** Implemented; Account identity and dashboard content superseded by Plan 20
 
 **Owner:** Engineering
 
-**Last Updated:** 2026-07-26
+**Last Updated:** 2026-07-27
 
 **Depends On:** `README.md`, `VISION.md`, `AGENTS.md`, `ROADMAP.md`,
 `docs/plans/13-browser-independent-web-page-snapshot-and-firefox-host.md`,
@@ -16,6 +16,10 @@
 `docs/architecture/15-coordination-server.md`, `docs/architecture/17-extension-framework.md`,
 `docs/architecture/19-testing-strategy.md`, and
 `docs/architecture/20-deployment-and-operations.md`
+
+> **Current-contract notice:** Plan 20 replaces this plan's email-based Account copy and expands
+> the Account surface. Its design-system, interaction, accessibility, and visual-proof contracts
+> remain current. See [Plan 20](20-username-account-and-devices-dashboard.md).
 
 ---
 
@@ -136,7 +140,7 @@ minimalism.
 
 - dark mode;
 - pricing, billing, payment processing, plan comparison, subscription state, or quota UI;
-- collecting waitlist email or displaying a “plans coming soon” teaser;
+- collecting waitlist contact details or displaying a “plans coming soon” teaser;
 - legal Terms of Service or a counsel-approved legal Privacy Policy;
 - landing-page analytics or product telemetry;
 - product screenshots in public marketing;
@@ -606,7 +610,7 @@ Create factual product explanations, not legal documents.
 Describe:
 
 - local Capture and Vault content;
-- Account email and password digest;
+- private Account username and password digest;
 - browser and API session records;
 - Device certificates and encrypted key envelopes;
 - server-visible identifiers, byte counts, timing, IP/access logs, and traffic patterns;
@@ -724,7 +728,7 @@ Every form SHALL provide:
 - an error summary focused after invalid Turbo submission;
 - summary links to invalid fields;
 - inline field errors associated through `aria-describedby`;
-- retained email and non-secret values;
+- retained username and non-secret values;
 - cleared password fields after failure;
 - visible focus and autofill treatment;
 - minimum 44px controls;
@@ -1056,7 +1060,7 @@ Add exactly these forward-looking initiatives:
 
 Define pricing, quotas, payment processing/provider, taxes, abuse controls, legal/privacy terms,
 support commitments, cancellation/refund behavior, and production readiness before presenting plan
-teasers or collecting waitlist email.
+teasers or collecting waitlist contact details.
 
 ### Authentic Product Screenshot Marketing
 

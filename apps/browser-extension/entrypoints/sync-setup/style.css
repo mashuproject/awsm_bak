@@ -100,7 +100,7 @@ label {
   gap: 6px;
   font-weight: 650;
 }
-input[type="email"],
+input[name="username"],
 input[type="password"],
 input[type="text"],
 input[type="url"],
@@ -276,7 +276,7 @@ fieldset input[type="radio"] {
   background: var(--awsm-danger-pale);
 }
 
-input[type="email"] {
+input[name="username"] {
   text-overflow: ellipsis;
 }
 

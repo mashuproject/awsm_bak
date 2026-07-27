@@ -6,9 +6,10 @@ require "redis"
 RSpec.describe "Plan 15 Device challenge sessions", type: :request do
   let(:account) do
     Account.create!(
-      email: "reader@example.test",
+      username: "reader",
       password: "correct horse battery staple",
-      password_confirmation: "correct horse battery staple"
+      password_confirmation: "correct horse battery staple",
+      last_activity_at: Time.current
     )
   end
   let(:account_issued) { Coordination::SessionCredentials.issue(account:, scope: "Account") }

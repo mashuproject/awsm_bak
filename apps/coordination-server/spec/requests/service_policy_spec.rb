@@ -1,6 +1,14 @@
 require "rails_helper"
 
 RSpec.describe "Service policy", type: :request do
+  def with_environment(name, value)
+    original = ENV[name]
+    ENV[name] = value
+    yield
+  ensure
+    original.nil? ? ENV.delete(name) : ENV[name] = original
+  end
+
   before do
     account = create_account
     allow(Coordination::AccountAuthenticator).to receive(:authenticate).and_return(
@@ -23,6 +31,7 @@ RSpec.describe "Service policy", type: :request do
     Then { response.status == 200 }
     And { response.headers.fetch("Awsm-Protocol-Version") == "1" }
     And { response.headers.fetch("Awsm-Request-ID") == request_id }
+    And { response.parsed_body.fetch("inactiveAccountRetentionDays") == 365 }
     And { response.parsed_body.fetch("recoveryRetentionDays") == 90 }
     And { response.parsed_body.fetch("uploadPartSizeBytes") == 8_388_608 }
   end
@@ -33,5 +42,19 @@ RSpec.describe "Service policy", type: :request do
     Then { response.status == 400 }
     And { response.parsed_body.fetch("outcome") == "PROTOCOL_VERSION_UNSUPPORTED" }
     And { response.parsed_body.fetch("requestId") == request_id }
+  end
+
+  it "accepts only a positive integer inactivity retention policy" do
+    with_environment("AWSM_INACTIVE_ACCOUNT_RETENTION_DAYS", "0") do
+      expect { Coordination::ServicePolicy.current }.to raise_error(
+        "AWSM_INACTIVE_ACCOUNT_RETENTION_DAYS is outside its supported range"
+      )
+    end
+
+    with_environment("AWSM_INACTIVE_ACCOUNT_RETENTION_DAYS", "not-an-integer") do
+      expect { Coordination::ServicePolicy.current }.to raise_error(
+        "AWSM_INACTIVE_ACCOUNT_RETENTION_DAYS must be an integer"
+      )
+    end
   end
 end

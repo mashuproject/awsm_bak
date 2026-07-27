@@ -111,7 +111,7 @@ export class DeviceSessionManager {
     if (
       session.scope !== "VaultDevice" ||
       session.account.accountId !== stored.metadata.accountId ||
-      session.account.email !== stored.metadata.email
+      session.account.username !== stored.metadata.username
     )
       throw Object.assign(new Error("Device session identity changed"), {
         id: "SYNCHRONIZATION_INTEGRITY_FAILED",

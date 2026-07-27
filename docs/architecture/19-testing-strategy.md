@@ -151,7 +151,8 @@ The following invariants are fundamental.
   offline Events.
 - Generation tests cover paged reachability, dependency closure, predecessor/head races, explicit
   recovery, and stale-write rejection.
-- Account tests cover password-derived authentication/key separation, normalized email privacy,
+- Account tests cover private normalized username/password authentication, lifecycle fencing,
+  inactivity deletion, verified permanent deletion,
   rotating one-use refresh credentials, opaque 256-bit one-use Cable tickets stored only under
   digest keys, logout erasure, and filtered secret sentinels.
 - Trusted Runtime tests cover existing/new Vault enrollment, remote bootstrap, snapshot-bounded

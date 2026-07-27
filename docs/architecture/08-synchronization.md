@@ -74,7 +74,7 @@ direct successor Generation fast-forwards only when the predecessor identity, nu
 recovered authoritative closure prove ancestry. Sibling successors or unavailable ancestry are a
 conflict and never an overwrite.
 
-The source and candidate Accounts have independent identities even when their emails match. The
+The source and candidate Accounts have independent identities even when their usernames match. The
 trusted Runtime authenticates each Account, then uses certified Device authority to prove that both
 servers expose the same Vault cryptographic identity without exposing a Vault key. The Coordination
 Server stores and transfers opaque records but never classifies, merges, or interprets history.

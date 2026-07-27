@@ -20,6 +20,7 @@ export interface PreparedReplacementAuthority {
   readonly account: StoredAccountMetadataV1;
   readonly target: PreparedVault;
   readonly recoveryGenerationId: string;
+  readonly keyEpochActivatedAt: string;
   readonly entropy: Uint8Array;
   readonly wrappingKey: Uint8Array;
   readonly administratorSeed: Uint8Array;
@@ -132,6 +133,7 @@ export async function prepareReplacementAuthority(input: {
       account: input.account,
       target: input.target,
       recoveryGenerationId,
+      keyEpochActivatedAt: input.target.records.metadata.createdAt,
       entropy,
       wrappingKey,
       administratorSeed,

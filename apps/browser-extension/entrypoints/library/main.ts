@@ -290,6 +290,85 @@ function appendResetDeviceSection(form: HTMLFormElement, dialog: HTMLDialogEleme
   form.append(resetSection);
 }
 
+function appendStopUsingServerSection(
+  form: HTMLFormElement,
+  settingsDialog: HTMLDialogElement,
+  vaultId: string,
+): void {
+  const section = element("section", undefined, "reset-device");
+  section.append(
+    element("h3", "Stop using this synchronization server"),
+    element(
+      "p",
+      "Keep the complete Vault on this browser and remove this browser’s Account and server binding. This does not delete the remote Account or remote encrypted data.",
+      "muted",
+    ),
+  );
+  const open = element("button", "Stop using this synchronization server", "danger-action");
+  open.type = "button";
+  open.addEventListener("click", () => {
+    settingsDialog.close();
+    const { dialog, form: confirmation } = dialogShell("Stop using this synchronization server?");
+    confirmation.append(
+      element(
+        "p",
+        "This keeps the complete Vault on this browser and stops using the configured synchronization server. It does not delete the remote Account or remote encrypted data. Other Devices may keep using that server until the Account is deleted for inactivity.",
+        "notice",
+      ),
+    );
+    const acknowledgeLabel = element("label");
+    const acknowledge = element("input") as HTMLInputElement;
+    acknowledge.type = "checkbox";
+    acknowledgeLabel.append(
+      acknowledge,
+      document.createTextNode(
+        " I understand that this does not delete anything from the synchronization server.",
+      ),
+    );
+    const actions = element("div", undefined, "actions server-actions");
+    const cancel = element("button", "Cancel");
+    cancel.type = "button";
+    cancel.addEventListener("click", () => dialog.close());
+    const stop = element("button", "Keep local Vault and stop synchronization", "danger-action");
+    stop.type = "button";
+    stop.disabled = true;
+    acknowledge.addEventListener("change", () => {
+      stop.disabled = !acknowledge.checked;
+    });
+    stop.addEventListener("click", () => {
+      stop.disabled = true;
+      void sendRequest<AppState>({
+        type: "StopUsingSynchronizationServer",
+        expectedVaultId: vaultId,
+      }).then(
+        (next) => {
+          dialog.close();
+          renderVaultBar(next);
+        },
+        (error) => {
+          stop.disabled = false;
+          confirmation.querySelector(".error")?.remove();
+          confirmation.append(
+            element(
+              "p",
+              error instanceof AppClientError
+                ? error.message
+                : "Synchronization could not be stopped safely.",
+              "notice error",
+            ),
+          );
+        },
+      );
+    });
+    actions.append(cancel, stop);
+    confirmation.append(acknowledgeLabel, actions);
+    dialog.addEventListener("close", () => open.focus(), { once: true });
+    dialog.showModal();
+  });
+  section.append(open);
+  form.append(section);
+}
+
 const searchIndexingLabels: Readonly<Record<SearchStateMessage["indexing"]["state"], string>> = {
   Idle: "Idle",
   Running: "Running",
@@ -952,9 +1031,20 @@ function showAccountSettings(): void {
   const accountSummary = element("dl", undefined, "account-summary");
   accountSummary.append(
     summaryRow("Server", server),
-    summaryRow("Account", account.email ?? "Not signed in"),
+    summaryRow("Account", account.username ?? "Not signed in"),
     summaryRow("Synchronization", synchronizationLabels[account.vaultSyncState]),
   );
+  if (account.inactiveDeletionAt !== undefined) {
+    const deletionAt = new Date(account.inactiveDeletionAt);
+    accountSummary.append(
+      summaryRow(
+        "Scheduled inactivity deletion",
+        Number.isNaN(deletionAt.valueOf())
+          ? account.inactiveDeletionAt
+          : deletionAt.toLocaleString(),
+      ),
+    );
+  }
   form.append(accountSummary);
   const serverSwitch = state.serverSwitch;
   if (serverSwitch !== undefined) {
@@ -992,19 +1082,21 @@ function showAccountSettings(): void {
       ),
     );
     if (serverSwitch.state === "AuthenticationRequired") {
-      const emailLabel = element("label", "Email");
-      const email = element("input");
-      email.type = "email";
-      email.required = true;
-      email.autocomplete = "username";
-      emailLabel.append(email);
+      const usernameLabel = element("label", "Username");
+      const username = element("input");
+      username.type = "text";
+      username.required = true;
+      username.autocomplete = "username";
+      username.minLength = 3;
+      username.maxLength = 32;
+      usernameLabel.append(username);
       const passwordLabel = element("label", "Password");
       const password = element("input");
       password.type = "password";
       password.required = true;
       password.autocomplete = "current-password";
       passwordLabel.append(password);
-      form.append(emailLabel, passwordLabel);
+      form.append(usernameLabel, passwordLabel);
       const candidateActions = element("div", undefined, "actions");
       const login = element("button", "Sign in");
       login.type = "button";
@@ -1012,7 +1104,7 @@ function showAccountSettings(): void {
         login.disabled = true;
         void sendRequest<AppState>({
           type: "LoginServerSwitchCandidate",
-          email: email.value,
+          username: username.value,
           password: password.value,
         }).then(
           (next) => {
@@ -1263,6 +1355,8 @@ function showAccountSettings(): void {
         },
       );
   });
+  if (account.configuration.mode === "Configured" && state.workspace.activeVaultId !== undefined)
+    appendStopUsingServerSection(form, dialog, state.workspace.activeVaultId);
   appendResetDeviceSection(form, dialog);
   installSettingsTabs(form);
   dialog.addEventListener("close", () => accountSettings.focus(), {
@@ -2112,7 +2206,14 @@ function renderVaultBar(state: AppState): void {
   }
   const bar = element("section", undefined, "vault-control");
   bar.id = "vault-management";
-  bar.append(element("p", active.unlocked ? "Unlocked" : "Locked", "muted"));
+  bar.append(
+    element("p", active.unlocked ? "Unlocked" : "Locked", "muted"),
+    element(
+      "p",
+      `Synchronization: ${synchronizationLabels[state.account.vaultSyncState]}`,
+      "muted",
+    ),
+  );
   if (state.account.staleResolutionRequired === true) {
     bar.append(
       element(

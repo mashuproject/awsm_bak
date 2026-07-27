@@ -72,7 +72,7 @@ RSpec.describe Coordination::CableTickets do
   end
 
   it "keeps tickets bound to their issuing Accounts" do
-    another_account = create_account(email: "another-#{SecureRandom.hex(4)}@example.test")
+    another_account = create_account(username: "another_#{SecureRandom.hex(4)}")
     first_ticket, = described_class.issue(principal)
     second_ticket, = described_class.issue(principal_for(another_account))
 

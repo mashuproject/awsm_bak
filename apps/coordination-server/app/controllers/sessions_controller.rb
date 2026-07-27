@@ -6,13 +6,13 @@ class SessionsController < ApplicationController
 
   def create
     account = Coordination::AccountAuthenticator.authenticate_login(
-      params.expect(:email),
+      params.expect(:username),
       params.expect(:password)
     )
     start_new_session_for(account)
     redirect_to after_authentication_url
   rescue Coordination::OutcomeError, ActionController::ParameterMissing
-    flash.now[:alert] = "That email or password is incorrect."
+    flash.now[:alert] = "That username or password is incorrect."
     render :new, status: :unprocessable_content
   end
 
@@ -22,7 +22,7 @@ class SessionsController < ApplicationController
     if resume_session
       render json: {
         authenticated: true,
-        account: { email: Current.browser_session.account.email },
+        account: { username: Current.browser_session.account.username },
         csrfToken: form_authenticity_token
       }
     else

@@ -11,8 +11,8 @@
 
   <%= form_with url: session_path, class: "account-form" do |form| %>
     <div class="field">
-      <%= form.label :email %>
-      <%= form.email_field :email, required: true, autocomplete: "email" %>
+      <%= form.label :username %>
+      <%= form.text_field :username, required: true, autocomplete: "username", minlength: 3, maxlength: 32 %>
     </div>
     <div class="field">
       <%= form.label :password %>

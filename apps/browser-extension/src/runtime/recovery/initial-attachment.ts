@@ -46,6 +46,7 @@ export interface InitialDeviceAuthority {
   readonly recoveryKit: RecoveryKitV1;
   readonly remoteGenerationId: string;
   readonly remoteGenerationNumber: number;
+  readonly remoteHeadCursor: number;
   readonly session: AuthenticatedSession;
 }
 
@@ -59,6 +60,7 @@ interface PreparedAttachment {
   readonly records: VaultRecordsV1;
   readonly recoveryGenerationId: string;
   readonly keyEpochId: string;
+  readonly keyEpochActivatedAt: string;
   readonly entropy: Uint8Array;
   readonly wrappingKey: Uint8Array;
   readonly administratorSeed: Uint8Array;
@@ -130,6 +132,7 @@ export class InitialVaultAttachmentService {
     const setupId = this.randomUuid();
     const recoveryGenerationId = this.randomUuid();
     const keyEpochId = input.records.metadata.activeKeyEpochId;
+    const keyEpochActivatedAt = input.records.metadata.createdAt;
     const entropy = crypto.getRandomValues(new Uint8Array(16));
     let wrappingKey: Uint8Array | undefined;
     let administratorSeed: Uint8Array | undefined;
@@ -190,6 +193,7 @@ export class InitialVaultAttachmentService {
         records: input.records,
         recoveryGenerationId,
         keyEpochId,
+        keyEpochActivatedAt,
         entropy,
         wrappingKey,
         administratorSeed,
@@ -244,9 +248,16 @@ export class InitialVaultAttachmentService {
               generationId: prepared.records.generation.generationId,
               generationNumber: prepared.records.generation.generationNumber,
               recoveryGeneration: recoveryKitToWire(prepared.recoveryKit),
-              keyEpoch: { keyEpochId: prepared.keyEpochId, ordinal: 0 },
+              keyEpochs: [
+                {
+                  keyEpochId: prepared.keyEpochId,
+                  ordinal: 0,
+                  activatedAt: prepared.keyEpochActivatedAt,
+                },
+              ],
+              activeKeyEpochId: prepared.keyEpochId,
               deviceCertificate: deviceCertificateToWire(prepared.certificate),
-              deviceKeyEnvelope: deviceKeyEnvelopeToWire(prepared.envelope),
+              deviceKeyEnvelopes: [deviceKeyEnvelopeToWire(prepared.envelope)],
               deviceProofSignature: bytesToBase64Url(prepared.deviceProofSignature),
               generationObject: {
                 objectId: prepared.records.generation.generationId,
@@ -318,6 +329,7 @@ export class InitialVaultAttachmentService {
         recoveryKit: prepared.recoveryKit,
         remoteGenerationId: prepared.records.generation.generationId,
         remoteGenerationNumber: prepared.records.generation.generationNumber,
+        remoteHeadCursor: 1,
         session,
       });
       return session.accessToken;

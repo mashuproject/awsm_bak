@@ -5,7 +5,8 @@ export type ApiSessionScope = "Account" | "VaultDevice";
 export interface AuthenticatedSession {
   readonly account: {
     readonly accountId: string;
-    readonly email: string;
+    readonly username: string;
+    readonly inactiveDeletionAt: string;
   };
   readonly sessionId: string;
   readonly scope: ApiSessionScope;
@@ -16,7 +17,7 @@ export interface AuthenticatedSession {
 }
 
 export interface AccountHttp {
-  createSession(email: string, password: string): Promise<AuthenticatedSession>;
+  createSession(username: string, password: string): Promise<AuthenticatedSession>;
   refresh(refreshToken: string): Promise<AuthenticatedSession>;
   logout(accessToken: string): Promise<void>;
 }
@@ -33,14 +34,19 @@ export function decodeAuthenticatedSession(value: unknown): AuthenticatedSession
   ]);
   const account = canonicalRecord(input.account, "authenticatedSession.account", [
     "accountId",
-    "email",
+    "username",
+    "inactiveDeletionAt",
   ]);
   const scope = string(input.scope, "authenticatedSession.scope");
   if (scope !== "Account" && scope !== "VaultDevice") throw new Error("Invalid API session scope");
   return {
     account: {
       accountId: uuid(account.accountId, "authenticatedSession.account.accountId"),
-      email: string(account.email, "authenticatedSession.account.email"),
+      username: string(account.username, "authenticatedSession.account.username"),
+      inactiveDeletionAt: timestamp(
+        account.inactiveDeletionAt,
+        "authenticatedSession.account.inactiveDeletionAt",
+      ),
     },
     sessionId: uuid(input.sessionId, "authenticatedSession.sessionId"),
     scope,
@@ -91,8 +97,8 @@ export class CoordinationAccountHttp implements AccountHttp {
     return payload;
   }
 
-  async createSession(email: string, password: string): Promise<AuthenticatedSession> {
-    return decodeAuthenticatedSession(await this.post("/api/sessions", { email, password }));
+  async createSession(username: string, password: string): Promise<AuthenticatedSession> {
+    return decodeAuthenticatedSession(await this.post("/api/sessions", { username, password }));
   }
 
   async refresh(refreshToken: string): Promise<AuthenticatedSession> {

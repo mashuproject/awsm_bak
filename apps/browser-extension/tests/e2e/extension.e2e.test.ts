@@ -723,13 +723,13 @@ async function waitForSynchronizedState(page: Page, serverOrigin: string): Promi
 async function createRailsAccount(
   context: BrowserContext,
   serverOrigin: string,
-  email: string,
+  username: string,
   password: string,
 ): Promise<void> {
   const signup = await context.newPage();
   try {
     await signup.goto(`${serverOrigin}/sign_up`);
-    await signup.getByLabel("Email").fill(email);
+    await signup.getByLabel("Username").fill(username);
     await signup.getByLabel("Password", { exact: true }).fill(password);
     await signup.getByLabel("Confirm password").fill(password);
     await Promise.all([
@@ -745,7 +745,7 @@ async function createSynchronizedClient(
   testInfo: TestInfo,
   name: string,
   serverOrigin: string,
-  email: string,
+  username: string,
   password: string,
 ): Promise<
   Awaited<ReturnType<typeof packagedAccountContext>> & {
@@ -754,9 +754,9 @@ async function createSynchronizedClient(
   }
 > {
   const client = await packagedAccountContext(testInfo, name);
-  await createRailsAccount(client.context, serverOrigin, email, password);
+  await createRailsAccount(client.context, serverOrigin, username, password);
   await appRequest(client.popup, { type: "ConfigureSyncServer", serverOrigin });
-  await appRequest(client.popup, { type: "LoginAccount", email, password });
+  await appRequest(client.popup, { type: "LoginAccount", username, password });
   const prepared = await appRequest<{
     readonly setupId: string;
     readonly recoveryPhrase: string;
@@ -780,7 +780,7 @@ async function loginSynchronizedClient(
   testInfo: TestInfo,
   name: string,
   serverOrigin: string,
-  email: string,
+  username: string,
   password: string,
   recoveryPhrase: string,
 ): Promise<
@@ -790,7 +790,7 @@ async function loginSynchronizedClient(
 > {
   const client = await packagedAccountContext(testInfo, name);
   await appRequest(client.popup, { type: "ConfigureSyncServer", serverOrigin });
-  await appRequest(client.popup, { type: "LoginAccount", email, password });
+  await appRequest(client.popup, { type: "LoginAccount", username, password });
   await appRequest(client.popup, {
     type: "RecoverAccountVault",
     recoveryPhrase,
@@ -806,7 +806,7 @@ async function switchPackagedClient(
   page: Page,
   vaultId: string,
   candidateOrigin: string,
-  email: string,
+  username: string,
   password: string,
 ): Promise<void> {
   await appRequest(page, {
@@ -817,7 +817,7 @@ async function switchPackagedClient(
   try {
     await appRequest(page, {
       type: "LoginServerSwitchCandidate",
-      email,
+      username,
       password,
     });
   } catch (error) {
@@ -826,13 +826,181 @@ async function switchPackagedClient(
   await waitForSynchronizedState(page, candidateOrigin);
 }
 
+test("detaches a complete synchronized Vault while offline without contacting its server", async ({
+  browserName,
+}, testInfo) => {
+  test.setTimeout(300_000);
+  expect(browserName).toBe("chromium");
+  const serverOrigin = "http://127.0.0.1:3300";
+  const username = `${crypto.randomUUID().replaceAll("-", "").slice(0, 24)}_test`;
+  const password = "correct horse offline archive";
+  const client = await createSynchronizedClient(
+    testInfo,
+    "offline-detachment",
+    serverOrigin,
+    username,
+    password,
+  );
+  const firstLibrary = await client.context.newPage();
+  const secondLibrary = await client.context.newPage();
+  await Promise.all([
+    firstLibrary.goto(`chrome-extension://${client.extensionId}/library.html`),
+    secondLibrary.goto(`chrome-extension://${client.extensionId}/library.html`),
+  ]);
+  const fixture = await client.context.newPage();
+  await fixture.goto("http://127.0.0.1:4174/fixture");
+  await archiveFixture(client, fixture, 1);
+  await waitForSynchronizedState(firstLibrary, serverOrigin);
+  const serverRequests: string[] = [];
+  const serverResponses: string[] = [];
+  client.context.on("request", (request) => {
+    if (request.url().startsWith(serverOrigin)) serverRequests.push(request.url());
+  });
+  client.context.on("response", (response) => {
+    if (response.url().startsWith(serverOrigin))
+      serverResponses.push(`${String(response.status())} ${new URL(response.url()).pathname}`);
+  });
+  try {
+    await Promise.all(
+      [firstLibrary, secondLibrary].map((page) =>
+        expect(page.getByText("Synchronization: Up to date", { exact: true })).toBeVisible(),
+      ),
+    );
+    await firstLibrary.setViewportSize({ width: 1280, height: 900 });
+    await firstLibrary.getByRole("button", { name: "Settings" }).click();
+    await firstLibrary
+      .getByRole("button", { name: "Stop using this synchronization server", exact: true })
+      .click();
+    const confirmation = firstLibrary.getByRole("dialog", {
+      name: "Stop using this synchronization server?",
+    });
+    await expect(confirmation).toBeVisible();
+    await expect(
+      confirmation.getByRole("button", {
+        name: "Keep local Vault and stop synchronization",
+      }),
+    ).toBeDisabled();
+    await firstLibrary.screenshot({
+      path: testInfo.outputPath("detachment-confirmation-desktop.png"),
+      fullPage: true,
+    });
+    await firstLibrary.setViewportSize({ width: 390, height: 844 });
+    await firstLibrary.screenshot({
+      path: testInfo.outputPath("detachment-confirmation-narrow.png"),
+      fullPage: true,
+    });
+    await confirmation.getByRole("button", { name: "Cancel" }).click();
+    await firstLibrary.setViewportSize({ width: 1280, height: 900 });
+    serverRequests.length = 0;
+    await client.context.setOffline(true);
+    await appRequest(firstLibrary, {
+      type: "StopUsingSynchronizationServer",
+      expectedVaultId: client.vaultId,
+    });
+    await Promise.all(
+      [firstLibrary, secondLibrary].map((page) =>
+        expect(page.getByText("Synchronization: Local only", { exact: true })).toBeVisible(),
+      ),
+    );
+    const state = await appRequest<{
+      account: {
+        configuration: { mode: string };
+        vaultSyncState: string;
+      };
+      workspace: { activeVaultId?: string };
+    }>(firstLibrary, { type: "GetState" });
+
+    expect(state).toMatchObject({
+      account: {
+        configuration: { mode: "LocalOnly" },
+        vaultSyncState: "LocalOnly",
+      },
+      workspace: { activeVaultId: client.vaultId },
+    });
+    expect(serverRequests).toEqual([]);
+    await firstLibrary.screenshot({
+      path: testInfo.outputPath("detachment-complete-desktop.png"),
+      fullPage: true,
+    });
+    await firstLibrary.setViewportSize({ width: 390, height: 844 });
+    const detachedSidebar = firstLibrary.locator("#library-sidebar");
+    await expect(detachedSidebar).toHaveAttribute("aria-hidden", "true");
+    await detachedSidebar.evaluate(async (sidebar) => {
+      await Promise.all(sidebar.getAnimations().map(async (animation) => animation.finished));
+    });
+    await firstLibrary.screenshot({
+      path: testInfo.outputPath("detachment-complete-narrow.png"),
+      fullPage: true,
+    });
+    await firstLibrary.setViewportSize({ width: 1280, height: 900 });
+
+    await client.context.setOffline(false);
+    await appRequest(firstLibrary, {
+      type: "ConfigureSyncServer",
+      serverOrigin,
+    });
+    serverResponses.length = 0;
+    try {
+      await appRequest(firstLibrary, { type: "LoginAccount", username, password });
+    } catch (error) {
+      throw new Error(`Original Account return failed: ${JSON.stringify(serverResponses)}`, {
+        cause: error,
+      });
+    }
+    await waitForSynchronizedState(firstLibrary, serverOrigin);
+    const originalGroups = await appRequest<
+      readonly { readonly captures: readonly { readonly bundleId: string }[] }[]
+    >(firstLibrary, {
+      type: "ListLibrary",
+      expectedVaultId: client.vaultId,
+    });
+    expect(originalGroups.flatMap((group) => group.captures)).toHaveLength(1);
+
+    await client.context.setOffline(true);
+    await appRequest(firstLibrary, {
+      type: "StopUsingSynchronizationServer",
+      expectedVaultId: client.vaultId,
+    });
+    await client.context.setOffline(false);
+    const destinationOrigin = "http://127.0.0.1:3301";
+    const destinationUsername = `${crypto.randomUUID().replaceAll("-", "").slice(0, 24)}_test`;
+    await createRailsAccount(client.context, destinationOrigin, destinationUsername, password);
+    await appRequest(firstLibrary, {
+      type: "ConfigureSyncServer",
+      serverOrigin: destinationOrigin,
+    });
+    await appRequest(firstLibrary, {
+      type: "LoginAccount",
+      username: destinationUsername,
+      password,
+    });
+    await expect(
+      appRequest(firstLibrary, {
+        type: "PrepareAccountVault",
+        existingVaultId: client.vaultId,
+      }),
+    ).resolves.toEqual({ kind: "Reattached" });
+    await waitForSynchronizedState(firstLibrary, destinationOrigin);
+    const destinationGroups = await appRequest<
+      readonly { readonly captures: readonly { readonly bundleId: string }[] }[]
+    >(firstLibrary, {
+      type: "ListLibrary",
+      expectedVaultId: client.vaultId,
+    });
+    expect(destinationGroups).toEqual(originalGroups);
+  } finally {
+    await client.context.setOffline(false);
+    await client.context.close();
+  }
+});
+
 async function interruptServerSwitchAt(
   client: Awaited<ReturnType<typeof packagedAccountContext>>,
   testInfo: TestInfo,
   page: Page,
   vaultId: string,
   candidateOrigin: string,
-  email: string,
+  username: string,
   password: string,
   checkpoint: string,
   captureName: string,
@@ -845,7 +1013,7 @@ async function interruptServerSwitchAt(
   await faultControl(page, "arm", checkpoint);
   const switching = appRequest(page, {
     type: "LoginServerSwitchCandidate",
-    email,
+    username,
     password,
   }).catch(() => undefined);
   await expect
@@ -897,7 +1065,7 @@ async function switchWithApplyingCapture(
   page: Page,
   vaultId: string,
   candidateOrigin: string,
-  email: string,
+  username: string,
   password: string,
   captureName: string,
 ): Promise<void> {
@@ -909,7 +1077,7 @@ async function switchWithApplyingCapture(
   await faultControl(page, "arm", "server-switch:after-classification");
   const switching = appRequest(page, {
     type: "LoginServerSwitchCandidate",
-    email,
+    username,
     password,
   });
   await expect
@@ -1018,13 +1186,13 @@ async function vacuumDeleted(page: Page, vaultId: string): Promise<void> {
 
 async function sharedDeletedBase(testInfo: TestInfo, name: string) {
   const password = "x";
-  const sourceEmail = `${name}-source-${crypto.randomUUID()}@example.test`;
-  const candidateEmail = `${name}-candidate-${crypto.randomUUID()}@example.test`;
+  const sourceUsername = `${crypto.randomUUID().replaceAll("-", "").slice(0, 24)}_test`;
+  const candidateUsername = `${crypto.randomUUID().replaceAll("-", "").slice(0, 24)}_test`;
   const client = await createSynchronizedClient(
     testInfo,
     `${name}-primary`,
     "http://127.0.0.1:3300",
-    sourceEmail,
+    sourceUsername,
     password,
   );
   const page = await client.context.newPage();
@@ -1060,12 +1228,12 @@ async function sharedDeletedBase(testInfo: TestInfo, name: string) {
     bundleIds: [baselineBundleIds[1]],
   });
   await waitForSynchronizedState(page, "http://127.0.0.1:3300");
-  await createRailsAccount(client.context, "http://127.0.0.1:3301", candidateEmail, password);
+  await createRailsAccount(client.context, "http://127.0.0.1:3301", candidateUsername, password);
   await switchPackagedClient(
     page,
     client.vaultId,
     "http://127.0.0.1:3301",
-    candidateEmail,
+    candidateUsername,
     password,
   );
   return {
@@ -1073,8 +1241,8 @@ async function sharedDeletedBase(testInfo: TestInfo, name: string) {
     page,
     fixture,
     password,
-    sourceEmail,
-    candidateEmail,
+    sourceUsername,
+    candidateUsername,
     baselineBundleIds,
   };
 }
@@ -1084,7 +1252,7 @@ test("takes a first-time self-hosted user through capture, sync, Vacuum, and sta
 }, testInfo) => {
   test.setTimeout(900_000);
   expect(browserName).toBe("chromium");
-  const email = `journey-${crypto.randomUUID()}@example.test`;
+  const username = `${crypto.randomUUID().replaceAll("-", "").slice(0, 24)}_test`;
   const password = "correct horse archive battery";
   const first = await packagedAccountContext(testInfo, "journey-first");
   let second: Awaited<ReturnType<typeof packagedAccountContext>> | undefined;
@@ -1093,12 +1261,12 @@ test("takes a first-time self-hosted user through capture, sync, Vacuum, and sta
   let recoveryPhrase: string | undefined;
   try {
     await test.step("create the Rails Account and attach the first synchronized Vault", async () => {
-      await createRailsAccount(first.context, "http://127.0.0.1:3300", email, password);
+      await createRailsAccount(first.context, "http://127.0.0.1:3300", username, password);
       await appRequest(first.popup, {
         type: "ConfigureSyncServer",
         serverOrigin: "http://127.0.0.1:3300",
       });
-      await appRequest(first.popup, { type: "LoginAccount", email, password });
+      await appRequest(first.popup, { type: "LoginAccount", username, password });
       const prepared = await appRequest<{
         readonly setupId: string;
         readonly recoveryPhrase: string;
@@ -1154,7 +1322,7 @@ test("takes a first-time self-hosted user through capture, sync, Vacuum, and sta
         type: "ConfigureSyncServer",
         serverOrigin: "http://127.0.0.1:3300",
       });
-      await appRequest(setupPopup, { type: "LoginAccount", email, password });
+      await appRequest(setupPopup, { type: "LoginAccount", username, password });
       if (recoveryPhrase === undefined) throw new Error("The Recovery Phrase is unavailable.");
       try {
         await appRequest(setupPopup, {
@@ -1270,7 +1438,7 @@ test("takes a first-time self-hosted user through capture, sync, Vacuum, and sta
       await firstLibrary.keyboard.press("Escape");
       await faultControl(firstLibrary, "release");
       const login = await toolbarPopup(first);
-      await appRequest(login, { type: "LoginAccount", email, password });
+      await appRequest(login, { type: "LoginAccount", username, password });
       await expect
         .poll(
           async () =>
@@ -1545,8 +1713,8 @@ test("takes a first-time self-hosted user through capture, sync, Vacuum, and sta
 
     await test.step("publish the Vault to an empty second self-hosted server", async () => {
       if (vaultId === undefined) throw new Error("The first Journey Vault is unavailable.");
-      const candidateEmail = "switch@example.test";
-      await createRailsAccount(first.context, "http://127.0.0.1:3301", candidateEmail, password);
+      const candidateUsername = "switch_test";
+      await createRailsAccount(first.context, "http://127.0.0.1:3301", candidateUsername, password);
       await firstLibrary.bringToFront();
       const reliefEstimate = await appRequest<{
         readonly candidateArtifacts: number;
@@ -1603,7 +1771,7 @@ test("takes a first-time self-hosted user through capture, sync, Vacuum, and sta
         path: testInfo.outputPath("server-switch-login-narrow.png"),
       });
       await firstLibrary.setViewportSize({ width: 1280, height: 900 });
-      await candidate.getByRole("textbox", { name: "Email" }).fill(candidateEmail);
+      await candidate.getByRole("textbox", { name: "Username" }).fill(candidateUsername);
       await candidate.getByLabel("Password").fill(password);
       await faultControl(firstLibrary, "arm", "server-switch:after-classification");
       await candidate.getByRole("button", { name: "Sign in" }).click();
@@ -1738,7 +1906,7 @@ test("fast-forwards a candidate server from an exact recovered predecessor", asy
       setup.page,
       setup.client.vaultId,
       "http://127.0.0.1:3300",
-      setup.sourceEmail,
+      setup.sourceUsername,
       setup.password,
       "server-switch:after-remote-activation",
       "server-switch-fast-forward-candidate",
@@ -1761,7 +1929,7 @@ test("fast-forwards a stale local Replica from a candidate successor", async ({
       testInfo,
       "candidate-ahead-stale",
       "http://127.0.0.1:3300",
-      setup.sourceEmail,
+      setup.sourceUsername,
       setup.password,
       setup.client.recoveryPhrase,
     );
@@ -1802,7 +1970,7 @@ test("fast-forwards a stale local Replica from a candidate successor", async ({
       stalePage,
       stale.vaultId,
       "http://127.0.0.1:3301",
-      setup.candidateEmail,
+      setup.candidateUsername,
       setup.password,
       "server-switch:before-local-activation",
       "server-switch-fast-forward-local",
@@ -1883,7 +2051,7 @@ test("unions independent append-only Events in the same Generation", async ({
       testInfo,
       "union-source-branch",
       "http://127.0.0.1:3300",
-      setup.sourceEmail,
+      setup.sourceUsername,
       setup.password,
       setup.client.recoveryPhrase,
     );
@@ -1929,7 +2097,7 @@ test("unions independent append-only Events in the same Generation", async ({
       sourcePage,
       source.vaultId,
       "http://127.0.0.1:3301",
-      setup.candidateEmail,
+      setup.candidateUsername,
       setup.password,
       "server-switch-union",
     );
@@ -1948,7 +2116,7 @@ test("unions independent append-only Events in the same Generation", async ({
       testInfo,
       "union-fresh-candidate",
       "http://127.0.0.1:3301",
-      setup.candidateEmail,
+      setup.candidateUsername,
       setup.password,
       setup.client.recoveryPhrase,
     );
@@ -1984,7 +2152,7 @@ test("reports sibling successor Generations as a conflict without changing serve
       testInfo,
       "sibling-conflict-second",
       "http://127.0.0.1:3300",
-      setup.sourceEmail,
+      setup.sourceUsername,
       setup.password,
       setup.client.recoveryPhrase,
     );
@@ -2005,7 +2173,7 @@ test("reports sibling successor Generations as a conflict without changing serve
       serverSwitch?: { state: string; reason?: string };
     }>(setup.page, {
       type: "LoginServerSwitchCandidate",
-      email: setup.sourceEmail,
+      username: setup.sourceUsername,
       password: setup.password,
     });
     expect(state).toMatchObject({
@@ -2036,20 +2204,20 @@ test("preserves the source context across candidate authentication and Vault fai
   test.setTimeout(600_000);
   expect(browserName).toBe("chromium");
   const password = "correct horse archive battery";
-  const sourceEmail = `failure-source-${crypto.randomUUID()}@example.test`;
-  const candidateEmail = `failure-candidate-${crypto.randomUUID()}@example.test`;
+  const sourceUsername = `${crypto.randomUUID().replaceAll("-", "").slice(0, 24)}_test`;
+  const candidateUsername = `${crypto.randomUUID().replaceAll("-", "").slice(0, 24)}_test`;
   const source = await createSynchronizedClient(
     testInfo,
     "failure-source",
     "http://127.0.0.1:3300",
-    sourceEmail,
+    sourceUsername,
     password,
   );
   const candidate = await createSynchronizedClient(
     testInfo,
     "failure-candidate",
     "http://127.0.0.1:3301",
-    candidateEmail,
+    candidateUsername,
     password,
   );
   try {
@@ -2063,14 +2231,14 @@ test("preserves the source context across candidate authentication and Vault fai
     await expect(
       appRequest(library, {
         type: "LoginServerSwitchCandidate",
-        email: candidateEmail,
+        username: candidateUsername,
         password: "definitely incorrect password",
       }),
     ).rejects.toThrow("AUTHENTICATION_FAILED");
     await expect(
       appRequest(library, {
         type: "LoginServerSwitchCandidate",
-        email: `unknown-${crypto.randomUUID()}@example.test`,
+        username: `${crypto.randomUUID().replaceAll("-", "").slice(0, 24)}_test`,
         password,
       }),
     ).rejects.toThrow("AUTHENTICATION_FAILED");
@@ -2081,7 +2249,7 @@ test("preserves the source context across candidate authentication and Vault fai
     await expect(
       appRequest(library, {
         type: "LoginServerSwitchCandidate",
-        email: candidateEmail,
+        username: candidateUsername,
         password,
       }),
     ).rejects.toThrow("SERVER_SWITCH_VAULT_MISMATCH");
@@ -2122,13 +2290,13 @@ test("reauthenticates a candidate switch before and after remote application", a
   test.setTimeout(900_000);
   expect(browserName).toBe("chromium");
   const password = "correct horse archive battery";
-  const beforeSourceEmail = `reauth-before-source-${crypto.randomUUID()}@example.test`;
-  const beforeCandidateEmail = `reauth-before-candidate-${crypto.randomUUID()}@example.test`;
+  const beforeSourceUsername = `${crypto.randomUUID().replaceAll("-", "").slice(0, 24)}_test`;
+  const beforeCandidateUsername = `${crypto.randomUUID().replaceAll("-", "").slice(0, 24)}_test`;
   const before = await createSynchronizedClient(
     testInfo,
     "reauth-before",
     "http://127.0.0.1:3300",
-    beforeSourceEmail,
+    beforeSourceUsername,
     password,
   );
   let after: Awaited<ReturnType<typeof sharedDeletedBase>> | undefined;
@@ -2138,7 +2306,7 @@ test("reauthenticates a candidate switch before and after remote application", a
     await createRailsAccount(
       before.context,
       "http://127.0.0.1:3301",
-      beforeCandidateEmail,
+      beforeCandidateUsername,
       password,
     );
     await appRequest(beforePage, {
@@ -2156,7 +2324,7 @@ test("reauthenticates a candidate switch before and after remote application", a
       serverSwitch?: { jobId: string; state: string };
     }>(beforePage, {
       type: "LoginServerSwitchCandidate",
-      email: beforeCandidateEmail,
+      username: beforeCandidateUsername,
       password,
     });
     expect(expiredBefore).toMatchObject({
@@ -2167,7 +2335,7 @@ test("reauthenticates a candidate switch before and after remote application", a
     await faultControl(beforePage, "release");
     await appRequest(beforePage, {
       type: "LoginServerSwitchCandidate",
-      email: beforeCandidateEmail,
+      username: beforeCandidateUsername,
       password,
     });
     await waitForSynchronizedState(beforePage, "http://127.0.0.1:3301");
@@ -2197,7 +2365,7 @@ test("reauthenticates a candidate switch before and after remote application", a
       serverSwitch?: { jobId: string; state: string };
     }>(after.page, {
       type: "LoginServerSwitchCandidate",
-      email: after.sourceEmail,
+      username: after.sourceUsername,
       password: after.password,
     });
     expect(expiredAfter).toMatchObject({
@@ -2208,7 +2376,7 @@ test("reauthenticates a candidate switch before and after remote application", a
     await faultControl(after.page, "release");
     await appRequest(after.page, {
       type: "LoginServerSwitchCandidate",
-      email: after.sourceEmail,
+      username: after.sourceUsername,
       password: after.password,
     });
     await waitForSynchronizedState(after.page, "http://127.0.0.1:3300");
@@ -2313,7 +2481,8 @@ async function seedStaleAccountVisual(page: Page, vaultId: string): Promise<void
         version: 1,
         accountId,
         sessionId,
-        email: "archive@example.test",
+        username: "archive_test",
+        inactiveDeletionAt: "2027-07-27T12:00:00.000Z",
         scope: "VaultDevice",
       },
       "active",
@@ -2628,6 +2797,7 @@ test("captures a page snapshot and full-page screenshot, then derives MHTML offl
     await expect(library.locator(".library-card")).toHaveCount(2);
     await expect(library.getByRole("button", { name: "Undo" })).toBeVisible();
     await library.getByRole("button", { name: "Undo" }).click();
+    await expect(library.locator("#announcer")).toHaveText("Library change undone");
     await expect(library.locator(".library-card")).toHaveCount(1);
     await expect(library.getByText(/2 captures/u)).toBeVisible();
 
@@ -2656,6 +2826,7 @@ test("captures a page snapshot and full-page screenshot, then derives MHTML offl
     await sourceCollection.dragTo(destinationCollection);
     await expect(library.locator(".library-card")).toHaveCount(1);
     await library.getByRole("button", { name: "Undo" }).click();
+    await expect(library.locator("#announcer")).toHaveText("Library change undone");
     await expect(library.locator(".library-card")).toHaveCount(2);
 
     await library.locator(".library-card .card").first().click();
@@ -3115,12 +3286,12 @@ test("frees synchronized browser storage and restores remote Artifacts on demand
   test.setTimeout(300_000);
   expect(browserName).toBe("chromium");
   const password = "correct horse storage battery";
-  const email = `storage-${crypto.randomUUID()}@example.test`;
+  const username = `${crypto.randomUUID().replaceAll("-", "").slice(0, 24)}_test`;
   const client = await createSynchronizedClient(
     testInfo,
     "storage-relief",
     "http://127.0.0.1:3300",
-    email,
+    username,
     password,
   );
   try {
@@ -3277,6 +3448,57 @@ test("frees synchronized browser storage and restores remote Artifacts on demand
       path: testInfo.outputPath("storage-relief-success-narrow.png"),
       fullPage: true,
     });
+
+    await desktop.getByRole("button", { name: "Settings" }).click();
+    await desktop
+      .getByRole("button", { name: "Stop using this synchronization server", exact: true })
+      .click();
+    const detachmentRefusal = desktop.getByRole("dialog", {
+      name: "Stop using this synchronization server?",
+    });
+    await detachmentRefusal.getByRole("checkbox").check();
+    await detachmentRefusal
+      .getByRole("button", { name: "Keep local Vault and stop synchronization" })
+      .click();
+    await expect(
+      detachmentRefusal.getByText(
+        "This Vault is not fully stored on this browser. Reconnect to the synchronization server and retrieve the missing items before stopping synchronization.",
+      ),
+    ).toBeVisible();
+    await desktop.screenshot({
+      path: testInfo.outputPath("detachment-remote-only-refusal-desktop.png"),
+      fullPage: true,
+    });
+    await detachmentRefusal.getByRole("button", { name: "Close" }).click();
+    await expect(detachmentRefusal).toBeHidden();
+    await desktop.setViewportSize({ width: 390, height: 844 });
+    const remoteOnlySidebar = desktop.locator("#library-sidebar");
+    await expect(remoteOnlySidebar).toHaveAttribute("aria-hidden", "true");
+    await remoteOnlySidebar.evaluate(async (sidebar) => {
+      await Promise.all(sidebar.getAnimations().map(async (animation) => animation.finished));
+    });
+    await desktop.getByRole("button", { name: "Settings" }).click();
+    await desktop
+      .getByRole("button", { name: "Stop using this synchronization server", exact: true })
+      .click();
+    const narrowDetachmentRefusal = desktop.getByRole("dialog", {
+      name: "Stop using this synchronization server?",
+    });
+    await narrowDetachmentRefusal.getByRole("checkbox").check();
+    await narrowDetachmentRefusal
+      .getByRole("button", { name: "Keep local Vault and stop synchronization" })
+      .click();
+    await expect(
+      narrowDetachmentRefusal.getByText(
+        "This Vault is not fully stored on this browser. Reconnect to the synchronization server and retrieve the missing items before stopping synchronization.",
+      ),
+    ).toBeVisible();
+    await desktop.screenshot({
+      path: testInfo.outputPath("detachment-remote-only-refusal-narrow.png"),
+      fullPage: true,
+    });
+    await narrowDetachmentRefusal.getByRole("button", { name: "Close" }).click();
+    await desktop.setViewportSize({ width: 1280, height: 900 });
 
     await appRequest(desktop, { type: "RetrySynchronization" });
     await waitForSynchronizedState(desktop, "http://127.0.0.1:3300");
@@ -3539,7 +3761,7 @@ test("frees synchronized browser storage and restores remote Artifacts on demand
     });
 
     await desktop.goto(`chrome-extension://${client.extensionId}/library.html`);
-    await appRequest(desktop, { type: "LoginAccount", email, password });
+    await appRequest(desktop, { type: "LoginAccount", username, password });
     await appRequest(desktop, { type: "UnlockDevice", expectedVaultId: client.vaultId });
     await waitForSynchronizedState(desktop, "http://127.0.0.1:3300");
     await setCoordinationServerUnavailable(client, true);
@@ -3714,7 +3936,7 @@ test("resumes every packaged storage-relief removal boundary and preserves parti
     testInfo,
     "storage-relief-restart",
     "http://127.0.0.1:3300",
-    `storage-restart-${crypto.randomUUID()}@example.test`,
+    `${crypto.randomUUID().replaceAll("-", "").slice(0, 24)}_test`,
     password,
   );
   try {

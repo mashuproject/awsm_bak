@@ -3,19 +3,73 @@ class CreateCoordinationSchema < ActiveRecord::Migration[8.1]
     enable_extension "pgcrypto"
 
     create_table :accounts, id: :uuid do |table|
-      table.string :email, null: false
+      table.string :username, null: false
       table.string :password_digest, null: false
+      table.string :state, null: false, default: "Active"
+      table.datetime :last_activity_at, null: false
       table.timestamps
     end
-    add_index :accounts, :email, unique: true
-    add_check_constraint :accounts, "email = lower(email)", name: "accounts_normalized_email"
+    add_index :accounts, :username, unique: true
+    add_check_constraint :accounts, "username = lower(username)",
+      name: "accounts_normalized_username"
+    add_check_constraint :accounts, "char_length(username) BETWEEN 3 AND 32",
+      name: "accounts_username_length"
+    add_check_constraint :accounts,
+      "username ~ '^[a-z0-9](?:[a-z0-9_-]{1,30}[a-z0-9])?$'",
+      name: "accounts_username_shape"
+    add_check_constraint :accounts, "state IN ('Active', 'Deleting')",
+      name: "accounts_state"
 
     create_table :browser_sessions, id: :uuid do |table|
       table.references :account, null: false, type: :uuid, foreign_key: true
-      table.string :ip_address
-      table.string :user_agent
+      table.string :client_family, null: false
+      table.datetime :last_activity_at, null: false
       table.timestamps
     end
+    add_index :browser_sessions, [ :account_id, :last_activity_at ]
+    add_check_constraint :browser_sessions, "client_family IN ('Chrome', 'Firefox', 'Other')",
+      name: "browser_sessions_client_family"
+
+    create_table :account_deletion_jobs, id: :uuid do |table|
+      table.references :account, type: :uuid, foreign_key: { on_delete: :nullify }
+      table.string :reason, null: false
+      table.string :state, null: false
+      table.string :stage, null: false
+      table.bigint :total_bytes, null: false, default: 0
+      table.bigint :processed_bytes, null: false, default: 0
+      table.integer :retry_count, null: false, default: 0
+      table.string :error_outcome
+      table.binary :receipt_digest
+      table.datetime :started_at
+      table.datetime :completed_at
+      table.datetime :receipt_expires_at
+      table.timestamps
+    end
+    add_index :account_deletion_jobs, :account_id, unique: true,
+      where: "account_id IS NOT NULL AND state <> 'Succeeded'",
+      name: "index_one_active_account_deletion"
+    add_check_constraint :account_deletion_jobs, "reason IN ('Manual', 'Inactivity')",
+      name: "account_deletion_jobs_reason"
+    add_check_constraint :account_deletion_jobs,
+      "state IN ('Pending', 'Running', 'FailedRetryable', 'Succeeded')",
+      name: "account_deletion_jobs_state"
+    add_check_constraint :account_deletion_jobs,
+      "stage IN ('Freeze', 'DeleteOpaqueBytes', 'DeleteRelationalState', 'Complete')",
+      name: "account_deletion_jobs_stage"
+    add_check_constraint :account_deletion_jobs,
+      "total_bytes >= 0 AND processed_bytes >= 0 AND processed_bytes <= total_bytes " \
+      "AND retry_count >= 0",
+      name: "account_deletion_jobs_counters"
+    add_check_constraint :account_deletion_jobs,
+      "receipt_digest IS NULL OR octet_length(receipt_digest) = 32",
+      name: "account_deletion_jobs_receipt_digest"
+    add_check_constraint :account_deletion_jobs,
+      "reason = 'Manual' OR receipt_digest IS NULL",
+      name: "account_deletion_jobs_inactivity_receipt"
+    add_check_constraint :account_deletion_jobs,
+      "state <> 'Succeeded' OR " \
+      "(stage = 'Complete' AND completed_at IS NOT NULL AND account_id IS NULL)",
+      name: "account_deletion_jobs_completion"
 
     create_table :api_sessions, id: :uuid do |table|
       table.references :account, null: false, type: :uuid, foreign_key: true
@@ -276,7 +330,7 @@ class CreateCoordinationSchema < ActiveRecord::Migration[8.1]
       table.integer :part_number, null: false
       table.bigint :byte_length, null: false
       table.binary :sha256, null: false
-      table.string :storage_key, null: false
+      table.string :storage_key
       table.datetime :received_at, null: false
       table.timestamps
     end

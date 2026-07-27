@@ -16,15 +16,17 @@ module Coordination
       def authenticate_credential(credential)
         raise OutcomeError.new("AUTHENTICATION_FAILED", status: :unauthorized) if credential.nil?
         session = SessionCredentials.authenticate(credential)
+        raise OutcomeError.new("AUTHENTICATION_FAILED", status: :unauthorized) unless session.account.active?
+
         AccountPrincipal.new(account: session.account, confirmed_at: session.confirmed_at, session:,
           scope: session.scope)
       end
 
-      def authenticate_login(email, password)
-        account = Account.find_by(email: Account.normalize_value_for(:email, email))
+      def authenticate_login(username, password)
+        account = Account.find_by(username: Account.normalize_value_for(:username, username))
         digest = account&.password_digest || SYNTHETIC_AUTHENTICATION_DIGEST
         authenticated = BCrypt::Password.new(digest).is_password?(password)
-        return account if authenticated && account
+        return account if authenticated && account&.active?
 
         raise OutcomeError.new("AUTHENTICATION_FAILED", status: :unauthorized)
       end

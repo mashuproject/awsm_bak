@@ -5,9 +5,10 @@ require "openssl"
 RSpec.describe "Plan 15 Device management", type: :request do
   let(:account) do
     Account.create!(
-      email: "reader@example.test",
+      username: "reader",
       password: "correct horse battery staple",
-      password_confirmation: "correct horse battery staple"
+      password_confirmation: "correct horse battery staple",
+      last_activity_at: Time.current
     )
   end
   let(:vault) do

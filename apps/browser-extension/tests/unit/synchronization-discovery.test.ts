@@ -13,7 +13,8 @@ describe("Account Vault enrollment discovery", () => {
     version: 1 as const,
     accountId,
     sessionId,
-    email: "reader@example.test",
+    username: "reader_test",
+    inactiveDeletionAt: "2027-07-27T12:00:00.000Z",
     scope: "Account" as const,
   };
 

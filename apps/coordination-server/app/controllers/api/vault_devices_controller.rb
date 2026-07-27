@@ -111,7 +111,11 @@ module Api
       target_device_id = body.fetch("targetDeviceId")
       recovery_id = body.fetch("recoveryGeneration").fetch("recoveryGenerationId")
       key_epoch = body.fetch("keyEpoch")
-      next_ordinal = vault.vault_key_epochs.maximum(:ordinal)&.+(1)
+      unless vault.active_recovery_generation_id == expected_recovery_id &&
+          vault.active_key_epoch_id == expected_epoch_id
+        raise Coordination::OutcomeError.new("RECOVERY_GENERATION_CHANGED", status: :conflict)
+      end
+      next_ordinal = vault.vault_key_epochs.find_by(id: expected_epoch_id)&.ordinal&.+(1)
       unless key_epoch.keys.sort == %w[keyEpochId ordinal].sort &&
           next_ordinal && key_epoch.fetch("ordinal") == next_ordinal
         raise Coordination::OutcomeError.new("DEVICE_ENROLLMENT_INVALID",

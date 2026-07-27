@@ -13,6 +13,7 @@ export const STORES = {
   deviceSessions: "device_sessions",
   deviceIdentities: "device_identities",
   deviceLocalKeys: "device_local_keys",
+  detachedVaultAuthorities: "detached_vault_authorities",
   epochKeys: "epoch_keys",
   deviceEnrollmentJobs: "device_enrollment_jobs",
   futureProtectionJobs: "future_protection_jobs",
@@ -146,7 +147,8 @@ export interface StoredAccountMetadataV1 {
   readonly version: 1;
   readonly accountId: string;
   readonly sessionId: string;
-  readonly email: string;
+  readonly username: string;
+  readonly inactiveDeletionAt: string;
   readonly scope: "Account" | "VaultDevice";
 }
 
@@ -175,6 +177,31 @@ export interface StoredRecoveryKitV1 {
   readonly recoveryGenerationId: string;
   readonly metadata: import("../../runtime/recovery/kit").RecoveryKitMetadataV1;
   readonly ciphertext: Uint8Array;
+}
+
+export interface DetachedVaultAuthorityV1 {
+  readonly version: 1;
+  readonly vaultId: string;
+  readonly activeRecoveryGenerationId: string;
+  readonly activeKeyEpochId: string;
+  readonly deviceIdentity: {
+    readonly deviceId: string;
+    readonly recoveryGenerationId: string;
+    readonly certificate: import("../../runtime/recovery/device").DeviceCertificateV1;
+    readonly envelopes: readonly import("../../runtime/recovery/device").DeviceKeyEnvelopeV1[];
+    readonly signingPublicKey: Uint8Array;
+    readonly wrappingPublicKey: Uint8Array;
+    readonly wrappedSigningSecretKey: Uint8Array;
+    readonly wrappedWrappingSecretKey: Uint8Array;
+  };
+  readonly epochKeys: readonly {
+    readonly version: 1;
+    readonly vaultId: string;
+    readonly keyEpochId: string;
+    readonly ordinal: number;
+    readonly wrappedRootKey: Uint8Array;
+  }[];
+  readonly recoveryKit: StoredRecoveryKitV1;
 }
 
 export type SynchronizationStage =

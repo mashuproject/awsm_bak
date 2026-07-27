@@ -47,7 +47,7 @@ services:
         condition: service_healthy
     environment:
       AWSM_CABLE_ADAPTER: redis
-      AWSM_JOB_QUEUE_ADAPTER: async
+      AWSM_JOB_QUEUE_ADAPTER: inline
       AWSM_OPENAPI_PATH: /docs/specifications/protocol/http-api.openapi.yaml
       AWSM_OPAQUE_STORAGE_PATH: /opaque-storage
       AWSM_REDIS_NAMESPACE: awsm:sync-proof
@@ -69,7 +69,7 @@ services:
         condition: service_completed_successfully
     environment: &coordination-proof-environment
       AWSM_CABLE_ADAPTER: redis
-      AWSM_JOB_QUEUE_ADAPTER: async
+      AWSM_JOB_QUEUE_ADAPTER: inline
       AWSM_OPENAPI_PATH: /docs/specifications/protocol/http-api.openapi.yaml
       AWSM_OPAQUE_STORAGE_PATH: /opaque-storage
       AWSM_REDIS_NAMESPACE: awsm:sync-proof

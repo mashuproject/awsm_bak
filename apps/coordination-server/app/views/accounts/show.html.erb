@@ -2,21 +2,160 @@
 
 <%= render layout: "shared/account_shell",
            locals: {
-             story_heading: "One place for your server identity.",
-             story_copy: "Manage the Account credentials and active sessions this Coordination Server can see."
+             card_class: "account-card--dashboard",
+             story_heading: "Manage the server identity connected to your Vault.",
+             story_copy: "This website shows Account, Device, and website-session facts. Vault content remains in trusted AWSM extension clients."
            } do %>
   <p class="eyebrow">Coordination Server Account</p>
   <h1>Your Account</h1>
-  <ul class="metadata">
-    <li><strong>Email:</strong> <%= @account.email %></li>
-    <li><strong>Created:</strong> <%= time_tag @account.created_at %></li>
-    <li><strong>Browser sessions:</strong> <%= @account.browser_sessions.count %></li>
-    <li><strong>API sessions:</strong> <%= @account.api_sessions.where(revoked_at: nil).count %></li>
-  </ul>
 
-  <div class="actions">
-    <%= link_to "Change password", edit_account_password_path, class: "button" %>
-    <%= button_to "Sign out", session_path, method: :delete %>
-    <%= link_to "Return to AWSM", root_path %>
-  </div>
+  <nav class="account-section-nav" aria-label="Account sections">
+    <%= link_to "Overview", "#overview" %>
+    <%= link_to "Devices", "#devices" %>
+    <%= link_to "Website sessions", "#website-sessions" %>
+    <%= link_to "Security", "#security" %>
+    <%= link_to "Delete Account", "#delete-account" %>
+  </nav>
+
+  <section class="account-dashboard-section" id="overview">
+    <p class="eyebrow">Overview</p>
+    <h2>Account overview</h2>
+    <dl class="account-facts">
+      <div><dt>Username</dt><dd><%= @account.username %></dd></div>
+      <div><dt>Created</dt><dd><%= time_tag @account.created_at %></dd></div>
+      <div><dt>Synchronization server</dt><dd><%= Coordination::Registration.public_origin %></dd></div>
+      <div>
+        <dt>Vault state</dt>
+        <dd>
+          <% if @vault&.state == "Active" %>
+            Synchronized Vault attached
+          <% elsif @vault&.state == "Provisional" %>
+            Synchronization setup in progress
+          <% else %>
+            No synchronized Vault
+          <% end %>
+        </dd>
+      </div>
+      <div><dt>Active Devices</dt><dd><%= @devices.count { |device| device.revoked_at.nil? } %></dd></div>
+      <div><dt>Website sessions</dt><dd><%= @browser_sessions.size %></dd></div>
+      <div>
+        <dt>Scheduled inactivity deletion</dt>
+        <dd><%= time_tag @inactive_deletion_at, format: :long %></dd>
+      </div>
+    </dl>
+    <p>
+      Successful Account use moves this date forward. Inactive Account deletion is permanent and
+      has no recovery period.
+    </p>
+  </section>
+
+  <section class="account-dashboard-section" id="devices">
+    <p class="eyebrow">Devices</p>
+    <h2>Synchronized Devices</h2>
+    <% if @devices.empty? %>
+      <p>No synchronized Devices are attached to this Account.</p>
+    <% else %>
+      <ul class="account-record-list">
+        <% @devices.each do |device| %>
+          <li>
+            <div>
+              <strong><%= device.display_name %></strong>
+              <span><%= device.client_kind == "ChromeExtension" ? "Chrome" : "Firefox" %></span>
+            </div>
+            <dl>
+              <div><dt>Enrolled</dt><dd><%= time_tag device.enrolled_at, format: :long %></dd></div>
+              <div>
+                <dt>Status</dt>
+                <dd>
+                  <% if device.revoked_at %>
+                    Removed <%= time_tag device.revoked_at, format: :long %>
+                  <% else %>
+                    Active
+                  <% end %>
+                </dd>
+              </div>
+            </dl>
+          </li>
+        <% end %>
+      </ul>
+    <% end %>
+    <p>
+      Device removal changes Vault cryptographic authority. Manage Devices in the AWSM extension.
+    </p>
+  </section>
+
+  <section class="account-dashboard-section" id="website-sessions">
+    <p class="eyebrow">Website sessions</p>
+    <h2>Signed-in browsers</h2>
+    <ul class="account-record-list">
+      <% @browser_sessions.each do |browser_session| %>
+        <li>
+          <div>
+            <strong><%= browser_session.client_family %></strong>
+            <% if browser_session == Current.browser_session %>
+              <span class="awsm-badge">This session</span>
+            <% end %>
+          </div>
+          <dl>
+            <div><dt>Created</dt><dd><%= time_tag browser_session.created_at, format: :long %></dd></div>
+            <div>
+              <dt>Last active</dt>
+              <dd><%= time_tag browser_session.last_activity_at.to_date, format: :long %></dd>
+            </div>
+          </dl>
+          <% unless browser_session == Current.browser_session %>
+            <%= button_to "Sign out this session",
+                          account_browser_session_path(browser_session),
+                          method: :delete,
+                          class: "awsm-button awsm-button--quiet" %>
+          <% end %>
+        </li>
+      <% end %>
+    </ul>
+    <% if @browser_sessions.size > 1 %>
+      <%= button_to "Sign out all other website sessions",
+                    account_browser_sessions_path,
+                    method: :delete,
+                    class: "awsm-button awsm-button--secondary" %>
+    <% end %>
+    <p>
+      Extension sessions are managed by the extension. Changing your Account password or deleting
+      the Account revokes them.
+    </p>
+  </section>
+
+  <section class="account-dashboard-section" id="security">
+    <p class="eyebrow">Security</p>
+    <h2>Account security</h2>
+    <p>
+      Your username is permanent. To use a different username, permanently delete this Account and
+      create a new one.
+    </p>
+    <p>
+      Your Account password proves who you are to this synchronization server. Your Recovery
+      Phrase protects access to your Vault on a trusted AWSM client. The Recovery Phrase cannot
+      reset or recover the Account password.
+    </p>
+    <p>
+      AWSM does not collect an email address and cannot send a reset link. If you forget the
+      Account password, you can keep using a complete local Vault or move it to another
+      synchronization server, but you cannot regain access to this Account.
+    </p>
+    <div class="button-row">
+      <%= link_to "Change password", edit_account_password_path, class: "awsm-button awsm-button--secondary" %>
+      <%= button_to "Sign out", session_path, method: :delete, class: "awsm-button awsm-button--quiet" %>
+    </div>
+  </section>
+
+  <section class="account-dashboard-section account-dashboard-section--danger" id="delete-account">
+    <p class="eyebrow">Delete Account</p>
+    <h2>Permanently delete this Account</h2>
+    <p>
+      Deletion removes the server-side Account and encrypted Replica. It does not delete data in
+      this browser or in Exports. There is no recovery period.
+    </p>
+    <%= link_to "Delete Account", new_account_deletion_path, class: "awsm-button awsm-button--danger" %>
+  </section>
+
+  <p><%= link_to "Return to AWSM", root_path %></p>
 <% end %>

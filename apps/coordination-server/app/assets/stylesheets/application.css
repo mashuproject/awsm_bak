@@ -744,6 +744,75 @@ body {
   font-size: clamp(2.2rem, 5vw, 3.5rem);
 }
 
+.account-card--dashboard {
+  width: min(100%, 760px);
+}
+
+.account-section-nav,
+.account-facts,
+.account-record-list,
+.account-record-list dl {
+  display: grid;
+  gap: var(--awsm-space-3);
+}
+
+.account-section-nav {
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  margin-block: var(--awsm-space-6);
+  border-block: 1px solid var(--awsm-border-subtle);
+  padding-block: var(--awsm-space-3);
+}
+
+.account-dashboard-section {
+  scroll-margin-top: var(--awsm-space-6);
+  margin-block: var(--awsm-space-8);
+  border-top: var(--awsm-border);
+  padding-top: var(--awsm-space-6);
+}
+
+.account-dashboard-section--danger {
+  border: var(--awsm-border);
+  border-color: var(--awsm-danger);
+  border-radius: var(--awsm-radius-control);
+  padding: var(--awsm-space-6);
+  background: var(--awsm-danger-pale);
+}
+
+.account-facts,
+.account-record-list {
+  padding: 0;
+  list-style: none;
+}
+
+.account-facts > div,
+.account-record-list > li {
+  border-bottom: 1px solid var(--awsm-border-subtle);
+  padding-block: var(--awsm-space-3);
+}
+
+.account-facts dt,
+.account-record-list dt {
+  font-weight: 750;
+}
+
+.account-facts dd,
+.account-record-list dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.account-record-list > li > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--awsm-space-3);
+}
+
+.account-record-list dl {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  margin-block: var(--awsm-space-3);
+}
+
 .account-form,
 .field,
 .actions {
@@ -788,6 +857,11 @@ body {
   box-shadow: var(--awsm-shadow-hard);
   cursor: pointer;
   font-weight: 800;
+}
+
+.actions input[type="submit"].awsm-button--danger {
+  color: var(--awsm-paper);
+  background: var(--awsm-danger);
 }
 
 .metadata {

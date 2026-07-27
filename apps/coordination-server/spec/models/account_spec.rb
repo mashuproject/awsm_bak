@@ -3,28 +3,65 @@ require "rails_helper"
 RSpec.describe Account, type: :model do
   let(:attributes) do
     {
-      email: "reader@example.test",
+      username: "quiet_vault",
       password: "correct horse battery staple",
-      password_confirmation: "correct horse battery staple"
+      password_confirmation: "correct horse battery staple",
+      last_activity_at: Time.current
     }
   end
 
-  it "stores one normalized password credential and permits at most one Vault" do
-    account = described_class.create!(**attributes)
+  it "stores one normalized private username and password credential" do
+    account = described_class.create!(**attributes.merge(username: "  Quiet_Vault  "))
 
-    expect(account.email).to eq("reader@example.test")
+    expect(account.username).to eq("quiet_vault")
     expect(account.password_digest).to be_present
+    expect(account.state).to eq("Active")
     expect(account.authenticate("correct horse battery staple")).to eq(account)
     expect(account.authenticate("wrong password")).to be(false)
     expect(account.vault_replicas).to be_empty
   end
 
-  it "rejects duplicate normalized email" do
+  it "rejects duplicate normalized usernames" do
     described_class.create!(**attributes)
 
-    duplicate = described_class.new(**attributes.merge(email: "READER@EXAMPLE.TEST"))
+    duplicate = described_class.new(**attributes.merge(username: " QUIET_VAULT "))
 
     expect(duplicate).not_to be_valid
-    expect(duplicate.errors[:email]).to be_present
+    expect(duplicate.errors[:username]).to be_present
+  end
+
+  it "accepts only the canonical 3-to-32-character ASCII username shape" do
+    expect(described_class.new(**attributes.merge(username: "a-b_c9"))).to be_valid
+
+    [ "ab", "-archive", "archive-", "a..b", "álbum", "a" * 33 ].each do |username|
+      account = described_class.new(**attributes.merge(username:))
+
+      expect(account).not_to be_valid
+      expect(account.errors[:username]).to be_present
+    end
+  end
+
+  it "defines only the canonical Account identity and lifecycle columns" do
+    expect(described_class.column_names).to include(
+      "username",
+      "password_digest",
+      "state",
+      "last_activity_at"
+    )
+    expect(described_class.column_names).not_to include("email")
+  end
+
+  it "enforces username normalization and shape in PostgreSQL" do
+    insert = <<~SQL.squish
+      INSERT INTO accounts
+        (username, password_digest, state, last_activity_at, created_at, updated_at)
+      VALUES
+        ('INVALID', 'digest', 'Active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    SQL
+
+    expect { described_class.connection.execute(insert) }.to raise_error(
+      ActiveRecord::StatementInvalid,
+      /accounts_normalized_username|accounts_username_shape/
+    )
   end
 end

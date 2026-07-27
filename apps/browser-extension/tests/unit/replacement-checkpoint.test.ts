@@ -26,7 +26,8 @@ describe("replacement sensitive checkpoint", () => {
         version: 1,
         accountId: id(1),
         sessionId: id(2),
-        email: "owner@example.test",
+        username: "owner_test",
+        inactiveDeletionAt: "2027-07-27T12:00:00.000Z",
         scope: "Account",
       },
       target,
@@ -56,7 +57,8 @@ describe("replacement sensitive checkpoint", () => {
       session: {
         account: {
           accountId: id(1),
-          email: "owner@example.test",
+          username: "owner_test",
+          inactiveDeletionAt: "2027-07-27T12:00:00.000Z",
         },
         sessionId: id(4),
         scope: "VaultDevice",

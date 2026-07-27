@@ -1,10 +1,4 @@
-import {
-  createCipheriv,
-  createDecipheriv,
-  createHash,
-  randomBytes,
-  randomUUID,
-} from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "node:crypto";
 import assert from "node:assert/strict";
 import { createInitialVaultAuthority } from "./plan15-proof-authority.mjs";
 
@@ -28,16 +22,9 @@ function encryptArtifact(plaintext, key) {
 }
 
 function decryptArtifact(wrapper, key) {
-  const decipher = createDecipheriv(
-    "aes-256-gcm",
-    key,
-    wrapper.subarray(0, 12),
-  );
+  const decipher = createDecipheriv("aes-256-gcm", key, wrapper.subarray(0, 12));
   decipher.setAuthTag(wrapper.subarray(12, 28));
-  return Buffer.concat([
-    decipher.update(wrapper.subarray(28)),
-    decipher.final(),
-  ]);
+  return Buffer.concat([decipher.update(wrapper.subarray(28)), decipher.final()]);
 }
 
 function requestId() {
@@ -45,12 +32,7 @@ function requestId() {
   return randomUUID();
 }
 
-async function control(
-  method,
-  path,
-  body,
-  { idempotencyKey, expected = [200] } = {},
-) {
+async function control(method, path, body, { idempotencyKey, expected = [200] } = {}) {
   const headers = {
     "Awsm-Protocol-Version": "1",
     "Awsm-Request-ID": requestId(),
@@ -73,31 +55,21 @@ async function control(
 }
 
 async function putPart(url, partNumber, bytes) {
-  const response = await fetch(
-    `${baseUrl}${url.replace("{partNumber}", String(partNumber))}`,
-    {
-      method: "PUT",
-      headers: {
-        "Awsm-Protocol-Version": "1",
-        "Awsm-Request-ID": requestId(),
-        "Content-Type": "application/octet-stream",
-        "Content-Length": String(bytes.byteLength),
-        "Content-SHA256": sha256(bytes),
-      },
-      body: bytes,
+  const response = await fetch(`${baseUrl}${url.replace("{partNumber}", String(partNumber))}`, {
+    method: "PUT",
+    headers: {
+      "Awsm-Protocol-Version": "1",
+      "Awsm-Request-ID": requestId(),
+      "Content-Type": "application/octet-stream",
+      "Content-Length": String(bytes.byteLength),
+      "Content-SHA256": sha256(bytes),
     },
-  );
+    body: bytes,
+  });
   assert.equal(response.status, 204);
 }
 
-async function beginUpload(
-  vaultId,
-  generationId,
-  objectId,
-  objectType,
-  bytes,
-  eventMetadata,
-) {
+async function beginUpload(vaultId, generationId, objectId, objectType, bytes, eventMetadata) {
   const body = {
     objectId,
     objectType,
@@ -107,15 +79,10 @@ async function beginUpload(
     targetGenerationId: generationId,
     ...(eventMetadata ? { eventMetadata } : {}),
   };
-  const { payload } = await control(
-    "POST",
-    `/api/vaults/${vaultId}/uploads`,
-    body,
-    {
-      idempotencyKey: randomUUID(),
-      expected: [201],
-    },
-  );
+  const { payload } = await control("POST", `/api/vaults/${vaultId}/uploads`, body, {
+    idempotencyKey: randomUUID(),
+    expected: [201],
+  });
   return { ...payload, bytes };
 }
 
@@ -141,10 +108,7 @@ async function openCable(vaultId) {
     expected: [201],
   });
   const socketUrl = `${cableUrl}?ticket=${encodeURIComponent(issued.payload.ticket)}`;
-  const socket = new WebSocket(socketUrl, [
-    "actioncable-v1-json",
-    "actioncable-unsupported",
-  ]);
+  const socket = new WebSocket(socketUrl, ["actioncable-v1-json", "actioncable-unsupported"]);
   const messages = [];
   let confirmedResolve;
   const confirmed = new Promise((resolve) => (confirmedResolve = resolve));
@@ -176,10 +140,10 @@ async function openCable(vaultId) {
 }
 
 async function expectCableReplayRejected(rawTicket) {
-  const socket = new WebSocket(
-    `${cableUrl}?ticket=${encodeURIComponent(rawTicket)}`,
-    ["actioncable-v1-json", "actioncable-unsupported"],
-  );
+  const socket = new WebSocket(`${cableUrl}?ticket=${encodeURIComponent(rawTicket)}`, [
+    "actioncable-v1-json",
+    "actioncable-unsupported",
+  ]);
   await Promise.race([
     new Promise((resolve, reject) => {
       socket.addEventListener("message", (event) => {
@@ -192,10 +156,7 @@ async function expectCableReplayRejected(rawTicket) {
       socket.addEventListener("error", resolve);
     }),
     new Promise((_, reject) =>
-      setTimeout(
-        () => reject(new Error("Cable replay rejection timeout")),
-        10_000,
-      ),
+      setTimeout(() => reject(new Error("Cable replay rejection timeout")), 10_000),
     ),
   ]);
 }
@@ -210,20 +171,20 @@ async function waitFor(predicate, label, timeout = 15_000) {
   throw new Error(`Timed out waiting for ${label}`);
 }
 
-const email = `proof-${randomUUID()}@example.test`;
+const username = `proof_${randomUUID().replaceAll("-", "").slice(0, 20)}`;
 const password = `coordination proof ${randomUUID()}`;
 const signupResponse = await fetch(`${baseUrl}/sign_up`, {
   method: "POST",
   headers: { "Content-Type": "application/x-www-form-urlencoded" },
   body: new URLSearchParams({
-    "account[email]": email,
+    "account[username]": username,
     "account[password]": password,
     "account[password_confirmation]": password,
   }),
   redirect: "manual",
 });
 assert.equal(signupResponse.status, 302);
-const signup = await control("POST", "/api/sessions", { email, password });
+const signup = await control("POST", "/api/sessions", { username, password });
 credential = signup.payload.accessToken;
 const refreshed = await control(
   "POST",
@@ -234,12 +195,7 @@ const refreshed = await control(
 credential = refreshed.payload.accessToken;
 await control("DELETE", "/api/session", undefined, { expected: [204] });
 credential = undefined;
-const login = await control(
-  "POST",
-  "/api/sessions",
-  { email, password },
-  { expected: [200] },
-);
+const login = await control("POST", "/api/sessions", { username, password }, { expected: [200] });
 credential = login.payload.accessToken;
 
 const policy = (await control("GET", "/api/service-policy")).payload;
@@ -247,10 +203,7 @@ assert.equal(policy.recoveryRetentionDays, 90);
 assert.equal(policy.uploadPartSizeBytes, 8_388_608);
 
 const generationZeroBytes = Buffer.from("opaque-generation-zero");
-const authority = createInitialVaultAuthority(
-  login.payload.sessionId,
-  generationZeroBytes,
-);
+const authority = createInitialVaultAuthority(login.payload.sessionId, generationZeroBytes);
 const { vaultId, generationId: generationZeroId, keyEpochId } = authority;
 activeKeyEpochId = keyEpochId;
 const attachKey = randomUUID();
@@ -299,17 +252,9 @@ const artifact = await beginUpload(
   "Artifact",
   artifactBytes,
 );
-await putPart(
-  artifact.ticket.url,
-  0,
-  artifactBytes.subarray(0, artifact.upload.partSizeBytes),
-);
-const resumed = (
-  await control(
-    "GET",
-    `/api/vaults/${vaultId}/uploads/${artifact.upload.uploadId}`,
-  )
-).payload;
+await putPart(artifact.ticket.url, 0, artifactBytes.subarray(0, artifact.upload.partSizeBytes));
+const resumed = (await control("GET", `/api/vaults/${vaultId}/uploads/${artifact.upload.uploadId}`))
+  .payload;
 assert.deepEqual(resumed.receivedParts, [0]);
 await finishUpload(vaultId, artifact, 1);
 
@@ -366,20 +311,12 @@ await waitFor(
   "commit Cable hint",
 );
 
-const changes = (
-  await control("GET", `/api/vaults/${vaultId}/changes?after=0&limit=100`)
-).payload;
+const changes = (await control("GET", `/api/vaults/${vaultId}/changes?after=0&limit=100`)).payload;
 assert.equal(changes.snapshotCursor, 2);
-const activeBefore = (
-  await control("GET", `/api/vaults/${vaultId}/records?limit=100`)
-).payload;
+const activeBefore = (await control("GET", `/api/vaults/${vaultId}/records?limit=100`)).payload;
 assert(activeBefore.records.some((record) => record.objectId === eventId));
-const durableArtifact = activeBefore.records.find(
-  (record) => record.objectId === artifactId,
-);
-const durableEvent = activeBefore.records.find(
-  (record) => record.objectId === eventId,
-);
+const durableArtifact = activeBefore.records.find((record) => record.objectId === artifactId);
+const durableEvent = activeBefore.records.find((record) => record.objectId === eventId);
 assert.deepEqual(
   {
     objectType: durableArtifact?.objectType,
@@ -398,14 +335,9 @@ replicaOneRemoteOnlyArtifacts.add(artifactId);
 assert.equal(replicaOneLocalArtifacts.has(artifactId), false);
 assert.equal(replicaOneRemoteOnlyArtifacts.has(artifactId), true);
 const download = (
-  await control(
-    "POST",
-    `/api/vaults/${vaultId}/records/${artifactId}/downloads`,
-    undefined,
-    {
-      idempotencyKey: randomUUID(),
-    },
-  )
+  await control("POST", `/api/vaults/${vaultId}/records/${artifactId}/downloads`, undefined, {
+    idempotencyKey: randomUUID(),
+  })
 ).payload;
 const midpoint = Math.floor(artifactBytes.byteLength / 2);
 const firstRange = await fetch(`${baseUrl}${download.ticket.url}`, {
@@ -507,9 +439,8 @@ await control(
   },
 );
 
-const currentRecords = (
-  await control("GET", `/api/vaults/${vaultId}/records?limit=100`)
-).payload.records;
+const currentRecords = (await control("GET", `/api/vaults/${vaultId}/records?limit=100`)).payload
+  .records;
 const retainedIds = currentRecords.map((record) => record.objectId).sort();
 const successorId = randomUUID();
 const successorBytes = Buffer.from("canonical-successor");
@@ -570,14 +501,10 @@ await control(
   { idempotencyKey: randomUUID() },
 );
 
-const recovery = (await control("GET", `/api/vaults/${vaultId}/recoveries`))
-  .payload.recoveries[0];
+const recovery = (await control("GET", `/api/vaults/${vaultId}/recoveries`)).payload.recoveries[0];
 assert.equal(recovery.generationId, generationZeroId);
 const recoveryRecords = (
-  await control(
-    "GET",
-    `/api/vaults/${vaultId}/recoveries/${generationZeroId}/records?limit=100`,
-  )
+  await control("GET", `/api/vaults/${vaultId}/recoveries/${generationZeroId}/records?limit=100`)
 ).payload.records;
 assert(recoveryRecords.length > 0);
 await control(
@@ -614,14 +541,8 @@ await control(
   },
   { idempotencyKey: randomUUID() },
 );
-const pollOnly = (
-  await control("GET", `/api/vaults/${vaultId}/changes?after=4&limit=100`)
-).payload;
-assert(
-  pollOnly.changes.some(
-    (change) => change.event?.objectId === postActivationId,
-  ),
-);
+const pollOnly = (await control("GET", `/api/vaults/${vaultId}/changes?after=4&limit=100`)).payload;
+assert(pollOnly.changes.some((change) => change.event?.objectId === postActivationId));
 
 const purge = (
   await control("POST", `/api/vaults/${vaultId}/purges`, undefined, {
@@ -629,16 +550,33 @@ const purge = (
     expected: [202],
   })
 ).payload;
-await waitFor(
-  async () => {
-    const state = (
-      await control("GET", `/api/vaults/${vaultId}/purges/${purge.purgeId}`)
-    ).payload;
-    return state.state === "Succeeded" ? state : false;
-  },
-  "purge completion",
-  30_000,
-);
+let lastPurgeState;
+try {
+  await waitFor(
+    async () => {
+      const state = (await control("GET", `/api/vaults/${vaultId}/purges/${purge.purgeId}`))
+        .payload;
+      lastPurgeState = {
+        state: state.state,
+        stage: state.stage,
+        retryCount: state.retryCount,
+        outcome: state.outcome,
+      };
+      if (state.state === "FailedRetryable")
+        throw new Error(
+          `Purge failed retryably: ${JSON.stringify(lastPurgeState)}`,
+        );
+      return state.state === "Succeeded" ? state : false;
+    },
+    "purge completion",
+    30_000,
+  );
+} catch (error) {
+  throw new Error(
+    `${error instanceof Error ? error.message : String(error)}; last purge state: ${JSON.stringify(lastPurgeState)}`,
+    { cause: error },
+  );
+}
 await control(
   "GET",
   `/api/vaults/${vaultId}/recoveries/${generationZeroId}/records?limit=100`,
@@ -647,14 +585,9 @@ await control(
     expected: [410],
   },
 ).then(({ payload }) => assert.equal(payload.outcome, "RECOVERY_EXPIRED"));
-await control(
-  "POST",
-  `/api/vaults/${vaultId}/records/${artifactId}/downloads`,
-  undefined,
-  {
-    idempotencyKey: randomUUID(),
-  },
-);
+await control("POST", `/api/vaults/${vaultId}/records/${artifactId}/downloads`, undefined, {
+  idempotencyKey: randomUUID(),
+});
 
 process.stdout.write(
   "two replicas converged through HTTP, Cable, polling, remote-only Artifact restoration, Generation recovery, and verified purge\n",

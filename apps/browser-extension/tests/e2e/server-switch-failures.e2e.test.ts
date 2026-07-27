@@ -45,7 +45,7 @@ test("keeps remote-only source Artifacts safe across relay failures", async ({
       testInfo,
       `relay-${scenario.name}`,
       "http://127.0.0.1:3300",
-      `relay-source-${crypto.randomUUID()}@example.test`,
+      `${crypto.randomUUID().replaceAll("-", "").slice(0, 24)}_test`,
       password,
     );
     try {
@@ -60,8 +60,13 @@ test("keeps remote-only source Artifacts safe across relay failures", async ({
       for (const artifactObjectId of storage.remoteOnlyArtifactIds)
         expect(storage.filenames).not.toContain(`${artifactObjectId}.artifact`);
       if (scenario.corruptSource) await corruptRemoteArtifactObjects(storage.remoteOnlyArtifactIds);
-      const candidateEmail = `relay-candidate-${crypto.randomUUID()}@example.test`;
-      await createRailsAccount(source.context, "http://127.0.0.1:3301", candidateEmail, password);
+      const candidateUsername = `${crypto.randomUUID().replaceAll("-", "").slice(0, 24)}_test`;
+      await createRailsAccount(
+        source.context,
+        "http://127.0.0.1:3301",
+        candidateUsername,
+        password,
+      );
 
       await appRequest(page, {
         type: "BeginServerSwitch",
@@ -72,7 +77,7 @@ test("keeps remote-only source Artifacts safe across relay failures", async ({
         await faultControl(page, "arm", scenario.checkpoint, scenario.errorId);
       await appRequest(page, {
         type: "LoginServerSwitchCandidate",
-        email: candidateEmail,
+        username: candidateUsername,
         password,
       }).catch(() => undefined);
       await expect
@@ -113,20 +118,20 @@ test("preserves the source context across candidate authentication failures", as
   test.setTimeout(600_000);
   expect(browserName).toBe("chromium");
   const password = "correct horse archive battery";
-  const sourceEmail = `failure-source-${crypto.randomUUID()}@example.test`;
-  const candidateEmail = `failure-candidate-${crypto.randomUUID()}@example.test`;
+  const sourceUsername = `${crypto.randomUUID().replaceAll("-", "").slice(0, 24)}_test`;
+  const candidateUsername = `${crypto.randomUUID().replaceAll("-", "").slice(0, 24)}_test`;
   const source = await createSynchronizedClient(
     testInfo,
     "failure-source",
     "http://127.0.0.1:3300",
-    sourceEmail,
+    sourceUsername,
     password,
   );
   const candidate = await createSynchronizedClient(
     testInfo,
     "failure-candidate",
     "http://127.0.0.1:3301",
-    candidateEmail,
+    candidateUsername,
     password,
   );
   try {
@@ -140,14 +145,14 @@ test("preserves the source context across candidate authentication failures", as
     await expect(
       appRequest(library, {
         type: "LoginServerSwitchCandidate",
-        email: candidateEmail,
+        username: candidateUsername,
         password: "definitely incorrect password",
       }),
     ).rejects.toThrow("AUTHENTICATION_FAILED");
     await expect(
       appRequest(library, {
         type: "LoginServerSwitchCandidate",
-        email: `unknown-${crypto.randomUUID()}@example.test`,
+        username: `${crypto.randomUUID().replaceAll("-", "").slice(0, 24)}_test`,
         password,
       }),
     ).rejects.toThrow("AUTHENTICATION_FAILED");
@@ -158,7 +163,7 @@ test("preserves the source context across candidate authentication failures", as
     await expect(
       appRequest(library, {
         type: "LoginServerSwitchCandidate",
-        email: candidateEmail,
+        username: candidateUsername,
         password,
       }),
     ).rejects.toThrow("SERVER_SWITCH_VAULT_MISMATCH");
@@ -203,13 +208,13 @@ test("reauthenticates a candidate switch before and after remote application", a
   test.setTimeout(900_000);
   expect(browserName).toBe("chromium");
   const password = "correct horse archive battery";
-  const beforeSourceEmail = `reauth-before-source-${crypto.randomUUID()}@example.test`;
-  const beforeCandidateEmail = `reauth-before-candidate-${crypto.randomUUID()}@example.test`;
+  const beforeSourceUsername = `${crypto.randomUUID().replaceAll("-", "").slice(0, 24)}_test`;
+  const beforeCandidateUsername = `${crypto.randomUUID().replaceAll("-", "").slice(0, 24)}_test`;
   const before = await createSynchronizedClient(
     testInfo,
     "reauth-before",
     "http://127.0.0.1:3300",
-    beforeSourceEmail,
+    beforeSourceUsername,
     password,
   );
   let after: Awaited<ReturnType<typeof sharedDeletedBase>> | undefined;
@@ -219,7 +224,7 @@ test("reauthenticates a candidate switch before and after remote application", a
     await createRailsAccount(
       before.context,
       "http://127.0.0.1:3301",
-      beforeCandidateEmail,
+      beforeCandidateUsername,
       password,
     );
     await appRequest(beforePage, {
@@ -237,7 +242,7 @@ test("reauthenticates a candidate switch before and after remote application", a
       serverSwitch?: { jobId: string; state: string };
     }>(beforePage, {
       type: "LoginServerSwitchCandidate",
-      email: beforeCandidateEmail,
+      username: beforeCandidateUsername,
       password,
     });
     expect(expiredBefore).toMatchObject({
@@ -249,7 +254,7 @@ test("reauthenticates a candidate switch before and after remote application", a
     await faultControl(beforePage, "release");
     await appRequest(beforePage, {
       type: "LoginServerSwitchCandidate",
-      email: beforeCandidateEmail,
+      username: beforeCandidateUsername,
       password,
     });
     await waitForSynchronizedState(beforePage, "http://127.0.0.1:3301");
@@ -271,7 +276,7 @@ test("reauthenticates a candidate switch before and after remote application", a
       serverSwitch?: { jobId: string; state: string };
     }>(after.page, {
       type: "LoginServerSwitchCandidate",
-      email: after.sourceEmail,
+      username: after.sourceUsername,
       password,
     });
     expect(expiredAfter).toMatchObject({
@@ -283,7 +288,7 @@ test("reauthenticates a candidate switch before and after remote application", a
     await faultControl(after.page, "release");
     await appRequest(after.page, {
       type: "LoginServerSwitchCandidate",
-      email: after.sourceEmail,
+      username: after.sourceUsername,
       password,
     });
     await waitForSynchronizedState(after.page, "http://127.0.0.1:3300");
@@ -305,7 +310,7 @@ test("reports a concurrent candidate rewrite after accepted Union authority trut
       testInfo,
       "concurrent-union-source",
       "http://127.0.0.1:3300",
-      setup.sourceEmail,
+      setup.sourceUsername,
       setup.password,
     );
     const sourcePage = await source.context.newPage();
@@ -333,7 +338,7 @@ test("reports a concurrent candidate rewrite after accepted Union authority trut
       };
     }>(sourcePage, {
       type: "LoginServerSwitchCandidate",
-      email: setup.candidateEmail,
+      username: setup.candidateUsername,
       password: setup.password,
     }).catch(async (error) => {
       const diagnostic = await faultControl(sourcePage, "status");

@@ -84,7 +84,7 @@ export class ServerSwitchService {
   }
 
   async authenticate(input: {
-    readonly email: string;
+    readonly username: string;
     readonly password: string;
   }): Promise<string> {
     const job = await this.jobs.loadJob();

@@ -21,9 +21,7 @@ function compose(...args) {
     encoding: "utf8",
   });
   if (result.status !== 0) {
-    throw new Error(
-      `docker compose ${args.join(" ")} failed\n${result.stderr || result.stdout}`,
-    );
+    throw new Error(`docker compose ${args.join(" ")} failed\n${result.stderr || result.stdout}`);
   }
 }
 
@@ -54,20 +52,17 @@ async function request(method, path, body, options = {}) {
 }
 
 async function putPart(url, bytes) {
-  const response = await fetch(
-    `${baseUrl}${url.replace("{partNumber}", "0")}`,
-    {
-      method: "PUT",
-      headers: {
-        "Awsm-Protocol-Version": "1",
-        "Awsm-Request-ID": randomUUID(),
-        "Content-Type": "application/octet-stream",
-        "Content-Length": String(bytes.byteLength),
-        "Content-SHA256": sha256(bytes),
-      },
-      body: bytes,
+  const response = await fetch(`${baseUrl}${url.replace("{partNumber}", "0")}`, {
+    method: "PUT",
+    headers: {
+      "Awsm-Protocol-Version": "1",
+      "Awsm-Request-ID": randomUUID(),
+      "Content-Type": "application/octet-stream",
+      "Content-Length": String(bytes.byteLength),
+      "Content-SHA256": sha256(bytes),
     },
-  );
+    body: bytes,
+  });
   assert.equal(response.status, 204);
 }
 
@@ -137,25 +132,20 @@ async function waitForReadiness(expectedStatus, timeout = 20_000) {
       await new Promise((resolve) => setTimeout(resolve, 200));
     }
   }
-  throw new Error(
-    `Timed out waiting for ${expectedStatus} readiness: ${lastError?.message}`,
-  );
+  throw new Error(`Timed out waiting for ${expectedStatus} readiness: ${lastError?.message}`);
 }
 
 async function openCable(vaultId) {
   const issued = await request("POST", "/api/cable-tickets", undefined, {
     expected: [201],
   });
-  const socket = new WebSocket(
-    `${cableUrl}?ticket=${encodeURIComponent(issued.ticket)}`,
-    ["actioncable-v1-json", "actioncable-unsupported"],
-  );
+  const socket = new WebSocket(`${cableUrl}?ticket=${encodeURIComponent(issued.ticket)}`, [
+    "actioncable-v1-json",
+    "actioncable-unsupported",
+  ]);
   const messages = [];
   const confirmed = new Promise((resolve, reject) => {
-    const timeout = setTimeout(
-      () => reject(new Error("Cable subscription timeout")),
-      10_000,
-    );
+    const timeout = setTimeout(() => reject(new Error("Cable subscription timeout")), 10_000);
     socket.addEventListener("message", (event) => {
       const frame = JSON.parse(event.data);
       if (frame.type === "welcome") {
@@ -189,20 +179,20 @@ async function waitForMessage(messages, cursor, timeout = 15_000) {
   throw new Error(`Timed out waiting for Cable cursor ${cursor}`);
 }
 
-const email = `resilience-${randomUUID()}@example.test`;
+const username = `resilience_${randomUUID().replaceAll("-", "").slice(0, 20)}`;
 const password = `coordination proof ${randomUUID()}`;
 const signupResponse = await fetch(`${baseUrl}/sign_up`, {
   method: "POST",
   headers: { "Content-Type": "application/x-www-form-urlencoded" },
   body: new URLSearchParams({
-    "account[email]": email,
+    "account[username]": username,
     "account[password]": password,
     "account[password_confirmation]": password,
   }),
   redirect: "manual",
 });
 assert.equal(signupResponse.status, 302);
-const login = await request("POST", "/api/sessions", { email, password });
+const login = await request("POST", "/api/sessions", { username, password });
 credential = login.accessToken;
 const generationBytes = Buffer.from("opaque-resilience-generation");
 const authority = createInitialVaultAuthority(login.sessionId, generationBytes);
@@ -248,15 +238,8 @@ await uploadEvent(
 );
 const outageCommit = await commitEvent(vaultId, generationId, outageEventId);
 assert.equal(outageCommit.cursor, 2);
-const outageChanges = await request(
-  "GET",
-  `/api/vaults/${vaultId}/changes?after=1&limit=100`,
-);
-assert(
-  outageChanges.changes.some(
-    (change) => change.event?.objectId === outageEventId,
-  ),
-);
+const outageChanges = await request("GET", `/api/vaults/${vaultId}/changes?after=1&limit=100`);
+assert(outageChanges.changes.some((change) => change.event?.objectId === outageEventId));
 
 compose("up", "--detach", "--wait", "redis-coordination-e2e");
 await waitForReadiness("ready");
@@ -270,11 +253,7 @@ await uploadEvent(
   recoveryEventId,
   Buffer.from("opaque-event-after-redis-recovery"),
 );
-const recoveryCommit = await commitEvent(
-  vaultId,
-  generationId,
-  recoveryEventId,
-);
+const recoveryCommit = await commitEvent(vaultId, generationId, recoveryEventId);
 assert.equal(recoveryCommit.cursor, 3);
 await waitForMessage(cable.messages, 3);
 cable.socket.close();
