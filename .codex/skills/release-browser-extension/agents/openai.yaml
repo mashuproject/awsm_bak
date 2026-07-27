@@ -1,0 +1,4 @@
+interface:
+  display_name: "Release Browser Extension"
+  short_description: "Safely validate and publish browser releases"
+  default_prompt: "Use $release-browser-extension to validate and publish the next browser-extension release safely."
