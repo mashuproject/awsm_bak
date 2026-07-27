@@ -579,8 +579,8 @@ example passed **1/1**; and the temporary containers, network, and volumes were 
 cleanup trap. The production Coordination Server image also built successfully from
 `apps/coordination-server/Dockerfile` as `awsm-plan20-production-check:local`.
 
-Still pending: immutable candidate commit; signed Firefox proof; and exact release/staging
-verification.
+The immutable candidate, signed Firefox proof, joint Release, and exact-tag staging verification
+are recorded below.
 
 # 18. Rendered and Accessibility Evidence
 
@@ -642,12 +642,109 @@ were byte-identical across both runs. Their current SHA-256 values are local bui
 and are intentionally not retained here because publication must independently bind checksums to
 the immutable candidate commit.
 
-Candidate commit, AMO signing, signed-browser proof, tag, and Release remain pending.
+The immutable candidate was committed as
+`96b7204c6f0457e80ae94c36544390969f989b7b` and pushed to the authorized working fork's `main`
+branch. A fetch proved local `HEAD` and `origin/main` resolved to that same full commit.
+
+Before signing, the remote `v0.2.0` tag and Release were absent,
+`FIREFOX_AMO_SIGNING_ENABLED` was exactly `true`, and both required AMO secret names were present
+without inspecting their values. Candidate workflow run
+[`30295953624`](https://github.com/mashuproject/awsm_bak/actions/runs/30295953624) was manually
+dispatched on the exact commit. Its build, deterministic packaging, AMO submission, signed-XPI
+validation, provenance creation, and run-scoped candidate upload passed.
+
+The package-owned signed-candidate verifier was then run with explicit run ID `30295953624`. It
+reproduced and compared the unsigned runtime and source archives, validated the Mozilla-signed
+XPI, passed repository-pinned Firefox Stable and ESR production checks **4/4**, and passed the
+complete signed Chrome/Firefox synchronization suite **8/8** in 9.2 minutes. It wrote successful
+commit status `awsm/firefox-signed-local-proof` on the exact candidate; the status target is the
+same candidate workflow run.
+
+Annotated tag `v0.2.0` was created on the proven commit and pushed without moving another tag.
+Publication workflow run
+[`30297314122`](https://github.com/mashuproject/awsm_bak/actions/runs/30297314122) resolved the
+local proof, downloaded the exact run-scoped candidate, revalidated provenance, and published one
+joint non-draft, non-prerelease
+[`v0.2.0` Release](https://github.com/mashuproject/awsm_bak/releases/tag/v0.2.0). The publisher did
+not contact AMO again.
+
+Independent verification downloaded all four public assets into a fresh temporary directory:
+
+- `awsm-chrome-v0.2.0.zip`;
+- its `.sha256` file;
+- `awsm-firefox-v0.2.0.xpi`; and
+- its `.sha256` file.
+
+Both published checksums passed, both archives passed integrity checks, both root manifests report
+`0.2.0`, and the XPI contains Mozilla signature entries.
 
 # 20. Staging Evidence
 
-Pending.
+Read-only inspection preceded every mutation. It proved:
+
+- the reference staging Compose, source, database volume, opaque-storage volume, container
+  network, and loopback origin were resolved explicitly;
+- the application connected to the inspected staging PostgreSQL instance, proven by matching its
+  live postmaster/database marker from both sides;
+- staging database and opaque-storage resources were unused by production;
+- staging and production source, Compose, container-network, database, and opaque-storage
+  resources did not overlap;
+- all staging containers carried the staging project label;
+- the origin was bound only to loopback;
+- origin liveness and readiness both returned 200;
+- the environment file existed without being read; and
+- every rollout command selected the staging project and Compose file explicitly.
+
+The prior staging source and application image were preserved under timestamped rollback names.
+An archive made from exact tag `v0.2.0` was transferred and verified by SHA-256 before extraction.
+Only the resolved staging application and PostgreSQL containers were stopped and removed. The
+isolated staging PostgreSQL and opaque-storage volumes were deleted. The existing Redis container
+remained running with the same container identity; environment configuration, ingress, shared
+connector, and production were not changed.
+
+A fresh staging PostgreSQL volume was created. The application image was rebuilt from the exact
+tag source, the canonical migration `20260719000000` was applied, and migration status reported it
+`up`. The staging application was recreated from the new image. All three staging services then
+ran, while origin liveness and readiness returned 200. A deterministic tree digest of the installed
+source exactly matched a fresh extraction of the verified tag archive, the running container used
+the newly built Compose image, and the deployed extension version reported `0.2.0`.
+
+A temporary, untracked Playwright harness exercised the deployed HTTPS service with synthetic
+Accounts and the packaged `0.2.0` extension. Live results:
+
+- username-only signup and login passed with no email input;
+- the dashboard rendered the exact inactivity-deletion date;
+- Chrome and Firefox website sessions were projected coarsely;
+- sign-out-all-others invalidated the other browser session;
+- password change invalidated every website session;
+- the empty Account deletion status page reached `Succeeded`;
+- the deleted username was immediately reusable for a new Account;
+- a synchronized Vault and active Chrome Device appeared on the dashboard;
+- two open extension surfaces transitioned from `Up to date` to `Local only`;
+- offline detachment emitted no request to the abandoned server;
+- remembered-password login safely reattached the same local Vault and returned to `Up to date`;
+  and
+- synchronized Account deletion reached `Succeeded`.
+
+Primary and `390x844` dashboard renders were inspected for both empty and active-Device states.
+All content remained readable and contained, navigation and metadata wrapped cleanly, session
+controls remained usable, the current-session marker stayed distinct, and the danger zone retained
+clear but proportionate prominence. The temporary harness was removed. All failed-run synthetic
+Accounts were subsequently reaped through the queued inactivity-deletion pipeline; aggregate
+verification found zero synthetic Accounts, zero Accounts stuck `Deleting`, and zero retryable
+deletion Jobs.
+
+Public read-only cache inspection found that the four cacheable public pages returned old `HIT`
+bodies rather than the current origin bodies. Dynamic Account pages and the authenticated journeys
+reached the new origin. No cache mutation was performed because Plan 20 requires separate exact
+authorization. Exact-URL invalidation and post-purge rendered verification therefore remain
+pending.
 
 # 21. Completion Audit
 
-Pending.
+Every source, test, release, signed-browser, exact-tag deployment, origin-health, authenticated
+journey, and rendered Account/Device requirement is proven above. Production, the frozen upstream
+repository, shared ingress, and unauthorized cache state were not changed.
+
+Completion remains pending only on separately authorized invalidation and verification of the four
+proven-stale reference-staging public URLs.
