@@ -58,6 +58,23 @@ Server proofs local; do not add them or real-browser matrices to hosted CI. Vali
 archives, deterministic Firefox packaging, exact manifest version, expected root layout, source
 reviewability, and stale-archive exclusion.
 
+Require deterministic bytes for both the unsigned runtime ZIP and the Firefox source ZIP across
+filesystem traversal order, timestamps, and host timezones. Run the package-owned verifier without
+an extra standalone `--`:
+
+```bash
+corepack pnpm --filter @awsm/browser-extension \
+  release:firefox:verify-candidate --run-id <candidate-run-id>
+```
+
+Before any AMO submission, prove every unsigned Firefox behavior that is locally reproducible in
+the repository-pinned Stable and ESR lanes and in the complete unsigned Chrome/Firefox suite.
+Exercise all affected permission, login, unlock, Capture, Export/Import, and synchronization paths,
+and resolve product or harness failures before consuming an AMO version. After signing, prove the
+signed candidate's retained-profile restart and returning-Device flows and run the complete signed
+cross-browser suite before creating a tag or Release. Signing validates final bytes; it is not the
+first functional Firefox test or a substitute for local proof.
+
 Inspect all changed rendered states at primary and narrow widths. Run applicable formatters,
 static checks, and skill validation. Stage only intended files, review the complete staged diff,
 commit, push the exact candidate, fetch, and prove local `HEAD` equals the authorized remote branch.
@@ -96,6 +113,10 @@ must:
 - run that XPI in repository-pinned Firefox Stable and ESR;
 - run both Chrome-to-Firefox and Firefox-to-Chrome synchronization directions; and
 - write the configured commit-status context on the exact candidate commit.
+
+For signed retained-profile restart proof, restart the browser with the same profile and verify the
+persisted WebExtension policy is active. Do not reinstall the signed XPI after restart:
+reinstallation would conceal persistence defects and can corrupt the proof boundary.
 
 A pending or failed local run must not leave a success status. The success status target URL must
 identify the exact candidate run without exposing local paths, test data, or secrets.

@@ -193,6 +193,16 @@ These proofs are local-only and must not be added to hosted CI. A plan must also
 repository-declared lint, typecheck, unit, integration, build, package, and affected-package checks
 applicable to its scope. Do not omit a required proof merely because hosted CI does not run it.
 
+Before submitting a Firefox build to AMO, prove every unsigned Firefox behavior that is locally
+reproducible. At minimum, run the production Firefox build and archive validation, the
+repository-pinned Firefox Stable and ESR lanes, the complete unsigned Chrome/Firefox cross-browser
+suite, and every affected permission, login, unlock, Capture, Export/Import, and synchronization
+scenario. Resolve product and harness failures before consuming an AMO version. After AMO returns
+the signed candidate, run the signed retained-profile restart and returning-Device flows plus the
+complete signed cross-browser suite before creating a tag or Release. Mozilla signing validates the
+exact final bytes; it is not the first functional Firefox test and it never substitutes for local
+proof before publication.
+
 The repository uses a shared 100-column code-formatting style in root Biome and Prettier
 configuration; Markdown retains its 80-column prose style. The browser-extension package owns its
 JavaScript, TypeScript, JSON, and CSS formatting through Biome. Run

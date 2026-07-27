@@ -276,11 +276,12 @@ Plan 19 supersedes that prepared tag-time contract. The current workflow separat
 untagged candidate-signing dispatch from tag publication, binds the signed XPI to strict
 run-scoped provenance, and permits joint publication only after the exact commit has successful
 local-proof status. Tag publication performs no AMO request and cannot select replacement bytes.
-The live `v0.1.9` execution and final results belong to Plan 19's completion evidence. The first
+The live `v0.1.10` execution and final results belong to Plan 19's completion evidence. The first
 real `v0.1.8` candidate demonstrated that AMO reserializes `manifest.json` without changing its
 parsed value. The verifier now permits only semantic-equivalent manifest serialization while
-retaining byte equality for every other payload file; the source-changing correction advanced the
-release version rather than reusing the signed candidate.
+retaining byte equality for every other payload file. Signed retained-profile proof withheld
+`v0.1.9`, and source-archive reproduction exposed nondeterministic bytes; both source-changing
+corrections advanced the release version rather than reusing either signed candidate.
 
 Current-worktree verification:
 

@@ -160,7 +160,21 @@ async function firefoxPopupUrl(driver) {
 }
 async function installedFirefox(profile, reset = true) {
   const driver = await launchFirefox(profile, reset);
-  expect(await driver.installAddon(firefoxBuild, !signedFirefoxInstall)).toBe(firefoxExtensionId);
+  if (reset || !signedFirefoxInstall) {
+    expect(await driver.installAddon(firefoxBuild, !signedFirefoxInstall)).toBe(firefoxExtensionId);
+  } else {
+    await driver.setContext(firefox.Context.CHROME);
+    try {
+      expect(
+        await driver.executeScript(
+          "return WebExtensionPolicy.getByID(arguments[0])?.active ?? false;",
+          firefoxExtensionId,
+        ),
+      ).toBe(true);
+    } finally {
+      await driver.setContext(firefox.Context.CONTENT);
+    }
+  }
   return { driver, popupUrl: await firefoxPopupUrl(driver) };
 }
 async function answerFirefoxPermissionPrompt(driver) {

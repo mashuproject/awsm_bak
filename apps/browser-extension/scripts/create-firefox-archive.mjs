@@ -10,7 +10,7 @@ const archive = new URL(
   `awsmbrowser-extension-${packageMetadata.version}-firefox.zip`,
   outputDirectory,
 );
-const canonicalTimestamp = new Date("1980-01-01T00:00:00.000Z");
+const canonicalTimestamp = new Date(1980, 0, 1, 0, 0, 0);
 
 async function files(directory) {
   const entries = await readdir(directory, { withFileTypes: true });
@@ -29,7 +29,9 @@ const paths = (await files(buildDirectory.pathname)).sort((left, right) =>
     "en",
   ),
 );
-const writer = new ZipWriter(new BlobWriter("application/zip"));
+const writer = new ZipWriter(new BlobWriter("application/zip"), {
+  extendedTimestamp: false,
+});
 for (const path of paths) {
   const name = relative(buildDirectory.pathname, path).replaceAll("\\", "/");
   await writer.add(name, new Uint8ArrayReader(await readFile(path)), {
