@@ -193,7 +193,7 @@ test("holds a storage-relief maintenance lease only while actively working", asy
   });
 });
 
-test("restores encrypted Account credentials and erases only Account state on logout", async ({
+test("restores credentials and retains only an unusable reauthentication key on logout", async ({
   page,
 }) => {
   await expect(scenario(page, "account-persistence")).resolves.toEqual({
@@ -202,6 +202,8 @@ test("restores encrypted Account credentials and erases only Account state on lo
     sessionKeyExtractable: false,
     signedOut: true,
     retainedEmail: "reader@example.test",
+    refreshReplaced: true,
+    sessionKeyReused: true,
     localObjectCount: 1,
   });
 });

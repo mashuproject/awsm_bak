@@ -188,6 +188,32 @@ async function accountPersistenceScenario(): Promise<unknown> {
   await repository.logout();
   const afterLogout = await repository.loadAuthenticated();
   const retainedMetadata = await repository.loadMetadata();
+  const reauthenticatedRepository = new IndexedDbAccountRepository(databaseName);
+  await reauthenticatedRepository.saveAuthenticated({
+    metadata: {
+      version: 1,
+      accountId: id("811"),
+      sessionId: id("815"),
+      email: "reader@example.test",
+      scope: "Account",
+    },
+    refreshToken: "replacement-refresh-token",
+  });
+  const afterReauthentication = await reauthenticatedRepository.loadAuthenticated();
+  if (afterRestart === undefined || afterReauthentication === undefined)
+    throw new Error("Account reauthentication proof is incomplete.");
+  const proofNonce = crypto.getRandomValues(new Uint8Array(12));
+  const proofPlaintext = new TextEncoder().encode("retained reauthentication key");
+  const proofCiphertext = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv: proofNonce },
+    afterRestart.sessionKey,
+    proofPlaintext,
+  );
+  const proofRoundTrip = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: proofNonce },
+    afterReauthentication.sessionKey,
+    proofCiphertext,
+  );
   const reopened = await new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open(databaseName);
     request.addEventListener("success", () => resolve(request.result), {
@@ -215,6 +241,8 @@ async function accountPersistenceScenario(): Promise<unknown> {
     sessionKeyExtractable: afterRestart?.sessionKey.extractable,
     signedOut: afterLogout === undefined,
     retainedEmail: retainedMetadata?.email,
+    refreshReplaced: afterReauthentication?.refreshToken === "replacement-refresh-token",
+    sessionKeyReused: new TextDecoder().decode(proofRoundTrip) === "retained reauthentication key",
     localObjectCount,
   };
 }

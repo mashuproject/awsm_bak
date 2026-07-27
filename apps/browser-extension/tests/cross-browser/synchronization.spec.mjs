@@ -94,17 +94,34 @@ async function firefoxRequest(driver, request) {
   if (!response.ok) throw new Error(JSON.stringify(response.error));
   return response.value;
 }
-async function firefoxFaultStatus(driver) {
-  return driver.executeAsyncScript(`
-    const done = arguments[arguments.length - 1];
-    browser.runtime.sendMessage({
-      type: "awsm:test-fault-control",
-      action: "status",
-    }).then(
-      response => done(JSON.parse(JSON.stringify(response))),
-      error => done({ thrown: String(error) }),
-    );
-  `);
+async function startFirefoxRequest(driver, request) {
+  return driver.executeScript(
+    `
+      const [request] = arguments;
+      document.documentElement.dataset.awsmPendingRequest = JSON.stringify({ state: "pending" });
+      browser.runtime.sendMessage(request).then(
+        response => {
+          document.documentElement.dataset.awsmPendingRequest = JSON.stringify({
+            state: "fulfilled",
+            response: JSON.parse(JSON.stringify(response)),
+          });
+        },
+        error => {
+          document.documentElement.dataset.awsmPendingRequest = JSON.stringify({
+            state: "rejected",
+            error: String(error),
+          });
+        },
+      );
+    `,
+    request,
+  );
+}
+async function firefoxPendingRequest(driver) {
+  const value = await driver.executeScript(
+    "return document.documentElement.dataset.awsmPendingRequest;",
+  );
+  return JSON.parse(value);
 }
 async function launchChrome(profile) {
   const extensionPath = resolve(profile, "extension");
@@ -1205,10 +1222,19 @@ test("recovers a fresh Firefox Device and converges in both directions", async (
         return state.workspace.activeVaultId === sourceVaultId;
       }, 2e4);
       try {
-        await firefoxRequest(client.driver, { type: "LoginAccount", email, password });
+        await startFirefoxRequest(client.driver, { type: "LoginAccount", email, password });
+        await client.driver.wait(async () => {
+          const pending = await firefoxPendingRequest(client.driver);
+          if (pending.state === "pending") return false;
+          if (pending.state === "rejected") throw new Error(pending.error);
+          if (!pending.response.ok) throw new Error(JSON.stringify(pending.response.error));
+          return true;
+        }, 3e4);
       } catch (error) {
         throw new Error(
-          `Firefox returning-Device login failed: ${JSON.stringify(await firefoxFaultStatus(client.driver))}`,
+          `Firefox returning-Device login failed: ${JSON.stringify(
+            await firefoxPendingRequest(client.driver),
+          )}`,
           { cause: error },
         );
       }

@@ -146,17 +146,21 @@ interface AuthenticatedInput {
 interface PreparedAuthenticated {
   readonly metadata: StoredAccountMetadataV1;
   readonly sessionKey: CryptoKey;
+  readonly sessionKeyIsNew: boolean;
   readonly secrets: StoredAccountSecretsV1;
 }
 
 async function prepareAuthenticated(
   input: AuthenticatedInput,
   scope: AccountCredentialScope,
+  retainedSessionKey?: CryptoKey,
 ): Promise<PreparedAuthenticated> {
-  const sessionKey = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, [
-    "encrypt",
-    "decrypt",
-  ]);
+  const sessionKey =
+    retainedSessionKey ??
+    (await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, [
+      "encrypt",
+      "decrypt",
+    ]));
   const refreshNonce = crypto.getRandomValues(new Uint8Array(12));
   const refreshCiphertext = new Uint8Array(
     await crypto.subtle.encrypt(
@@ -174,6 +178,7 @@ async function prepareAuthenticated(
   return {
     metadata: input.metadata,
     sessionKey,
+    sessionKeyIsNew: retainedSessionKey === undefined,
     secrets: {
       version: 1,
       accountId: input.metadata.accountId,
@@ -191,7 +196,8 @@ function putPrepared(
 ): void {
   const keys = credentialKeys(scope);
   transaction.objectStore(STORES.apiSessions).put(prepared.metadata, keys.metadata);
-  transaction.objectStore(STORES.sessionKeys).put(prepared.sessionKey, keys.session);
+  if (prepared.sessionKeyIsNew)
+    transaction.objectStore(STORES.sessionKeys).put(prepared.sessionKey, keys.session);
   transaction.objectStore(STORES.protectedCredentials).put(prepared.secrets, keys.secrets);
 }
 
@@ -206,8 +212,16 @@ export class IndexedDbAccountRepository {
     input: AuthenticatedInput,
     scope: AccountCredentialScope = "active",
   ): Promise<void> {
-    const prepared = await prepareAuthenticated(input, scope);
     const database = await this.databasePromise;
+    const keys = credentialKeys(scope);
+    const read = database.transaction(STORES.sessionKeys, "readonly");
+    const retainedValue = await requestValue(
+      read.objectStore(STORES.sessionKeys).get(keys.session),
+    );
+    await transactionDone(read);
+    const retainedSessionKey =
+      retainedValue === undefined ? undefined : sessionStorageKey(retainedValue);
+    const prepared = await prepareAuthenticated(input, scope, retainedSessionKey);
     const transaction = database.transaction(
       [STORES.apiSessions, STORES.sessionKeys, STORES.protectedCredentials],
       "readwrite",
@@ -242,8 +256,11 @@ export class IndexedDbAccountRepository {
         requestValue(transaction.objectStore(STORES.protectedCredentials).get(keys.secrets)),
       ]);
       await transactionDone(transaction);
-      if ([sessionValue, secretsValue].every((value) => value === undefined)) return undefined;
-      if ([metadataValue, sessionValue, secretsValue].some((value) => value === undefined))
+      if (secretsValue === undefined) {
+        if (sessionValue !== undefined) sessionStorageKey(sessionValue);
+        return undefined;
+      }
+      if (metadataValue === undefined || sessionValue === undefined)
         throw new DomainValidationError("account", "is only partially initialized");
       const decodedMetadata = metadata(metadataValue);
       const decodedSecrets = secrets(secretsValue);
@@ -299,9 +316,11 @@ export class IndexedDbAccountRepository {
       requestValue(transaction.objectStore(STORES.protectedCredentials).get(keys.secrets)),
     ]);
     await transactionDone(transaction);
-    const secretValues = [sessionValue, secretsValue];
-    if (secretValues.every((value) => value === undefined)) return false;
-    if (metadataValue === undefined || secretValues.some((value) => value === undefined))
+    if (secretsValue === undefined) {
+      if (sessionValue !== undefined) sessionStorageKey(sessionValue);
+      return false;
+    }
+    if (metadataValue === undefined || sessionValue === undefined)
       throw new DomainValidationError("account", "has partial credential state");
     const decodedMetadata = metadata(metadataValue);
     const decodedSecrets = secrets(secretsValue);
@@ -343,15 +362,9 @@ export class IndexedDbAccountRepository {
     const database = await this.databasePromise;
     const keys = credentialKeys("active");
     const transaction = database.transaction(
-      [
-        STORES.sessionKeys,
-        STORES.protectedCredentials,
-        STORES.synchronizationJobs,
-        STORES.synchronizationCheckpoints,
-      ],
+      [STORES.protectedCredentials, STORES.synchronizationJobs, STORES.synchronizationCheckpoints],
       "readwrite",
     );
-    transaction.objectStore(STORES.sessionKeys).delete(keys.session);
     transaction.objectStore(STORES.protectedCredentials).delete(keys.secrets);
     transaction.objectStore(STORES.synchronizationJobs).clear();
     transaction.objectStore(STORES.synchronizationCheckpoints).clear();
