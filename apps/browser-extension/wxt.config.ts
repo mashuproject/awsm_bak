@@ -1,7 +1,16 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { defineConfig, type UserManifest } from "wxt";
 import { FIREFOX_SYNCHRONIZATION_DATA_CATEGORIES } from "./src/hosts/firefox/synchronization-permission";
 
 export const FIREFOX_EXTENSION_ID = "{f6f49704-8d53-4eda-aef7-619ab88dda5f}";
+const ONNX_RUNTIME_FILES = [
+  "ort-wasm-simd-threaded.asyncify.mjs",
+  "ort-wasm-simd-threaded.asyncify.wasm",
+] as const;
+const THIRD_PARTY_NOTICES = fileURLToPath(
+  new URL("./notices/THIRD_PARTY_NOTICES.txt", import.meta.url),
+);
 
 export function createManifest(browser: "chrome" | "firefox"): UserManifest {
   const shared: UserManifest = {
@@ -53,6 +62,36 @@ export function createManifest(browser: "chrome" | "firefox"): UserManifest {
 
 export default defineConfig({
   manifest: ({ browser }) => createManifest(browser === "firefox" ? "firefox" : "chrome"),
+  vite: () => ({
+    resolve: {
+      conditions: ["onnxruntime-web-use-extern-wasm"],
+    },
+    build: {
+      assetsInlineLimit: 0,
+    },
+    plugins: [
+      {
+        name: "awsm-search-onnx-runtime-assets",
+        generateBundle() {
+          this.emitFile({
+            type: "asset",
+            fileName: "THIRD_PARTY_NOTICES.txt",
+            source: readFileSync(THIRD_PARTY_NOTICES),
+          });
+          for (const filename of ONNX_RUNTIME_FILES) {
+            const source = readFileSync(
+              fileURLToPath(import.meta.resolve(`onnxruntime-web/${filename}`)),
+            );
+            this.emitFile({
+              type: "asset",
+              fileName: `search-model-runtime/${filename}`,
+              source,
+            });
+          }
+        },
+      },
+    ],
+  }),
   zip: {
     excludeSources: [
       "blob-report/**",

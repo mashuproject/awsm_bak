@@ -1,7 +1,12 @@
 packages:
   - apps/*
 
+overrides:
+  "@huggingface/transformers@4.2.0>onnxruntime-node": "-"
+  "@huggingface/transformers@4.2.0>sharp": "-"
+
 allowBuilds:
   esbuild: true
   geckodriver: true
+  protobufjs: false
   spawn-sync: true

@@ -51,6 +51,7 @@ export type {
   WorkspaceMetadataV1,
   WorkspaceRecordsV1,
 } from "./schema";
+export { IndexedDbSearchRepository } from "./search-repository";
 export {
   decodeServerSwitchCheckpoint,
   decodeServerSwitchJob,

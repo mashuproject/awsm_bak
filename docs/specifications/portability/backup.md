@@ -106,6 +106,7 @@ Backup Sets SHALL NOT contain:
 
 - Projections
 - Search Projection Materializations
+- Search settings, model references, protected remote credentials, Jobs, and checkpoints
 - caches
 - Runtime state
 - Job queues
@@ -189,7 +190,8 @@ Diagnostics SHALL NOT expose decrypted user content.
 - Backup creates recovery points.
 - Backup is Snapshot-based.
 - Backup preserves authoritative Objects only.
-- Backup never stores Projections or Search Projection Materializations.
+- Backup never stores Projections, Search Projection Materializations, Search settings, model
+  references, protected remote credentials, Search Jobs, or Search checkpoints.
 - Backup execution is a Runtime Job.
 - Backup does not require plaintext Vault contents.
 - Complete Backup includes every reachable Artifact wrapper regardless of source-device availability.

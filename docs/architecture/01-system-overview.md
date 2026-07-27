@@ -409,19 +409,19 @@ User Query
 
 ↓
 
-Local Search Projection
+Encrypted local Search Projection Materializations
 
 ↓
 
-Matching Bundle references
+Ranked Capture and passage identifiers
 
 ↓
 
-Decrypt
+Re-authenticate the selected passage
 
 ↓
 
-Render
+Render and focus Capture detail
 ```
 
 The server never participates in search.

@@ -52,7 +52,7 @@ try {
       `Confidential-looking file packaged in Firefox ZIP: ${name}`,
     );
     assert(
-      /^(?:assets\/|chunks\/|manifest\.json|background\.js|(?:library|popup|sync-setup)\.html|chunks\/[^/]+\.js|assets\/[^/]+\.(?:css|woff2)|icon-(?:16|32|48|128|512)\.png)$/u.test(
+      /^(?:assets\/|chunks\/|search-model-runtime\/|THIRD_PARTY_NOTICES\.txt|manifest\.json|background\.js|(?:library|popup|sync-setup)\.html|chunks\/[^/]+\.js|assets\/[^/]+\.(?:css|woff2)|search-model-runtime\/ort-wasm-simd-threaded\.asyncify\.(?:mjs|wasm)|icon-(?:16|32|48|128|512)\.png)$/u.test(
         name,
       ),
       `Unexpected file packaged in Firefox ZIP: ${name}`,
@@ -98,6 +98,10 @@ try {
   const sourceNames = (await sourceReader.getEntries()).map((entry) => entry.filename);
   assert(sourceNames.includes("package.json"), "Firefox source ZIP is missing package.json.");
   assert(sourceNames.includes("wxt.config.ts"), "Firefox source ZIP is missing WXT configuration.");
+  assert(
+    sourceNames.includes("notices/THIRD_PARTY_NOTICES.txt"),
+    "Firefox source ZIP is missing third-party notices.",
+  );
   assert(
     sourceNames.includes("entrypoints/background.ts"),
     "Firefox source ZIP is missing its background entrypoint.",

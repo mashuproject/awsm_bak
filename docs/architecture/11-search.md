@@ -6,441 +6,208 @@
 
 **Owner:** Engineering
 
-**Depends On:**
-
-- architecture/09-event-model.md
-- architecture/10-projection-engine.md
+**Depends On:** `architecture/03-zero-knowledge.md`, `architecture/09-event-model.md`,
+`architecture/10-projection-engine.md`, `architecture/13-capture-pipeline.md`,
+`specifications/runtime/search.md`
 
 ---
 
 # Purpose
 
-This document defines the local search architecture used by Archive Platform.
+Search is a private, local-first Projection that helps a user find a Capture and its best matching
+passage. It combines deterministic keyword retrieval with optional semantic retrieval in one
+ranked list.
 
-Search is entirely client-side.
+The Coordination Server never indexes or searches user content. Search settings, queries,
+Materializations, vectors, rankings, snippets, cursors, and model configuration remain on the
+trusted client and never synchronize.
 
-The Coordination Server never indexes or searches user content.
+# Product Boundary
 
-All searchable structures are derived from authoritative Objects and the Event Log.
+The current Search experience provides:
 
----
+- a persistent Search field in the Library;
+- explicit query submission;
+- Capture results with the best matching passage;
+- exact-title, exact-URL, quoted-phrase, keyword, and optional semantic relevance;
+- Host, captured-date, and Collection filters;
+- Active or Deleted scope inherited from the current Library section;
+- 50-result pages followed by **Load more**;
+- passage focus when a result opens in Capture detail; and
+- useful keyword Search while semantic Search is unconfigured, incomplete, offline, or
+  unavailable.
 
-# Design Goals
+The current Projection indexes title, canonical and known URLs, Host, Collection title, captured
+date, and preserved text from `CONTENT_STRUCTURED` with `TEXT_EXTRACTED` fallback. It does not index
+notes, tags, summaries, OCR, images, audio, video, arbitrary local models, or plugin providers.
 
-The search system must provide:
+Search performs retrieval only. It does not generate answers, summaries, citations, or prose.
 
-- offline operation
-- instant response
-- incremental indexing
-- zero-knowledge
-- extensibility
-- deterministic rebuilding
-- provider independence
+# Ownership and Data Flow
 
----
-
-# Philosophy
-
-Bundles preserve information.
-
-Search Projection Materializations discover information.
-
-Materializations are disposable.
-
-Bundles are authoritative.
-
----
-
-# Search Pipeline
-
-```
-Bundle
-
-↓
-
-Extract Searchable Content
-
-↓
-
-Search Projection
-
-↓
-
-Search Providers
-
-↓
-
-Search Coordinator
-```
-
-Search never reads Bundles during query execution.
-
----
-
-# Searchable Sources
-
-Searchable information may include:
-
-- page title
-- URL
-- extracted text
-- notes
-- tags
-- AI summaries
-- OCR text
-- detected entities
-- folder names
-- archive names
-
-Each source contributes independently.
-
----
-
-# Search Coordinator
-
-The Search Coordinator receives all search requests.
-
-Responsibilities:
-
-- dispatch requests
-- merge provider results
-- rank results
-- remove duplicates
-- apply filters
-
-The Coordinator owns no index.
-
----
-
-# Search Request
-
-Every query is represented by a SearchRequest.
-
-Example:
+Authoritative Objects, Events, Bundles, and source Artifacts remain unchanged. Projection Builders
+derive deterministic Search documents and passages from authenticated source state:
 
 ```text
-Query
-
-Filters
-
-Sort
-
-Limit
-
-Ranking Profile
-
-Search Scope
+Objects and Events
+        |
+        v
+CONTENT_STRUCTURED, with TEXT_EXTRACTED fallback
+        |
+        v
+Search document and deterministic passages
+        |
+        +----> encrypted keyword Materialization
+        |
+        +----> explicit embedding provider
+                    |
+                    v
+             encrypted vectors and centroids
 ```
 
-This abstraction allows future expansion without changing provider interfaces.
+At query time, the Search Coordinator opens only the required local Materializations, dispatches
+keyword and optional semantic retrieval, applies filters, fuses rankings, deduplicates Captures,
+selects the best passage, and creates a memory-only paging session. Search does not reconstruct
+Bundles during ranking.
 
----
+Providers accept bounded inputs and return candidates or embeddings. They never consume Events,
+write Materializations, decide persistence, or mutate authoritative state.
 
-# Search Response
+# Search Documents and Passages
 
-Search returns:
+The Search document builder produces identical output for identical authenticated source inputs.
+It normalizes searchable fields, preserves source order, and assigns stable passage identifiers.
+Passages are bounded and overlap only as specified by the Search Runtime contract.
 
-- archive references
-- bundle references
-- relevance score
-- match explanation
-- highlighted fields
+`CONTENT_STRUCTURED` is preferred because its ordered semantic blocks preserve useful passage
+boundaries. `TEXT_EXTRACTED` is the fallback. Missing optional extraction reduces coverage without
+invalidating a mandatory `PRIMARY` representation.
 
-Providers never return decrypted Bundle contents directly.
+# Keyword Retrieval
 
----
+Keyword Search is always available after keyword indexing and requires no semantic provider or
+network access.
 
-# Search Providers
+The keyword Materialization stores an encrypted term dictionary, document frequencies, postings,
+field lengths, and the source data needed to return a best passage. Ranking uses field-weighted
+BM25F with deterministic ties. Exact title, canonical URL, and balanced quoted-phrase matches form
+deterministic tiers before ordinary fused relevance.
 
-Search capabilities are implemented by providers.
+The current tokenizer does not perform stemming, fuzzy correction, prefix matching, or
+search-as-you-type.
 
-Examples:
+# Semantic Retrieval
 
-Keyword Provider
+Semantic Search is optional and is not configured by default. One provider identity is active per
+Vault, and vectors created by different provider identities are never mixed.
 
-Tag Provider
+The default setup choice is an English-first, 384-dimensional
+`Xenova/all-MiniLM-L6-v2` profile pinned by immutable revision. The model runs with CPU/WASM for
+Chrome and Firefox parity and downloads only after explicit user action. Verified model files are
+cached locally; inference makes no later network request.
 
-Date Provider
+An advanced remote adapter implements the narrow OpenAI-compatible embedding contract. It uses
+repository-owned `fetch`, not a provider SDK. A remote endpoint may receive plaintext passages and
+queries only after the user:
 
-Folder Provider
+1. configures the exact HTTPS endpoint and model;
+2. accepts the disclosure for the active Vault; and
+3. grants the exact endpoint Host permission.
 
-Semantic Provider
+There is no automatic local-to-remote or remote-to-local fallback.
 
-Plugin Provider
+Passage embeddings and per-Capture centroids are normalized, quantized to signed int8 values, and
+encrypted before persistence. A Capture contributes to semantic coverage only after all of its
+semantic Materializations commit atomically.
 
-Providers execute independently.
+# Hybrid Ranking
 
----
+The Coordinator combines keyword and semantic ranks with deterministic reciprocal-rank fusion.
+Exact-match tiers remain ahead of the ordinary fused tier and are not duplicated. Filters are
+applied consistently, and deterministic identifiers break remaining ties.
 
-# Keyword Provider
+Semantic coverage may be partial. The Library exposes exact completed and eligible Capture counts.
+Partial semantic coverage never disables keyword results.
 
-Responsibilities:
+# Index Lifecycle
 
-- full-text search
-- tokenization
-- stemming
-- phrase matching
-- prefix matching
+Indexing is an incremental, restart-safe per-Vault Job with per-Capture checkpoints and a durable
+lease. It runs only while the expected Vault is active and unlocked and a Library surface is
+connected and visible. Local-model readiness, remote permission, and remote connectivity add
+provider-specific gates.
 
-Implementation is replaceable.
+Closing or hiding the Library, locking, switching Vaults, losing provider permission, going
+offline, pausing, or restarting the background worker releases the lease into an exact durable
+wait state. Resume continues the same generation from pending or failed checkpoints. A change to
+the authenticated authoritative Vault generation starts a fresh Search generation, including
+after a worker restart.
 
----
+Keyword and semantic commits are atomic per Capture. A failed Capture records a stable,
+non-sensitive error identifier on its exact checkpoint. Transient provider unavailability gains a
+bounded retry deadline; explicit user action may retry sooner.
 
-# Tag Provider
+# Privacy and Persistence
 
-Responsibilities:
+All Search Materializations use Projection-domain encryption. IndexedDB contains no plaintext
+titles, URLs, passages, tokens, term dictionaries, document frequencies, vectors, centroids, or
+remote configuration.
 
-- tag lookup
-- hierarchical tags (future)
-- tag suggestions
+The remote API key is wrapped by a non-exportable device-local key. Search queries, snippets,
+result sets, rankings, cursors, highlights, and passage selections exist only in memory and never
+enter URLs, logs, diagnostics, synchronization, Export, Import, or backup packages.
 
----
+Lock, Vault switch, reset, permission revocation, and background restart clear plaintext Search
+buffers and invalidate active cursors. Every request is bound to `expectedVaultId`; results from
+different Vaults cannot be combined.
 
-# Date Provider
+# Result Navigation
 
-Responsibilities:
+A result carries only memory-bound identifiers into Capture detail. The Runtime re-authenticates
+the authoritative source and rebuilds the selected passage before focus. Detail displays a labeled,
+keyboard-focusable **Search match** treatment and scrolls it into view while honoring reduced
+motion.
 
-- capture date
-- archive date
-- import date
-- modification history
+If the passage is stale, Capture detail still opens, announces that the exact passage changed,
+clears the selection, and requests a Search rebuild. Query text and passage text never enter the
+URL.
 
----
+# Rebuilding and Portability
 
-# Folder Provider
+Search Projection Materializations are disposable:
 
-Responsibilities:
-
-- folder hierarchy
-- folder filtering
-
----
-
-# Semantic Provider
-
-Responsibilities:
-
-- embedding lookup
-- nearest-neighbor search
-- semantic ranking
-
-The Semantic Provider is optional.
-
-If unavailable, search remains fully functional.
-
----
-
-# Plugin Providers
-
-Plugins may register additional providers.
-
-Examples:
-
-Code Search
-
-Citation Search
-
-People Search
-
-Image Search
-
-Plugin providers participate through the Coordinator.
-
----
-
-# Search Projection
-
-The Search Projection maintains provider Materializations.
-
-It receives Events from the Projection Engine.
-
-```
-Event
-
-↓
-
-Search Projection
-
-↓
-
-Provider Materializations
-```
-
-Providers never consume Events directly.
-
----
-
-# Projection Materialization Updates
-
-When new Bundles arrive:
-
-```
-Bundle
-
-↓
-
-Extract Search Data
-
-↓
-
-Update Search Projection
-
-↓
-
-Update Provider Materializations
-```
-
-Materialization updates occur asynchronously.
-
----
-
-# Ranking
-
-Ranking combines provider scores.
-
-Possible signals:
-
-- textual relevance
-- semantic similarity
-- recency
-- archive popularity
-- exact matches
-- tag matches
-
-Ranking algorithms are replaceable.
-
----
-
-# Highlighting
-
-Highlights are generated from indexed text where possible.
-
-Bundle reconstruction should occur only when necessary.
-
----
-
-# Rebuilding
-
-Search Projection Materializations may be discarded.
-
-```
+```text
 Delete Search Projection
-
-↓
-
-Replay Events
-
-↓
-
-Rebuild Materializations
+        |
+        v
+Replay authenticated authoritative state
+        |
+        v
+Rebuild encrypted Materializations
 ```
 
-No server interaction is required.
+Rebuild requires no server data. Search Materializations, Jobs, checkpoints, provider settings,
+model references, and credentials are excluded from synchronization and portability packages.
+Restore or Import rebuilds Search from authoritative content.
 
----
+# Performance and Verification
 
-# Capture Source Artifacts
+The target Vault contains 10,000 Captures. Query execution uses bounded pages and avoids loading
+the entire corpus into memory. Required verification covers:
 
-The initial Capture pipeline creates `TEXT_EXTRACTED` and `CONTENT_STRUCTURED` as immutable source
-Artifacts from one ordered live-DOM semantic block stream. Projection Builders consume those
-Artifacts to rebuild Search Projection Materializations without decrypting MHTML or screenshots.
-The source Artifacts remain authoritative; the Search Materialization remains local, disposable,
-and unsynchronized.
-
-An optional extraction failure reduces Search coverage and is visible as a typed Capture warning.
-It never invalidates mandatory `PRIMARY` preservation.
-
----
-
-# Offline Operation
-
-All Search Projection Materializations reside locally.
-
-Search continues to function without network connectivity.
-
----
-
-# Performance Goals
-
-Target characteristics:
-
-- sub-100 ms keyword queries
-- incremental indexing
-- background rebuilding
-- streaming result generation
-- bounded memory usage
-
----
-
-# Privacy
-
-Search Projection Materializations remain encrypted at rest if supported by the platform.
-
-Materializations are never synchronized.
-
-The backend never receives:
-
-- queries
-- Search Projection Materializations
-- rankings
-- search history
-
----
-
-# Extensibility
-
-Future providers may include:
-
-- image similarity
-- handwriting
-- audio transcripts
-- OCR confidence
-- browser history correlation
-- knowledge graph traversal
-
-These require no protocol changes.
-
----
-
-# Design Decisions
-
-## Why Provider-Based?
-
-Providers isolate search capabilities and simplify experimentation.
-
----
-
-## Why a Coordinator?
-
-The Coordinator centralizes ranking while allowing providers to evolve independently.
-
----
-
-## Why Local Search?
-
-Local search preserves privacy, supports offline operation, and aligns with the zero-knowledge architecture.
-
----
-
-## Why Disposable Materializations?
-
-Materializations are derived data and can always be regenerated from authoritative Objects and Events.
-
----
-
-# Open Questions
-
-Should ranking profiles be user-configurable?
-
-Should semantic search be enabled automatically when embeddings exist?
-
-Should plugin providers participate in global ranking or expose separate result groups?
-
-How should duplicate results from multiple providers be merged?
-
----
+- keyword latency below 100 milliseconds at p95 on the deterministic 10,000-Capture corpus;
+- bounded keyword and incremental semantic memory;
+- deterministic keyword and hybrid ranking;
+- encrypted-at-rest and no-persistence invariants;
+- indexing interruption, failure, retry, and restart behavior;
+- real local MiniLM inference with network fallback disabled;
+- explicit remote disclosure and permission boundaries;
+- passage focus, stale passage handling, accessibility, and narrow layouts; and
+- Chrome and Firefox production-build parity.
 
 # References
 
-- `docs/architecture/12-processing-pipeline.md`
+- `docs/plans/18-hybrid-local-first-search.md`
+- `docs/specifications/runtime/search.md`
+- `docs/specifications/runtime/jobs.md`
 - `docs/architecture/13-capture-pipeline.md`
+- `docs/architecture/19-testing-strategy.md`

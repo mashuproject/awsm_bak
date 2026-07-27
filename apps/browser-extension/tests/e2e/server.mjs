@@ -6,7 +6,7 @@ const fixture = `<!doctype html>
 html,body{margin:0} body{font:20px sans-serif} header{position:fixed;inset:0 0 auto;height:60px;background:#111;color:#fff;z-index:5}
 .band{height:700px;display:grid;place-items:center}.red{background:#d43b32}.green{background:#2f9d58}.blue{background:#3269cf}
 </style></head><body data-archive-script="not-executed">
-<header>Fixed header appears once</header><main><section class="band red">red landmark</section><section class="band green">green landmark</section><section class="band blue">blue landmark</section></main>
+<header>Fixed header appears once</header><main><section class="band red">red landmark</section><section class="band green"><p>green landmark</p></section><section class="band blue">blue landmark</section></main>
 <script>document.body.dataset.liveFixture = "executed-only-on-live-page";</script></body></html>`;
 
 createServer((request, response) => {

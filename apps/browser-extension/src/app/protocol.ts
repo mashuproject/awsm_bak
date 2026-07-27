@@ -13,6 +13,14 @@ import type {
 import type { ArtifactDetailItem } from "../runtime/library/service";
 import type { WorkspaceState } from "../runtime/vault/workspace-service";
 import {
+  isSearchRequest,
+  type RemoteSearchProbeMessage,
+  type SearchPageMessage,
+  type SearchPassageFocusMessage,
+  type SearchRequest,
+  type SearchStateMessage,
+} from "./search-protocol";
+import {
   isStorageReliefRequest,
   type StorageReliefJobView,
   type StorageReliefRequest,
@@ -21,6 +29,7 @@ import {
 type ExpectedVault = { readonly expectedVaultId: string };
 
 export type AppRequest =
+  | SearchRequest
   | StorageReliefRequest
   | { readonly type: "GetState" }
   | { readonly type: "WakeSynchronization" }
@@ -257,6 +266,7 @@ const APP_REQUEST_TYPES: ReadonlySet<AppRequest["type"]> = new Set([
 ]);
 
 export function isAppRequest(value: unknown): value is AppRequest {
+  if (isSearchRequest(value)) return true;
   const recognized =
     typeof value === "object" &&
     value !== null &&
@@ -674,6 +684,10 @@ export interface LibraryOperationReceipt {
 
 export type AppValue =
   | AppState
+  | SearchPageMessage
+  | SearchPassageFocusMessage
+  | SearchStateMessage
+  | RemoteSearchProbeMessage
   | readonly LibraryPageGroupMessage[]
   | LibraryDetailMessage
   | LibraryOperationReceipt

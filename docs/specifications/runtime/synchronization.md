@@ -165,4 +165,6 @@ local content or availability rows.
 
 The Runtime rejects malformed identifiers, mismatched immutable metadata, ciphertext checksum or
 length failures, rollback, omitted dependency closure, and malicious server responses. Plaintext,
-unwrapped keys, Search Materializations, and content-derived metadata never enter protocol requests.
+unwrapped keys, Search Materializations, Search settings, model references, protected remote
+credentials, Search Jobs, Search checkpoints, and content-derived metadata never enter protocol
+requests.

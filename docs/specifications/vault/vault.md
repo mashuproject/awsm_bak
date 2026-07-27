@@ -161,7 +161,7 @@ It MAY contain:
 
 - encrypted metadata
 - encrypted keyword Materializations
-- embedding references
+- encrypted passage vectors and Capture centroids
 
 Search Materializations MUST be rebuildable.
 

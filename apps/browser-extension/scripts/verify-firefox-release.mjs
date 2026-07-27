@@ -39,6 +39,16 @@ async function files(directory) {
 }
 
 const manifest = JSON.parse(await readFile(new URL("manifest.json", output), "utf8"));
+const notices = await readFile(new URL("THIRD_PARTY_NOTICES.txt", output), "utf8");
+for (const required of [
+  "@huggingface/transformers 4.2.0",
+  "Xenova/all-MiniLM-L6-v2",
+  "onnxruntime-web 1.26.0-dev.20260416-b7804b056c",
+  "@noble/hashes 2.2.0",
+  "Apache License",
+  "MIT License",
+])
+  assert(notices.includes(required), `Third-party notice is missing ${required}.`);
 assert(manifest.manifest_version === 3, "The Firefox build must use Manifest V3.");
 assert(
   JSON.stringify(manifest.permissions) === JSON.stringify(approvedPermissions),

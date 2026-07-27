@@ -94,6 +94,154 @@ header > #library-title {
 main {
   padding: 24px 0 60px;
 }
+.library-search {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  width: min(1050px, calc(100% - 40px));
+  margin: 0 auto;
+  padding-top: 16px;
+  align-items: end;
+  gap: 12px;
+}
+.library-search search {
+  display: block;
+  min-width: 0;
+}
+.library-search-filters,
+.library-search-filter-chips {
+  display: flex;
+  grid-column: 1 / -1;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.library-search-filter {
+  position: relative;
+}
+.library-search-filter summary {
+  min-height: 44px;
+  border: 1px solid var(--awsm-border-subtle);
+  border-radius: 8px;
+  padding: 9px 12px;
+  background: var(--awsm-paper);
+  cursor: pointer;
+}
+.library-search-filter summary:focus-visible {
+  outline: 3px solid var(--awsm-focus);
+  outline-offset: 2px;
+}
+.library-search-filter fieldset {
+  position: absolute;
+  z-index: 2;
+  display: grid;
+  min-width: 240px;
+  max-height: 320px;
+  gap: 8px;
+  margin: 4px 0 0;
+  border: 1px solid var(--awsm-border-subtle);
+  border-radius: 8px;
+  padding: 12px;
+  overflow: auto;
+  background: var(--awsm-paper);
+  box-shadow: var(--shadow-sm);
+}
+.library-search-filter-option {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: center;
+  min-height: 44px;
+  gap: 8px;
+}
+.library-search-filter-chip,
+.library-search-filter-clear {
+  min-height: 44px;
+}
+.library-search__controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+.search-results {
+  display: grid;
+  gap: 16px;
+}
+.search-results__heading,
+.search-results__count,
+.search-result h3,
+.search-result p {
+  margin: 0;
+}
+.search-results__list {
+  display: grid;
+  gap: 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.search-result {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--awsm-border-subtle);
+  border-radius: 12px;
+  padding: 18px;
+  color: var(--awsm-ink);
+  background: var(--awsm-paper);
+}
+.search-result__metadata {
+  color: var(--awsm-text-muted);
+}
+.search-result__badge {
+  justify-self: start;
+  border-radius: 999px;
+  padding: 4px 8px;
+  color: var(--awsm-ink);
+  background: var(--awsm-surface-subtle);
+  font-size: 13px;
+  font-weight: 700;
+}
+.search-result__snippet {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.search-results__notice {
+  border-left: 4px solid var(--awsm-cobalt);
+  border-radius: 8px;
+  padding: 12px 16px;
+  color: var(--awsm-ink);
+  background: var(--awsm-info-pale);
+}
+.search-passage-focus {
+  display: grid;
+  gap: 8px;
+  border: 2px solid var(--awsm-ink);
+  border-left: 10px solid var(--awsm-coral);
+  border-radius: 12px;
+  padding: 16px;
+  background: var(--awsm-yellow-pale);
+}
+.search-passage-focus h3 {
+  margin: 0;
+}
+.search-passage-focus__text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.search-passage-focus__text:focus {
+  outline: 3px solid var(--awsm-cobalt);
+  outline-offset: 4px;
+}
+@media (max-width: 480px) {
+  .library-search {
+    grid-template-columns: 1fr;
+    width: min(100% - 24px, 1050px);
+    align-items: stretch;
+  }
+  .library-search > * {
+    grid-column: 1;
+  }
+  .library-search__controls {
+    grid-template-columns: 1fr;
+  }
+}
 .vault-control {
   display: flex;
   flex-wrap: wrap;
@@ -573,7 +721,7 @@ main {
 
 .settings-tabs {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.25rem;
   padding: 0.25rem;
   border: 1px solid var(--border);
@@ -603,6 +751,10 @@ main {
 .settings-panel[hidden] {
   display: none;
 }
+.search-settings {
+  display: grid;
+  gap: 16px;
+}
 .settings-vault__name {
   margin: 0;
   font-size: 18px;
@@ -610,6 +762,40 @@ main {
 }
 .settings-actions {
   margin-bottom: 12px;
+}
+.settings-action-note {
+  flex-basis: 100%;
+  margin: 0;
+}
+.remote-search-setup {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--awsm-surface-subtle);
+}
+.remote-search-setup > summary {
+  min-height: 44px;
+  padding: 10px 14px;
+  font-weight: 680;
+  cursor: pointer;
+}
+.remote-search-setup__fields {
+  display: grid;
+  gap: 14px;
+  padding: 4px 14px 16px;
+}
+.remote-search-setup__fields label:not(.remote-search-consent) {
+  display: grid;
+  gap: 6px;
+  font-weight: 650;
+}
+.remote-search-consent {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+}
+.remote-search-setup__fields [role="status"]:empty {
+  display: none;
 }
 .server-actions {
   justify-content: flex-end;
@@ -769,6 +955,43 @@ input {
   padding: 9px 11px;
   font: inherit;
 }
+.remote-search-consent input {
+  width: 24px;
+  height: 24px;
+  margin: 0;
+}
+.library-search form {
+  display: grid;
+  flex: 1;
+  gap: 8px;
+}
+.library-search label {
+  color: var(--awsm-ink);
+  font-size: 14px;
+  font-weight: 700;
+}
+.library-search input {
+  min-width: 0;
+  min-height: 44px;
+  border: 1px solid var(--awsm-border-subtle);
+  border-radius: 8px;
+  padding: 8px 12px;
+  color: var(--awsm-ink);
+  background: var(--awsm-paper);
+  font: inherit;
+}
+.library-search input:focus-visible {
+  outline: 3px solid var(--awsm-focus);
+  outline-offset: 2px;
+}
+.library-search-filter-option input {
+  width: 24px;
+  height: 24px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--awsm-cobalt);
+}
 .warning-confirmation input {
   width: 18px;
   height: 18px;
@@ -845,13 +1068,13 @@ input {
   backdrop-filter: blur(12px);
 }
 .picker form > .actions:last-child > button:last-child:not(.danger-action) {
-  border-color: var(--primary);
-  color: var(--awsm-paper);
-  background: var(--primary);
+  border-color: var(--awsm-ink);
+  color: var(--awsm-ink);
+  background: var(--awsm-coral);
 }
 .picker form > .actions:last-child > button:last-child:not(.danger-action):hover:not(:disabled) {
-  border-color: var(--primary-hover);
-  background: var(--primary-hover);
+  border-color: var(--awsm-ink);
+  background: var(--awsm-yellow);
 }
 .snackbar button {
   border-color: var(--awsm-paper);

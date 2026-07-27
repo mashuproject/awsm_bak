@@ -191,9 +191,12 @@ Responsibilities:
 - semantic search
 - incremental indexing
 
-The Search Service never communicates with the backend.
+The Search Service never sends plaintext or Search state to the Coordination Server. An optional
+remote embedding adapter communicates directly with the exact user-configured HTTPS endpoint only
+after active-Vault disclosure consent and Host permission.
 
-Search Projection Materializations remain local.
+Search Projection Materializations, settings, credentials, Jobs, checkpoints, queries, and paging
+sessions remain local.
 
 ---
 

@@ -336,6 +336,34 @@ Job. Restart makes a non-terminal Import Job fail with `IMPORT_INTERRUPTED`; Imp
 because its passphrase is not persisted. Success is written in the destination activation
 transaction. Cancellation before activation is terminal and idempotent.
 
+## Search Indexing Job
+
+The browser Runtime persists one current Search indexing Job per Vault and provider generation.
+Its stages are Discover, Keyword, Semantic, Validate, and Terminal. Its states are Created,
+Running, Paused, WaitingForUnlock, WaitingForLibrary, WaitingForPermission, WaitingForNetwork,
+Failed, and Succeeded.
+
+Discovery orders authoritative Captures by Bundle ID and writes one durable checkpoint per
+Capture. Each checkpoint binds the source revision, keyword state, semantic state, attempt count,
+and last stable error identifier. A renewable 30-second lease identifies the active Library
+owner; it SHALL be renewed no later than every ten seconds, and a different owner may claim only
+after expiry.
+
+Indexing runs only while the Library is connected and visible, the expected Vault is active and
+unlocked, the user has not paused, required provider permission exists, and a remote provider is
+online. Losing any gate aborts the current plaintext batch and releases the lease to the exact
+waiting state. Committed Capture rows remain available.
+
+A Capture materialization, its checkpoint, Job counters, and projection revision SHALL commit
+atomically. A failed Capture, its attempt count, safe error identifier, retry deadline, and Job
+failure SHALL also commit atomically. Resume resets failed checkpoints to Pending and retains the
+same generation unless a changed authoritative Vault generation, Search schema, tokenizer, or
+provider identity requires rebuild.
+
+Search Jobs, checkpoints, leases, errors, and retry deadlines are local operational records. They
+SHALL NOT synchronize or enter Export, Import, Backup, or diagnostics containing Vault
+identifiers.
+
 Jobs are durable.
 
 Workers are stateless.

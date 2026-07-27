@@ -8,6 +8,7 @@ import {
   IndexedDbDeviceRepository,
   IndexedDbDriver,
   IndexedDbImportRepository,
+  IndexedDbSearchRepository,
   IndexedDbServerSwitchRepository,
   IndexedDbStorageReliefRepository,
   IndexedDbVaultReplacementRepository,
@@ -32,6 +33,7 @@ import {
 import { OpfsArtifactStore } from "../hosts/shared/artifact-store";
 import { VaultImportHost } from "../hosts/shared/import";
 import { acquireBestEffortScreenshot } from "../hosts/shared/screenshot";
+import { SearchProviderPermission } from "../hosts/shared/search-provider-permission";
 import { reconcileTemporaryFiles, stagePlaintextFile } from "../hosts/shared/temporary-file";
 import { TestingFaultCheckpoint } from "../hosts/testing/fault-checkpoint";
 import { DeviceSessionManager, establishDeviceSession } from "../runtime/account/device-session";
@@ -80,6 +82,22 @@ import { VaultReplacementRunner } from "../runtime/recovery/replacement-runner";
 import { VaultReplacementService } from "../runtime/recovery/replacement-service";
 import { VaultReplacementGraphUploader } from "../runtime/recovery/replacement-upload";
 import { VaultReplacementRemoteValidator } from "../runtime/recovery/replacement-validation";
+import { SearchIndexDiscovery } from "../runtime/search/discovery";
+import { indexingWaitState } from "../runtime/search/index-lifecycle";
+import { SearchKeywordIndexer } from "../runtime/search/indexer";
+import { AuthoritativeSearchSource } from "../runtime/search/library-source";
+import { CacheStorageLocalModelStore } from "../runtime/search/local-model/cache-store";
+import { LocalModelDownloader } from "../runtime/search/local-model/download";
+import { LOCAL_MINILM_MANIFEST } from "../runtime/search/local-model/manifest";
+import { LocalModelDownloadPermission } from "../runtime/search/local-model/permission";
+import { localMiniLmProvider } from "../runtime/search/local-model/provider";
+import { remoteSearchEndpointIdentity } from "../runtime/search/remote-endpoint";
+import {
+  OpenAiCompatibleEmbeddingProvider,
+  probeOpenAiCompatibleEmbeddingProvider,
+} from "../runtime/search/remote-provider";
+import { providerIdentityHash } from "../runtime/search/semantic";
+import { SearchCoordinator } from "../runtime/search/service";
 import { StorageReliefCandidateEnumerator } from "../runtime/storage-relief/candidates";
 import { ActiveGenerationStorageReliefProver } from "../runtime/storage-relief/proof";
 import { StorageReliefJobRunner } from "../runtime/storage-relief/runner";
@@ -133,12 +151,137 @@ const accountRepository = new IndexedDbAccountRepository();
 const deviceRepository = new IndexedDbDeviceRepository();
 const serverSwitchRepository = new IndexedDbServerSwitchRepository();
 const storageReliefRepository = new IndexedDbStorageReliefRepository();
+const searchRepository = new IndexedDbSearchRepository();
+const searchModelStore = new CacheStorageLocalModelStore();
+const extensionUrl = browser.runtime.getURL as (path: string) => string;
+const searchCoordinator = new SearchCoordinator({
+  repository: searchRepository,
+  providerFor: searchEmbeddingProvider,
+});
+let searchModelDownloadController: AbortController | undefined;
+let searchModelDownloadProgress:
+  | { readonly completedBytes: number; readonly totalBytes: number }
+  | undefined;
+let searchModelLifecycleTail: Promise<void> = Promise.resolve();
+let remoteSearchProbe:
+  | {
+      readonly probeId: string;
+      readonly vaultId: string;
+      readonly endpoint: string;
+      readonly responseModel: string;
+      readonly dimensions: number;
+      readonly apiKey: Uint8Array;
+      readonly expiresAt: number;
+    }
+  | undefined;
+let remoteSearchProbeExpiry: ReturnType<typeof setTimeout> | undefined;
+
+function clearRemoteSearchProbe(): void {
+  if (remoteSearchProbeExpiry !== undefined) clearTimeout(remoteSearchProbeExpiry);
+  remoteSearchProbeExpiry = undefined;
+  remoteSearchProbe?.apiKey.fill(0);
+  remoteSearchProbe = undefined;
+}
+
+async function serializeSearchModelLifecycle<T>(operation: () => Promise<T>): Promise<T> {
+  const previous = searchModelLifecycleTail;
+  let release = (): void => undefined;
+  searchModelLifecycleTail = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await previous;
+  try {
+    return await operation();
+  } finally {
+    release();
+  }
+}
+
+const searchIndexControllers = new Map<string, AbortController>();
+const searchIndexRuns = new Map<string, Promise<void>>();
+const searchIndexInvalidations = new Set<string>();
+type SearchLibraryPort = ReturnType<typeof browser.runtime.connect>;
+const searchLibraryPresence = new Map<
+  SearchLibraryPort,
+  { readonly vaultId?: string; readonly visible: boolean }
+>();
+
+function searchLibraryConnected(vaultId: string): boolean {
+  return Array.from(searchLibraryPresence.values()).some(
+    (presence) => presence.vaultId === vaultId,
+  );
+}
+
+function searchLibraryVisible(vaultId: string): boolean {
+  return Array.from(searchLibraryPresence.values()).some(
+    (presence) => presence.vaultId === vaultId && presence.visible,
+  );
+}
+
+function reconcileSearchLibraryPresence(vaultId: string): void {
+  if (searchLibraryVisible(vaultId)) {
+    void startup
+      .then(() => ensureSearchIndexing(vaultId, false))
+      .catch((error) => testingFaultCheckpoint?.recordFailure(error));
+  } else {
+    searchIndexControllers.get(vaultId)?.abort();
+  }
+}
+const searchQueryControllers = new Map<
+  string,
+  { readonly vaultId: string; readonly controller: AbortController }
+>();
+
+function abortSearchQueries(vaultId?: string): void {
+  for (const [clientInstanceId, active] of searchQueryControllers) {
+    if (vaultId !== undefined && active.vaultId !== vaultId) continue;
+    active.controller.abort();
+    searchQueryControllers.delete(clientInstanceId);
+  }
+}
 const vaultReplacementRepository = new IndexedDbVaultReplacementRepository();
 const storageReliefControllers = new Map<string, AbortController>();
 const firefoxHost = browser.runtime.getManifest().browser_specific_settings?.gecko !== undefined;
 const mhtmlDownloadHost = firefoxHost
   ? new FirefoxMhtmlDownloadHost()
   : new ChromeMhtmlDownloadHost();
+
+async function remoteSearchPermissionPresent(endpoint: string): Promise<boolean> {
+  return new SearchProviderPermission(
+    endpoint,
+    browser.permissions as unknown as ConstructorParameters<typeof SearchProviderPermission>[1],
+    firefoxHost,
+  ).present();
+}
+
+async function searchEmbeddingProvider(
+  settings: Exclude<import("../runtime/search/settings").SearchSettings, { semantic: "Disabled" }>,
+  vaultId: string,
+) {
+  if (settings.semantic === "Local")
+    return localMiniLmProvider(searchModelStore, {
+      factoryUrl: extensionUrl("search-model-runtime/ort-wasm-simd-threaded.asyncify.mjs"),
+      wasmUrl: extensionUrl("search-model-runtime/ort-wasm-simd-threaded.asyncify.wasm"),
+    });
+  if (!(await remoteSearchPermissionPresent(settings.endpoint)))
+    throw Object.assign(
+      new Error("Remote Search access was removed. Grant access or choose another provider."),
+      { id: "SEARCH_PROVIDER_PERMISSION_REQUIRED" },
+    );
+  const apiKey = await searchRepository.loadRemoteSearchApiKey(vaultId, settings);
+  try {
+    return new OpenAiCompatibleEmbeddingProvider({
+      endpoint: settings.endpoint,
+      requestModel: settings.provider.model,
+      responseModel: settings.provider.model,
+      dimensions: settings.provider.dimensions,
+      endpointPathHash: settings.provider.endpointPathHash ?? "",
+      apiKey: new TextDecoder("utf-8", { fatal: true }).decode(apiKey),
+    });
+  } finally {
+    apiKey.fill(0);
+  }
+}
 const liveStorageReliefRepository = {
   latestStorageReliefJob: (vaultId: string) =>
     storageReliefRepository.latestStorageReliefJob(vaultId),
@@ -964,8 +1107,21 @@ async function reconcileFirefoxSynchronizationPermission(): Promise<void> {
 browser.permissions.onAdded.addListener(() => {
   void reconcileFirefoxSynchronizationPermission();
 });
-browser.permissions.onRemoved.addListener(() => {
+browser.permissions.onRemoved.addListener((removed) => {
   void reconcileFirefoxSynchronizationPermission();
+  const searchPermission = removed as unknown as {
+    readonly origins?: readonly string[];
+    readonly data_collection?: readonly string[];
+  };
+  if (
+    (searchPermission.origins?.length ?? 0) > 0 ||
+    (searchPermission.data_collection?.length ?? 0) > 0
+  ) {
+    clearRemoteSearchProbe();
+    abortSearchQueries();
+    for (const controller of searchIndexControllers.values()) controller.abort();
+    void notifyAppStateChanged();
+  }
 });
 
 async function storageReliefContext(expectedVaultId: string) {
@@ -1118,6 +1274,7 @@ async function discoverAccountVault(): Promise<void> {
 }
 
 async function notifyAppStateChanged(): Promise<void> {
+  searchCoordinator.invalidate();
   await browser.runtime.sendMessage({ type: "AppStateChanged" }).catch(() => undefined);
 }
 
@@ -1127,6 +1284,9 @@ async function clearOriginPrivateFileSystem(): Promise<void> {
 }
 
 async function resetLocalDevice(): Promise<void> {
+  clearRemoteSearchProbe();
+  abortSearchQueries();
+  for (const controller of searchIndexControllers.values()) controller.abort();
   for (const controller of storageReliefControllers.values()) controller.abort();
   for (const controller of importControllers.values()) controller.abort();
   for (const controller of exportControllers.values()) controller.abort();
@@ -2587,6 +2747,21 @@ const startup = contexts.initialize().then(async () => {
 });
 
 browser.alarms.onAlarm.addListener((alarm) => {
+  const searchRetryMatch =
+    /^awsm:search-index-retry:([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/u.exec(
+      alarm.name,
+    );
+  if (searchRetryMatch !== null) {
+    const vaultId = searchRetryMatch[1];
+    if (vaultId === undefined) return;
+    void startup
+      .then(async () => {
+        if (!searchLibraryVisible(vaultId) || contexts.active()?.vaultId !== vaultId) return;
+        await ensureSearchIndexing(vaultId, false);
+      })
+      .catch((error) => testingFaultCheckpoint?.recordFailure(error));
+    return;
+  }
   if (alarm.name !== "awsm:synchronization-poll") return;
   void (async () => {
     const activeVaultId = contexts.active()?.vaultId;
@@ -2668,6 +2843,28 @@ function safeError(error: unknown): AppResponse {
       "AWSM could not prove a safe fast-forward. Your current synchronization server is unchanged.",
     SERVER_SWITCH_VAULT_MISMATCH:
       "That Account owns a different Vault. Your current synchronization server is unchanged.",
+    SEARCH_QUERY_INVALID: "Enter a Search query between 2 and 500 characters.",
+    SEARCH_FILTER_INVALID: "Review the Search filters and try again.",
+    SEARCH_CURSOR_EXPIRED: "Search results changed. Refresh the Search.",
+    SEARCH_INDEX_UNAVAILABLE: "Search is temporarily unavailable for this Vault.",
+    SEARCH_INDEX_CORRUPT: "The local Search index is invalid. Rebuild it to continue.",
+    SEARCH_PROVIDER_NOT_CONFIGURED: "Choose a semantic Search provider first.",
+    SEARCH_PROVIDER_PERMISSION_REQUIRED:
+      "Remote Search access was removed. Grant access or choose another provider.",
+    SEARCH_PROVIDER_UNAVAILABLE:
+      "The semantic Search provider could not be reached. Keyword results remain available.",
+    SEARCH_PROVIDER_RESPONSE_INVALID:
+      "The semantic Search provider returned an unsupported response.",
+    SEARCH_PROVIDER_DIMENSION_CHANGED:
+      "The semantic Search provider changed its vector dimensions. Choose the provider again.",
+    SEARCH_MODEL_PERMISSION_REQUIRED: "Model download access was not granted.",
+    SEARCH_MODEL_DOWNLOAD_FAILED:
+      "The Search model could not be downloaded. Keyword Search remains available.",
+    SEARCH_MODEL_INTEGRITY_FAILED:
+      "The downloaded Search model failed verification and was discarded.",
+    SEARCH_MODEL_IN_USE:
+      "Disable semantic Search in every Vault that uses this model before removing it.",
+    SEARCH_PROBE_EXPIRED: "Test the remote Search connection again before saving.",
   };
   return {
     ok: false,
@@ -3213,6 +3410,35 @@ async function exportVault(
 }
 
 browser.runtime.onConnect.addListener((port) => {
+  const searchLibraryMatch = /^awsm:search-library:([A-Za-z0-9_-]{22})$/u.exec(port.name);
+  if (searchLibraryMatch !== null) {
+    searchLibraryPresence.set(port, { visible: false });
+    port.onMessage.addListener((message: unknown) => {
+      if (
+        typeof message !== "object" ||
+        message === null ||
+        !("vaultId" in message) ||
+        !("visible" in message) ||
+        typeof message.vaultId !== "string" ||
+        typeof message.visible !== "boolean"
+      )
+        return;
+      const previous = searchLibraryPresence.get(port);
+      searchLibraryPresence.set(port, {
+        vaultId: message.vaultId,
+        visible: message.visible,
+      });
+      if (previous?.vaultId !== undefined && previous.vaultId !== message.vaultId)
+        reconcileSearchLibraryPresence(previous.vaultId);
+      reconcileSearchLibraryPresence(message.vaultId);
+    });
+    port.onDisconnect.addListener(() => {
+      const previous = searchLibraryPresence.get(port);
+      searchLibraryPresence.delete(port);
+      if (previous?.vaultId !== undefined) reconcileSearchLibraryPresence(previous.vaultId);
+    });
+    return;
+  }
   if (port.name !== "awsm:popup-lifetime") return;
   let visibleCapture: { readonly vaultId: string; readonly jobId: string } | undefined;
   port.onMessage.addListener((message: unknown) => {
@@ -3514,6 +3740,7 @@ async function captureActivePage(
     now: () => new Date().toISOString(),
   });
   const outcome = await runtime.execute(command);
+  invalidateSearchIndex(expectedVaultId);
   return { bundleId: outcome.bundleId };
 }
 
@@ -3737,6 +3964,199 @@ async function runVaultReplacement(
   return result;
 }
 
+async function activeSearchContext(expectedVaultId: string) {
+  const context = contexts.snapshot(expectedVaultId);
+  const head = await context.driver.getVaultHead();
+  if (head === undefined)
+    throw Object.assign(new Error("The active Vault generation is unavailable."), {
+      id: "SEARCH_INDEX_UNAVAILABLE",
+    });
+  return {
+    context,
+    keyring: context.vault.requireKeyring(),
+    vaultGeneration: `${head.generationId}:${head.generationNumber}`,
+  };
+}
+
+function invalidateSearchIndex(vaultId: string): void {
+  searchIndexInvalidations.add(vaultId);
+}
+
+async function ensureSearchIndexing(vaultId: string, force: boolean): Promise<void> {
+  const running = searchIndexRuns.get(vaultId);
+  if (running !== undefined) {
+    if (!force) return running;
+    searchIndexControllers.get(vaultId)?.abort();
+    await running.catch(() => undefined);
+  }
+  const controller = new AbortController();
+  searchIndexControllers.set(vaultId, controller);
+  const run = (async () => {
+    const { context, keyring, vaultGeneration } = await activeSearchContext(vaultId);
+    const currentJob = await searchRepository.latestSearchIndexJob(vaultId);
+    const indexedVaultGeneration = await searchRepository.loadIndexedVaultGeneration(vaultId);
+    const effectiveForce =
+      force ||
+      (indexedVaultGeneration === undefined
+        ? currentJob?.state === "Succeeded"
+        : indexedVaultGeneration !== vaultGeneration);
+    if (!effectiveForce && currentJob?.state === "Succeeded") return;
+    if (!effectiveForce && currentJob?.state === "Failed") {
+      if (currentJob.retryAt === undefined || currentJob.retryAt > new Date().toISOString()) return;
+      await searchRepository.resumeLatestSearchIndexJob(vaultId, new Date().toISOString());
+    }
+    const source = new AuthoritativeSearchSource(vaultId, await library(vaultId));
+    const settings = await searchRepository.loadSearchSettings(keyring, vaultId);
+    const modelReady = await searchModelStore.isReady(LOCAL_MINILM_MANIFEST);
+    const initialRemotePermissionPresent =
+      settings?.semantic === "Remote"
+        ? await remoteSearchPermissionPresent(settings.endpoint)
+        : true;
+    const semanticReady =
+      settings?.semantic === "Local"
+        ? modelReady
+        : settings?.semantic === "Remote"
+          ? initialRemotePermissionPresent && navigator.onLine
+          : false;
+    const embeddingProvider =
+      settings !== undefined && settings.semantic !== "Disabled" && semanticReady
+        ? await searchEmbeddingProvider(settings, vaultId)
+        : undefined;
+    try {
+      const identityHash =
+        settings === undefined || settings.semantic === "Disabled"
+          ? undefined
+          : await providerIdentityHash(settings.provider);
+      const discovery = new SearchIndexDiscovery({
+        repository: searchRepository,
+        source,
+        now: () => new Date().toISOString(),
+        uuid: () => crypto.randomUUID(),
+      });
+      const job = await discovery.run({
+        vaultId,
+        keyring,
+        ...(identityHash === undefined ? {} : { providerIdentityHash: identityHash }),
+        force: effectiveForce,
+        signal: controller.signal,
+      });
+      if (job.stage !== "Keyword" && job.stage !== "Semantic") return;
+      const indexingGate = async () => ({
+        connected: searchLibraryConnected(vaultId),
+        visible: searchLibraryVisible(vaultId),
+        expectedVaultActive: contexts.active()?.vaultId === vaultId,
+        unlocked: context.vault.isUnlocked(),
+        paused: false,
+        permissionPresent:
+          settings?.semantic === "Local"
+            ? await searchModelStore.isReady(LOCAL_MINILM_MANIFEST)
+            : settings?.semantic === "Remote"
+              ? await remoteSearchPermissionPresent(settings.endpoint)
+              : true,
+        online: settings?.semantic !== "Remote" || navigator.onLine,
+      });
+      const indexer = new SearchKeywordIndexer({
+        repository: searchRepository,
+        source,
+        gate: indexingGate,
+        now: () => new Date().toISOString(),
+        onCommitted: notifyAppStateChanged,
+        ...(embeddingProvider === undefined ? {} : { embeddingProvider }),
+      });
+      const owner = crypto.randomUUID();
+      try {
+        const result = await indexer.run({
+          vaultId,
+          jobId: job.jobId,
+          owner,
+          keyring,
+          signal: controller.signal,
+        });
+        if (result.state === "Succeeded")
+          await searchRepository.saveIndexedVaultGeneration(vaultId, vaultGeneration);
+      } catch (error) {
+        const currentJob = await searchRepository.loadSearchIndexJob(vaultId, job.jobId);
+        if (controller.signal.aborted) {
+          if (currentJob?.state === "Running" && currentJob.leaseOwner === owner) {
+            await searchRepository.releaseSearchIndexLease(
+              vaultId,
+              job.jobId,
+              owner,
+              indexingWaitState(await indexingGate()) ?? "Paused",
+              new Date().toISOString(),
+            );
+          }
+          return;
+        }
+        if (currentJob?.state === "Failed") {
+          if (currentJob.retryAt !== undefined)
+            await browser.alarms.create(`awsm:search-index-retry:${vaultId}`, {
+              when: new Date(currentJob.retryAt).valueOf(),
+            });
+          throw error;
+        }
+        if (currentJob?.state === "Running" && currentJob.leaseOwner === owner) {
+          const candidate =
+            typeof error === "object" && error !== null && "id" in error ? error.id : undefined;
+          const errorId = isRuntimeErrorId(candidate) ? candidate : "SEARCH_INDEX_CORRUPT";
+          const failedAt = new Date();
+          const retryAt =
+            errorId === "SEARCH_PROVIDER_UNAVAILABLE"
+              ? new Date(failedAt.valueOf() + 300_000).toISOString()
+              : undefined;
+          await searchRepository.failSearchIndexJob(
+            vaultId,
+            job.jobId,
+            owner,
+            errorId,
+            failedAt.toISOString(),
+            retryAt,
+          );
+          if (retryAt !== undefined)
+            await browser.alarms.create(`awsm:search-index-retry:${vaultId}`, {
+              when: new Date(retryAt).valueOf(),
+            });
+        }
+        throw error;
+      }
+    } finally {
+      await embeddingProvider?.dispose();
+      await notifyAppStateChanged();
+    }
+  })();
+  searchIndexRuns.set(vaultId, run);
+  try {
+    await run;
+  } finally {
+    if (searchIndexRuns.get(vaultId) === run) {
+      searchIndexRuns.delete(vaultId);
+      searchIndexControllers.delete(vaultId);
+    }
+  }
+}
+
+function searchPageMessage(
+  page: Awaited<ReturnType<SearchCoordinator["search"]>>,
+): import("./search-protocol").SearchPageMessage {
+  return {
+    results: page.results.map(
+      ({
+        score: _score,
+        originalUrl,
+        ...result
+      }): import("./search-protocol").SearchResultMessage => ({
+        ...result,
+        originalUrl,
+      }),
+    ),
+    ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }),
+    resultCount: page.resultCount,
+    resultCountIsComplete: page.resultCountIsComplete,
+    coverage: page.coverage,
+    semantic: page.semantic,
+  };
+}
+
 async function handle(request: AppRequest): Promise<AppResponse> {
   await startup;
   try {
@@ -3744,6 +4164,382 @@ async function handle(request: AppRequest): Promise<AppResponse> {
     if (synchronizationOrigin !== undefined)
       await assertFirefoxSynchronizationPermission(synchronizationOrigin);
     switch (request.type) {
+      case "GetSearchPassageFocus": {
+        await activeSearchContext(request.expectedVaultId);
+        const source = new AuthoritativeSearchSource(
+          request.expectedVaultId,
+          await library(request.expectedVaultId),
+        );
+        const row = await source.loadKeywordRow(
+          request.expectedVaultId,
+          request.bundleId,
+          AbortSignal.timeout(20_000),
+        );
+        const passage = row.document.passages.find(
+          (candidate) => candidate.passageId === request.passageId,
+        );
+        return {
+          ok: true,
+          value:
+            passage === undefined
+              ? { state: "Stale" }
+              : {
+                  state: "Found",
+                  text: passage.text,
+                  sourceRole: passage.source.role,
+                },
+        };
+      }
+      case "SearchLibrary": {
+        const { keyring, vaultGeneration } = await activeSearchContext(request.expectedVaultId);
+        searchQueryControllers.get(request.clientInstanceId)?.controller.abort();
+        const controller = new AbortController();
+        searchQueryControllers.set(request.clientInstanceId, {
+          vaultId: request.expectedVaultId,
+          controller,
+        });
+        try {
+          const page = await searchCoordinator.search({
+            keyring,
+            vaultId: request.expectedVaultId,
+            vaultGeneration,
+            clientInstanceId: request.clientInstanceId,
+            query: request.query,
+            filters: { scope: request.scope, ...request.filters },
+            signal: AbortSignal.any([controller.signal, AbortSignal.timeout(20_000)]),
+          });
+          return { ok: true, value: searchPageMessage(page) };
+        } finally {
+          if (searchQueryControllers.get(request.clientInstanceId)?.controller === controller)
+            searchQueryControllers.delete(request.clientInstanceId);
+        }
+      }
+      case "LoadMoreSearchResults": {
+        const { keyring, vaultGeneration } = await activeSearchContext(request.expectedVaultId);
+        const loaded = await searchCoordinator.more({
+          keyring,
+          vaultId: request.expectedVaultId,
+          vaultGeneration,
+          clientInstanceId: request.clientInstanceId,
+          cursor: request.cursor,
+        });
+        return {
+          ok: true,
+          value: {
+            results: loaded.results.map(({ score: _score, ...result }) => result),
+            ...(loaded.page.cursor === undefined ? {} : { nextCursor: loaded.page.cursor }),
+            resultCount: loaded.page.resultCount,
+            resultCountIsComplete: loaded.page.resultCountIsComplete,
+            ...loaded.state,
+          },
+        };
+      }
+      case "GetSearchState": {
+        const { keyring } = await activeSearchContext(request.expectedVaultId);
+        const [state, settings, modelReady, indexJob] = await Promise.all([
+          searchCoordinator.stateForScope({
+            keyring,
+            vaultId: request.expectedVaultId,
+            scope: "Active",
+          }),
+          searchRepository.loadSearchSettings(keyring, request.expectedVaultId),
+          searchModelStore.isReady(LOCAL_MINILM_MANIFEST),
+          searchRepository.latestSearchIndexJob(request.expectedVaultId),
+        ]);
+        return {
+          ok: true,
+          value: {
+            coverage: {
+              ...state.coverage,
+              ...(indexJob?.state === "Succeeded" ? { indexedAt: indexJob.updatedAt } : {}),
+            },
+            semantic:
+              settings === undefined || settings.semantic === "Disabled"
+                ? { state: "NotConfigured" }
+                : {
+                    state: "Configured",
+                    kind: settings.semantic,
+                    providerLabel:
+                      settings.semantic === "Local"
+                        ? "On-device English model"
+                        : settings.provider.model,
+                    model: settings.provider.model,
+                    dimensions: settings.provider.dimensions,
+                  },
+            localModel:
+              searchModelDownloadProgress !== undefined
+                ? { state: "Downloading", ...searchModelDownloadProgress }
+                : modelReady
+                  ? {
+                      state: "Ready",
+                      manifestId: LOCAL_MINILM_MANIFEST.manifestId,
+                      referenceCount: await searchRepository.countSearchModelReferences(
+                        LOCAL_MINILM_MANIFEST.manifestId,
+                      ),
+                    }
+                  : { state: "NotDownloaded" },
+            indexing: {
+              state:
+                indexJob === undefined || indexJob.state === "Succeeded"
+                  ? "Idle"
+                  : indexJob.state === "Created"
+                    ? "Running"
+                    : indexJob.state,
+              completedCaptures: indexJob?.completedCaptures ?? state.coverage.keywordCaptures,
+              totalCaptures: indexJob?.totalCaptures ?? state.coverage.eligibleCaptures,
+              ...(indexJob?.errorId === undefined ? {} : { errorId: indexJob.errorId }),
+            },
+          },
+        };
+      }
+      case "DisableSemanticSearch": {
+        abortSearchQueries(request.expectedVaultId);
+        searchIndexControllers.get(request.expectedVaultId)?.abort();
+        const value = await serializeSearchModelLifecycle(async () => {
+          const { keyring } = await activeSearchContext(request.expectedVaultId);
+          await searchRepository.saveSearchSettings(keyring, request.expectedVaultId, {
+            version: 1,
+            semantic: "Disabled",
+          });
+          await notifyAppStateChanged();
+          return state();
+        });
+        return { ok: true, value };
+      }
+      case "RemoveLocalSearchModel": {
+        const value = await serializeSearchModelLifecycle(async () => {
+          if (
+            (await searchRepository.countSearchModelReferences(
+              LOCAL_MINILM_MANIFEST.manifestId,
+            )) !== 0
+          )
+            throw Object.assign(
+              new Error(
+                "Disable semantic Search in every Vault that uses this model before removing it.",
+              ),
+              { id: "SEARCH_MODEL_IN_USE" },
+            );
+          await searchModelStore.deleteCurrent();
+          await notifyAppStateChanged();
+          return state();
+        });
+        return { ok: true, value };
+      }
+      case "CancelLocalSearchModelDownload":
+        searchModelDownloadController?.abort();
+        return { ok: true, value: await state() };
+      case "ConfigureLocalSearch": {
+        abortSearchQueries(request.expectedVaultId);
+        searchIndexControllers.get(request.expectedVaultId)?.abort();
+        const value = await serializeSearchModelLifecycle(async () => {
+          const { keyring } = await activeSearchContext(request.expectedVaultId);
+          if (!(await searchModelStore.isReady(LOCAL_MINILM_MANIFEST))) {
+            const permission = new LocalModelDownloadPermission(
+              browser.permissions as unknown as ConstructorParameters<
+                typeof LocalModelDownloadPermission
+              >[0],
+            );
+            if (!(await permission.acquire()))
+              throw Object.assign(new Error("Model download permission was not granted."), {
+                id: "SEARCH_PROVIDER_PERMISSION_REQUIRED",
+              });
+            const controller = new AbortController();
+            searchModelDownloadController = controller;
+            try {
+              await new LocalModelDownloader({ store: searchModelStore }).download({
+                signal: controller.signal,
+                onProgress: ({ completedBytes, totalBytes }) => {
+                  searchModelDownloadProgress = { completedBytes, totalBytes };
+                  void browser.runtime
+                    .sendMessage({ type: "AppStateChanged" })
+                    .catch(() => undefined);
+                },
+              });
+            } finally {
+              searchModelDownloadController = undefined;
+              searchModelDownloadProgress = undefined;
+              await permission.release().catch(() => false);
+            }
+          }
+          await searchRepository.saveSearchSettings(
+            keyring,
+            request.expectedVaultId,
+            {
+              version: 1,
+              semantic: "Local",
+              provider: {
+                version: 1,
+                kind: "LocalMiniLm",
+                model: LOCAL_MINILM_MANIFEST.model,
+                modelRevision: LOCAL_MINILM_MANIFEST.revision,
+                dimensions: LOCAL_MINILM_MANIFEST.dimensions,
+                pooling: "Mean",
+                normalized: true,
+              },
+              disclosureVersion: request.acceptedDisclosureVersion,
+            },
+            { localManifestId: LOCAL_MINILM_MANIFEST.manifestId },
+          );
+          await notifyAppStateChanged();
+          void ensureSearchIndexing(request.expectedVaultId, true).catch((error) =>
+            testingFaultCheckpoint?.recordFailure(error),
+          );
+          return state();
+        });
+        return { ok: true, value };
+      }
+      case "StartSearchIndexing": {
+        const latest = await searchRepository.latestSearchIndexJob(request.expectedVaultId);
+        if (
+          latest !== undefined &&
+          latest.state !== "Created" &&
+          latest.state !== "Running" &&
+          latest.state !== "Succeeded"
+        )
+          await searchRepository.resumeLatestSearchIndexJob(
+            request.expectedVaultId,
+            new Date().toISOString(),
+          );
+        void ensureSearchIndexing(request.expectedVaultId, false).catch((error) =>
+          testingFaultCheckpoint?.recordFailure(error),
+        );
+        return { ok: true, value: await state() };
+      }
+      case "RebuildSearchIndex":
+        void ensureSearchIndexing(request.expectedVaultId, true).catch((error) =>
+          testingFaultCheckpoint?.recordFailure(error),
+        );
+        return { ok: true, value: await state() };
+      case "PauseSearchIndexing": {
+        searchIndexControllers.get(request.expectedVaultId)?.abort();
+        await searchIndexRuns.get(request.expectedVaultId)?.catch(() => undefined);
+        await searchRepository.pauseLatestSearchIndexJob(
+          request.expectedVaultId,
+          new Date().toISOString(),
+        );
+        await notifyAppStateChanged();
+        return { ok: true, value: await state() };
+      }
+      case "CancelRemoteSearchProbe":
+        if (remoteSearchProbe?.vaultId === request.expectedVaultId) clearRemoteSearchProbe();
+        return { ok: true, value: null };
+      case "ProbeRemoteSearchProvider": {
+        clearRemoteSearchProbe();
+        await activeSearchContext(request.expectedVaultId);
+        const endpointIdentity = await remoteSearchEndpointIdentity(request.endpoint);
+        if (endpointIdentity.endpoint !== request.endpoint)
+          throw Object.assign(new Error("Enter a normalized remote embedding endpoint."), {
+            id: "SEARCH_PROVIDER_RESPONSE_INVALID",
+          });
+        const permission = new SearchProviderPermission(
+          endpointIdentity.endpoint,
+          browser.permissions as unknown as ConstructorParameters<
+            typeof SearchProviderPermission
+          >[1],
+          firefoxHost,
+        );
+        if (!(await permission.present()))
+          throw Object.assign(new Error("Remote Search host access was not granted."), {
+            id: "SEARCH_PROVIDER_PERMISSION_REQUIRED",
+          });
+        const result = await probeOpenAiCompatibleEmbeddingProvider({
+          endpoint: endpointIdentity.endpoint,
+          model: request.model,
+          ...(request.dimensions === undefined ? {} : { dimensions: request.dimensions }),
+          apiKey: request.apiKey,
+          signal: AbortSignal.timeout(15_000),
+        });
+        const probeId = bytesToBase64Url(crypto.getRandomValues(new Uint8Array(16)));
+        const expiresAt = Date.now() + 10 * 60_000;
+        remoteSearchProbe = {
+          probeId,
+          vaultId: request.expectedVaultId,
+          endpoint: endpointIdentity.endpoint,
+          responseModel: result.responseModel,
+          dimensions: result.effectiveDimensions,
+          apiKey: new TextEncoder().encode(request.apiKey),
+          expiresAt,
+        };
+        remoteSearchProbeExpiry = setTimeout(clearRemoteSearchProbe, 10 * 60_000);
+        return {
+          ok: true,
+          value: {
+            probeId,
+            responseModel: result.responseModel,
+            effectiveDimensions: result.effectiveDimensions,
+            expiresAt: new Date(expiresAt).toISOString(),
+          },
+        };
+      }
+      case "ConfigureRemoteSearch": {
+        abortSearchQueries(request.expectedVaultId);
+        searchIndexControllers.get(request.expectedVaultId)?.abort();
+        const value = await serializeSearchModelLifecycle(async () => {
+          const probe = remoteSearchProbe;
+          if (
+            probe === undefined ||
+            probe.probeId !== request.probeId ||
+            probe.vaultId !== request.expectedVaultId ||
+            probe.expiresAt <= Date.now()
+          ) {
+            clearRemoteSearchProbe();
+            throw Object.assign(
+              new Error("Test the remote Search connection again before saving."),
+              { id: "SEARCH_PROBE_EXPIRED" },
+            );
+          }
+          const permission = new SearchProviderPermission(
+            probe.endpoint,
+            browser.permissions as unknown as ConstructorParameters<
+              typeof SearchProviderPermission
+            >[1],
+            firefoxHost,
+          );
+          if (!(await permission.present())) {
+            clearRemoteSearchProbe();
+            throw Object.assign(
+              new Error(
+                "Remote Search access was removed. Grant access or choose another provider.",
+              ),
+              { id: "SEARCH_PROVIDER_PERMISSION_REQUIRED" },
+            );
+          }
+          const { keyring } = await activeSearchContext(request.expectedVaultId);
+          const endpointIdentity = await remoteSearchEndpointIdentity(probe.endpoint);
+          try {
+            await searchRepository.saveSearchSettings(
+              keyring,
+              request.expectedVaultId,
+              {
+                version: 1,
+                semantic: "Remote",
+                provider: {
+                  version: 1,
+                  kind: "RemoteOpenAiCompatible",
+                  endpointOrigin: endpointIdentity.origin,
+                  endpointPathHash: endpointIdentity.pathHash,
+                  model: probe.responseModel,
+                  dimensions: probe.dimensions,
+                  pooling: "Mean",
+                  normalized: true,
+                },
+                endpoint: endpointIdentity.endpoint,
+                protectedCredentialId: `search-${crypto.randomUUID()}`,
+                disclosureVersion: request.acceptedDisclosureVersion,
+              },
+              { remoteApiKey: probe.apiKey },
+            );
+          } finally {
+            clearRemoteSearchProbe();
+          }
+          await notifyAppStateChanged();
+          void ensureSearchIndexing(request.expectedVaultId, true).catch((error) =>
+            testingFaultCheckpoint?.recordFailure(error),
+          );
+          return state();
+        });
+        return { ok: true, value };
+      }
       case "GetState":
         return { ok: true, value: await state() };
       case "WakeSynchronization":
@@ -4176,6 +4972,7 @@ async function handle(request: AppRequest): Promise<AppResponse> {
             await current.vault.lock();
           }
         }
+        clearRemoteSearchProbe();
         activeCable?.disconnect();
         activeCable = undefined;
         activeCableContext = undefined;
@@ -4196,6 +4993,8 @@ async function handle(request: AppRequest): Promise<AppResponse> {
         return { ok: true, value: await state() };
       case "SelectActiveVault":
         await assertNoApplyingServerSwitch();
+        clearRemoteSearchProbe();
+        abortSearchQueries();
         await cancelArtifactSessions();
         await contexts.select(request);
         return { ok: true, value: await state() };
@@ -4236,22 +5035,38 @@ async function handle(request: AppRequest): Promise<AppResponse> {
           ok: true,
           value: await captureActivePage(request.expectedVaultId, request.tabId),
         };
-      case "ListLibrary":
+      case "ListLibrary": {
+        const groups = await libraryGroups(request.expectedVaultId);
+        const force = searchIndexInvalidations.delete(request.expectedVaultId);
+        void ensureSearchIndexing(request.expectedVaultId, force).catch((error) => {
+          if (force) searchIndexInvalidations.add(request.expectedVaultId);
+          testingFaultCheckpoint?.recordFailure(error);
+        });
         return {
           ok: true,
-          value: await libraryGroups(request.expectedVaultId),
+          value: groups,
         };
-      case "ListDeleted":
+      }
+      case "ListDeleted": {
+        const groups = await libraryGroups(request.expectedVaultId, "Deleted");
+        const force = searchIndexInvalidations.delete(request.expectedVaultId);
+        void ensureSearchIndexing(request.expectedVaultId, force).catch((error) => {
+          if (force) searchIndexInvalidations.add(request.expectedVaultId);
+          testingFaultCheckpoint?.recordFailure(error);
+        });
         return {
           ok: true,
-          value: await libraryGroups(request.expectedVaultId, "Deleted"),
+          value: groups,
         };
+      }
       case "DeleteCaptures":
         await changeLibraryState(request.expectedVaultId, request.bundleIds, "Delete");
+        invalidateSearchIndex(request.expectedVaultId);
         await notifyAppStateChanged();
         return { ok: true, value: null };
       case "RestoreCaptures":
         await changeLibraryState(request.expectedVaultId, request.bundleIds, "Restore");
+        invalidateSearchIndex(request.expectedVaultId);
         await notifyAppStateChanged();
         return { ok: true, value: null };
       case "MergeCollections":
@@ -4259,6 +5074,7 @@ async function handle(request: AppRequest): Promise<AppResponse> {
       case "ExtractCaptures":
       case "UndoLibraryOperation": {
         const receipt = await manageCollections(request);
+        invalidateSearchIndex(request.expectedVaultId);
         await notifyAppStateChanged();
         return { ok: true, value: receipt };
       }

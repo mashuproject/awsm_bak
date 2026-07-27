@@ -129,9 +129,11 @@ The following invariants are fundamental.
 
 ## Zero Knowledge
 
-- Plaintext never leaves the trusted runtime.
+- Plaintext never reaches the Coordination Server. Any optional remote embedding request requires
+  explicit active-Vault disclosure consent and exact Host permission.
 - The Coordination Server never requires plaintext to operate.
-- Search indexes never synchronize.
+- Search Materializations, settings, credentials, Jobs, checkpoints, queries, results, and cursors
+  never synchronize.
 - OpenAPI request and response validation rejects unknown fields and undocumented resources.
 - Independent clients converge through real HTTP, PostgreSQL, immutable byte storage, and Action
   Cable; a lost-notification variant converges through polling alone.
@@ -250,6 +252,9 @@ Examples:
 - Command validation
 - Key derivation
 - Search tokenization
+- exact-tier, BM25F, semantic, and hybrid ranking
+- Search document and passage determinism
+- embedding quantization and encrypted Search rows
 
 ---
 
@@ -264,6 +269,8 @@ Examples:
 - Event → Projection
 - Synchronization → Replay
 - Processing → Artifact
+- authenticated Artifacts → resumable Search Materializations
+- Search result → re-authenticated passage focus
 
 ---
 

@@ -4,6 +4,7 @@ import {
   IndexedDbDeviceRepository,
   IndexedDbDriver,
   IndexedDbImportRepository,
+  IndexedDbSearchRepository,
   IndexedDbServerSwitchRepository,
   IndexedDbStorageReliefRepository,
   IndexedDbVaultReplacementRepository,
@@ -24,6 +25,32 @@ import type {
 import { OpfsArtifactStore } from "../../../src/hosts/shared/artifact-store";
 import { VaultImportHost } from "../../../src/hosts/shared/import";
 import { prepareVaultEpochStorage } from "../../../src/runtime/import/credentials";
+import { buildSearchDocument } from "../../../src/runtime/search/documents";
+import { SearchKeywordIndexer } from "../../../src/runtime/search/indexer";
+import { buildKeywordRow } from "../../../src/runtime/search/keyword";
+import { CacheStorageLocalModelStore } from "../../../src/runtime/search/local-model/cache-store";
+import { LocalModelDownloader } from "../../../src/runtime/search/local-model/download";
+import {
+  LOCAL_MINILM_MANIFEST,
+  type LocalMiniLmManifest,
+} from "../../../src/runtime/search/local-model/manifest";
+import { localMiniLmProvider } from "../../../src/runtime/search/local-model/provider";
+import {
+  deriveSearchKeywordLookupKey,
+  keywordPostingEntries,
+} from "../../../src/runtime/search/postings";
+import { parseSearchQuery } from "../../../src/runtime/search/query";
+import { remoteSearchEndpointPathHash } from "../../../src/runtime/search/remote-endpoint";
+import {
+  buildSemanticMaterializations,
+  normalizeEmbedding,
+  providerIdentityHash,
+} from "../../../src/runtime/search/semantic";
+import { SearchCoordinator } from "../../../src/runtime/search/service";
+import {
+  createKeywordStatistics,
+  projectionGeneration,
+} from "../../../src/runtime/search/statistics";
 import type { StorageReliefFaults } from "../../../src/runtime/storage-relief/contracts";
 import { StorageReliefJobRunner } from "../../../src/runtime/storage-relief/runner";
 import { InterruptedStaleDiscardReconciler } from "../../../src/runtime/synchronization/recovery-reconciliation";
@@ -40,6 +67,46 @@ import { TEST_KEY_EPOCH_ID, testKeyring } from "../../helpers/keyring";
 
 function id(suffix: string): string {
   return `00000000-0000-4000-8000-${suffix.padStart(12, "0")}`;
+}
+
+async function localMiniLmInferenceScenario(): Promise<unknown> {
+  const store = new CacheStorageLocalModelStore();
+  const generationName = `awsm-search-model-proof-${crypto.randomUUID()}`;
+  try {
+    for (const file of LOCAL_MINILM_MANIFEST.files) {
+      const response = await fetch(`/model/${file.path}`);
+      if (!response.ok) throw new Error(`Missing local model proof file: ${file.path}`);
+      await store.putFile(generationName, file.path, response);
+    }
+    await store.promote(LOCAL_MINILM_MANIFEST.manifestId, generationName);
+    const provider = localMiniLmProvider(store, {
+      factoryUrl: `${location.origin}/vendor/onnxruntime/ort-wasm-simd-threaded.asyncify.mjs`,
+      wasmUrl: `${location.origin}/vendor/onnxruntime/ort-wasm-simd-threaded.asyncify.wasm`,
+    });
+    try {
+      const vectors = await provider.embed({
+        purpose: "Query",
+        texts: ["private local archive", "garden weather"],
+        signal: AbortSignal.timeout(60_000),
+      });
+      const first = vectors[0];
+      const second = vectors[1];
+      if (first === undefined || second === undefined)
+        throw new Error("MiniLM returned no vector.");
+      const norm = (vector: Float32Array) => Math.hypot(...vector);
+      const cosine = first.reduce((sum, value, index) => sum + value * (second[index] ?? 0), 0);
+      return {
+        dimensions: first.length,
+        finite: [...first, ...second].every(Number.isFinite),
+        normalized: Math.abs(norm(first) - 1) < 0.0001 && Math.abs(norm(second) - 1) < 0.0001,
+        distinct: cosine < 0.99,
+      };
+    } finally {
+      await provider.dispose();
+    }
+  } finally {
+    await store.deleteCurrent();
+  }
 }
 
 function object(objectId: string, byte: number): StoredBundleDescriptorObjectV1 {
@@ -4211,6 +4278,805 @@ async function uiPreferencesScenario(): Promise<unknown> {
   return result;
 }
 
+async function searchKeywordPersistenceScenario(): Promise<unknown> {
+  const databaseName = `awsm-search-${crypto.randomUUID()}`;
+  const repository = new IndexedDbSearchRepository(databaseName);
+  const vaultId = id("960");
+  const bundleId = id("961");
+  const keywordRow = buildKeywordRow(
+    await buildSearchDocument({
+      vaultId,
+      bundleId,
+      collectionId: id("962"),
+      collectionTitle: "Research",
+      status: "Active",
+      title: "Private Search",
+      canonicalUrl: "https://example.test/search",
+      knownUrls: ["https://example.test/search"],
+      capturedAt: "2026-07-26T00:00:00.000Z",
+      artifactObjectId: id("963"),
+      artifactChecksum: new Uint8Array(32),
+      source: { role: "TEXT_EXTRACTED", text: "Find the right Capture passage." },
+    }),
+  );
+  const rootKey = await crypto.subtle.importKey("raw", new Uint8Array(32).fill(7), "HKDF", false, [
+    "deriveBits",
+  ]);
+  const keyring = testKeyring(rootKey);
+  await repository.saveKeywordRow(keyring, keywordRow);
+  const lookupKey = await deriveSearchKeywordLookupKey(keyring, vaultId);
+  const termEntry = (await keywordPostingEntries(lookupKey, keywordRow)).find(
+    ({ namespace, value }) => namespace === "term" && value === "private",
+  );
+  if (termEntry === undefined) throw new Error("Expected private Search posting.");
+  await repository.saveKeywordPosting(keyring, vaultId, {
+    namespace: termEntry.namespace,
+    opaqueMac: termEntry.opaqueMac,
+    Active: [bundleId],
+    Deleted: [],
+  });
+  const postingCandidates = (
+    await repository.loadKeywordPostings(keyring, vaultId, [termEntry.opaqueMac])
+  ).flatMap(({ Active }) => Active);
+  const reopenedRepository = new IndexedDbSearchRepository(databaseName);
+  const restored = await reopenedRepository.loadKeywordRow(keyring, vaultId, bundleId);
+  await reopenedRepository.close();
+
+  const database = await new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open(databaseName);
+    request.addEventListener("success", () => resolve(request.result), { once: true });
+    request.addEventListener("error", () => reject(request.error), { once: true });
+  });
+  const read = database.transaction("search_keyword_rows", "readonly");
+  const stored = await new Promise<Record<string, unknown>>((resolve, reject) => {
+    const request = read.objectStore("search_keyword_rows").get([vaultId, bundleId]);
+    request.addEventListener("success", () => resolve(request.result as Record<string, unknown>), {
+      once: true,
+    });
+    request.addEventListener("error", () => reject(request.error), { once: true });
+  });
+  const ciphertextContainsPlaintext = new TextDecoder()
+    .decode(stored.ciphertext as Uint8Array)
+    .includes("Private Search");
+  const write = database.transaction("search_keyword_rows", "readwrite");
+  write
+    .objectStore("search_keyword_rows")
+    .put({ ...stored, sourceRevision: "ff".repeat(32) }, [vaultId, bundleId]);
+  await new Promise<void>((resolve, reject) => {
+    write.addEventListener("complete", () => resolve(), { once: true });
+    write.addEventListener("error", () => reject(write.error), { once: true });
+  });
+  let tamperingRejected = false;
+  try {
+    await repository.loadKeywordRow(keyring, vaultId, bundleId);
+  } catch {
+    tamperingRejected = true;
+  }
+  const searchStoreCount = Array.from(database.objectStoreNames).filter((name) =>
+    name.startsWith("search_"),
+  ).length;
+  database.close();
+  await repository.deleteDatabase();
+  return {
+    restoredTitle: restored?.document.title,
+    ciphertextContainsPlaintext,
+    tamperingRejected,
+    postingCandidates,
+    searchStoreCount,
+  };
+}
+
+async function searchKeywordAtomicCommitScenario(): Promise<unknown> {
+  const databaseName = `awsm-search-atomic-${crypto.randomUUID()}`;
+  const repository = new IndexedDbSearchRepository(databaseName);
+  const vaultId = id("949");
+  const generationId = id("950");
+  const bundleId = id("951");
+  const jobId = id("952");
+  const initialStatistics = createKeywordStatistics(generationId);
+  const initialJob = {
+    version: 1,
+    jobId,
+    vaultId,
+    state: "Created",
+    stage: "Keyword",
+    projectionGeneration: projectionGeneration(initialStatistics),
+    completedCaptures: 0,
+    totalCaptures: 1,
+    failedCaptures: 0,
+    createdAt: "2026-07-26T00:00:00.000Z",
+    updatedAt: "2026-07-26T00:00:00.000Z",
+  } as const;
+  const pendingCheckpoint = {
+    version: 1,
+    vaultId,
+    jobId,
+    bundleId,
+    sourceRevision: "00".repeat(32),
+    keywordState: "Pending",
+    semanticState: "NotConfigured",
+    attemptCount: 0,
+    updatedAt: "2026-07-26T00:00:00.000Z",
+  } as const;
+  const rootKey = await crypto.subtle.importKey("raw", new Uint8Array(32).fill(9), "HKDF", false, [
+    "deriveBits",
+  ]);
+  const keyring = testKeyring(rootKey);
+  await repository.createKeywordGeneration({
+    keyring,
+    vaultId,
+    statistics: initialStatistics,
+    job: initialJob,
+    checkpoints: [pendingCheckpoint],
+  });
+  const keywordRow = buildKeywordRow(
+    await buildSearchDocument({
+      vaultId,
+      bundleId,
+      collectionId: id("953"),
+      collectionTitle: "Research",
+      status: "Active",
+      title: "Private Search",
+      canonicalUrl: "https://example.test/search",
+      knownUrls: ["https://example.test/search"],
+      capturedAt: "2026-07-26T00:00:00.000Z",
+      artifactObjectId: id("954"),
+      artifactChecksum: new Uint8Array(32),
+      source: { role: "TEXT_EXTRACTED", text: "Private local Search passage." },
+    }),
+  );
+  const committedCheckpoint = {
+    ...pendingCheckpoint,
+    sourceRevision: keywordRow.document.sourceRevision,
+    keywordState: "Committed",
+    attemptCount: 1,
+    updatedAt: "2026-07-26T00:00:01.000Z",
+  } as const;
+  const committedJob = {
+    ...initialJob,
+    state: "Running",
+    projectionGeneration: `${generationId}:1`,
+    completedCaptures: 1,
+    updatedAt: "2026-07-26T00:00:01.000Z",
+    leaseOwner: "library-instance",
+    leaseExpiresAt: "2026-07-26T00:00:31.000Z",
+  } as const;
+  await repository.commitKeywordCapture({
+    keyring,
+    row: keywordRow,
+    expectedProjectionGeneration: `${generationId}:0`,
+    job: committedJob,
+    checkpoint: committedCheckpoint,
+  });
+  const statistics = await repository.loadKeywordStatistics(keyring, vaultId);
+  const job = await repository.loadSearchIndexJob(vaultId, jobId);
+  const checkpoint = await repository.loadSearchIndexCheckpoint(vaultId, jobId, bundleId);
+  const lookupKey = await deriveSearchKeywordLookupKey(keyring, vaultId);
+  const privateEntry = (await keywordPostingEntries(lookupKey, keywordRow)).find(
+    ({ namespace, value }) => namespace === "term" && value === "private",
+  );
+  if (privateEntry === undefined) throw new Error("Expected private Search posting.");
+  const privatePostingCandidates = (
+    await repository.loadKeywordPostings(keyring, vaultId, [privateEntry.opaqueMac])
+  ).flatMap(({ Active }) => Active);
+  const queryCandidateIds = (
+    await repository.keywordCandidateBundleIds(
+      keyring,
+      vaultId,
+      parseSearchQuery('"private local" Search'),
+      "Active",
+    )
+  ).ordinary;
+  let staleConcurrentCommitRejected = false;
+  try {
+    await repository.commitKeywordCapture({
+      keyring,
+      row: keywordRow,
+      expectedProjectionGeneration: `${generationId}:0`,
+      job: committedJob,
+      checkpoint: committedCheckpoint,
+    });
+  } catch {
+    staleConcurrentCommitRejected = true;
+  }
+  const coordinator = new SearchCoordinator({
+    repository,
+    providerFor: async () => {
+      throw new Error("Semantic provider must not be loaded.");
+    },
+  });
+  const searchPage = await coordinator.search({
+    keyring,
+    vaultId,
+    vaultGeneration: generationId,
+    clientInstanceId: "AAAAAAAAAAAAAAAAAAAAAA",
+    query: '"private local" Search',
+    filters: { scope: "Active", hosts: [], collectionIds: [] },
+    signal: new AbortController().signal,
+  });
+  const result = {
+    projectionGeneration: statistics === undefined ? undefined : projectionGeneration(statistics),
+    completedCaptures: job?.completedCaptures,
+    checkpointState: checkpoint?.keywordState,
+    privatePostingCandidates,
+    queryCandidateIds,
+    activeDocumentCount: statistics?.Active.documentCount,
+    staleConcurrentCommitRejected,
+    coordinatorResult: searchPage.results.map(({ bundleId: resultBundleId, match, snippet }) => ({
+      bundleId: resultBundleId,
+      match,
+      snippet,
+    })),
+    semanticState: searchPage.semantic.state,
+  };
+  await repository.deleteDatabase();
+  return result;
+}
+
+async function searchSemanticAtomicCommitScenario(): Promise<unknown> {
+  const databaseName = `awsm-search-semantic-${crypto.randomUUID()}`;
+  const repository = new IndexedDbSearchRepository(databaseName);
+  const vaultId = id("970");
+  const generationId = id("971");
+  const bundleId = id("972");
+  const jobId = id("973");
+  const provider = {
+    version: 1,
+    kind: "LocalMiniLm",
+    model: "Xenova/all-MiniLM-L6-v2",
+    modelRevision: "fixture-revision",
+    dimensions: 2,
+    pooling: "Mean",
+    normalized: true,
+  } as const;
+  const identityHash = await providerIdentityHash(provider);
+  const rootKey = await crypto.subtle.importKey("raw", new Uint8Array(32).fill(11), "HKDF", false, [
+    "deriveBits",
+  ]);
+  const keyring = testKeyring(rootKey);
+  await repository.saveSearchSettings(
+    keyring,
+    vaultId,
+    {
+      version: 1,
+      semantic: "Local",
+      provider,
+      disclosureVersion: 1,
+    },
+    { localManifestId: "fixture-manifest" },
+  );
+  const modelReferencesAfterConfigure =
+    await repository.countSearchModelReferences("fixture-manifest");
+  await repository.saveSearchSettings(
+    keyring,
+    vaultId,
+    {
+      version: 1,
+      semantic: "Local",
+      provider,
+      disclosureVersion: 1,
+    },
+    { localManifestId: "fixture-manifest" },
+  );
+  const modelReferencesAfterRepeatedConfigure =
+    await repository.countSearchModelReferences("fixture-manifest");
+  const keywordRow = buildKeywordRow(
+    await buildSearchDocument({
+      vaultId,
+      bundleId,
+      collectionId: id("974"),
+      collectionTitle: "Research",
+      status: "Active",
+      title: "Semantic Search",
+      canonicalUrl: "https://example.test/semantic",
+      knownUrls: ["https://example.test/semantic"],
+      capturedAt: "2026-07-26T00:00:00.000Z",
+      artifactObjectId: id("975"),
+      artifactChecksum: new Uint8Array(32),
+      source: { role: "TEXT_EXTRACTED", text: "The best matching passage is here." },
+    }),
+  );
+  const statistics = createKeywordStatistics(generationId);
+  const createdJob = {
+    version: 1,
+    jobId,
+    vaultId,
+    state: "Created",
+    stage: "Keyword",
+    projectionGeneration: projectionGeneration(statistics),
+    providerIdentityHash: identityHash,
+    completedCaptures: 0,
+    totalCaptures: 1,
+    failedCaptures: 0,
+    createdAt: "2026-07-26T00:00:00.000Z",
+    updatedAt: "2026-07-26T00:00:00.000Z",
+  } as const;
+  const pending = {
+    version: 1,
+    vaultId,
+    jobId,
+    bundleId,
+    sourceRevision: keywordRow.document.sourceRevision,
+    keywordState: "Pending",
+    semanticState: "Pending",
+    attemptCount: 0,
+    updatedAt: "2026-07-26T00:00:00.000Z",
+  } as const;
+  await repository.createKeywordGeneration({
+    keyring,
+    vaultId,
+    statistics,
+    job: createdJob,
+    checkpoints: [pending],
+  });
+  const keywordCheckpoint = {
+    ...pending,
+    keywordState: "Committed",
+    attemptCount: 1,
+    updatedAt: "2026-07-26T00:00:01.000Z",
+  } as const;
+  const semanticJob = {
+    ...createdJob,
+    state: "Running",
+    stage: "Semantic",
+    projectionGeneration: `${generationId}:1`,
+    updatedAt: "2026-07-26T00:00:01.000Z",
+    leaseOwner: "library-instance",
+    leaseExpiresAt: "2026-07-26T00:00:31.000Z",
+  } as const;
+  await repository.commitKeywordCapture({
+    keyring,
+    row: keywordRow,
+    expectedProjectionGeneration: `${generationId}:0`,
+    job: semanticJob,
+    checkpoint: keywordCheckpoint,
+  });
+  const semantic = buildSemanticMaterializations({
+    document: keywordRow.document,
+    providerIdentityHash: identityHash,
+    embeddings: keywordRow.document.passages.map((passage, passageOrdinal) => ({
+      passageId: passage.passageId,
+      passageOrdinal,
+      vector: normalizeEmbedding([passageOrdinal + 1, 1]),
+    })),
+  });
+  const committedCheckpoint = {
+    ...keywordCheckpoint,
+    semanticState: "Committed",
+    attemptCount: 2,
+    updatedAt: "2026-07-26T00:00:02.000Z",
+  } as const;
+  const committedJob = {
+    ...semanticJob,
+    completedCaptures: 1,
+    updatedAt: "2026-07-26T00:00:02.000Z",
+    leaseExpiresAt: "2026-07-26T00:00:32.000Z",
+  } as const;
+  await repository.commitSemanticCapture({
+    keyring,
+    ...semantic,
+    job: committedJob,
+    checkpoint: committedCheckpoint,
+  });
+  const restoredCapture = await repository.loadSemanticCapture(keyring, vaultId, bundleId);
+  const restoredPassages = await repository.loadSemanticPassages(keyring, vaultId, bundleId);
+  const scanned: string[] = [];
+  await repository.scanSemanticCaptures(
+    keyring,
+    vaultId,
+    async (batch) => {
+      scanned.push(...batch.map(({ bundleId: candidate }) => candidate));
+    },
+    1,
+  );
+  let staleRejected = false;
+  try {
+    await repository.commitSemanticCapture({
+      keyring,
+      ...semantic,
+      job: committedJob,
+      checkpoint: committedCheckpoint,
+    });
+  } catch {
+    staleRejected = true;
+  }
+  const database = await new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open(databaseName);
+    request.addEventListener("success", () => resolve(request.result), { once: true });
+    request.addEventListener("error", () => reject(request.error), { once: true });
+  });
+  const transaction = database.transaction("search_semantic_rows", "readonly");
+  const stored = (await new Promise<unknown>((resolve, reject) => {
+    const request = transaction.objectStore("search_semantic_rows").get([vaultId, bundleId]);
+    request.addEventListener("success", () => resolve(request.result), { once: true });
+    request.addEventListener("error", () => reject(request.error), { once: true });
+  })) as { ciphertext: Uint8Array };
+  const ciphertextText = new TextDecoder().decode(stored.ciphertext);
+  database.close();
+  const result = {
+    restoredBundleId: restoredCapture?.bundleId,
+    passageCount: restoredPassages?.passages.length,
+    providerIdentityHash: restoredCapture?.providerIdentityHash,
+    scanned,
+    ciphertextContainsTitle: ciphertextText.includes("Semantic Search"),
+    checkpointState: (await repository.loadSearchIndexCheckpoint(vaultId, jobId, bundleId))
+      ?.semanticState,
+    staleRejected,
+    modelReferencesAfterConfigure,
+    modelReferencesAfterRepeatedConfigure,
+  };
+  await repository.saveSearchSettings(keyring, vaultId, { version: 1, semantic: "Disabled" });
+  const indexedVaultGeneration = `${id("979")}:12`;
+  await repository.saveIndexedVaultGeneration(vaultId, indexedVaultGeneration);
+  Object.assign(result, {
+    semanticCleared:
+      (await repository.loadSemanticCapture(keyring, vaultId, bundleId)) === undefined &&
+      (await repository.loadSemanticPassages(keyring, vaultId, bundleId)) === undefined,
+    modelReferencesAfterDisable: await repository.countSearchModelReferences("fixture-manifest"),
+    indexedVaultGeneration: await repository.loadIndexedVaultGeneration(vaultId),
+  });
+  const remoteEndpoint = "https://embeddings.example.test/v1/embeddings?route=private";
+  const remoteSettings = {
+    version: 1,
+    semantic: "Remote",
+    provider: {
+      version: 1,
+      kind: "RemoteOpenAiCompatible",
+      endpointOrigin: "https://embeddings.example.test",
+      endpointPathHash: remoteSearchEndpointPathHash(remoteEndpoint),
+      model: "resolved-model",
+      dimensions: 2,
+      pooling: "Mean",
+      normalized: true,
+    },
+    endpoint: remoteEndpoint,
+    protectedCredentialId: "search-fixture-credential",
+    disclosureVersion: 1,
+  } as const;
+  await repository.saveSearchSettings(keyring, vaultId, remoteSettings, {
+    remoteApiKey: new TextEncoder().encode("fixture-api-key"),
+  });
+  Object.assign(result, {
+    remoteCredential: new TextDecoder().decode(
+      await repository.loadRemoteSearchApiKey(vaultId, remoteSettings),
+    ),
+  });
+  await repository.saveSearchSettings(keyring, vaultId, { version: 1, semantic: "Disabled" });
+  let remoteCredentialDeleted = false;
+  try {
+    await repository.loadRemoteSearchApiKey(vaultId, remoteSettings);
+  } catch {
+    remoteCredentialDeleted = true;
+  }
+  Object.assign(result, { remoteCredentialDeleted });
+  await repository.deleteDatabase();
+  return result;
+}
+
+async function searchIndexLeaseScenario(): Promise<unknown> {
+  const databaseName = `awsm-search-lease-${crypto.randomUUID()}`;
+  const repository = new IndexedDbSearchRepository(databaseName);
+  const vaultId = id("940");
+  const generationId = id("941");
+  const jobId = id("942");
+  const rootKey = await crypto.subtle.importKey("raw", new Uint8Array(32).fill(11), "HKDF", false, [
+    "deriveBits",
+  ]);
+  const keyring = testKeyring(rootKey);
+  const statistics = createKeywordStatistics(generationId);
+  await repository.createKeywordGeneration({
+    keyring,
+    vaultId,
+    statistics,
+    job: {
+      version: 1,
+      jobId,
+      vaultId,
+      state: "Created",
+      stage: "Discover",
+      projectionGeneration: projectionGeneration(statistics),
+      completedCaptures: 0,
+      totalCaptures: 0,
+      failedCaptures: 0,
+      createdAt: "2026-07-26T00:00:00.000Z",
+      updatedAt: "2026-07-26T00:00:00.000Z",
+    },
+    checkpoints: [],
+  });
+  const first = await repository.claimSearchIndexLease(
+    vaultId,
+    jobId,
+    "library-a",
+    "2026-07-26T00:00:01.000Z",
+  );
+  const competingRepository = new IndexedDbSearchRepository(databaseName);
+  const contention = await competingRepository.claimSearchIndexLease(
+    vaultId,
+    jobId,
+    "library-b",
+    "2026-07-26T00:00:30.999Z",
+  );
+  await competingRepository.close();
+  const takeover = await repository.claimSearchIndexLease(
+    vaultId,
+    jobId,
+    "library-b",
+    "2026-07-26T00:00:31.000Z",
+  );
+  const renewed = await repository.renewSearchIndexLease(
+    vaultId,
+    jobId,
+    "library-b",
+    "2026-07-26T00:00:40.000Z",
+  );
+  const waiting = await repository.releaseSearchIndexLease(
+    vaultId,
+    jobId,
+    "library-b",
+    "WaitingForLibrary",
+    "2026-07-26T00:00:41.000Z",
+  );
+  const result = {
+    firstOwner: first?.leaseOwner,
+    contentionRejected: contention === undefined,
+    takeoverOwner: takeover?.leaseOwner,
+    renewedUntil: renewed.leaseExpiresAt,
+    waitingState: waiting.state,
+    leaseCleared: waiting.leaseOwner === undefined && waiting.leaseExpiresAt === undefined,
+  };
+  await repository.deleteDatabase();
+  return result;
+}
+
+async function searchIndexFailureResumeScenario(): Promise<unknown> {
+  const databaseName = `awsm-search-failure-${crypto.randomUUID()}`;
+  const repository = new IndexedDbSearchRepository(databaseName);
+  const vaultId = id("925");
+  const bundleId = id("926");
+  const jobId = id("927");
+  const generationId = id("928");
+  const rootKey = await crypto.subtle.importKey("raw", new Uint8Array(32).fill(17), "HKDF", false, [
+    "deriveBits",
+  ]);
+  const keyring = testKeyring(rootKey);
+  const statistics = createKeywordStatistics(generationId);
+  await repository.createKeywordGeneration({
+    keyring,
+    vaultId,
+    statistics,
+    job: {
+      version: 1,
+      jobId,
+      vaultId,
+      state: "Created",
+      stage: "Keyword",
+      projectionGeneration: projectionGeneration(statistics),
+      completedCaptures: 0,
+      totalCaptures: 1,
+      failedCaptures: 0,
+      createdAt: "2026-07-26T00:00:00.000Z",
+      updatedAt: "2026-07-26T00:00:00.000Z",
+    },
+    checkpoints: [
+      {
+        version: 1,
+        vaultId,
+        jobId,
+        bundleId,
+        sourceRevision: "cd".repeat(32),
+        keywordState: "Pending",
+        semanticState: "NotConfigured",
+        attemptCount: 0,
+        updatedAt: "2026-07-26T00:00:00.000Z",
+      },
+    ],
+  });
+  await repository.claimSearchIndexLease(vaultId, jobId, "library-a", "2026-07-26T00:00:01.000Z");
+  const failed = await repository.failSearchIndexCapture({
+    vaultId,
+    jobId,
+    bundleId,
+    owner: "library-a",
+    stage: "Keyword",
+    errorId: "SEARCH_PROVIDER_UNAVAILABLE",
+    now: "2026-07-26T00:00:02.000Z",
+    retryAt: "2026-07-26T00:05:02.000Z",
+  });
+  const failedCheckpoint = await repository.loadSearchIndexCheckpoint(vaultId, jobId, bundleId);
+  const resumed = await repository.resumeLatestSearchIndexJob(vaultId, "2026-07-26T00:00:03.000Z");
+  const resumedCheckpoint = await repository.loadSearchIndexCheckpoint(vaultId, jobId, bundleId);
+  const result = {
+    failedState: failed.state,
+    failedCaptures: failed.failedCaptures,
+    retryAt: failed.retryAt,
+    failedCheckpointState: failedCheckpoint?.keywordState,
+    failedAttemptCount: failedCheckpoint?.attemptCount,
+    failedCheckpointError: failedCheckpoint?.errorId,
+    resumedState: resumed.state,
+    resumedFailedCaptures: resumed.failedCaptures,
+    resumedCheckpointState: resumedCheckpoint?.keywordState,
+    resumedCheckpointError: resumedCheckpoint?.errorId,
+  };
+  await repository.deleteDatabase();
+  return result;
+}
+
+async function searchKeywordIndexerScenario(): Promise<unknown> {
+  const databaseName = `awsm-search-indexer-${crypto.randomUUID()}`;
+  const repository = new IndexedDbSearchRepository(databaseName);
+  const vaultId = id("930");
+  const bundleId = id("931");
+  const jobId = id("932");
+  const generationId = id("933");
+  const rootKey = await crypto.subtle.importKey("raw", new Uint8Array(32).fill(13), "HKDF", false, [
+    "deriveBits",
+  ]);
+  const keyring = testKeyring(rootKey);
+  const row = buildKeywordRow(
+    await buildSearchDocument({
+      vaultId,
+      bundleId,
+      collectionId: id("934"),
+      collectionTitle: "Research",
+      status: "Active",
+      title: "Private Search",
+      canonicalUrl: "https://example.test/search",
+      knownUrls: ["https://example.test/search"],
+      capturedAt: "2026-07-26T00:00:00.000Z",
+      artifactObjectId: id("935"),
+      artifactChecksum: new Uint8Array(32),
+      source: { role: "TEXT_EXTRACTED", text: "Private local Search passage." },
+    }),
+  );
+  const statistics = createKeywordStatistics(generationId);
+  await repository.createKeywordGeneration({
+    keyring,
+    vaultId,
+    statistics,
+    job: {
+      version: 1,
+      jobId,
+      vaultId,
+      state: "Created",
+      stage: "Keyword",
+      projectionGeneration: projectionGeneration(statistics),
+      completedCaptures: 0,
+      totalCaptures: 1,
+      failedCaptures: 0,
+      createdAt: "2026-07-26T00:00:00.000Z",
+      updatedAt: "2026-07-26T00:00:00.000Z",
+    },
+    checkpoints: [
+      {
+        version: 1,
+        vaultId,
+        jobId,
+        bundleId,
+        sourceRevision: row.document.sourceRevision,
+        keywordState: "Pending",
+        semanticState: "NotConfigured",
+        attemptCount: 0,
+        updatedAt: "2026-07-26T00:00:00.000Z",
+      },
+    ],
+  });
+  let invalidations = 0;
+  const indexer = new SearchKeywordIndexer({
+    repository,
+    source: {
+      loadKeywordRow: async (_vaultId, _bundleId, signal) => {
+        signal.throwIfAborted();
+        return row;
+      },
+    },
+    gate: async () => ({
+      connected: true,
+      visible: true,
+      expectedVaultActive: true,
+      unlocked: true,
+      paused: false,
+      permissionPresent: true,
+      online: true,
+    }),
+    now: () => "2026-07-26T00:00:01.000Z",
+    onCommitted: async () => {
+      invalidations += 1;
+    },
+  });
+  const result = await indexer.run({
+    vaultId,
+    jobId,
+    owner: "library-instance",
+    keyring,
+    signal: new AbortController().signal,
+  });
+  const checkpoint = await repository.loadSearchIndexCheckpoint(vaultId, jobId, bundleId);
+  const indexed = await repository.loadKeywordRow(keyring, vaultId, bundleId);
+  const output = {
+    state: result.state,
+    completedCaptures: result.completedCaptures,
+    checkpointState: checkpoint?.keywordState,
+    indexedTitle: indexed?.document.title,
+    invalidations,
+  };
+  await repository.deleteDatabase();
+  return output;
+}
+
+async function searchLocalModelCacheScenario(): Promise<unknown> {
+  const manifest = {
+    manifestId: "fixture-manifest",
+    model: "Xenova/all-MiniLM-L6-v2",
+    revision: "751bff37182d3f1213fa05d7196b954e230abad9",
+    dtype: "int8",
+    dimensions: 384,
+    maximumWordpieces: 256,
+    pooling: "Mean",
+    normalization: "L2",
+    language: "English",
+    license: "Apache-2.0",
+    totalBytes: 3,
+    files: [
+      {
+        path: "config.json",
+        bytes: 3,
+        sha256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+      },
+    ],
+  } satisfies LocalMiniLmManifest;
+  const response = (body: string): Response => {
+    const value = new Response(body, {
+      headers: {
+        "content-length": String(body.length),
+        "content-type": "application/octet-stream",
+      },
+    });
+    Object.defineProperty(value, "url", {
+      value: "https://cdn-lfs.hf.co/fixture",
+    });
+    return value;
+  };
+  const store = new CacheStorageLocalModelStore();
+  await store.deleteCurrent();
+  await new LocalModelDownloader({
+    store,
+    manifest,
+    fetcher: async () => response("abc"),
+    createGenerationId: () => "browser-valid",
+  }).download({
+    signal: new AbortController().signal,
+    onProgress: () => undefined,
+  });
+  const pointerBefore = await store.current();
+  const ready = await store.isReady(manifest);
+  const cachedText = await (await store.file("config.json"))?.text();
+  let corruptPromotionRejected = false;
+  try {
+    await new LocalModelDownloader({
+      store,
+      manifest,
+      fetcher: async () => response("abd"),
+      createGenerationId: () => "browser-corrupt",
+    }).download({
+      signal: new AbortController().signal,
+      onProgress: () => undefined,
+    });
+  } catch {
+    corruptPromotionRejected = true;
+  }
+  const pointerAfter = await store.current();
+  await store.deleteCurrent();
+  const removed = !(await store.isReady(manifest));
+  return {
+    ready,
+    cachedText,
+    pointerManifest: pointerBefore?.manifestId,
+    corruptPromotionRejected,
+    pointerUnchanged: pointerBefore?.generationName === pointerAfter?.generationName,
+    removed,
+  };
+}
+
 async function storageReliefPersistenceScenario(): Promise<unknown> {
   const databaseName = `awsm-storage-relief-${crypto.randomUUID()}`;
   const repository = new IndexedDbStorageReliefRepository(databaseName);
@@ -4692,127 +5558,151 @@ async function run(): Promise<void> {
   const result =
     scenario === "ui-preferences"
       ? await uiPreferencesScenario()
-      : scenario === "storage-relief-fault-matrix"
-        ? await storageReliefFaultMatrixScenario()
-        : scenario === "storage-relief-runner"
-          ? await storageReliefRunnerScenario()
-          : scenario === "storage-relief-lease"
-            ? await storageReliefLeaseScenario()
-            : scenario === "storage-relief-persistence"
-              ? await storageReliefPersistenceScenario()
-              : scenario === "storage-relief-schema"
-                ? await storageReliefSchemaScenario()
-                : scenario === "account-persistence"
-                  ? await accountPersistenceScenario()
-                  : scenario === "account-scope-isolation"
-                    ? await accountScopeIsolationScenario()
-                    : scenario === "server-switch-promotion"
-                      ? await serverSwitchPromotionScenario()
-                      : scenario === "server-switch-replica-promotion-atomicity"
-                        ? await serverSwitchReplicaPromotionAtomicityScenario()
-                        : scenario === "server-switch-persistence"
-                          ? await serverSwitchPersistenceScenario()
-                          : scenario === "vault"
-                            ? await vaultScenario()
-                            : scenario === "workspace"
-                              ? await workspaceScenario()
-                              : scenario === "atomic-vault-create"
-                                ? await atomicVaultCreateScenario()
-                                : scenario === "atomic-vault-create-failures"
-                                  ? await atomicVaultCreateFailureScenario()
-                                  : scenario === "atomic-vault-select"
-                                    ? await atomicVaultSelectScenario()
-                                    : scenario === "atomic-vault-select-failures"
-                                      ? await atomicVaultSelectFailureScenario()
-                                      : scenario === "atomic-vault-rename"
-                                        ? await atomicVaultRenameScenario()
-                                        : scenario === "atomic-vault-rename-failures"
-                                          ? await atomicVaultRenameFailureScenario()
-                                          : scenario === "vault-record-isolation"
-                                            ? await vaultRecordIsolationScenario()
-                                            : scenario === "immutable"
-                                              ? await immutableScenario()
-                                              : scenario === "vault-isolation"
-                                                ? await vaultIsolationScenario()
-                                                : scenario === "capture-job-vault-isolation"
-                                                  ? await captureJobVaultIsolationScenario()
-                                                  : scenario === "event-vault-mismatch"
-                                                    ? await eventVaultMismatchScenario()
-                                                    : scenario === "atomic"
-                                                      ? await atomicScenario()
-                                                      : scenario === "rollback"
-                                                        ? await rollbackScenario()
-                                                        : scenario === "stale-epoch-replay-commit"
-                                                          ? await staleEpochReplayCommitScenario()
-                                                          : scenario ===
-                                                              "vault-replacement-persistence"
-                                                            ? await vaultReplacementPersistenceScenario()
-                                                            : scenario ===
-                                                                "vault-replacement-hidden-stage"
-                                                              ? await vaultReplacementHiddenStageScenario()
-                                                              : scenario ===
-                                                                  "vault-replacement-promotion"
-                                                                ? await vaultReplacementPromotionScenario()
-                                                                : scenario === "projection"
-                                                                  ? await projectionScenario()
-                                                                  : scenario === "interruption"
-                                                                    ? await interruptionScenario()
-                                                                    : scenario === "dismissal"
-                                                                      ? await dismissalScenario()
-                                                                      : scenario === "library-state"
-                                                                        ? await libraryStateScenario()
+      : scenario === "search-keyword-persistence"
+        ? await searchKeywordPersistenceScenario()
+        : scenario === "search-keyword-atomic-commit"
+          ? await searchKeywordAtomicCommitScenario()
+          : scenario === "search-semantic-atomic-commit"
+            ? await searchSemanticAtomicCommitScenario()
+            : scenario === "search-index-lease"
+              ? await searchIndexLeaseScenario()
+              : scenario === "search-index-failure-resume"
+                ? await searchIndexFailureResumeScenario()
+                : scenario === "search-keyword-indexer"
+                  ? await searchKeywordIndexerScenario()
+                  : scenario === "search-local-minilm-inference"
+                    ? await localMiniLmInferenceScenario()
+                    : scenario === "search-local-model-cache"
+                      ? await searchLocalModelCacheScenario()
+                      : scenario === "storage-relief-fault-matrix"
+                        ? await storageReliefFaultMatrixScenario()
+                        : scenario === "storage-relief-runner"
+                          ? await storageReliefRunnerScenario()
+                          : scenario === "storage-relief-lease"
+                            ? await storageReliefLeaseScenario()
+                            : scenario === "storage-relief-persistence"
+                              ? await storageReliefPersistenceScenario()
+                              : scenario === "storage-relief-schema"
+                                ? await storageReliefSchemaScenario()
+                                : scenario === "account-persistence"
+                                  ? await accountPersistenceScenario()
+                                  : scenario === "account-scope-isolation"
+                                    ? await accountScopeIsolationScenario()
+                                    : scenario === "server-switch-promotion"
+                                      ? await serverSwitchPromotionScenario()
+                                      : scenario === "server-switch-replica-promotion-atomicity"
+                                        ? await serverSwitchReplicaPromotionAtomicityScenario()
+                                        : scenario === "server-switch-persistence"
+                                          ? await serverSwitchPersistenceScenario()
+                                          : scenario === "vault"
+                                            ? await vaultScenario()
+                                            : scenario === "workspace"
+                                              ? await workspaceScenario()
+                                              : scenario === "atomic-vault-create"
+                                                ? await atomicVaultCreateScenario()
+                                                : scenario === "atomic-vault-create-failures"
+                                                  ? await atomicVaultCreateFailureScenario()
+                                                  : scenario === "atomic-vault-select"
+                                                    ? await atomicVaultSelectScenario()
+                                                    : scenario === "atomic-vault-select-failures"
+                                                      ? await atomicVaultSelectFailureScenario()
+                                                      : scenario === "atomic-vault-rename"
+                                                        ? await atomicVaultRenameScenario()
+                                                        : scenario ===
+                                                            "atomic-vault-rename-failures"
+                                                          ? await atomicVaultRenameFailureScenario()
+                                                          : scenario === "vault-record-isolation"
+                                                            ? await vaultRecordIsolationScenario()
+                                                            : scenario === "immutable"
+                                                              ? await immutableScenario()
+                                                              : scenario === "vault-isolation"
+                                                                ? await vaultIsolationScenario()
+                                                                : scenario ===
+                                                                    "capture-job-vault-isolation"
+                                                                  ? await captureJobVaultIsolationScenario()
+                                                                  : scenario ===
+                                                                      "event-vault-mismatch"
+                                                                    ? await eventVaultMismatchScenario()
+                                                                    : scenario === "atomic"
+                                                                      ? await atomicScenario()
+                                                                      : scenario === "rollback"
+                                                                        ? await rollbackScenario()
                                                                         : scenario ===
-                                                                            "vacuum-rollback"
-                                                                          ? await vacuumRollbackScenario()
+                                                                            "stale-epoch-replay-commit"
+                                                                          ? await staleEpochReplayCommitScenario()
                                                                           : scenario ===
-                                                                              "vacuum-availability-cleanup"
-                                                                            ? await vacuumAvailabilityCleanupScenario()
+                                                                              "vault-replacement-persistence"
+                                                                            ? await vaultReplacementPersistenceScenario()
                                                                             : scenario ===
-                                                                                "vacuum-cas-conflict"
-                                                                              ? await vacuumCasConflictScenario()
+                                                                                "vault-replacement-hidden-stage"
+                                                                              ? await vaultReplacementHiddenStageScenario()
                                                                               : scenario ===
-                                                                                  "vacuum-lease"
-                                                                                ? await vacuumLeaseScenario()
+                                                                                  "vault-replacement-promotion"
+                                                                                ? await vaultReplacementPromotionScenario()
                                                                                 : scenario ===
-                                                                                    "synchronized-vacuum-journal"
-                                                                                  ? await synchronizedVacuumJournalScenario()
+                                                                                    "projection"
+                                                                                  ? await projectionScenario()
                                                                                   : scenario ===
-                                                                                      "collection-operation"
-                                                                                    ? await collectionOperationScenario()
+                                                                                      "interruption"
+                                                                                    ? await interruptionScenario()
                                                                                     : scenario ===
-                                                                                        "management-busy"
-                                                                                      ? await managementBusyScenario()
+                                                                                        "dismissal"
+                                                                                      ? await dismissalScenario()
                                                                                       : scenario ===
-                                                                                          "export-lease"
-                                                                                        ? await exportLeaseScenario()
+                                                                                          "library-state"
+                                                                                        ? await libraryStateScenario()
                                                                                         : scenario ===
-                                                                                            "import-lease"
-                                                                                          ? await importLeaseScenario()
+                                                                                            "vacuum-rollback"
+                                                                                          ? await vacuumRollbackScenario()
                                                                                           : scenario ===
-                                                                                              "artifact-store"
-                                                                                            ? await artifactStoreScenario()
+                                                                                              "vacuum-availability-cleanup"
+                                                                                            ? await vacuumAvailabilityCleanupScenario()
                                                                                             : scenario ===
-                                                                                                "import-source-staging"
-                                                                                              ? await importSourceStagingScenario()
+                                                                                                "vacuum-cas-conflict"
+                                                                                              ? await vacuumCasConflictScenario()
                                                                                               : scenario ===
-                                                                                                  "import-job-lifecycle"
-                                                                                                ? await importJobLifecycleScenario()
+                                                                                                  "vacuum-lease"
+                                                                                                ? await vacuumLeaseScenario()
                                                                                                 : scenario ===
-                                                                                                    "atomic-vault-import"
-                                                                                                  ? await atomicVaultImportScenario()
+                                                                                                    "synchronized-vacuum-journal"
+                                                                                                  ? await synchronizedVacuumJournalScenario()
                                                                                                   : scenario ===
-                                                                                                      "atomic-stale-discard"
-                                                                                                    ? await atomicStaleDiscardScenario()
+                                                                                                      "collection-operation"
+                                                                                                    ? await collectionOperationScenario()
                                                                                                     : scenario ===
-                                                                                                        "remote-reconciliation-fence"
-                                                                                                      ? await remoteReconciliationFenceScenario()
+                                                                                                        "management-busy"
+                                                                                                      ? await managementBusyScenario()
                                                                                                       : scenario ===
-                                                                                                          "stale-discard-restart"
-                                                                                                        ? await staleDiscardRestartScenario()
-                                                                                                        : {
-                                                                                                            error:
-                                                                                                              "unknown scenario",
-                                                                                                          };
+                                                                                                          "export-lease"
+                                                                                                        ? await exportLeaseScenario()
+                                                                                                        : scenario ===
+                                                                                                            "import-lease"
+                                                                                                          ? await importLeaseScenario()
+                                                                                                          : scenario ===
+                                                                                                              "artifact-store"
+                                                                                                            ? await artifactStoreScenario()
+                                                                                                            : scenario ===
+                                                                                                                "import-source-staging"
+                                                                                                              ? await importSourceStagingScenario()
+                                                                                                              : scenario ===
+                                                                                                                  "import-job-lifecycle"
+                                                                                                                ? await importJobLifecycleScenario()
+                                                                                                                : scenario ===
+                                                                                                                    "atomic-vault-import"
+                                                                                                                  ? await atomicVaultImportScenario()
+                                                                                                                  : scenario ===
+                                                                                                                      "atomic-stale-discard"
+                                                                                                                    ? await atomicStaleDiscardScenario()
+                                                                                                                    : scenario ===
+                                                                                                                        "remote-reconciliation-fence"
+                                                                                                                      ? await remoteReconciliationFenceScenario()
+                                                                                                                      : scenario ===
+                                                                                                                          "stale-discard-restart"
+                                                                                                                        ? await staleDiscardRestartScenario()
+                                                                                                                        : {
+                                                                                                                            error:
+                                                                                                                              "unknown scenario",
+                                                                                                                          };
   const output = document.querySelector("#result");
   if (output !== null) {
     output.textContent = JSON.stringify(result);

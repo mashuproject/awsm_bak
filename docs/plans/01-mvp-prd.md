@@ -322,19 +322,16 @@ The local archive shall support:
 
 The client shall provide:
 
-- full-text search
+- deterministic title, URL, Host, Collection-title, and preserved-text keyword Search;
+- exact title, canonical URL, and balanced quoted-phrase tiers;
+- optional semantic Search through an explicitly configured local or remote embedding provider;
+- Host, captured-date, and Collection filters;
+- a Capture result with its best matching passage; and
+- offline keyword Search, plus offline semantic Search after the local model is cached.
 
-- title search
-
-- URL search
-
-- tag search
-
-- folder search
-
-- AI-assisted semantic search (future)
-
-Search shall not require backend participation.
+Search shall not require Coordination Server participation. Remote semantic Search is an advanced
+opt-in mode that may disclose bounded plaintext passages and submitted queries only to the exact
+user-configured endpoint after disclosure consent and Host permission.
 
 ---
 

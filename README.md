@@ -56,6 +56,8 @@ The browser extension currently supports:
   Vacuum;
 - a responsive Library with Archive and Deleted navigation, Newest/Oldest/Title sorting, and
   device-local Grid or Compact List presentation preferences;
+- private per-Vault keyword Search, plus optional semantic Search using either an explicitly
+  downloaded local English model or an explicitly configured remote embedding endpoint;
 - passphrase-protected Complete Vault Export and Import; and
 - optional Account authentication and synchronization of an encrypted Vault Replica through a
   compatible self-hosted Coordination Server in Chrome and Firefox.
@@ -65,17 +67,19 @@ Firefox can derive and download MHTML from it on demand; MHTML is not stored as 
 state or rendered inside the Library. The full-page screenshot is previewed in the Capture detail
 view, while extracted text and structured content can be inspected there.
 
-The current Firefox development build supports local Vaults, Capture, Library, MHTML, Export,
-Import, and synchronization. Enabling synchronization requests Firefox's native optional
+The current Firefox development build supports local Vaults, Capture, Library, Search, MHTML,
+Export, Import, and synchronization. Enabling synchronization requests Firefox's native optional
 permissions for website content, browsing activity, authentication information, personally
 identifying information, and the selected server origin. Denial or revocation leaves local
 features available and prevents server traffic. Mozilla signing remains disabled until the first
 unlisted distribution initiative on the Roadmap is explicitly authorized.
 
-Search, AI-generated summaries, tags, embeddings, classifications, annotations, and folders are
-not implemented user-facing features. AWSM already preserves normalized text and document structure
-as architectural groundwork for future client-side search and derived Artifacts; it does not
-present those future capabilities as current behavior.
+AI-generated summaries, tags, classifications, annotations, and folders are not implemented
+user-facing features. Search materializations are encrypted, rebuildable, local-only, and excluded
+from synchronization and Vault packages. Keyword Search remains available offline. The optional
+local semantic model downloads only after user action and then works offline; a remote embedding
+provider receives Capture passages and submitted queries only after a separate explicit disclosure
+and exact endpoint permission.
 
 The Coordination Server root is the public AWSM product and installation guide on hosted and
 self-hosted deployments. Its privacy, security, setup, and Account pages are evergreen product

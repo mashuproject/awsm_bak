@@ -35,6 +35,27 @@
           <div><p class="eyebrow">Private archive</p><div id="library-title"></div></div>
           <button id="header-settings" type="button">Settings</button>
         </header>
+        <section class="library-search" id="library-search" aria-labelledby="library-search-label">
+          <search>
+            <form id="library-search-form">
+              <label id="library-search-label" for="library-search-input">Search this Vault</label>
+              <div class="library-search__controls">
+                <input
+                  id="library-search-input"
+                  name="query"
+                  type="search"
+                  maxlength="1024"
+                  autocomplete="off"
+                  placeholder="Search titles, URLs, and captured text"
+                />
+                <button id="library-search-submit" type="submit">Search</button>
+              </div>
+            </form>
+          </search>
+          <div id="library-search-filters" class="library-search-filters"></div>
+          <div id="library-search-filter-chips" class="library-search-filter-chips" aria-live="polite"></div>
+          <button id="library-search-clear" type="button" hidden>Back to Library</button>
+        </section>
         <main id="app" aria-busy="true"></main>
       </div>
     </div>

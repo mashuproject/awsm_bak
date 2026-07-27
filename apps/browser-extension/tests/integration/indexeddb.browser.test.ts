@@ -29,6 +29,21 @@ test("persists a non-exportable device key and Vault records", async ({ page }) 
   });
 });
 
+test("runs the pinned local MiniLM through browser WASM without network fallback", async ({
+  page,
+}) => {
+  test.skip(
+    process.env.AWSM_SEARCH_MODEL_PROOF_DIR === undefined,
+    "Set AWSM_SEARCH_MODEL_PROOF_DIR to the exact pinned MiniLM files.",
+  );
+  await expect(scenario(page, "search-local-minilm-inference")).resolves.toEqual({
+    dimensions: 384,
+    finite: true,
+    normalized: true,
+    distinct: true,
+  });
+});
+
 test("creates the canonical storage-relief stores without a schema upgrade", async ({ page }) => {
   await expect(scenario(page, "storage-relief-schema")).resolves.toEqual({
     databaseVersion: 1,
@@ -43,6 +58,111 @@ test("persists canonical local-only Library preferences in the fresh schema", as
     defaults: { version: 1, sort: "CapturedNewest", view: "Grid" },
     restored: { version: 1, sort: "TitleAscending", view: "List" },
     keys: ["library"],
+  });
+});
+
+test("persists encrypted keyword Search rows and rejects authenticated-header tampering", async ({
+  page,
+}) => {
+  await expect(scenario(page, "search-keyword-persistence")).resolves.toEqual({
+    restoredTitle: "Private Search",
+    ciphertextContainsPlaintext: false,
+    tamperingRejected: true,
+    postingCandidates: ["00000000-0000-4000-8000-000000000961"],
+    searchStoreCount: 9,
+  });
+});
+
+test("atomically commits keyword rows, opaque postings, statistics, Jobs, and checkpoints", async ({
+  page,
+}) => {
+  await expect(scenario(page, "search-keyword-atomic-commit")).resolves.toEqual({
+    projectionGeneration: "00000000-0000-4000-8000-000000000950:1",
+    completedCaptures: 1,
+    checkpointState: "Committed",
+    privatePostingCandidates: ["00000000-0000-4000-8000-000000000951"],
+    queryCandidateIds: ["00000000-0000-4000-8000-000000000951"],
+    activeDocumentCount: 1,
+    staleConcurrentCommitRejected: true,
+    coordinatorResult: [
+      {
+        bundleId: "00000000-0000-4000-8000-000000000951",
+        match: "ExactPhrase",
+        snippet: "Private local Search passage.",
+      },
+    ],
+    semanticState: "NotConfigured",
+  });
+});
+
+test("atomically commits encrypted semantic centroids, passages, Job, and checkpoint", async ({
+  page,
+}) => {
+  await expect(scenario(page, "search-semantic-atomic-commit")).resolves.toEqual({
+    restoredBundleId: "00000000-0000-4000-8000-000000000972",
+    passageCount: 2,
+    providerIdentityHash: expect.stringMatching(/^[0-9a-f]{64}$/u),
+    scanned: ["00000000-0000-4000-8000-000000000972"],
+    ciphertextContainsTitle: false,
+    checkpointState: "Committed",
+    staleRejected: true,
+    modelReferencesAfterConfigure: 1,
+    modelReferencesAfterRepeatedConfigure: 1,
+    semanticCleared: true,
+    modelReferencesAfterDisable: 0,
+    indexedVaultGeneration: "00000000-0000-4000-8000-000000000979:12",
+    remoteCredential: "fixture-api-key",
+    remoteCredentialDeleted: true,
+  });
+});
+
+test("persists Search index lease contention, expiry takeover, renewal, and release", async ({
+  page,
+}) => {
+  await expect(scenario(page, "search-index-lease")).resolves.toEqual({
+    firstOwner: "library-a",
+    contentionRejected: true,
+    takeoverOwner: "library-b",
+    renewedUntil: "2026-07-26T00:01:10.000Z",
+    waitingState: "WaitingForLibrary",
+    leaseCleared: true,
+  });
+});
+
+test("atomically records and resumes one failed Search Capture checkpoint", async ({ page }) => {
+  await expect(scenario(page, "search-index-failure-resume")).resolves.toEqual({
+    failedState: "Failed",
+    failedCaptures: 1,
+    retryAt: "2026-07-26T00:05:02.000Z",
+    failedCheckpointState: "Failed",
+    failedAttemptCount: 1,
+    failedCheckpointError: "SEARCH_PROVIDER_UNAVAILABLE",
+    resumedState: "Created",
+    resumedFailedCaptures: 0,
+    resumedCheckpointState: "Pending",
+  });
+});
+
+test("runs a resumable keyword Search Job to completion against encrypted IndexedDB", async ({
+  page,
+}) => {
+  await expect(scenario(page, "search-keyword-indexer")).resolves.toEqual({
+    state: "Succeeded",
+    completedCaptures: 1,
+    checkpointState: "Committed",
+    indexedTitle: "Private Search",
+    invalidations: 1,
+  });
+});
+
+test("atomically promotes only a verified local model Cache generation", async ({ page }) => {
+  await expect(scenario(page, "search-local-model-cache")).resolves.toEqual({
+    ready: true,
+    cachedText: "abc",
+    pointerManifest: "fixture-manifest",
+    corruptPromotionRejected: true,
+    pointerUnchanged: true,
+    removed: true,
   });
 });
 

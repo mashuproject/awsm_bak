@@ -190,6 +190,45 @@ metadata crosses the Coordination Server boundary.
 
 ---
 
+## Retrieval-Grounded Archive Answers with Gemma 4
+
+**Status:** Discovery
+
+Evaluate an optional trusted-client AI experience that answers questions about an unlocked Vault
+from a bounded set of locally retrieved passages and links every material claim back to the
+matching Capture. Use an exact Apache-2.0-licensed Gemma 4 model and a pinned, permissively licensed
+local inference stack only after measuring download size, memory, latency, battery use, supported
+hardware, quantization quality, cancellation, and browser lifecycle behavior. The model must
+receive only the minimum retrieved plaintext needed for the requested answer; it must never scan
+the Vault independently, communicate with the Coordination Server, or become authoritative.
+
+Before promotion, define the user initiation and model-download ceremony, deterministic retrieval
+boundary, prompt and model provenance, citation validation, unsupported-device behavior, and
+whether a user may preserve an answer as a separately encrypted Derived Artifact. Search must
+remain useful without generation, model failure must not alter authoritative data, and this
+initiative must consume semantic Search results rather than use Gemma 4 as an embedding provider.
+
+---
+
+## Chrome Built-In Prompt API Host
+
+**Status:** Discovery
+
+Evaluate Chrome's built-in Prompt API and browser-managed Gemini Nano as an optional Host adapter
+for the same retrieval-grounded answer capability. Keep the Runtime request, retrieved context,
+citations, validation, and failure semantics provider-neutral; capability detection, user-activated
+model download, session creation, top-level extension-document execution, and Chrome lifecycle
+behavior belong behind the Chrome Host boundary.
+
+Prove behavior when the API, required hardware, language, model download, or model session is
+unavailable, and never silently fall back to remote plaintext processing. Firefox and unsupported
+Chrome installations must retain complete Search and Library behavior without this adapter.
+Evaluate browser-managed model updates, non-deterministic output, prompt-injection resistance,
+structured-output validation, cancellation, memory clearing on lock or Vault change, accessibility,
+and store privacy disclosures before promotion.
+
+---
+
 ## Automatic Replica Retention and Pinning
 
 **Status:** Candidate

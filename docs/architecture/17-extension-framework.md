@@ -187,11 +187,14 @@ Examples:
 
 ## Search Providers
 
-Examples:
+Possible future examples:
 
 - Code Search
 - Image Search
 - Citation Search
+
+The current Search Runtime does not expose plugin Search providers. Adding one requires a separate
+provider-boundary, privacy, ranking, and licensing design.
 
 ---
 

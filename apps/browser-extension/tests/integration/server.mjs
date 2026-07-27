@@ -5,15 +5,21 @@ import { extname, join, normalize } from "node:path";
 const root = new URL("../../.output/integration/", import.meta.url).pathname;
 const dependencyRoots = {
   "/vendor/cborg/": `${realpathSync(new URL("../../node_modules/cborg", import.meta.url).pathname)}/`,
+  "/vendor/noble-hashes/": `${realpathSync(new URL("../../node_modules/@noble/hashes", import.meta.url).pathname)}/`,
   "/vendor/libsodium-wrappers-sumo/": `${realpathSync(new URL("../../node_modules/libsodium-wrappers-sumo", import.meta.url).pathname)}/`,
   "/vendor/libsodium-sumo/": `${realpathSync(new URL("../../../../node_modules/.pnpm/libsodium-sumo@0.8.4/node_modules/libsodium-sumo", import.meta.url).pathname)}/`,
   "/vendor/zipjs/": `${realpathSync(new URL("../../node_modules/@zip.js/zip.js", import.meta.url).pathname)}/`,
+  "/vendor/transformers/": `${realpathSync(new URL("../../node_modules/@huggingface/transformers/dist", import.meta.url).pathname)}/`,
+  "/vendor/onnxruntime/": `${realpathSync(new URL("../../node_modules/onnxruntime-web/dist", import.meta.url).pathname)}/`,
+  "/vendor/onnxruntime-common/": `${realpathSync(new URL("../../../../node_modules/.pnpm/onnxruntime-common@1.24.0-dev.20251116-b39e144322/node_modules/onnxruntime-common", import.meta.url).pathname)}/`,
 };
+const modelProofRoot = process.env.AWSM_SEARCH_MODEL_PROOF_DIR;
+if (modelProofRoot !== undefined) dependencyRoots["/model/"] = `${realpathSync(modelProofRoot)}/`;
 
 const index = `<!doctype html>
 <html lang="en">
   <head><meta charset="UTF-8"><title>AWSM integration harness</title>
-  <script type="importmap">{"imports":{"@zip.js/zip.js":"/vendor/zipjs/index.js","cborg":"/vendor/cborg/cborg.js","libsodium-wrappers-sumo":"/vendor/libsodium-wrappers-sumo/dist/modules-sumo-esm/libsodium-wrappers.mjs","libsodium-sumo":"/vendor/libsodium-sumo/dist/modules-sumo-esm/libsodium-sumo.mjs"}}</script></head>
+  <script type="importmap">{"imports":{"@huggingface/transformers":"/vendor/transformers/transformers.web.js","onnxruntime-web/webgpu":"/vendor/onnxruntime/ort.webgpu.min.mjs","onnxruntime-common":"/vendor/onnxruntime-common/dist/esm/index.js","@zip.js/zip.js":"/vendor/zipjs/index.js","@noble/hashes/sha2.js":"/vendor/noble-hashes/sha2.js","cborg":"/vendor/cborg/cborg.js","libsodium-wrappers-sumo":"/vendor/libsodium-wrappers-sumo/dist/modules-sumo-esm/libsodium-wrappers.mjs","libsodium-sumo":"/vendor/libsodium-sumo/dist/modules-sumo-esm/libsodium-sumo.mjs"}}</script></head>
   <body><output id="result" aria-live="polite">running</output>
   <script type="module" src="/tests/integration/browser/harness.js"></script></body>
 </html>`;

@@ -123,21 +123,103 @@ async function createLocalVault(popup: Page): Promise<void> {
   await expect(popup.getByRole("button", { name: "Archive this page" })).toBeVisible();
 }
 
+const localSearchManifestId =
+  "xenova-all-minilm-l6-v2-int8-751bff37182d3f1213fa05d7196b954e230abad9";
+
+async function seedReferencedLocalSearchModel(page: Page): Promise<void> {
+  await page.evaluate(
+    async ({ manifestId }) => {
+      const generationName = "awsm-search-model-design-fixture";
+      const files = [
+        ["config.json", 650],
+        ["special_tokens_map.json", 125],
+        ["tokenizer.json", 711_661],
+        ["tokenizer_config.json", 366],
+        ["vocab.txt", 231_508],
+        ["onnx/model_int8.onnx", 22_972_370],
+      ] as const;
+      const generation = await caches.open(generationName);
+      for (const [path, bytes] of files) {
+        await generation.put(
+          new Request(
+            `https://awsm.invalid/search-model/file/${path
+              .split("/")
+              .map(encodeURIComponent)
+              .join("/")}`,
+          ),
+          new Response("", { headers: { "content-length": String(bytes) } }),
+        );
+      }
+      await (await caches.open("awsm-search-model-pointer-v1")).put(
+        new Request("https://awsm.invalid/search-model/current"),
+        new Response(JSON.stringify({ manifestId, generationName }), {
+          headers: { "content-type": "application/json" },
+        }),
+      );
+      const database = await new Promise<IDBDatabase>((resolveDatabase, reject) => {
+        const request = indexedDB.open("awsm-client", 1);
+        request.addEventListener("success", () => resolveDatabase(request.result), {
+          once: true,
+        });
+        request.addEventListener("error", () => reject(request.error), { once: true });
+      });
+      await new Promise<void>((resolveTransaction, reject) => {
+        const transaction = database.transaction("search_model_references", "readwrite");
+        transaction.objectStore("search_model_references").put(
+          {
+            version: 1,
+            vaultReference: "a".repeat(64),
+            manifestId,
+          },
+          "a".repeat(64),
+        );
+        transaction.addEventListener("complete", () => resolveTransaction(), { once: true });
+        transaction.addEventListener("error", () => reject(transaction.error), { once: true });
+        transaction.addEventListener("abort", () => reject(transaction.error), { once: true });
+      });
+      database.close();
+    },
+    { manifestId: localSearchManifestId },
+  );
+}
+
+async function deleteLocalSearchModelReference(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    const database = await new Promise<IDBDatabase>((resolveDatabase, reject) => {
+      const request = indexedDB.open("awsm-client", 1);
+      request.addEventListener("success", () => resolveDatabase(request.result), { once: true });
+      request.addEventListener("error", () => reject(request.error), { once: true });
+    });
+    await new Promise<void>((resolveTransaction, reject) => {
+      const transaction = database.transaction("search_model_references", "readwrite");
+      transaction.objectStore("search_model_references").clear();
+      transaction.addEventListener("complete", () => resolveTransaction(), { once: true });
+      transaction.addEventListener("error", () => reject(transaction.error), { once: true });
+      transaction.addEventListener("abort", () => reject(transaction.error), { once: true });
+    });
+    database.close();
+  });
+}
+
 async function assertInteractiveTargets(page: Page): Promise<void> {
   const controls = page.locator(
     'button:visible, a[href]:visible, input:visible, select:visible, summary:visible, [tabindex="0"]:visible',
   );
-  const count = await controls.count();
-  expect(count).toBeGreaterThan(0);
-  for (let index = 0; index < count; index += 1) {
-    const box = await controls.nth(index).boundingBox();
-    expect(box, `interactive target ${index} has no rendered box`).not.toBeNull();
-    expect(box?.width, `interactive target ${index} is too narrow`).toBeGreaterThanOrEqual(24);
-    expect(box?.height, `interactive target ${index} is too short`).toBeGreaterThanOrEqual(24);
-  }
+  await expect
+    .poll(async () => {
+      const sizes = await controls.evaluateAll((nodes) =>
+        nodes.map((node) => {
+          const box = node.getBoundingClientRect();
+          return { width: box.width, height: box.height };
+        }),
+      );
+      return sizes.length > 0 && sizes.every(({ width, height }) => width >= 24 && height >= 24);
+    })
+    .toBe(true);
 }
 
 test("renders packaged popup and Library design states", async ({ browserName }, testInfo) => {
+  test.setTimeout(180_000);
   expect(browserName).toBe("chromium");
   const client = await packagedExtension(testInfo, "product-surfaces");
   try {
@@ -192,6 +274,103 @@ test("renders packaged popup and Library design states", async ({ browserName },
     await expect(library).toHaveScreenshot("library-settings-wide.png", {
       fullPage: true,
     });
+    await library.getByRole("tab", { name: "Search", exact: true }).click();
+    await expect(
+      library.locator("#settings-search-panel").getByText("Keyword index"),
+    ).toBeVisible();
+    await assertInteractiveTargets(library);
+    await expectReadableContrast(library);
+    await expect(library).toHaveScreenshot("library-search-settings-wide.png", {
+      fullPage: true,
+    });
+    await library.setViewportSize({ width: 390, height: 844 });
+    await assertInteractiveTargets(library);
+    await expectReadableContrast(library);
+    await expect(library).toHaveScreenshot("library-search-settings-narrow.png", {
+      fullPage: true,
+    });
+    await library.setViewportSize({ width: 1280, height: 900 });
+    await library.getByRole("button", { name: "Set up semantic Search" }).click();
+    const semanticSetup = library.getByRole("dialog", {
+      name: "Search by meaning on this device",
+    });
+    await semanticSetup
+      .getByText("Advanced: use a remote embedding service", { exact: true })
+      .click();
+    await semanticSetup
+      .getByLabel("Exact embedding endpoint URL")
+      .fill("https://embeddings.example.test/v1/embeddings");
+    await semanticSetup.getByLabel("Model identifier").fill("embedding-model");
+    await semanticSetup.getByLabel("Bearer API key").fill("design-fixture-key");
+    await semanticSetup
+      .getByLabel(
+        "I understand that this Vault's passage text and my Search queries will be sent to this endpoint.",
+      )
+      .check();
+    await expect(
+      semanticSetup.getByRole("button", { name: "Grant endpoint access" }),
+    ).toBeEnabled();
+    await expect(semanticSetup.getByRole("button", { name: "Test connection" })).toBeDisabled();
+    await assertInteractiveTargets(library);
+    await expectReadableContrast(library);
+    await expect(library).toHaveScreenshot("library-search-remote-setup-wide.png", {
+      fullPage: true,
+    });
+    await library.setViewportSize({ width: 390, height: 844 });
+    await assertInteractiveTargets(library);
+    await expectReadableContrast(library);
+    await expect(library).toHaveScreenshot("library-search-remote-setup-narrow.png", {
+      fullPage: true,
+    });
+    await semanticSetup.getByRole("button", { name: "Test connection" }).scrollIntoViewIfNeeded();
+    await expect(library).toHaveScreenshot("library-search-remote-setup-narrow-actions.png", {
+      fullPage: true,
+    });
+    await library.setViewportSize({ width: 1280, height: 900 });
+    await semanticSetup.getByRole("button", { name: "Not now" }).click();
+    await library.keyboard.press("Escape");
+
+    await seedReferencedLocalSearchModel(library);
+    await library.getByRole("button", { name: "Settings" }).click();
+    await library.getByRole("tab", { name: "Search", exact: true }).click();
+    const removeModel = library.getByRole("button", { name: "Remove downloaded model" });
+    await expect(removeModel).toBeDisabled();
+    await expect(
+      library.getByText(
+        "Disable semantic Search in those Vaults before removing the shared model.",
+      ),
+    ).toBeVisible();
+    await assertInteractiveTargets(library);
+    await expectReadableContrast(library);
+    await expect(library).toHaveScreenshot("library-search-model-in-use-wide.png", {
+      fullPage: true,
+    });
+    await library.keyboard.press("Escape");
+    await deleteLocalSearchModelReference(library);
+    await library.getByRole("button", { name: "Settings" }).click();
+    await library.getByRole("tab", { name: "Search", exact: true }).click();
+    await expect(removeModel).toBeEnabled();
+    await removeModel.click();
+    await expect(
+      library.getByRole("dialog", { name: "Remove downloaded Search model?" }),
+    ).toBeVisible();
+    await assertInteractiveTargets(library);
+    await expectReadableContrast(library);
+    await expect(library).toHaveScreenshot("library-search-model-remove-wide.png", {
+      fullPage: true,
+    });
+    await library.setViewportSize({ width: 390, height: 844 });
+    await assertInteractiveTargets(library);
+    await expectReadableContrast(library);
+    await expect(library).toHaveScreenshot("library-search-model-remove-narrow.png", {
+      fullPage: true,
+    });
+    await library.setViewportSize({ width: 1280, height: 900 });
+    await library
+      .getByRole("dialog", { name: "Remove downloaded Search model?" })
+      .getByRole("button", { name: "Remove downloaded model" })
+      .click();
+    await expect(removeModel).toHaveCount(0);
     await library.keyboard.press("Escape");
 
     await library.setViewportSize({ width: 390, height: 844 });
@@ -206,6 +385,16 @@ test("renders packaged popup and Library design states", async ({ browserName },
     });
     await library.keyboard.press("Escape");
     await expect(menu).toBeFocused();
+    await expect(library.getByRole("searchbox", { name: "Search this Vault" })).toBeVisible();
+    await expect(library.getByRole("button", { name: "Search", exact: true })).toBeVisible();
+    const searchBox = await library.locator("#library-search").boundingBox();
+    expect(searchBox).not.toBeNull();
+    expect((searchBox?.x ?? 0) + (searchBox?.width ?? 0)).toBeLessThanOrEqual(390);
+    await assertInteractiveTargets(library);
+    await expectReadableContrast(library);
+    await expect(library).toHaveScreenshot("library-empty-narrow-shell.png", {
+      fullPage: true,
+    });
 
     const fixture = await client.context.newPage();
     await fixture.goto("http://127.0.0.1:4174/fixture");
@@ -238,6 +427,94 @@ test("renders packaged popup and Library design states", async ({ browserName },
     await expect(library).toHaveScreenshot("library-populated-grid.png", {
       fullPage: true,
     });
+    const libraryState = await appRequest<{
+      readonly workspace: { readonly activeVaultId?: string };
+    }>(library, { type: "GetState" });
+    const searchVaultId = libraryState.workspace.activeVaultId;
+    if (searchVaultId === undefined) throw new Error("Active Search Vault is unavailable.");
+    await expect
+      .poll(
+        async () =>
+          (
+            await appRequest<{
+              readonly coverage: { readonly keywordCaptures: number };
+            }>(library, {
+              type: "GetSearchState",
+              expectedVaultId: searchVaultId,
+            })
+          ).coverage.keywordCaptures,
+        { timeout: 30_000 },
+      )
+      .toBe(1);
+    await library.getByRole("searchbox", { name: "Search this Vault" }).fill("green landmark");
+    await library.getByRole("button", { name: "Search", exact: true }).click();
+    await expect(library.getByRole("heading", { name: "Search results" })).toBeVisible();
+    await expect(
+      library.getByRole("button", { name: "Open Capture: AWSM tall fixture" }),
+    ).toBeVisible();
+    await expectReadableContrast(library);
+    await expect(library).toHaveScreenshot("library-search-results-wide.png", {
+      fullPage: true,
+    });
+    await library.setViewportSize({ width: 390, height: 844 });
+    await assertInteractiveTargets(library);
+    await expectReadableContrast(library);
+    await expect(library).toHaveScreenshot("library-search-results-narrow.png", {
+      fullPage: true,
+    });
+    await library.setViewportSize({ width: 1280, height: 900 });
+    await library.emulateMedia({ reducedMotion: "reduce" });
+    await library.getByRole("button", { name: "Open Capture: AWSM tall fixture" }).click();
+    const focusedPassage = library.getByRole("region", { name: "Search match" });
+    await expect(focusedPassage).toBeVisible();
+    await expect(focusedPassage.locator(".search-passage-focus__text")).toBeFocused();
+    await expect(library.locator("#announcer")).toHaveText("Search match focused.");
+    expect(new URL(library.url()).searchParams.has("query")).toBe(false);
+    await assertInteractiveTargets(library);
+    await expectReadableContrast(library);
+    await expect(library).toHaveScreenshot("library-search-passage-focus-wide.png", {
+      fullPage: true,
+    });
+    await library.getByRole("button", { name: "Search results" }).click();
+    await expect(library.getByRole("heading", { name: "Search results" })).toBeVisible();
+    await library.getByRole("button", { name: "Back to Library" }).click();
+    await expect(library.locator(".library-card")).toHaveCount(1);
+    await library.getByText("Host", { exact: true }).click();
+    const hostFilter = library.getByRole("group", { name: "Filter by Host" });
+    await expect(hostFilter).toBeVisible();
+    const hostCheckbox = hostFilter.getByRole("checkbox").first();
+    const hostLabel = await hostCheckbox.locator("..").innerText();
+    await hostCheckbox.check();
+    await expect(
+      library.getByRole("button", { name: `Host: ${hostLabel} · Remove` }),
+    ).toBeVisible();
+    await expect(library.locator(".library-card")).toHaveCount(1);
+    await assertInteractiveTargets(library);
+    await expectReadableContrast(library);
+    await expect(library).toHaveScreenshot("library-search-host-filter-wide.png", {
+      fullPage: true,
+    });
+    await library.setViewportSize({ width: 390, height: 844 });
+    const narrowFilterBox = await hostFilter.boundingBox();
+    expect(narrowFilterBox).not.toBeNull();
+    expect((narrowFilterBox?.x ?? 0) + (narrowFilterBox?.width ?? 0)).toBeLessThanOrEqual(390);
+    await expectReadableContrast(library);
+    await expect(library).toHaveScreenshot("library-search-host-filter-narrow.png", {
+      fullPage: true,
+    });
+    await library.setViewportSize({ width: 1280, height: 900 });
+    await library.getByText("Host", { exact: true }).click();
+    await library.getByText("Captured", { exact: true }).click();
+    await library.getByLabel("From").fill("2026-08-02");
+    await library.getByLabel("Before").fill("2026-08-01");
+    await library.getByRole("searchbox", { name: "Search this Vault" }).fill("fixture");
+    await library.getByRole("button", { name: "Search", exact: true }).click();
+    await expect(library.locator("#announcer")).toHaveText(
+      "Before must be the same as or later than From.",
+    );
+    await expect(library.locator(".library-card")).toHaveCount(1);
+    await library.getByRole("button", { name: "Clear filters" }).click();
+    await expect(library.locator(".library-search-filter-chip")).toHaveCount(0);
     await library.getByLabel("Sort archive").selectOption("TitleAscending");
     await library.getByRole("button", { name: "Compact list" }).click();
     await expect(library.locator(".library-row")).toHaveCount(1);

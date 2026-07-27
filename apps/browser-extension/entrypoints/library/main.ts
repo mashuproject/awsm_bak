@@ -10,12 +10,20 @@ import type {
   LibraryPageGroupMessage,
   OpenArtifactMessage,
 } from "../../src/app/protocol";
+import type {
+  SearchFilters,
+  SearchPageMessage,
+  SearchPassageFocusMessage,
+  SearchResultMessage,
+  SearchStateMessage,
+} from "../../src/app/search-protocol";
 import type { ArtifactRole } from "../../src/domain/artifact-graph";
 import { decodeStructuredContentSequence } from "../../src/domain/structured-content";
 import type { StoredLibraryPreferencesV1 } from "../../src/drivers/indexeddb/schema";
 import { UiPreferencesRepository } from "../../src/drivers/indexeddb/ui-preferences-repository";
 import { VaultImportHost } from "../../src/hosts/shared/import";
 import { validateServerOrigin } from "../../src/runtime/account/server";
+import { normalizeRemoteSearchEndpoint } from "../../src/runtime/search/remote-endpoint";
 import { DEFAULT_LIBRARY_PREFERENCES, sortLibraryGroups } from "../../src/ui/library-preferences";
 import {
   artifactPresentation,
@@ -30,6 +38,8 @@ import {
   signOutConfirmation,
   storageReliefConfirmation,
 } from "../../src/ui/library-view";
+import { canonicalSearchDateBounds, normalizedSearchHosts } from "../../src/ui/search-filters";
+import { requestRemoteSearchPermission } from "../../src/ui/search-provider-permission";
 import {
   storageReliefAnnouncement,
   storageReliefFocusTarget,
@@ -58,6 +68,12 @@ const sidebarClose = requiredElement("#sidebar-close") as HTMLButtonElement;
 const headerSettings = requiredElement("#header-settings") as HTMLButtonElement;
 const librarySidebar = requiredElement("#library-sidebar");
 const libraryWorkspace = requiredElement("#library-workspace");
+const searchForm = requiredElement("#library-search-form") as HTMLFormElement;
+const searchInput = requiredElement("#library-search-input") as HTMLInputElement;
+const searchSubmit = requiredElement("#library-search-submit") as HTMLButtonElement;
+const searchClear = requiredElement("#library-search-clear") as HTMLButtonElement;
+const searchFilters = requiredElement("#library-search-filters");
+const searchFilterChips = requiredElement("#library-search-filter-chips");
 const narrowSidebar = window.matchMedia("(max-width: 768px)");
 const preferencesRepository = new UiPreferencesRepository();
 let libraryPreferences: StoredLibraryPreferencesV1 = DEFAULT_LIBRARY_PREFERENCES;
@@ -87,6 +103,39 @@ let detailRefreshDeferred = false;
 let staleDiscardDialogOpened = false;
 let libraryOperationError: string | undefined;
 let pendingStorageReliefFocus: "action" | "heading" | undefined;
+const searchClientInstanceId = (() => {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
+})();
+const searchLibraryPort = browser.runtime.connect({
+  name: `awsm:search-library:${searchClientInstanceId}`,
+});
+
+function reportSearchLibraryPresence(): void {
+  if (activeVaultId === undefined) return;
+  searchLibraryPort.postMessage({
+    vaultId: activeVaultId,
+    visible: document.visibilityState === "visible",
+  });
+}
+let submittedSearchQuery: string | undefined;
+let searchResults: SearchResultMessage[] = [];
+let searchNextCursor: string | undefined;
+let searchResultCount = 0;
+let searchResultCountIsComplete = true;
+let searchCoverage: SearchPageMessage["coverage"] | undefined;
+let searchSemantic: SearchPageMessage["semantic"] | undefined;
+let localSearchSetupExpanded = false;
+const selectedSearchHosts = new Set<string>();
+const selectedSearchCollectionIds = new Set<string>();
+let searchCapturedFrom = "";
+let searchCapturedBefore = "";
+let submittedSearchFilters: SearchFilters | undefined;
+let searchScrollPosition = 0;
+let refreshOpenSearchSettings: (() => void) | undefined;
+let selectedSearchPassage: { readonly bundleId: string; readonly passageId: string } | undefined;
 
 function expectedVaultId(): string {
   if (activeVaultId === undefined) throw new Error("No active Vault is selected.");
@@ -135,36 +184,53 @@ function summaryRow(term: string, value: string): HTMLDivElement {
 
 function installSettingsTabs(form: HTMLFormElement): void {
   const headings = [...form.querySelectorAll(":scope > h3")];
+  const searchHeading = headings.find((heading) => heading.textContent === "Search");
   const accountHeading = headings.find((heading) => heading.textContent === "Account & sync");
-  if (accountHeading === undefined) return;
+  if (searchHeading === undefined || accountHeading === undefined) return;
+  const searchStart = [...form.children].indexOf(searchHeading);
   const accountStart = [...form.children].indexOf(accountHeading);
-  if (accountStart <= 0) return;
+  if (searchStart <= 0 || accountStart <= searchStart) return;
   const vaultPanel = element("section", undefined, "settings-panel");
+  const searchPanel = element("section", undefined, "settings-panel");
   const accountPanel = element("section", undefined, "settings-panel");
   vaultPanel.id = "settings-vault-panel";
+  searchPanel.id = "settings-search-panel";
   accountPanel.id = "settings-account-panel";
   vaultPanel.setAttribute("role", "tabpanel");
+  searchPanel.setAttribute("role", "tabpanel");
   accountPanel.setAttribute("role", "tabpanel");
-  for (const child of [...form.children].slice(1, accountStart)) vaultPanel.append(child);
+  for (const child of [...form.children].slice(1, searchStart)) vaultPanel.append(child);
+  for (const child of [...form.children].slice(1, accountStart - searchStart + 1))
+    searchPanel.append(child);
   for (const child of [...form.children].slice(1)) accountPanel.append(child);
+  searchPanel.hidden = true;
   accountPanel.hidden = true;
 
   const tabs = element("div", undefined, "settings-tabs");
   tabs.setAttribute("role", "tablist");
   tabs.setAttribute("aria-label", "Settings sections");
   const vaultTab = element("button", "Vault", "settings-tab");
+  const searchTab = element("button", "Search", "settings-tab");
   const accountTab = element("button", "Account & sync", "settings-tab");
   const activate = (selected: HTMLButtonElement): void => {
     const showVault = selected === vaultTab;
-    vaultTab.setAttribute("aria-selected", String(showVault));
-    accountTab.setAttribute("aria-selected", String(!showVault));
-    vaultTab.tabIndex = showVault ? 0 : -1;
-    accountTab.tabIndex = showVault ? -1 : 0;
+    const showSearch = selected === searchTab;
+    const showAccount = selected === accountTab;
+    for (const [tab, selectedTab] of [
+      [vaultTab, showVault],
+      [searchTab, showSearch],
+      [accountTab, showAccount],
+    ] as const) {
+      tab.setAttribute("aria-selected", String(selectedTab));
+      tab.tabIndex = selectedTab ? 0 : -1;
+    }
     vaultPanel.hidden = !showVault;
-    accountPanel.hidden = showVault;
+    searchPanel.hidden = !showSearch;
+    accountPanel.hidden = !showAccount;
   };
   for (const [tab, panel] of [
     [vaultTab, vaultPanel],
+    [searchTab, searchPanel],
     [accountTab, accountPanel],
   ] as const) {
     tab.type = "button";
@@ -174,14 +240,18 @@ function installSettingsTabs(form: HTMLFormElement): void {
     tab.addEventListener("keydown", (event) => {
       if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
       event.preventDefault();
-      const target = tab === vaultTab ? accountTab : vaultTab;
+      const orderedTabs = [vaultTab, searchTab, accountTab];
+      const current = orderedTabs.indexOf(tab);
+      const direction = event.key === "ArrowRight" ? 1 : -1;
+      const target = orderedTabs[(current + direction + orderedTabs.length) % orderedTabs.length];
+      if (target === undefined) return;
       activate(target);
       target.focus();
     });
   }
   activate(accountTab);
-  tabs.append(vaultTab, accountTab);
-  form.append(tabs, vaultPanel, accountPanel);
+  tabs.append(vaultTab, searchTab, accountTab);
+  form.append(tabs, vaultPanel, searchPanel, accountPanel);
 }
 
 function appendResetDeviceSection(form: HTMLFormElement, dialog: HTMLDialogElement): void {
@@ -204,10 +274,579 @@ function appendResetDeviceSection(form: HTMLFormElement, dialog: HTMLDialogEleme
   form.append(resetSection);
 }
 
+const searchIndexingLabels: Readonly<Record<SearchStateMessage["indexing"]["state"], string>> = {
+  Idle: "Idle",
+  Running: "Running",
+  Paused: "Paused",
+  WaitingForUnlock: "Waiting for Vault unlock",
+  WaitingForLibrary: "Waiting for Library",
+  WaitingForPermission: "Waiting for permission",
+  WaitingForNetwork: "Waiting for network",
+  Failed: "Failed",
+};
+
+function showLocalSemanticSetup(
+  returnFocus: HTMLElement,
+  vaultId: string,
+  onConfigured: () => void,
+): void {
+  const { dialog, form } = dialogShell("Search by meaning on this device");
+  form.append(
+    element(
+      "p",
+      "Download an English Search model, about 24 MB. Your Captures and searches stay in this browser. After download, semantic Search works offline.",
+    ),
+  );
+  const actions = element("div", undefined, "actions");
+  const download = element("button", "Download model");
+  download.type = "button";
+  download.addEventListener("click", () => {
+    download.disabled = true;
+    download.setAttribute("aria-busy", "true");
+    void sendRequest({
+      type: "ConfigureLocalSearch",
+      expectedVaultId: vaultId,
+      acceptedDisclosureVersion: 1,
+    }).then(
+      () => {
+        dialog.close();
+        onConfigured();
+      },
+      (error) => {
+        download.disabled = false;
+        download.removeAttribute("aria-busy");
+        form.querySelector(".error")?.remove();
+        form.append(
+          element(
+            "p",
+            error instanceof AppClientError
+              ? error.message
+              : "The Search model could not be downloaded.",
+            "notice error",
+          ),
+        );
+      },
+    );
+  });
+  const notNow = element("button", "Not now");
+  notNow.type = "button";
+  notNow.addEventListener("click", () => dialog.close());
+  actions.append(notNow, download);
+
+  const remote = element("details", undefined, "remote-search-setup");
+  remote.append(element("summary", "Advanced: use a remote embedding service"));
+  const remoteFields = element("div", undefined, "remote-search-setup__fields");
+  remoteFields.append(
+    element(
+      "p",
+      "AWSM will send Capture passages from this Vault to the endpoint you choose while indexing. It will also send each submitted Search query. The provider may retain content or charge for use under its own terms. AWSM synchronization remains end-to-end encrypted, but remote embedding processing is not local.",
+      "notice",
+    ),
+  );
+  const endpointLabel = element("label", "Exact embedding endpoint URL");
+  const endpoint = element("input") as HTMLInputElement;
+  endpoint.type = "url";
+  endpoint.setAttribute("autocomplete", "url");
+  endpoint.placeholder = "https://provider.example/v1/embeddings";
+  endpointLabel.append(endpoint);
+  const modelLabel = element("label", "Model identifier");
+  const model = element("input") as HTMLInputElement;
+  model.autocomplete = "off";
+  modelLabel.append(model);
+  const dimensionsLabel = element("label", "Dimensions (optional)");
+  const dimensions = element("input") as HTMLInputElement;
+  dimensions.type = "number";
+  dimensions.min = "1";
+  dimensions.max = "4096";
+  dimensions.step = "1";
+  dimensionsLabel.append(dimensions);
+  const apiKeyLabel = element("label", "Bearer API key");
+  const apiKey = element("input") as HTMLInputElement;
+  apiKey.type = "password";
+  apiKey.autocomplete = "off";
+  apiKeyLabel.append(apiKey);
+  const consentLabel = element("label", undefined, "remote-search-consent");
+  const consent = element("input") as HTMLInputElement;
+  consent.type = "checkbox";
+  consentLabel.append(
+    consent,
+    element(
+      "span",
+      "I understand that this Vault's passage text and my Search queries will be sent to this endpoint.",
+    ),
+  );
+  const remoteStatus = element("p");
+  remoteStatus.setAttribute("role", "status");
+  const remoteActions = element("div", undefined, "actions");
+  const grant = element("button", "Grant endpoint access");
+  grant.type = "button";
+  const testConnection = element("button", "Test connection");
+  testConnection.type = "button";
+  const useProvider = element("button", "Use this provider");
+  useProvider.type = "button";
+  useProvider.disabled = true;
+  let grantedEndpoint: string | undefined;
+  let probeId: string | undefined;
+
+  const normalizedEndpoint = (): string | undefined => {
+    try {
+      const normalized = normalizeRemoteSearchEndpoint(endpoint.value);
+      return normalized === endpoint.value ? normalized : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  const validDimensions = (): boolean =>
+    dimensions.value.length === 0 ||
+    (Number.isSafeInteger(dimensions.valueAsNumber) &&
+      dimensions.valueAsNumber >= 1 &&
+      dimensions.valueAsNumber <= 4_096);
+  const baseValid = (): boolean =>
+    consent.checked &&
+    normalizedEndpoint() !== undefined &&
+    model.value.length >= 1 &&
+    Array.from(model.value).length <= 256 &&
+    validDimensions() &&
+    apiKey.value.length >= 1 &&
+    apiKey.value.length <= 8_192;
+  const updateRemoteActions = (): void => {
+    const valid = baseValid();
+    grant.disabled = !valid;
+    testConnection.disabled =
+      !valid || grantedEndpoint === undefined || grantedEndpoint !== normalizedEndpoint();
+  };
+  const invalidateProbe = (): void => {
+    if (probeId !== undefined) {
+      void sendRequest({
+        type: "CancelRemoteSearchProbe",
+        expectedVaultId: vaultId,
+      });
+    }
+    probeId = undefined;
+    useProvider.disabled = true;
+    remoteStatus.replaceChildren();
+  };
+  for (const control of [endpoint, model, dimensions, apiKey, consent]) {
+    control.addEventListener("input", () => {
+      if (control === endpoint) grantedEndpoint = undefined;
+      invalidateProbe();
+      updateRemoteActions();
+    });
+    control.addEventListener("change", updateRemoteActions);
+  }
+  updateRemoteActions();
+  grant.addEventListener("click", () => {
+    const exactEndpoint = normalizedEndpoint();
+    if (exactEndpoint === undefined) return;
+    grant.disabled = true;
+    void requestRemoteSearchPermission(exactEndpoint).then(
+      (granted) => {
+        if (!granted) throw new Error("Remote Search host access was not granted.");
+        grantedEndpoint = exactEndpoint;
+        remoteStatus.textContent = "Endpoint access granted.";
+        updateRemoteActions();
+      },
+      (error) => {
+        remoteStatus.textContent =
+          error instanceof AppClientError ? error.message : "Endpoint access could not be granted.";
+        updateRemoteActions();
+      },
+    );
+  });
+  testConnection.addEventListener("click", () => {
+    const exactEndpoint = normalizedEndpoint();
+    if (exactEndpoint === undefined) return;
+    testConnection.disabled = true;
+    const configuredDimensions =
+      dimensions.value.length === 0 ? undefined : dimensions.valueAsNumber;
+    void sendRequest<{
+      readonly probeId: string;
+      readonly responseModel: string;
+      readonly effectiveDimensions: number;
+      readonly expiresAt: string;
+    }>({
+      type: "ProbeRemoteSearchProvider",
+      expectedVaultId: vaultId,
+      endpoint: exactEndpoint,
+      model: model.value,
+      ...(configuredDimensions === undefined ? {} : { dimensions: configuredDimensions }),
+      apiKey: apiKey.value,
+    }).then(
+      (result) => {
+        probeId = result.probeId;
+        apiKey.value = "";
+        grant.disabled = true;
+        testConnection.disabled = true;
+        useProvider.disabled = false;
+        remoteStatus.textContent = `Connection verified. Response model: ${result.responseModel}. Dimensions: ${String(result.effectiveDimensions)}.`;
+      },
+      (error) => {
+        apiKey.value = "";
+        remoteStatus.textContent =
+          error instanceof AppClientError
+            ? error.message
+            : "The remote Search connection could not be verified.";
+        updateRemoteActions();
+      },
+    );
+  });
+  useProvider.addEventListener("click", () => {
+    if (probeId === undefined) return;
+    useProvider.disabled = true;
+    void sendRequest({
+      type: "ConfigureRemoteSearch",
+      expectedVaultId: vaultId,
+      probeId,
+      acceptedDisclosureVersion: 1,
+    }).then(
+      () => {
+        probeId = undefined;
+        dialog.close();
+        onConfigured();
+      },
+      (error) => {
+        remoteStatus.textContent =
+          error instanceof AppClientError
+            ? error.message
+            : "The remote Search provider could not be saved.";
+        useProvider.disabled = false;
+      },
+    );
+  });
+  remoteActions.append(grant, testConnection, useProvider);
+  remoteFields.append(
+    endpointLabel,
+    modelLabel,
+    dimensionsLabel,
+    apiKeyLabel,
+    consentLabel,
+    remoteStatus,
+    remoteActions,
+  );
+  remote.append(remoteFields);
+
+  form.append(remote, actions);
+  dialog.addEventListener("close", () => returnFocus.focus(), { once: true });
+  dialog.addEventListener(
+    "close",
+    () => {
+      apiKey.value = "";
+      invalidateProbe();
+    },
+    { once: true },
+  );
+  dialog.showModal();
+}
+
+function showDisableSemanticConfirmation(
+  returnFocus: HTMLElement,
+  vaultId: string,
+  onDisabled: () => void,
+): void {
+  const { dialog, form } = dialogShell("Disable semantic Search?");
+  form.append(
+    element(
+      "p",
+      "AWSM will delete this Vault's local semantic vectors and provider setting. Keyword Search and Captures remain unchanged.",
+      "notice",
+    ),
+  );
+  const actions = element("div", undefined, "actions");
+  const disable = element("button", "Disable semantic Search", "danger-action");
+  disable.type = "button";
+  disable.addEventListener("click", () => {
+    disable.disabled = true;
+    void sendRequest({
+      type: "DisableSemanticSearch",
+      expectedVaultId: vaultId,
+    }).then(
+      () => {
+        dialog.close();
+        onDisabled();
+      },
+      (error) => {
+        disable.disabled = false;
+        form.append(
+          element(
+            "p",
+            error instanceof AppClientError
+              ? error.message
+              : "Semantic Search could not be disabled.",
+            "notice error",
+          ),
+        );
+      },
+    );
+  });
+  const cancel = element("button", "Cancel");
+  cancel.type = "button";
+  cancel.addEventListener("click", () => dialog.close());
+  actions.append(cancel, disable);
+  form.append(actions);
+  dialog.addEventListener("close", () => returnFocus.focus(), { once: true });
+  dialog.showModal();
+}
+
+function showChangeSemanticProviderConfirmation(
+  returnFocus: HTMLElement,
+  vaultId: string,
+  onConfigured: () => void,
+): void {
+  const { dialog, form } = dialogShell("Change semantic provider?");
+  form.append(
+    element(
+      "p",
+      "Changing the semantic provider deletes this Vault's existing semantic vectors and protected remote API key, if any. AWSM will rebuild semantic Search with the new provider. Keyword Search and Captures remain unchanged.",
+      "notice",
+    ),
+  );
+  const actions = element("div", undefined, "actions");
+  const cancel = element("button", "Cancel");
+  cancel.type = "button";
+  cancel.addEventListener("click", () => dialog.close());
+  const continueButton = element("button", "Continue", "danger-action");
+  continueButton.type = "button";
+  continueButton.addEventListener("click", () => {
+    dialog.close();
+    showLocalSemanticSetup(returnFocus, vaultId, onConfigured);
+  });
+  actions.append(cancel, continueButton);
+  form.append(actions);
+  dialog.addEventListener("close", () => returnFocus.focus(), { once: true });
+  dialog.showModal();
+}
+
+function showRemoveLocalModelConfirmation(
+  returnFocus: HTMLElement,
+  vaultId: string,
+  onRemoved: () => void,
+): void {
+  const { dialog, form } = dialogShell("Remove downloaded Search model?");
+  form.append(
+    element(
+      "p",
+      "AWSM will delete the shared local Search model from this browser. Captures, keyword Search, and per-Vault settings remain unchanged.",
+      "notice",
+    ),
+  );
+  const actions = element("div", undefined, "actions");
+  const remove = element("button", "Remove downloaded model", "danger-action");
+  remove.type = "button";
+  remove.addEventListener("click", () => {
+    remove.disabled = true;
+    void sendRequest({
+      type: "RemoveLocalSearchModel",
+      expectedVaultId: vaultId,
+    }).then(
+      () => {
+        dialog.close();
+        onRemoved();
+      },
+      (error) => {
+        remove.disabled = false;
+        form.querySelector(".error")?.remove();
+        form.append(
+          element(
+            "p",
+            error instanceof AppClientError
+              ? error.message
+              : "The downloaded Search model could not be removed.",
+            "notice error",
+          ),
+        );
+      },
+    );
+  });
+  const cancel = element("button", "Cancel");
+  cancel.type = "button";
+  cancel.addEventListener("click", () => dialog.close());
+  actions.append(cancel, remove);
+  form.append(actions);
+  dialog.addEventListener("close", () => returnFocus.focus(), { once: true });
+  dialog.showModal();
+}
+
+function installLiveSearchSettings(
+  dialog: HTMLDialogElement,
+  content: HTMLElement,
+  vaultId: string,
+): void {
+  let generation = 0;
+  const refresh = (): void => {
+    const requestedGeneration = ++generation;
+    content.setAttribute("aria-busy", "true");
+    void sendRequest<SearchStateMessage>({
+      type: "GetSearchState",
+      expectedVaultId: vaultId,
+    }).then(
+      (searchState) => {
+        if (requestedGeneration !== generation || !dialog.open || activeVaultId !== vaultId) return;
+        const summary = element("dl", undefined, "account-summary");
+        summary.append(
+          summaryRow(
+            "Keyword index",
+            `${String(searchState.coverage.keywordCaptures)} of ${String(searchState.coverage.eligibleCaptures)} Captures`,
+          ),
+          summaryRow(
+            "Semantic provider",
+            searchState.semantic.state === "NotConfigured"
+              ? "Not configured"
+              : searchState.semantic.providerLabel,
+          ),
+        );
+        if (searchState.semantic.state === "Configured") {
+          summary.append(
+            summaryRow("Provider location", searchState.semantic.kind),
+            summaryRow("Model", searchState.semantic.model),
+            summaryRow("Dimensions", String(searchState.semantic.dimensions)),
+          );
+        }
+        if (searchState.localModel.state === "Ready") {
+          summary.append(
+            summaryRow(
+              "Downloaded model",
+              searchState.localModel.referenceCount === 0
+                ? "Ready to remove"
+                : `${String(searchState.localModel.referenceCount)} ${
+                    searchState.localModel.referenceCount === 1 ? "Vault uses" : "Vaults use"
+                  } this model`,
+            ),
+          );
+        }
+        summary.append(
+          summaryRow(
+            "Semantic coverage",
+            `${String(searchState.coverage.semanticCaptures)} of ${String(searchState.coverage.eligibleCaptures)} Captures`,
+          ),
+          summaryRow("Indexing", searchIndexingLabels[searchState.indexing.state]),
+          summaryRow(
+            "Progress",
+            `${String(searchState.indexing.completedCaptures)} of ${String(searchState.indexing.totalCaptures)} Captures`,
+          ),
+          summaryRow(
+            "Last completed",
+            searchState.coverage.indexedAt === undefined
+              ? "Not completed"
+              : new Date(searchState.coverage.indexedAt).toLocaleString(),
+          ),
+        );
+        const actions = element("div", undefined, "actions settings-actions");
+        if (searchState.indexing.state === "Running") {
+          const pause = element("button", "Pause indexing");
+          pause.type = "button";
+          pause.addEventListener("click", () => {
+            pause.disabled = true;
+            void sendRequest({
+              type: "PauseSearchIndexing",
+              expectedVaultId: vaultId,
+            }).then(refresh, refresh);
+          });
+          actions.append(pause);
+        } else if (
+          searchState.indexing.state === "Paused" ||
+          searchState.indexing.state.startsWith("Waiting") ||
+          searchState.indexing.state === "Failed"
+        ) {
+          const resume = element("button", "Resume indexing");
+          resume.type = "button";
+          resume.addEventListener("click", () => {
+            resume.disabled = true;
+            void sendRequest({
+              type: "StartSearchIndexing",
+              expectedVaultId: vaultId,
+            }).then(refresh, refresh);
+          });
+          actions.append(resume);
+        }
+        const rebuild = element("button", "Rebuild Search index");
+        rebuild.type = "button";
+        rebuild.addEventListener("click", () => {
+          rebuild.disabled = true;
+          void sendRequest({
+            type: "RebuildSearchIndex",
+            expectedVaultId: vaultId,
+          }).then(refresh, refresh);
+        });
+        const provider = element(
+          "button",
+          searchState.semantic.state === "NotConfigured"
+            ? "Set up semantic Search"
+            : "Change semantic provider",
+        );
+        provider.type = "button";
+        provider.addEventListener("click", () => {
+          if (searchState.semantic.state === "NotConfigured")
+            showLocalSemanticSetup(provider, vaultId, refresh);
+          else showChangeSemanticProviderConfirmation(provider, vaultId, refresh);
+        });
+        actions.append(rebuild, provider);
+        if (searchState.semantic.state === "Configured") {
+          const disable = element("button", "Disable semantic Search");
+          disable.type = "button";
+          disable.addEventListener("click", () =>
+            showDisableSemanticConfirmation(disable, vaultId, refresh),
+          );
+          actions.append(disable);
+        }
+        if (searchState.localModel.state === "Ready") {
+          const removeModel = element("button", "Remove downloaded model", "danger-action");
+          removeModel.type = "button";
+          removeModel.disabled = searchState.localModel.referenceCount !== 0;
+          if (removeModel.disabled) {
+            removeModel.title =
+              "Disable semantic Search in every Vault that uses this model before removing it.";
+          } else {
+            removeModel.addEventListener("click", () =>
+              showRemoveLocalModelConfirmation(removeModel, vaultId, refresh),
+            );
+          }
+          actions.append(removeModel);
+          if (searchState.localModel.referenceCount !== 0) {
+            actions.append(
+              element(
+                "p",
+                "Disable semantic Search in those Vaults before removing the shared model.",
+                "settings-action-note",
+              ),
+            );
+          }
+        }
+        content.replaceChildren(summary, actions);
+        content.setAttribute("aria-busy", "false");
+      },
+      (error) => {
+        if (requestedGeneration !== generation || !dialog.open) return;
+        content.replaceChildren(
+          element(
+            "p",
+            error instanceof AppClientError
+              ? error.message
+              : "Search settings could not be loaded.",
+            "notice error",
+          ),
+        );
+        content.setAttribute("aria-busy", "false");
+      },
+    );
+  };
+  refreshOpenSearchSettings = refresh;
+  dialog.addEventListener(
+    "close",
+    () => {
+      generation += 1;
+      if (refreshOpenSearchSettings === refresh) refreshOpenSearchSettings = undefined;
+    },
+    { once: true },
+  );
+  refresh();
+}
+
 function showAccountSettings(): void {
   const state = renderedState;
   if (state === undefined) return;
   const { dialog, form } = dialogShell("Settings");
+  let searchSettingsContent: HTMLElement | undefined;
+  let searchSettingsVaultId: string | undefined;
   const account = state.account;
   const server =
     account.configuration.mode === "Configured"
@@ -283,7 +922,16 @@ function showAccountSettings(): void {
       showExportVaultDialog(accountSettings);
     });
     vaultActions.append(create, importVault, exportVault);
-    form.append(vaultSummary, vaultActions, element("h3", "Account & sync"));
+    searchSettingsContent = element("section", undefined, "search-settings");
+    searchSettingsContent.append(element("p", "Loading Search settings…", "muted"));
+    searchSettingsVaultId = active.vaultId;
+    form.append(
+      vaultSummary,
+      vaultActions,
+      element("h3", "Search"),
+      searchSettingsContent,
+      element("h3", "Account & sync"),
+    );
   }
   const accountSummary = element("dl", undefined, "account-summary");
   accountSummary.append(
@@ -424,6 +1072,8 @@ function showAccountSettings(): void {
       once: true,
     });
     dialog.showModal();
+    if (searchSettingsContent !== undefined && searchSettingsVaultId !== undefined)
+      installLiveSearchSettings(dialog, searchSettingsContent, searchSettingsVaultId);
     return;
   }
   const actions = element("div", undefined, "actions");
@@ -603,6 +1253,8 @@ function showAccountSettings(): void {
     once: true,
   });
   dialog.showModal();
+  if (searchSettingsContent !== undefined && searchSettingsVaultId !== undefined)
+    installLiveSearchSettings(dialog, searchSettingsContent, searchSettingsVaultId);
 }
 
 function showResetDeviceDialog(returnFocus: HTMLElement): void {
@@ -674,12 +1326,16 @@ manageVaults.addEventListener("click", showAccountSettings);
 storageSettings.addEventListener("click", showAccountSettings);
 headerSettings.addEventListener("click", showAccountSettings);
 showArchive.addEventListener("click", () => {
+  clearSearchResults();
+  clearSearchFilterState();
   expandedLibrarySection = "Active";
   showArchive.setAttribute("aria-current", "page");
   showDeleted.removeAttribute("aria-current");
   void loadList("Active");
 });
 showDeleted.addEventListener("click", () => {
+  clearSearchResults();
+  clearSearchFilterState();
   expandedLibrarySection = "Deleted";
   showDeleted.setAttribute("aria-current", "page");
   showArchive.removeAttribute("aria-current");
@@ -1409,12 +2065,25 @@ function appendImportJobStatus(bar: HTMLElement, state: AppState, currentVaultId
 }
 
 function renderVaultBar(state: AppState): void {
+  const previousVaultId = activeVaultId;
   renderedState = state;
   activeVaultId = state.workspace.activeVaultId;
+  reportSearchLibraryPresence();
+  const active = state.workspace.vaults.find((vault) => vault.active);
+  if (
+    (previousVaultId !== undefined && previousVaultId !== activeVaultId) ||
+    active?.unlocked !== true
+  ) {
+    activeGroups = [];
+    deletedGroups = [];
+    clearSearchState();
+  }
+  const searchAvailable = active?.unlocked === true;
+  searchInput.disabled = !searchAvailable;
+  searchSubmit.disabled = !searchAvailable;
   document.querySelector("#vault-management")?.remove();
   const view = vaultManagementView(state.workspace);
   vaultMutationDisabled = view.managementDisabled;
-  const active = state.workspace.vaults.find((vault) => vault.active);
   renderLibraryTitle(state);
   if (active === undefined) {
     if (state.latestImportJob !== undefined) {
@@ -2159,6 +2828,453 @@ function updateLibraryRoute(bundleId?: string): void {
   window.history.replaceState(null, "", url);
 }
 
+const searchMatchLabels: Readonly<Record<SearchResultMessage["match"], string>> = {
+  ExactTitle: "Exact title",
+  ExactUrl: "Exact URL",
+  ExactPhrase: "Exact phrase",
+  KeywordAndSemantic: "Keyword and meaning",
+  Keyword: "Keyword",
+  Semantic: "Meaning",
+};
+
+function clearSearchFilterState(): void {
+  selectedSearchHosts.clear();
+  selectedSearchCollectionIds.clear();
+  searchCapturedFrom = "";
+  searchCapturedBefore = "";
+  submittedSearchFilters = undefined;
+}
+
+function clearSearchState(): void {
+  submittedSearchQuery = undefined;
+  searchResults = [];
+  searchNextCursor = undefined;
+  searchCoverage = undefined;
+  searchSemantic = undefined;
+  searchInput.value = "";
+  searchClear.hidden = true;
+  localSearchSetupExpanded = false;
+  searchScrollPosition = 0;
+  selectedSearchPassage = undefined;
+  clearSearchFilterState();
+  renderSearchFilters();
+}
+
+function clearSearchResults(): void {
+  submittedSearchQuery = undefined;
+  searchResults = [];
+  searchNextCursor = undefined;
+  searchCoverage = undefined;
+  searchSemantic = undefined;
+  searchClear.hidden = true;
+}
+
+function currentSearchFilters(): SearchFilters {
+  return {
+    hosts: [...selectedSearchHosts].sort(),
+    collectionIds: [...selectedSearchCollectionIds].sort(),
+    ...canonicalSearchDateBounds(searchCapturedFrom, searchCapturedBefore),
+  };
+}
+
+function searchFilterChip(label: string, remove: () => void): HTMLButtonElement {
+  const chip = element("button", `${label} · Remove`, "library-search-filter-chip");
+  chip.type = "button";
+  chip.addEventListener("click", () => {
+    remove();
+    renderSearchFilters();
+  });
+  return chip;
+}
+
+function renderSearchFilterChips(): void {
+  const chips: HTMLButtonElement[] = [];
+  for (const host of [...selectedSearchHosts].sort()) {
+    chips.push(
+      searchFilterChip(`Host: ${host}`, () => {
+        selectedSearchHosts.delete(host);
+      }),
+    );
+  }
+  const groups = expandedLibrarySection === "Active" ? activeGroups : deletedGroups;
+  const collectionTitles = new Map(groups.map((group) => [group.collectionId, group.title]));
+  for (const collectionId of [...selectedSearchCollectionIds].sort()) {
+    chips.push(
+      searchFilterChip(`Collection: ${collectionTitles.get(collectionId) ?? "Unavailable"}`, () => {
+        selectedSearchCollectionIds.delete(collectionId);
+      }),
+    );
+  }
+  if (searchCapturedFrom !== "") {
+    chips.push(
+      searchFilterChip(`Captured from: ${searchCapturedFrom}`, () => {
+        searchCapturedFrom = "";
+      }),
+    );
+  }
+  if (searchCapturedBefore !== "") {
+    chips.push(
+      searchFilterChip(`Captured before: ${searchCapturedBefore}`, () => {
+        searchCapturedBefore = "";
+      }),
+    );
+  }
+  if (chips.length === 0) {
+    searchFilterChips.replaceChildren();
+    return;
+  }
+  const clear = element("button", "Clear filters", "library-search-filter-clear");
+  clear.type = "button";
+  clear.addEventListener("click", () => {
+    clearSearchFilterState();
+    renderSearchFilters();
+  });
+  searchFilterChips.replaceChildren(...chips, clear);
+}
+
+function checkboxFilter(
+  name: string,
+  label: string,
+  value: string,
+  checked: boolean,
+  change: (checked: boolean) => void,
+): HTMLLabelElement {
+  const control = element("input") as HTMLInputElement;
+  control.type = "checkbox";
+  control.name = name;
+  control.value = value;
+  control.checked = checked;
+  control.addEventListener("change", () => {
+    change(control.checked);
+    renderSearchFilterChips();
+  });
+  const wrapper = element("label", undefined, "library-search-filter-option");
+  wrapper.append(control, document.createTextNode(label));
+  return wrapper;
+}
+
+function searchFilterDetails(label: string): HTMLDetailsElement {
+  const details = element("details", undefined, "library-search-filter");
+  details.append(element("summary", label));
+  return details;
+}
+
+function renderSearchFilters(): void {
+  const groups = expandedLibrarySection === "Active" ? activeGroups : deletedGroups;
+  const availableCollections = new Set(groups.map(({ collectionId }) => collectionId));
+  for (const collectionId of selectedSearchCollectionIds) {
+    if (!availableCollections.has(collectionId)) selectedSearchCollectionIds.delete(collectionId);
+  }
+  const hosts = normalizedSearchHosts(
+    groups.flatMap(({ captures }) => captures.map((item) => item.originalUrl)),
+  );
+  const availableHosts = new Set(hosts);
+  for (const host of selectedSearchHosts) {
+    if (!availableHosts.has(host)) selectedSearchHosts.delete(host);
+  }
+
+  const hostDetails = searchFilterDetails("Host");
+  const hostOptions = element("fieldset");
+  hostOptions.append(element("legend", "Filter by Host", "sr-only"));
+  if (hosts.length === 0) {
+    hostOptions.append(element("p", "No Hosts in this section.", "muted"));
+  } else {
+    for (const host of hosts) {
+      hostOptions.append(
+        checkboxFilter("search-host", host, host, selectedSearchHosts.has(host), (checked) => {
+          if (checked) selectedSearchHosts.add(host);
+          else selectedSearchHosts.delete(host);
+        }),
+      );
+    }
+  }
+  hostDetails.append(hostOptions);
+
+  const capturedDetails = searchFilterDetails("Captured");
+  const capturedFields = element("fieldset");
+  capturedFields.append(element("legend", "Filter by capture date", "sr-only"));
+  const from = element("input") as HTMLInputElement;
+  from.type = "date";
+  from.value = searchCapturedFrom;
+  from.addEventListener("input", () => {
+    searchCapturedFrom = from.value;
+    renderSearchFilterChips();
+  });
+  const fromLabel = element("label");
+  fromLabel.append(document.createTextNode("From"), from);
+  const before = element("input") as HTMLInputElement;
+  before.type = "date";
+  before.value = searchCapturedBefore;
+  before.addEventListener("input", () => {
+    searchCapturedBefore = before.value;
+    renderSearchFilterChips();
+  });
+  const beforeLabel = element("label");
+  beforeLabel.append(document.createTextNode("Before"), before);
+  capturedFields.append(fromLabel, beforeLabel);
+  capturedDetails.append(capturedFields);
+
+  const collectionDetails = searchFilterDetails("Collection");
+  const collectionOptions = element("fieldset");
+  collectionOptions.append(element("legend", "Filter by Collection", "sr-only"));
+  if (groups.length === 0) {
+    collectionOptions.append(element("p", "No Collections in this section.", "muted"));
+  } else {
+    for (const group of groups.toSorted((left, right) => left.title.localeCompare(right.title))) {
+      collectionOptions.append(
+        checkboxFilter(
+          "search-collection",
+          group.title,
+          group.collectionId,
+          selectedSearchCollectionIds.has(group.collectionId),
+          (checked) => {
+            if (checked) selectedSearchCollectionIds.add(group.collectionId);
+            else selectedSearchCollectionIds.delete(group.collectionId);
+          },
+        ),
+      );
+    }
+  }
+  collectionDetails.append(collectionOptions);
+  searchFilters.replaceChildren(hostDetails, capturedDetails, collectionDetails);
+  renderSearchFilterChips();
+}
+
+function searchResultCard(result: SearchResultMessage): HTMLElement {
+  const card = element("article", undefined, "search-result");
+  const heading = element("h3");
+  const open = element("button", result.title);
+  open.type = "button";
+  open.setAttribute("aria-label", `Open Capture: ${result.title}`);
+  open.addEventListener("click", () => {
+    searchScrollPosition = window.scrollY;
+    selectedSearchPassage = {
+      bundleId: result.bundleId,
+      passageId: result.passageId,
+    };
+    void loadDetail(result.bundleId);
+  });
+  heading.append(open);
+  card.append(
+    heading,
+    element(
+      "p",
+      `${result.host} · ${new Date(result.capturedAt).toLocaleDateString()} · ${result.collectionTitle}`,
+      "search-result__metadata",
+    ),
+    element("span", searchMatchLabels[result.match], "search-result__badge"),
+    element("p", result.snippet, "search-result__snippet"),
+  );
+  return card;
+}
+
+function renderSearchResults(): void {
+  const section = element("section", undefined, "search-results");
+  section.setAttribute("aria-labelledby", "search-results-title");
+  const heading = element("h2", "Search results", "search-results__heading");
+  heading.id = "search-results-title";
+  section.append(
+    heading,
+    element(
+      "p",
+      searchResultCountIsComplete
+        ? `${String(searchResultCount)} results`
+        : `Showing the top ${String(searchResultCount)} results`,
+      "search-results__count",
+    ),
+  );
+  if (searchResults.length === 0) {
+    section.append(
+      element(
+        "p",
+        searchSemantic?.state === "Partial"
+          ? "No indexed Captures matched. Semantic indexing is still in progress."
+          : "No Captures matched this Search.",
+        "notice",
+      ),
+    );
+  } else {
+    const results = element("ol", undefined, "search-results__list");
+    for (const result of searchResults) {
+      const item = element("li");
+      item.append(searchResultCard(result));
+      results.append(item);
+    }
+    section.append(results);
+  }
+  if (searchSemantic?.state === "NotConfigured") {
+    const notice = element("div", undefined, "search-results__notice");
+    notice.append(
+      element("p", "Search by meaning is not set up for this Vault. Keyword results are complete."),
+    );
+    const actions = element("div", undefined, "actions");
+    if (localSearchSetupExpanded) {
+      notice.append(
+        element("h3", "Search by meaning on this device"),
+        element(
+          "p",
+          "Download an English Search model, about 24 MB. Your Captures and searches stay in this browser. After download, semantic Search works offline.",
+        ),
+      );
+      const download = element("button", "Download model");
+      download.type = "button";
+      download.addEventListener("click", () => {
+        download.disabled = true;
+        download.textContent = "Downloading model…";
+        void sendRequest({
+          type: "ConfigureLocalSearch",
+          expectedVaultId: expectedVaultId(),
+          acceptedDisclosureVersion: 1,
+        }).then(
+          () => executeSearch(false, true),
+          (error) => {
+            download.disabled = false;
+            download.textContent = "Download model";
+            announcer.textContent =
+              error instanceof AppClientError
+                ? error.message
+                : "The Search model could not be downloaded.";
+          },
+        );
+      });
+      const notNow = element("button", "Not now");
+      notNow.type = "button";
+      notNow.addEventListener("click", () => {
+        localSearchSetupExpanded = false;
+        renderSearchResults();
+      });
+      actions.append(download, notNow);
+    } else {
+      const setup = element("button", "Set up semantic Search");
+      setup.type = "button";
+      setup.addEventListener("click", () => {
+        localSearchSetupExpanded = true;
+        renderSearchResults();
+      });
+      const keepKeyword = element("button", "Keep keyword Search");
+      keepKeyword.type = "button";
+      keepKeyword.addEventListener("click", () => notice.remove());
+      actions.append(setup, keepKeyword);
+    }
+    notice.append(actions);
+    section.append(notice);
+  } else if (searchSemantic?.state === "Partial" && searchCoverage !== undefined) {
+    section.append(
+      element(
+        "p",
+        `Semantic Search covers ${String(searchCoverage.semanticCaptures)} of ${String(searchCoverage.eligibleCaptures)} eligible Captures. Keyword results include all indexed Captures.`,
+        "search-results__notice",
+      ),
+    );
+  } else if (searchSemantic?.state === "Unavailable") {
+    section.append(
+      element(
+        "p",
+        "Search by meaning is unavailable. Keyword results are still shown.",
+        "search-results__notice",
+      ),
+    );
+  }
+  if (searchNextCursor !== undefined) {
+    const more = element("button", "Load more");
+    more.type = "button";
+    more.addEventListener("click", () => {
+      more.disabled = true;
+      void loadMoreSearch().catch(() => {
+        more.disabled = false;
+      });
+    });
+    section.append(more);
+  }
+  app.replaceChildren(section);
+  app.setAttribute("aria-busy", "false");
+  searchClear.hidden = false;
+}
+
+async function executeSearch(announce = true, reuseSubmittedFilters = false): Promise<void> {
+  const query = searchInput.value;
+  let filters: SearchFilters;
+  try {
+    filters =
+      reuseSubmittedFilters && submittedSearchFilters !== undefined
+        ? submittedSearchFilters
+        : currentSearchFilters();
+  } catch (error) {
+    announcer.textContent =
+      error instanceof Error ? error.message : "Check the Search date filters.";
+    searchFilters.querySelector<HTMLInputElement>('input[type="date"]')?.focus();
+    return;
+  }
+  app.setAttribute("aria-busy", "true");
+  searchSubmit.disabled = true;
+  try {
+    const page = await sendRequest<SearchPageMessage>({
+      type: "SearchLibrary",
+      expectedVaultId: expectedVaultId(),
+      query,
+      clientInstanceId: searchClientInstanceId,
+      scope: expandedLibrarySection,
+      filters,
+      pageSize: 50,
+    });
+    submittedSearchQuery = query;
+    submittedSearchFilters = filters;
+    searchResults = [...page.results];
+    searchNextCursor = page.nextCursor;
+    searchResultCount = page.resultCount;
+    searchResultCountIsComplete = page.resultCountIsComplete;
+    searchCoverage = page.coverage;
+    searchSemantic = page.semantic;
+    renderSearchResults();
+    if (announce)
+      announcer.textContent = page.resultCountIsComplete
+        ? `${String(page.resultCount)} Search results.`
+        : `Showing the top ${String(page.resultCount)} Search results.`;
+  } catch (error) {
+    renderError(error instanceof AppClientError ? error.message : "Search could not be completed.");
+  } finally {
+    searchSubmit.disabled = false;
+  }
+}
+
+async function loadMoreSearch(): Promise<void> {
+  const cursor = searchNextCursor;
+  if (cursor === undefined) return;
+  try {
+    const page = await sendRequest<SearchPageMessage>({
+      type: "LoadMoreSearchResults",
+      expectedVaultId: expectedVaultId(),
+      clientInstanceId: searchClientInstanceId,
+      cursor,
+      pageSize: 50,
+    });
+    searchResults.push(...page.results);
+    searchNextCursor = page.nextCursor;
+    searchResultCount = page.resultCount;
+    searchResultCountIsComplete = page.resultCountIsComplete;
+    searchCoverage = page.coverage;
+    searchSemantic = page.semantic;
+    renderSearchResults();
+    announcer.textContent = `Loaded ${String(page.results.length)} more Search results.`;
+  } catch (error) {
+    if (error instanceof AppClientError && error.id === "SEARCH_CURSOR_EXPIRED") {
+      announcer.textContent = "Search results changed. AWSM refreshed them.";
+      await executeSearch(false, true);
+      return;
+    }
+    throw error;
+  }
+}
+
+searchForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  void executeSearch();
+});
+searchClear.addEventListener("click", () => {
+  clearSearchState();
+  void loadList();
+});
+
 async function loadList(expandedSection?: "Active" | "Deleted"): Promise<void> {
   updateLibraryRoute();
   if (expandedSection !== undefined) expandedLibrarySection = expandedSection;
@@ -2194,6 +3310,7 @@ async function loadList(expandedSection?: "Active" | "Deleted"): Promise<void> {
       ]);
     activeGroups = loadedActiveGroups;
     deletedGroups = loadedDeletedGroups;
+    renderSearchFilters();
     const content = document.createDocumentFragment();
     content.append(libraryPresentationControls());
     if (loadedActiveGroups.length === 0) {
@@ -2490,7 +3607,9 @@ async function loadDetail(bundleId: string, abortArtifactActions = true): Promis
   const replacingDetail = renderedDetailBundleId !== bundleId;
   if (replacingDetail) app.setAttribute("aria-busy", "true");
   try {
-    const [detail, activeGroups, deletedGroups] = await Promise.all([
+    const passageSelection =
+      selectedSearchPassage?.bundleId === bundleId ? selectedSearchPassage : undefined;
+    const [detail, activeGroups, deletedGroups, passageFocus] = await Promise.all([
       sendRequest<LibraryDetailMessage>({
         type: "GetLibraryDetail",
         expectedVaultId: expectedVaultId(),
@@ -2504,6 +3623,14 @@ async function loadDetail(bundleId: string, abortArtifactActions = true): Promis
         type: "ListDeleted",
         expectedVaultId: expectedVaultId(),
       }),
+      passageSelection === undefined
+        ? Promise.resolve(undefined)
+        : sendRequest<SearchPassageFocusMessage>({
+            type: "GetSearchPassageFocus",
+            expectedVaultId: expectedVaultId(),
+            bundleId,
+            passageId: passageSelection.passageId,
+          }),
     ]);
     const groups = [...activeGroups, ...deletedGroups];
     const group = groups.find((candidate) =>
@@ -2529,15 +3656,31 @@ async function loadDetail(bundleId: string, abortArtifactActions = true): Promis
     const section = element("article", undefined, "detail");
     const breadcrumb = element("nav", undefined, "breadcrumb");
     breadcrumb.setAttribute("aria-label", "Breadcrumb");
+    const returningToSearch = submittedSearchQuery !== undefined;
     const libraryCrumb = element(
       "button",
-      detail.item.status === "Active" ? "Library" : "Deleted",
+      returningToSearch
+        ? "Search results"
+        : detail.item.status === "Active"
+          ? "Library"
+          : "Deleted",
       "breadcrumb__link",
     );
     libraryCrumb.type = "button";
-    libraryCrumb.addEventListener("click", () => void loadList(detail.item.status));
+    libraryCrumb.addEventListener("click", () => {
+      if (returningToSearch) {
+        updateLibraryRoute();
+        renderedDetailBundleId = undefined;
+        renderedDetailSignature = undefined;
+        releaseScreenshot();
+        renderSearchResults();
+        window.requestAnimationFrame(() => window.scrollTo(0, searchScrollPosition));
+        return;
+      }
+      void loadList(detail.item.status);
+    });
     breadcrumb.append(libraryCrumb);
-    if (group.captures.length > 1) {
+    if (!returningToSearch && group.captures.length > 1) {
       breadcrumb.append(element("span", "/", "breadcrumb__separator"));
       const collectionCrumb = element("button", group.title, "breadcrumb__link");
       collectionCrumb.type = "button";
@@ -2607,6 +3750,15 @@ async function loadDetail(bundleId: string, abortArtifactActions = true): Promis
     for (const [label, value] of fields)
       metadata.append(element("dt", label), element("dd", value));
     section.append(metadata);
+    let focusedPassage: HTMLElement | undefined;
+    if (passageFocus?.state === "Found") {
+      const match = element("section", undefined, "search-passage-focus");
+      match.setAttribute("aria-label", "Search match");
+      focusedPassage = element("div", passageFocus.text, "search-passage-focus__text");
+      focusedPassage.tabIndex = -1;
+      match.append(element("h3", "Search match"), focusedPassage);
+      section.append(match);
+    }
     if (detail.item.warnings.length > 0)
       section.append(element("p", `Warnings: ${detail.item.warnings.join(", ")}`, "warning"));
     const bytesFromChunks = (chunks: readonly Uint8Array[]): Uint8Array => {
@@ -2856,7 +4008,23 @@ async function loadDetail(bundleId: string, abortArtifactActions = true): Promis
     section.append(artifactPanel);
     app.replaceChildren(section);
     app.setAttribute("aria-busy", "false");
-    announcer.textContent = `Opened ${detail.item.title}`;
+    if (passageFocus?.state === "Found" && focusedPassage !== undefined) {
+      focusedPassage.focus({ preventScroll: true });
+      focusedPassage.scrollIntoView({
+        block: "center",
+        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+      });
+      announcer.textContent = "Search match focused.";
+    } else if (passageFocus?.state === "Stale") {
+      selectedSearchPassage = undefined;
+      void sendRequest<SearchStateMessage>({
+        type: "RebuildSearchIndex",
+        expectedVaultId: expectedVaultId(),
+      }).catch(() => undefined);
+      announcer.textContent = "The Capture opened, but the indexed passage is no longer available.";
+    } else {
+      announcer.textContent = `Opened ${detail.item.title}`;
+    }
   } catch (error) {
     if (error instanceof AppClientError && error.id === "VAULT_CONTEXT_CHANGED") {
       await handleContextError(error);
@@ -2972,8 +4140,10 @@ async function initialize(): Promise<void> {
       if (trigger !== undefined) showStaleReplicaDiscardDialog(trigger);
     }
     const requestedBundleId = routeParameters.get("bundleId");
-    if (requestedBundleId === null) await loadList();
-    else await loadDetail(requestedBundleId, false);
+    if (requestedBundleId === null) {
+      if (submittedSearchQuery === undefined) await loadList();
+      else await executeSearch(false, true);
+    } else await loadDetail(requestedBundleId, false);
     if (libraryOperationError !== undefined) announcer.textContent = libraryOperationError;
   } catch (error) {
     renderError(
@@ -3011,6 +4181,7 @@ browser.runtime.onMessage.addListener((message: unknown) => {
     "type" in message &&
     message.type === "AppStateChanged"
   ) {
+    refreshOpenSearchSettings?.();
     if (renderedDetailBundleId !== undefined && window.getSelection()?.isCollapsed === false) {
       detailRefreshDeferred = true;
       return undefined;
@@ -3021,11 +4192,13 @@ browser.runtime.onMessage.addListener((message: unknown) => {
 });
 
 document.addEventListener("visibilitychange", () => {
+  reportSearchLibraryPresence();
   if (document.visibilityState === "visible") {
     wakeSynchronization();
     reconcile();
   }
 });
+window.addEventListener("pagehide", () => searchLibraryPort.disconnect(), { once: true });
 document.addEventListener("selectionchange", () => {
   if (!detailRefreshDeferred || window.getSelection()?.isCollapsed === false) return;
   detailRefreshDeferred = false;

@@ -43,12 +43,91 @@ export const STORES = {
   exportJobs: "export_jobs",
   importJobs: "import_jobs",
   uiPreferences: "ui_preferences",
+  searchSettings: "search_settings",
+  searchModelReferences: "search_model_references",
+  searchKeywordRows: "search_keyword_rows",
+  searchKeywordStatistics: "search_keyword_statistics",
+  searchKeywordPostings: "search_keyword_postings",
+  searchSemanticRows: "search_semantic_rows",
+  searchSemanticPassages: "search_semantic_passages",
+  searchIndexJobs: "search_index_jobs",
+  searchIndexCheckpoints: "search_index_checkpoints",
 } as const;
 
 export interface StoredLibraryPreferencesV1 {
   readonly version: 1;
   readonly sort: "CapturedNewest" | "CapturedOldest" | "TitleAscending";
   readonly view: "Grid" | "List";
+}
+
+export type SearchProjectionType =
+  | "SearchSettings-v1"
+  | "SearchKeyword-v1"
+  | "SearchKeywordStatistics-v1"
+  | "SearchKeywordPosting-v1"
+  | "SearchSemantic-v1"
+  | "SearchSemanticPassages-v1";
+
+export interface StoredSearchEnvelopeV1 {
+  readonly version: 1;
+  readonly vaultId: string;
+  readonly keyEpochId: string;
+  readonly rowId: string;
+  readonly projectionType: SearchProjectionType;
+  readonly sourceRevision: string;
+  readonly nonce: Uint8Array;
+  readonly ciphertext: Uint8Array;
+}
+
+export interface StoredSearchModelReferenceV1 {
+  readonly version: 1;
+  readonly vaultReference: string;
+  readonly manifestId: string;
+}
+
+export type SearchIndexJobState =
+  | "Created"
+  | "Running"
+  | "Paused"
+  | "WaitingForUnlock"
+  | "WaitingForLibrary"
+  | "WaitingForPermission"
+  | "WaitingForNetwork"
+  | "Failed"
+  | "Succeeded";
+
+export type SearchIndexJobStage = "Discover" | "Keyword" | "Semantic" | "Validate" | "Terminal";
+
+export interface SearchIndexJobV1 {
+  readonly version: 1;
+  readonly jobId: string;
+  readonly vaultId: string;
+  readonly state: SearchIndexJobState;
+  readonly stage: SearchIndexJobStage;
+  readonly projectionGeneration: string;
+  readonly providerIdentityHash?: string;
+  readonly completedCaptures: number;
+  readonly totalCaptures: number;
+  readonly failedCaptures: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly leaseOwner?: string;
+  readonly leaseExpiresAt?: string;
+  readonly retryAt?: string;
+  readonly errorId?: string;
+}
+
+export interface SearchIndexCheckpointV1 {
+  readonly version: 1;
+  readonly vaultId: string;
+  readonly jobId: string;
+  readonly bundleId: string;
+  readonly sourceRevision: string;
+  readonly keywordState: "Pending" | "Committed" | "Failed";
+  readonly semanticState: "NotConfigured" | "Pending" | "Committed" | "Failed";
+  readonly attemptCount: number;
+  readonly updatedAt: string;
+  readonly errorId?: string;
 }
 
 export type AccountConfigurationV1 =

@@ -28,10 +28,13 @@
   },
   "dependencies": {
     "@awsm/design-system": "workspace:*",
+    "@huggingface/transformers": "4.2.0",
+    "@noble/hashes": "2.2.0",
     "@scure/bip39": "2.2.0",
     "@zip.js/zip.js": "2.8.31",
     "cborg": "5.1.7",
-    "libsodium-wrappers-sumo": "0.8.4"
+    "libsodium-wrappers-sumo": "0.8.4",
+    "onnxruntime-web": "1.26.0-dev.20260416-b7804b056c"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.4",

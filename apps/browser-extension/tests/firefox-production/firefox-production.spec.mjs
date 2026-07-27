@@ -391,6 +391,31 @@ for (const lane of lanes) {
         'return browser.runtime.getURL("/library.html");',
       );
       await driver.get(libraryPageUrl);
+      await driver.wait(
+        async () =>
+          (
+            await send(driver, {
+              type: "GetSearchState",
+              expectedVaultId: vaultId,
+            })
+          ).coverage.keywordCaptures === 1,
+        30_000,
+      );
+      const search = await send(driver, {
+        type: "SearchLibrary",
+        expectedVaultId: vaultId,
+        query: "Firefox production fixture",
+        clientInstanceId: "abcdefghijklmnopqrstuv",
+        scope: "Active",
+        filters: { hosts: [], collectionIds: [] },
+        pageSize: 50,
+      });
+      expect(search.results).toHaveLength(1);
+      expect(search.results[0]).toMatchObject({
+        bundleId: capture.bundleId,
+        title: "Firefox production fixture",
+        match: "ExactTitle",
+      });
       await driver.wait(async () => {
         try {
           await driver.findElement(By.css("#account-settings")).click();
