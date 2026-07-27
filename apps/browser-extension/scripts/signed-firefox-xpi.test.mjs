@@ -39,7 +39,7 @@ async function archive(entries) {
   return Buffer.from(await (await writer.close()).arrayBuffer());
 }
 
-test("accepts only a signed XPI whose payload exactly matches the verified ZIP", async () => {
+test("accepts AMO manifest reserialization but rejects semantic or payload mutation", async () => {
   const directory = await mkdtemp(join(tmpdir(), "awsm-signed-xpi-"));
   const unsignedPath = join(directory, "unsigned.zip");
   const signedPath = join(directory, "signed.xpi");
@@ -61,10 +61,30 @@ test("accepts only a signed XPI whose payload exactly matches the verified ZIP",
   );
   assert.match(result.stdout, /validation passed/u);
 
+  const { manifest_version: manifestVersion, ...reorderedManifest } = JSON.parse(manifest);
   await writeFile(
     signedPath,
     await archive([
-      ["manifest.json", `${manifest} `],
+      [
+        "manifest.json",
+        `${JSON.stringify({ ...reorderedManifest, manifest_version: manifestVersion })} `,
+      ],
+      ["META-INF/manifest.mf", "manifest"],
+      ["META-INF/mozilla.sf", "signature"],
+      ["META-INF/mozilla.rsa", "certificate"],
+    ]),
+  );
+  await execute(
+    process.execPath,
+    [new URL("verify-signed-firefox-xpi.mjs", import.meta.url).pathname, signedPath, unsignedPath],
+    { encoding: "utf8" },
+  );
+
+  const changedManifest = JSON.stringify({ ...JSON.parse(manifest), name: "Changed by signer" });
+  await writeFile(
+    signedPath,
+    await archive([
+      ["manifest.json", changedManifest],
       ["META-INF/manifest.mf", "manifest"],
       ["META-INF/mozilla.sf", "signature"],
       ["META-INF/mozilla.rsa", "certificate"],
@@ -76,6 +96,32 @@ test("accepts only a signed XPI whose payload exactly matches the verified ZIP",
       signedPath,
       unsignedPath,
     ]),
-    /AMO changed signed payload bytes/u,
+    /changed signed manifest semantics/u,
+  );
+
+  await writeFile(
+    unsignedPath,
+    await archive([
+      ["manifest.json", manifest],
+      ["payload.js", "a"],
+    ]),
+  );
+  await writeFile(
+    signedPath,
+    await archive([
+      ["manifest.json", manifest],
+      ["payload.js", "b"],
+      ["META-INF/manifest.mf", "manifest"],
+      ["META-INF/mozilla.sf", "signature"],
+      ["META-INF/mozilla.rsa", "certificate"],
+    ]),
+  );
+  await assert.rejects(
+    execute(process.execPath, [
+      new URL("verify-signed-firefox-xpi.mjs", import.meta.url).pathname,
+      signedPath,
+      unsignedPath,
+    ]),
+    /changed signed payload bytes/u,
   );
 });

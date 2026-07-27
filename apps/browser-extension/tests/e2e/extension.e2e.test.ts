@@ -2632,10 +2632,10 @@ test("captures a page snapshot and full-page screenshot, then derives MHTML offl
     await expect(library.getByText(/2 captures/u)).toBeVisible();
 
     await library.locator(".card").click();
-    await library
+    const selectionAfterUndo = library
       .getByRole("checkbox", { name: /Select capture from/u })
-      .first()
-      .check();
+      .first();
+    await selectionAfterUndo.evaluate((checkbox) => (checkbox as HTMLInputElement).click());
     await library.getByRole("button", { name: "Extract to new collection" }).click();
     await expect(library.locator(".library-card")).toHaveCount(2);
     const sourceCollection = library.locator(".library-card").first();

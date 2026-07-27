@@ -23,8 +23,10 @@
 # 1. Purpose
 
 This is the decision-complete implementation and execution plan for replacing the current
-tag-time Firefox signing path with a two-phase release gate, then using that gate to publish AWSM
-browser extension `v0.1.8`.
+tag-time Firefox signing path with a two-phase release gate. The first real `v0.1.8` candidate
+proved that AMO semantically reserializes `manifest.json`; the verifier correctly withheld
+publication, and the source-changing correction advanced the joint Release to `v0.1.9` under this
+plan's immutability rule.
 
 It is written for an implementer starting from a cold checkout with no conversation context. Do
 not reopen the fixed signing channel, release version, proof handoff, publication, browser support,
@@ -41,7 +43,7 @@ The completed work SHALL:
 6. reject tag publication unless the tagged commit has the exact successful proof status;
 7. publish the exact locally tested XPI rather than signing or selecting a new file at tag time;
 8. retain the existing Chrome-only path when Firefox signing is explicitly disabled;
-9. publish `v0.1.8` as one joint GitHub Release with Chrome and Firefox assets and checksums;
+9. publish `v0.1.9` as one joint GitHub Release with Chrome and Firefox assets and checksums;
 10. describe Firefox accurately as an unlisted Mozilla-signed desktop-Linux beta;
 11. update the public product site, README, installation guidance, architecture/testing prose,
     Roadmap, and release skill to match the released behavior; and
@@ -58,7 +60,7 @@ Vault contents, or Coordination Server API.
 
 | Concern                    | Decision                                                        |
 | -------------------------- | --------------------------------------------------------------- |
-| First joint version        | `0.1.8`, annotated tag `v0.1.8`                                 |
+| First joint version        | `0.1.9`, annotated tag `v0.1.9`                                 |
 | GitHub Release kind        | Public, non-draft, non-prerelease                               |
 | Firefox channel            | AMO `unlisted`                                                  |
 | User distribution          | Signed XPI and checksum attached to the GitHub Release          |
@@ -79,7 +81,7 @@ Vault contents, or Coordination Server API.
 | Production                 | Out of scope and unchanged                                      |
 | Public implementation      | Provider-neutral; reference details stay in the ignored overlay |
 
-`0.1.8` remains a normal SemVer release because the project is already distributing public `0.x`
+`0.1.9` remains a normal SemVer release because the project is already distributing public `0.x`
 preview releases without SemVer prerelease suffixes. “Beta” describes the Firefox platform support
 and unlisted distribution channel, not the GitHub Release's prerelease flag.
 
@@ -99,7 +101,7 @@ This plan includes:
 - cross-run candidate artifact retrieval;
 - Chrome-only and joint publisher separation;
 - workflow, signing, provenance, verifier, and failure regression tests;
-- `v0.1.8` version and public download references;
+- `v0.1.9` version and public download references;
 - README, Firefox installation guide, release notes, public landing page, rendered assertions, and
   screenshots;
 - Roadmap and superseded Plan 13 release-contract reconciliation;
@@ -545,8 +547,8 @@ GitHub Releases is the user-facing download location.
 
 Update owned version and artifact references together:
 
-- Chrome direct download and checksum become `v0.1.8`;
-- add Firefox XPI and checksum links for `v0.1.8`;
+- Chrome direct download and checksum become `v0.1.9`;
+- add Firefox XPI and checksum links for `v0.1.9`;
 - state that the latest Release contains both browser packages;
 - change released-platform copy from Chrome-only plus Firefox development build to Chrome plus the
   signed desktop-Linux Firefox beta;
@@ -636,7 +638,7 @@ publication, and recovery. Keep the skill concise and under 500 lines. Do not ad
 changelog, redundant reference, or host-specific asset to the skill.
 
 Validate the skill with the installed skill-creator `quick_validate.py`. Local policy prohibits
-subagent forward-testing, so rely on workflow regression tests and the real `v0.1.8` execution as
+subagent forward-testing, so rely on workflow regression tests and the real `v0.1.9` execution as
 the forward test.
 
 # 8. Test-Driven Implementation Sequence
@@ -711,12 +713,12 @@ Test:
 - no success after partial proof; and
 - success payload context, description, target URL, SHA, and ordering.
 
-Then run it once against the real successful `v0.1.8` candidate. That live execution is required;
+Then run it once against the real successful `v0.1.9` candidate. That live execution is required;
 synthetic tests do not replace it.
 
 ## Task 5: Update version, public surfaces, and documentation
 
-Bump `0.1.8`, update public artifact references, revise release notes, site copy, guide, Roadmap,
+Bump `0.1.9`, update public artifact references, revise release notes, site copy, guide, Roadmap,
 Plan 13/current evidence, testing guidance, and the release skill.
 
 Run formatters owned by each file type. Browser-extension JavaScript, TypeScript, JSON, and CSS
@@ -736,9 +738,9 @@ Re-fetch and require:
 ```text
 local HEAD == origin/main
 working tree == clean
-package version == 0.1.8
-remote tag v0.1.8 == absent
-GitHub Release v0.1.8 == absent
+package version == 0.1.9
+remote tag v0.1.9 == absent
+GitHub Release v0.1.9 == absent
 ```
 
 ## Task 7: Sign and prove the candidate
@@ -757,8 +759,8 @@ candidate-artifact preflights.
 Create:
 
 ```bash
-git tag -a v0.1.8 -m "AWSM browser extension v0.1.8"
-git push origin refs/tags/v0.1.8
+git tag -a v0.1.9 -m "AWSM browser extension v0.1.9"
+git push origin refs/tags/v0.1.9
 ```
 
 Push only the tag. Monitor the browser release workflow. Do not create a Release manually while it
@@ -770,7 +772,7 @@ verify:
 - both checksum files;
 - ZIP and XPI integrity;
 - exactly one root manifest in each browser package;
-- manifest version `0.1.8`;
+- manifest version `0.1.9`;
 - permanent Firefox add-on ID;
 - Mozilla signature entries;
 - signed payload equivalence;
@@ -899,7 +901,7 @@ Require:
 - GitHub Release: four exact assets, correct visibility and tag;
 - staging origin: healthy and ready;
 - staging public pages: correct signed-Firefox and Search copy;
-- latest Release link: resolves to `v0.1.8`;
+- latest Release link: resolves to `v0.1.9`;
 - XPI/checksum links: downloadable and valid; and
 - shared cache: exact canonical pages warmed and returning expected hits.
 
@@ -940,7 +942,7 @@ This plan is complete only when all are true:
 - [ ] latest proof status on the release commit is successful;
 - [ ] tag publisher refuses missing, stale, failed, or mismatched proof;
 - [ ] tag publisher imports the exact proven run artifact and makes no AMO request;
-- [ ] `v0.1.8` joint Release contains four verified assets;
+- [ ] `v0.1.9` joint Release contains four verified assets;
 - [ ] published XPI bytes equal locally tested bytes;
 - [ ] README, Firefox guide, release notes, landing page, FAQ, and screenshots are factual;
 - [ ] stale “unsigned,” “development-only,” “future signed XPI,” and tag-time-signing language is

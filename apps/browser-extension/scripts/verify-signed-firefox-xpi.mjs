@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { BlobReader, TextWriter, Uint8ArrayWriter, ZipReader } from "@zip.js/zip.js";
 
 const extensionId = "{f6f49704-8d53-4eda-aef7-619ab88dda5f}";
@@ -97,6 +98,21 @@ try {
         unsignedEntry.getData(new Uint8ArrayWriter()),
         signedEntry.getData(new Uint8ArrayWriter()),
       ]);
+      if (unsignedEntry.filename === "manifest.json") {
+        let unsignedManifest;
+        let signedManifest;
+        try {
+          unsignedManifest = JSON.parse(Buffer.from(unsignedBytes).toString("utf8"));
+          signedManifest = JSON.parse(Buffer.from(signedBytes).toString("utf8"));
+        } catch {
+          throw new Error("Signed XPI manifest JSON is invalid.");
+        }
+        assert(
+          isDeepStrictEqual(unsignedManifest, signedManifest),
+          "AMO changed signed manifest semantics.",
+        );
+        continue;
+      }
       assert(
         Buffer.from(unsignedBytes).equals(Buffer.from(signedBytes)),
         `AMO changed signed payload bytes: ${unsignedEntry.filename}`,

@@ -17,12 +17,12 @@ Account registration remains deployment-specific.
 
 ### Download AWSM for Chrome or Firefox
 
-> **[Download the Chrome ZIP (v0.1.8)](https://github.com/mashuproject/awsm_bak/releases/download/v0.1.8/awsm-chrome-v0.1.8.zip)**
+> **[Download the Chrome ZIP (v0.1.9)](https://github.com/mashuproject/awsm_bak/releases/download/v0.1.9/awsm-chrome-v0.1.9.zip)**
 >
-> [Chrome SHA-256 checksum](https://github.com/mashuproject/awsm_bak/releases/download/v0.1.8/awsm-chrome-v0.1.8.zip.sha256) ·
-> **[Download the Mozilla-signed Firefox XPI (v0.1.8)](https://github.com/mashuproject/awsm_bak/releases/download/v0.1.8/awsm-firefox-v0.1.8.xpi)**
+> [Chrome SHA-256 checksum](https://github.com/mashuproject/awsm_bak/releases/download/v0.1.9/awsm-chrome-v0.1.9.zip.sha256) ·
+> **[Download the Mozilla-signed Firefox XPI (v0.1.9)](https://github.com/mashuproject/awsm_bak/releases/download/v0.1.9/awsm-firefox-v0.1.9.xpi)**
 > ·
-> [Firefox SHA-256 checksum](https://github.com/mashuproject/awsm_bak/releases/download/v0.1.8/awsm-firefox-v0.1.8.xpi.sha256) ·
+> [Firefox SHA-256 checksum](https://github.com/mashuproject/awsm_bak/releases/download/v0.1.9/awsm-firefox-v0.1.9.xpi.sha256) ·
 > [View the latest Release](https://github.com/mashuproject/awsm_bak/releases/latest) ·
 > [Chrome guide](docs/guides/install-chrome-extension.md) ·
 > [Firefox guide](docs/guides/install-firefox-extension.md)

@@ -450,6 +450,10 @@ integration, build, package, Chrome, Firefox, cross-browser, rendered-design,
 `test:sync-proof`, and `test:e2e:coordination` gates. The last two and all real-browser release
 proof remain local-only and SHALL NOT run in hosted CI.
 
+AMO MAY reserialize the root `manifest.json` while signing. Signed-XPI verification SHALL compare
+that file as parsed JSON and reject any semantic difference. Every other non-signature payload file
+SHALL remain byte-identical to the verified unsigned archive.
+
 ---
 
 # Canonical Format Coverage

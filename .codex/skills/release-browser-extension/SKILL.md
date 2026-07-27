@@ -75,8 +75,9 @@ Do not commit generated packages, profiles, logs, credentials, screenshots, or l
 5. Require the candidate artifact to bind repository, full commit, version, intended tag,
    operation, permanent add-on ID, candidate run URL, unsigned archive hash, source archive hash,
    signed XPI name, and signed XPI hash.
-6. Download and validate the run-scoped signed artifact. Reject missing signatures, unexpected
-   payload mutation, checksum mismatch, path ambiguity, manifest drift, or provenance mismatch.
+6. Download and validate the run-scoped signed artifact. Permit only semantic-equivalent
+   `manifest.json` reserialization by AMO; reject semantic manifest drift, any other payload
+   mutation, missing signatures, checksum mismatch, path ambiguity, or provenance mismatch.
 
 Candidate signing creates no tag or Release. If source or package bytes change, AMO remediation
 changes bytes, or signed-browser proof exposes a defect, choose a new patch version and repeat from
