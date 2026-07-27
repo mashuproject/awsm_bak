@@ -1293,7 +1293,8 @@ This plan is complete only when all statements are true:
       mandatory before data-category declaration or signing.
 - [x] Firefox data permission is optional and requested only when enabling synchronization.
 - [x] The deferred tag workflow produces both browser artifacts only after signing is enabled.
-- [x] Real AMO submission, signed-XPI proof, and GitHub Release publication remain Roadmap work.
+- [x] Plan 13 deferred real AMO submission, signed-XPI proof, and GitHub Release publication; Plan
+      19 subsequently completed that release contract for the unlisted desktop-Linux beta.
 - [x] Browser tests use tiered Playwright/Selenium lanes.
 - [x] Public stores, macOS/Windows proof, playback, recorded replay, and temporal links remain future
       Roadmap work.

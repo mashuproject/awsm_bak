@@ -521,6 +521,10 @@ model. Do not claim that self-hosting removes all traffic or metadata exposure.
 
 The `#install-awsm` section is the destination of every public install CTA.
 
+The browser-distribution bullets below record the state required when this design plan was
+implemented. Plan 19 supersedes the Firefox distribution copy with the unlisted Mozilla-signed
+desktop-Linux beta; current public surfaces follow Plan 19 and the installation guide.
+
 Use a progressively enhanced browser selector with complete static content:
 
 ### Chrome

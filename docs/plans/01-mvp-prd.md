@@ -297,8 +297,9 @@ Bundle Descriptor. Mandatory snapshot failure rejects Capture; optional Artifact
 visible through a typed warning.
 
 Browser Hosts produce the same self-contained snapshot representation. The Linux Firefox Host
-implements local Capture and portability parity; synchronization, signing, and release remain
-subject to the gates in Plan 13.
+implements local Capture, portability, and optional synchronization parity. Its unlisted
+Mozilla-signed desktop-Linux beta is distributed through the joint browser-extension GitHub
+Release under Plan 19.
 
 ---
 
@@ -362,8 +363,9 @@ email/password Account authentication, client-only Account-key enrollment, one C
 synchronized Vault, background convergence, synchronized Vacuum, manual heavy-Artifact storage
 relief with on-demand retrieval, and export-first stale-Replica discard.
 The Linux Firefox Host provides the same optional synchronization after native data-collection and
-server-origin consent; its signed unlisted beta remains Roadmap work. Device signing/revocation,
-Selective Replicas, and production deployment hardening remain future.
+server-origin consent. Its signed unlisted desktop-Linux beta is distributed through the joint
+browser-extension GitHub Release. Public browser-store listings, Selective Replicas, and production
+deployment hardening remain future.
 
 Synchronization shall:
 
