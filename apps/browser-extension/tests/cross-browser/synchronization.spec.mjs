@@ -1342,7 +1342,13 @@ test("synchronizes live from Chrome to Firefox and Firefox to Chrome", async ({
     );
     await captureInFirefox(firefoxDriver, popupUrl, firefoxVaultId);
     await waitForFirefoxSync(firefoxDriver);
-    await expect(chromeLibrary.getByText("Firefox cross-browser capture")).toBeVisible();
+    await expect(
+      chromeLibrary.locator("article.library-card").filter({
+        has: chromeLibrary.locator("strong", {
+          hasText: /^Firefox cross-browser capture$/u,
+        }),
+      }),
+    ).toBeVisible();
     await expectMatchingReplicas(
       () => chromeReplicaSnapshot(chromeClient.popup, chromeVaultId),
       () => firefoxReplicaSnapshot(firefoxDriver, firefoxVaultId),

@@ -109,16 +109,32 @@ const searchClientInstanceId = (() => {
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
 })();
-const searchLibraryPort = browser.runtime.connect({
-  name: `awsm:search-library:${searchClientInstanceId}`,
-});
+let searchLibraryPort: ReturnType<typeof browser.runtime.connect> | undefined;
+let pageUnloading = false;
+
+function connectSearchLibraryPort(): ReturnType<typeof browser.runtime.connect> {
+  const port = browser.runtime.connect({
+    name: `awsm:search-library:${searchClientInstanceId}`,
+  });
+  searchLibraryPort = port;
+  port.onDisconnect.addListener(() => {
+    if (searchLibraryPort === port) searchLibraryPort = undefined;
+  });
+  return port;
+}
 
 function reportSearchLibraryPresence(): void {
-  if (activeVaultId === undefined) return;
-  searchLibraryPort.postMessage({
+  if (activeVaultId === undefined || pageUnloading) return;
+  const message = {
     vaultId: activeVaultId,
     visible: document.visibilityState === "visible",
-  });
+  };
+  try {
+    (searchLibraryPort ?? connectSearchLibraryPort()).postMessage(message);
+  } catch {
+    searchLibraryPort = undefined;
+    connectSearchLibraryPort().postMessage(message);
+  }
 }
 let submittedSearchQuery: string | undefined;
 let searchResults: SearchResultMessage[] = [];
@@ -4082,6 +4098,7 @@ async function initialize(): Promise<void> {
         importRouteOpened = true;
         showImportVaultDialog(importExisting);
       }
+      reconciliationSucceeded();
       return;
     }
     if (!importRouteOpened && new URLSearchParams(window.location.search).get("import") === "1") {
@@ -4121,11 +4138,13 @@ async function initialize(): Promise<void> {
         box.append(select);
         app.replaceChildren(box);
         app.setAttribute("aria-busy", "false");
+        reconciliationSucceeded();
         return;
       }
     }
     if (!active.unlocked) {
       await showUnlock();
+      reconciliationSucceeded();
       return;
     }
     if (
@@ -4145,15 +4164,39 @@ async function initialize(): Promise<void> {
       else await executeSearch(false, true);
     } else await loadDetail(requestedBundleId, false);
     if (libraryOperationError !== undefined) announcer.textContent = libraryOperationError;
+    reconciliationSucceeded();
   } catch (error) {
+    if (error instanceof AppClientError && error.id === "VAULT_CONTEXT_CHANGED") {
+      await handleContextError(error);
+      return;
+    }
     renderError(
       error instanceof AppClientError ? error.message : "The local Vault could not be opened.",
     );
+    if (!(error instanceof AppClientError)) scheduleReconciliationRetry();
   }
 }
 
 let reconciliationRequested = false;
 let reconciliationRunning = false;
+let reconciliationRetryCount = 0;
+let reconciliationRetryTimer: number | undefined;
+
+function reconciliationSucceeded(): void {
+  reconciliationRetryCount = 0;
+  if (reconciliationRetryTimer !== undefined) window.clearTimeout(reconciliationRetryTimer);
+  reconciliationRetryTimer = undefined;
+}
+
+function scheduleReconciliationRetry(): void {
+  if (reconciliationRetryTimer !== undefined || reconciliationRetryCount >= 5) return;
+  const delay = 100 * 2 ** reconciliationRetryCount;
+  reconciliationRetryCount += 1;
+  reconciliationRetryTimer = window.setTimeout(() => {
+    reconciliationRetryTimer = undefined;
+    reconcile();
+  }, delay);
+}
 
 function reconcile(): void {
   reconciliationRequested = true;
@@ -4198,7 +4241,15 @@ document.addEventListener("visibilitychange", () => {
     reconcile();
   }
 });
-window.addEventListener("pagehide", () => searchLibraryPort.disconnect(), { once: true });
+window.addEventListener(
+  "pagehide",
+  () => {
+    pageUnloading = true;
+    searchLibraryPort?.disconnect();
+    searchLibraryPort = undefined;
+  },
+  { once: true },
+);
 document.addEventListener("selectionchange", () => {
   if (!detailRefreshDeferred || window.getSelection()?.isCollapsed === false) return;
   detailRefreshDeferred = false;

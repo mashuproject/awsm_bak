@@ -53,6 +53,7 @@ export class CacheStorageLocalModelStore implements LocalModelGenerationStore {
   }
 
   async current(): Promise<LocalModelGenerationPointer | undefined> {
+    if (!(await this.storage.has(POINTER_CACHE))) return undefined;
     const response = await (await this.storage.open(POINTER_CACHE)).match(POINTER_REQUEST);
     if (response === undefined) return undefined;
     try {
@@ -87,7 +88,7 @@ export class CacheStorageLocalModelStore implements LocalModelGenerationStore {
 
   async deleteCurrent(): Promise<void> {
     const pointer = await this.current();
-    await (await this.storage.open(POINTER_CACHE)).delete(POINTER_REQUEST);
+    await this.storage.delete(POINTER_CACHE);
     if (pointer !== undefined) await this.storage.delete(pointer.generationName);
   }
 }

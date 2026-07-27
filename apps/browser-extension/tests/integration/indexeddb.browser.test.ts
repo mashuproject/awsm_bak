@@ -163,6 +163,7 @@ test("atomically promotes only a verified local model Cache generation", async (
     corruptPromotionRejected: true,
     pointerUnchanged: true,
     removed: true,
+    cacheNamesAfterRemoval: [],
   });
 });
 

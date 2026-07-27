@@ -5067,6 +5067,7 @@ async function searchLocalModelCacheScenario(): Promise<unknown> {
   const pointerAfter = await store.current();
   await store.deleteCurrent();
   const removed = !(await store.isReady(manifest));
+  const cacheNamesAfterRemoval = await caches.keys();
   return {
     ready,
     cachedText,
@@ -5074,6 +5075,7 @@ async function searchLocalModelCacheScenario(): Promise<unknown> {
     corruptPromotionRejected,
     pointerUnchanged: pointerBefore?.generationName === pointerAfter?.generationName,
     removed,
+    cacheNamesAfterRemoval,
   };
 }
 

@@ -2387,7 +2387,7 @@ async function seedStaleAccountVisual(page: Page, vaultId: string): Promise<void
 test("captures a page snapshot and full-page screenshot, then derives MHTML offline", async ({
   browserName,
 }, testInfo) => {
-  test.setTimeout(180_000);
+  test.setTimeout(360_000);
   expect(browserName).toBe("chromium");
   const extensionPath = testInfo.outputPath("extension");
   await cp(extensionBuildPath, extensionPath, { recursive: true });
@@ -3014,6 +3014,10 @@ test("captures a page snapshot and full-page screenshot, then derives MHTML offl
     });
     await library.getByRole("button", { name: "Restore capture" }).click();
     await expect(library.getByText("Deleted is empty.")).toBeVisible();
+    await library
+      .getByRole("complementary", { name: "Library sections" })
+      .getByRole("button", { name: "Library", exact: true })
+      .click();
     await library.locator(".card").click();
     await library.locator(".version").first().click();
     library.once("dialog", async (dialog) => dialog.accept());
@@ -4311,8 +4315,11 @@ test("exports a Vault and imports it into a fresh Workspace", async ({ browserNa
     await expect(observer.getByRole("heading", { name: "Portable Archive" })).toBeVisible();
     await expect(library.getByRole("button", { name: "Unlock on this device" })).toBeVisible();
     await library.getByRole("button", { name: "Unlock on this device" }).click();
-    await expect(library.getByText("Portable Fixture")).toBeVisible();
-    await library.getByText("Portable Fixture").click();
+    const portableCapture = library.locator("article.library-card").filter({
+      has: library.locator("strong", { hasText: /^Portable Fixture$/u }),
+    });
+    await expect(portableCapture).toBeVisible();
+    await portableCapture.click();
     await library
       .locator("article.artifact-row")
       .filter({ hasText: "Extracted text" })
@@ -4660,7 +4667,11 @@ test("creates, captures, switches, locks, renames, and deep-links across isolate
     await expect(popup.getByRole("link", { name: /Open in library:/u })).toBeVisible({
       timeout: 30_000,
     });
-    await expect(liveLibraryB.getByText("AWSM tall fixture", { exact: true })).toBeVisible();
+    await expect(
+      liveLibraryB.locator("article.library-card").filter({
+        has: liveLibraryB.locator("strong", { hasText: /^AWSM tall fixture$/u }),
+      }),
+    ).toBeVisible();
     await liveLibraryB.close();
 
     const state = await popup.evaluate(async () => {

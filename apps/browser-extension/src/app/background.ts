@@ -1287,6 +1287,7 @@ async function resetLocalDevice(): Promise<void> {
   clearRemoteSearchProbe();
   abortSearchQueries();
   for (const controller of searchIndexControllers.values()) controller.abort();
+  await Promise.allSettled(searchIndexRuns.values());
   for (const controller of storageReliefControllers.values()) controller.abort();
   for (const controller of importControllers.values()) controller.abort();
   for (const controller of exportControllers.values()) controller.abort();
@@ -1310,6 +1311,7 @@ async function resetLocalDevice(): Promise<void> {
       storageReliefRepository.close(),
       importRepository.close(),
       vaultReplacementRepository.close(),
+      searchRepository.close(),
       workspaceRepository.close(),
     ]);
     await vaultRepository.deleteDatabase();
