@@ -238,6 +238,22 @@ Treat Cloudflare authentication and output as confidential operational state:
 - summarize only the minimum allowlisted, non-sensitive facts needed to explain or verify an
   operation.
 
+Treat cache invalidation as a verified state transition, not a successful API response:
+
+- capture the pre-change body, status, cache headers, age, `Vary`, and any known custom-cache-key
+  inputs for the exact public URLs;
+- purge the narrowest separately authorized scope first, warm each canonical URL, and require
+  several successive responses to serve the current body with fresh cache behavior;
+- test the request-header variants real browsers send when `Vary` or a custom cache key can create
+  multiple cache objects;
+- do not treat a successful purge response, one `MISS`, one current response, or origin health as
+  proof that every public cache variant was invalidated;
+- if exact-URL invalidation cannot evict a proven custom-key or Worker-managed cache variant,
+  explain the evidence and obtain explicit authorization before escalating to hostname, prefix, or
+  whole-zone scope; and
+- after any authorized escalation, re-warm only the canonical verification URLs, inspect rendered
+  primary and narrow states, and re-prove that unrelated and production targets were untouched.
+
 Useful documentation checks:
 
 ```bash

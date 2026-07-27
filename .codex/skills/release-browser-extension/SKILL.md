@@ -164,10 +164,15 @@ When staging is separately authorized:
 3. preserve explicit rollback material;
 4. mutate only the authorized staging service;
 5. verify origin liveness and readiness before any cache mutation;
-6. dry-run and then perform only the exact authorized URL purge;
-7. warm and verify those public URLs, expected cache headers, rendered distribution copy, and
-   Release links; and
-8. prove production was not changed.
+6. record the canonical bodies, cache headers, ages, `Vary`, and known custom-key inputs;
+7. dry-run and perform the narrowest separately authorized purge;
+8. warm every canonical URL repeatedly and require current bodies plus fresh cache behavior across
+   the header variants real browsers send;
+9. treat neither API success, a single cache miss, nor one current response as eviction proof;
+10. when exact-URL purge leaves a proven custom-key or Worker-managed variant stale, obtain new
+    explicit authorization before escalating to hostname, prefix, or whole-zone scope;
+11. inspect the rendered distribution copy and Release links at primary and narrow widths; and
+12. prove production and unrelated cache targets were not changed.
 
 Finish by reporting the version, Release URL, tagged commit, candidate and tag workflow runs,
 proof-status result, artifact and checksum verification, local browser and full test results,

@@ -2,7 +2,7 @@
 
 **Document:** `docs/plans/19-two-phase-firefox-signing-and-distribution.md`
 
-**Status:** Approved implementation plan
+**Status:** Implemented
 
 **Owner:** Engineering
 
@@ -63,28 +63,28 @@ Vault contents, or Coordination Server API.
 
 ## 2.1 Fixed decisions
 
-| Concern                    | Decision                                                        |
-| -------------------------- | --------------------------------------------------------------- |
-| First joint version        | `0.1.12`, annotated tag `v0.1.12`                               |
-| GitHub Release kind        | Public, non-draft, non-prerelease                               |
-| Firefox channel            | AMO `unlisted`                                                  |
-| User distribution          | Signed XPI and checksum attached to the GitHub Release          |
-| AMO listing                | No public/searchable AMO listing                                |
-| Automatic updates          | Not claimed or implemented                                      |
-| Supported Firefox platform | Desktop Linux only                                              |
-| Tested Firefox lanes       | Repository-pinned Stable and ESR                                |
-| Candidate Git location     | Exact candidate commit pushed to `main`                         |
-| Candidate trigger          | Explicit manual workflow dispatch                               |
-| Publication authorization  | Explicit annotated tag after local proof                        |
-| Proof handoff              | GitHub commit status on the exact candidate commit              |
-| Status context             | `awsm/firefox-signed-local-proof`                               |
-| Signed artifact provenance | Run-scoped artifact plus non-secret JSON manifest               |
-| Tag-time AMO traffic       | Forbidden                                                       |
-| Hosted real-browser tests  | Forbidden; signed browser proof remains local                   |
-| Public-site rollout        | Tagged source to staging only                                   |
-| Shared-cache invalidation  | Exact canonical staging public URLs only                        |
-| Production                 | Out of scope and unchanged                                      |
-| Public implementation      | Provider-neutral; reference details stay in the ignored overlay |
+| Concern                    | Decision                                                                               |
+| -------------------------- | -------------------------------------------------------------------------------------- |
+| First joint version        | `0.1.12`, annotated tag `v0.1.12`                                                      |
+| GitHub Release kind        | Public, non-draft, non-prerelease                                                      |
+| Firefox channel            | AMO `unlisted`                                                                         |
+| User distribution          | Signed XPI and checksum attached to the GitHub Release                                 |
+| AMO listing                | No public/searchable AMO listing                                                       |
+| Automatic updates          | Not claimed or implemented                                                             |
+| Supported Firefox platform | Desktop Linux only                                                                     |
+| Tested Firefox lanes       | Repository-pinned Stable and ESR                                                       |
+| Candidate Git location     | Exact candidate commit pushed to `main`                                                |
+| Candidate trigger          | Explicit manual workflow dispatch                                                      |
+| Publication authorization  | Explicit annotated tag after local proof                                               |
+| Proof handoff              | GitHub commit status on the exact candidate commit                                     |
+| Status context             | `awsm/firefox-signed-local-proof`                                                      |
+| Signed artifact provenance | Run-scoped artifact plus non-secret JSON manifest                                      |
+| Tag-time AMO traffic       | Forbidden                                                                              |
+| Hosted real-browser tests  | Forbidden; signed browser proof remains local                                          |
+| Public-site rollout        | Tagged source to staging only                                                          |
+| Shared-cache invalidation  | Exact canonical URLs first; broader staging scope needs evidence and separate approval |
+| Production                 | Out of scope and unchanged                                                             |
+| Public implementation      | Provider-neutral; reference details stay in the ignored overlay                        |
 
 `0.1.12` remains a normal SemVer release because the project is already distributing public `0.x`
 preview releases without SemVer prerelease suffixes. “Beta” describes the Firefox platform support
@@ -804,9 +804,15 @@ Portable staging requirements:
 7. verify the rendered Firefox copy and latest-Release link at the origin;
 8. dry-run and then perform the separately authorized exact-URL shared-cache purge;
 9. warm `/`, `/privacy`, `/security`, and `/glossary`;
-10. require successful public responses, expected cache headers, cache hits, and correct Release
-    assets; and
-11. restore the preserved staging source/image if health or rendered verification fails.
+10. require several successive successful public responses, current bodies, expected cache
+    headers, fresh cache behavior, and correct Release assets across relevant `Vary` or custom-key
+    request variants;
+11. treat neither purge API success, a single cache miss, nor one current response as proof that
+    every public cache variant was invalidated;
+12. if exact-URL invalidation leaves a proven custom-key or Worker-managed variant stale, obtain
+    separate explicit authorization before escalating to hostname, prefix, or whole-zone scope;
+    and
+13. restore the preserved staging source/image if health or rendered verification fails.
 
 Never infer permission to deploy, purge, restart, inspect credentials, or change production.
 
@@ -910,27 +916,51 @@ Require:
 - XPI/checksum links: downloadable and valid; and
 - shared cache: exact canonical pages warmed and returning expected hits.
 
+## 9.6 Completion evidence
+
+The first joint release completed this plan on 2026-07-27:
+
+| Evidence                | Result                                                                                                            |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Release commit          | `ecbeb2ffb741758f2c11015df37c184c0f95a797`                                                                        |
+| Candidate workflow      | Run `30269312080` succeeded for the exact release commit                                                          |
+| Signed local proof      | `awsm/firefox-signed-local-proof` succeeded and targets the candidate run                                         |
+| Publication workflow    | Tag run `30270626178` succeeded without AMO signing                                                               |
+| Public Release          | Non-draft, non-prerelease `v0.1.12` with exactly four browser assets and checksums                                |
+| Signed Firefox artifact | Candidate and published XPI are byte-identical at SHA-256 `d3d10a5de22c…58de0e31`                                 |
+| Unsigned local matrix   | All formatting, static, unit, integration, package, browser, design, and local proofs pass                        |
+| Signed browser matrix   | Exact XPI passed retained-profile restart, returning-Device, Stable, ESR, and all eight cross-browser scenarios   |
+| Staging origin          | Exact tagged source is healthy, ready, and renders the signed Firefox beta                                        |
+| Shared staging cache    | Exact-URL purges exposed retained cache-key variants; a separately authorized staging-hostname purge cleared them |
+| Public staging render   | Four canonical pages show fresh cache behavior; desktop and narrow Firefox states pass visual inspection          |
+| Production and upstream | Production remained healthy and unchanged; the frozen upstream repository was not pushed                          |
+
+The cache incident established an additional release invariant: API acceptance, one cache miss, or
+one current body is not invalidation proof. Future releases start at exact-URL scope, exercise
+relevant request variants, require repeated current responses, and obtain separate authorization
+before any broader staging-only purge.
+
 # 10. Failure and Recovery Rules
 
-| Failure                                   | Required response                                                     |
-| ----------------------------------------- | --------------------------------------------------------------------- |
-| Signing variable disabled                 | Candidate dispatch fails clearly; tag uses Chrome-only path           |
-| Missing AMO secret                        | Fail before AMO request; reveal no value                              |
-| AMO version absent                        | Submit exact unlisted package and source                              |
-| AMO pending                               | No candidate XPI or Release; rerun exact version                      |
-| AMO rejected                              | No tag or Release; inspect safe validator summary and use new version |
-| Candidate digest/signature mismatch       | Fail; preserve evidence; do not test or tag                           |
-| Candidate run does not match `HEAD`       | Fail before status creation                                           |
-| Stable, ESR, or cross-browser failure     | Latest proof status failure; fix and use new version if bytes change  |
-| Verifier interrupted                      | Pending status blocks publication                                     |
-| Missing/stale/wrong proof status          | Tag publisher fails before Release creation                           |
-| Candidate artifact expired                | Rerun candidate retrieval and full local proof before tagging         |
-| Tag workflow fails before Release         | Inspect exact failure; do not create a manual competing Release       |
-| Release already exists                    | Stop; never overwrite or recreate it                                  |
-| Published asset verification fails        | Report release blocker; do not deploy staging                         |
-| Staging build/health/render check fails   | Restore retained staging source/image; leave production untouched     |
-| Staging cache purge fails                 | Keep healthy origin, report stale CDN state, and do not broaden purge |
-| Production target appears in any mutation | Stop immediately                                                      |
+| Failure                                       | Required response                                                                                      |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Signing variable disabled                     | Candidate dispatch fails clearly; tag uses Chrome-only path                                            |
+| Missing AMO secret                            | Fail before AMO request; reveal no value                                                               |
+| AMO version absent                            | Submit exact unlisted package and source                                                               |
+| AMO pending                                   | No candidate XPI or Release; rerun exact version                                                       |
+| AMO rejected                                  | No tag or Release; inspect safe validator summary and use new version                                  |
+| Candidate digest/signature mismatch           | Fail; preserve evidence; do not test or tag                                                            |
+| Candidate run does not match `HEAD`           | Fail before status creation                                                                            |
+| Stable, ESR, or cross-browser failure         | Latest proof status failure; fix and use new version if bytes change                                   |
+| Verifier interrupted                          | Pending status blocks publication                                                                      |
+| Missing/stale/wrong proof status              | Tag publisher fails before Release creation                                                            |
+| Candidate artifact expired                    | Rerun candidate retrieval and full local proof before tagging                                          |
+| Tag workflow fails before Release             | Inspect exact failure; do not create a manual competing Release                                        |
+| Release already exists                        | Stop; never overwrite or recreate it                                                                   |
+| Published asset verification fails            | Report release blocker; do not deploy staging                                                          |
+| Staging build/health/render check fails       | Restore retained staging source/image; leave production untouched                                      |
+| Exact staging URL purge leaves stale variants | Keep healthy origin, record cache-key evidence, and obtain separate authorization before broader purge |
+| Production target appears in any mutation     | Stop immediately                                                                                       |
 
 Do not weaken a verifier, skip a browser lane, broaden a cache purge, move a tag, or manually
 replace an asset to recover from a failure.
@@ -939,27 +969,29 @@ replace an asset to recover from a failure.
 
 This plan is complete only when all are true:
 
-- [ ] workflow tests prove candidate signing and tag publication are separate;
-- [ ] validate-only dispatch cannot contact AMO;
-- [ ] candidate signing uses the exact commit, version, unsigned archive, and source archive;
-- [ ] candidate artifact contains strict non-secret provenance;
-- [ ] local verifier tests exact signed bytes in Stable, ESR, and every cross-browser case;
-- [ ] latest proof status on the release commit is successful;
-- [ ] tag publisher refuses missing, stale, failed, or mismatched proof;
-- [ ] tag publisher imports the exact proven run artifact and makes no AMO request;
-- [ ] `v0.1.12` joint Release contains four verified assets;
-- [ ] published XPI bytes equal locally tested bytes;
-- [ ] README, Firefox guide, release notes, landing page, FAQ, and screenshots are factual;
-- [ ] stale “unsigned,” “development-only,” “future signed XPI,” and tag-time-signing language is
+- [x] workflow tests prove candidate signing and tag publication are separate;
+- [x] validate-only dispatch cannot contact AMO;
+- [x] candidate signing uses the exact commit, version, unsigned archive, and source archive;
+- [x] candidate artifact contains strict non-secret provenance;
+- [x] local verifier tests exact signed bytes in Stable, ESR, and every cross-browser case;
+- [x] latest proof status on the release commit is successful;
+- [x] tag publisher refuses missing, stale, failed, or mismatched proof;
+- [x] tag publisher imports the exact proven run artifact and makes no AMO request;
+- [x] `v0.1.12` joint Release contains four verified assets;
+- [x] published XPI bytes equal locally tested bytes;
+- [x] README, Firefox guide, release notes, landing page, FAQ, and screenshots are factual;
+- [x] stale “unsigned,” “development-only,” “future signed XPI,” and tag-time-signing language is
       removed from current documentation;
-- [ ] stale public Search copy is corrected;
-- [ ] Firefox signing Roadmap work is removed and store-listing work remains forward-looking;
-- [ ] Plan 13/current evidence and testing guidance match the two-phase contract;
-- [ ] release skill and UI metadata match the proven workflow and pass validation;
-- [ ] all formatting, lint, typecheck, unit, integration, build, package, browser, Rails, design,
+- [x] stale public Search copy is corrected;
+- [x] Firefox signing Roadmap work is removed and store-listing work remains forward-looking;
+- [x] Plan 13/current evidence and testing guidance match the two-phase contract;
+- [x] release skill and UI metadata match the proven workflow and pass validation;
+- [x] all formatting, lint, typecheck, unit, integration, build, package, browser, Rails, design,
       sync-proof, and coordination-E2E gates pass;
-- [ ] exact tagged source is healthy and correctly rendered on staging;
-- [ ] only staging's four canonical public URLs are purged, warmed, and verified;
-- [ ] working tree is clean and pushed commits/tags resolve to the intended commit; and
-- [ ] production, production cache, production ingress, production data, and frozen upstream
+- [x] exact tagged source is healthy and correctly rendered on staging;
+- [x] staging cache invalidation starts with the four canonical URLs; any broader scope is
+      evidence-backed, separately authorized, limited to staging, and followed by repeated warm
+      and render verification;
+- [x] working tree is clean and pushed commits/tags resolve to the intended commit; and
+- [x] production, production cache, production ingress, production data, and frozen upstream
       repository are unchanged.
