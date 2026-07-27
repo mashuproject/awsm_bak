@@ -15,16 +15,21 @@ Account registration remains deployment-specific.
 
 ## Download and try AWSM
 
-### Download AWSM for Chrome
+### Download AWSM for Chrome or Firefox
 
-> **[Download the ready-to-install Chrome ZIP (v0.1.7)](https://github.com/mashuproject/awsm_bak/releases/download/v0.1.7/awsm-chrome-v0.1.7.zip)**
+> **[Download the Chrome ZIP (v0.1.8)](https://github.com/mashuproject/awsm_bak/releases/download/v0.1.8/awsm-chrome-v0.1.8.zip)**
 >
-> [Download its SHA-256 checksum](https://github.com/mashuproject/awsm_bak/releases/download/v0.1.7/awsm-chrome-v0.1.7.zip.sha256) ·
+> [Chrome SHA-256 checksum](https://github.com/mashuproject/awsm_bak/releases/download/v0.1.8/awsm-chrome-v0.1.8.zip.sha256) ·
+> **[Download the Mozilla-signed Firefox XPI (v0.1.8)](https://github.com/mashuproject/awsm_bak/releases/download/v0.1.8/awsm-firefox-v0.1.8.xpi)**
+> ·
+> [Firefox SHA-256 checksum](https://github.com/mashuproject/awsm_bak/releases/download/v0.1.8/awsm-firefox-v0.1.8.xpi.sha256) ·
 > [View the latest Release](https://github.com/mashuproject/awsm_bak/releases/latest) ·
-> [Installation guide](docs/guides/install-chrome-extension.md)
+> [Chrome guide](docs/guides/install-chrome-extension.md) ·
+> [Firefox guide](docs/guides/install-firefox-extension.md)
 
-The latest Release contains a ready-to-install Chrome ZIP and its SHA-256 checksum. No source build,
-Account, server, test credentials, or seeded sample data is required to try the core local archive.
+The latest Release contains a Chrome ZIP, a Mozilla-signed Firefox XPI, and their SHA-256 checksums.
+No source build, Account, server, test credentials, or seeded sample data is required to try the
+core local archive.
 
 1. Download the Chrome ZIP and matching `.sha256` file using the links above.
 2. Verify and install the ZIP using the
@@ -36,11 +41,12 @@ For a guided walkthrough, continue with [Try a Capture](#try-a-capture) and
 [Verify offline behavior](#verify-offline-behavior). To review the hackathon development process,
 see [How OpenAI tools were used](#how-openai-tools-were-used).
 
-**Released test platform:** Chrome 116 or newer on a desktop operating system supported by Chrome.
-AWSM must be used in a normal browser profile; Incognito and Firefox Private Browsing are not
-supported. A Firefox MV3 development build with optional synchronization is tested on Linux Firefox
-Stable and ESR 140 or newer, but it is not yet Mozilla-signed or distributed as an installable
-release. Safari, mobile, and standalone web applications are not currently packaged or tested.
+**Released test platforms:** Chrome 116 or newer on a desktop operating system supported by Chrome,
+and the repository-pinned Firefox Stable and ESR versions on desktop Linux. AWSM must be used in a
+normal browser profile; Incognito and Firefox Private Browsing are not supported. Firefox is an
+unlisted Mozilla-signed Linux beta distributed through the GitHub Release, not a public AMO listing,
+and AWSM does not claim AMO-managed automatic updates. Safari, mobile, and standalone web
+applications are not currently packaged or tested.
 
 ## What works today
 
@@ -67,12 +73,12 @@ Firefox can derive and download MHTML from it on demand; MHTML is not stored as 
 state or rendered inside the Library. The full-page screenshot is previewed in the Capture detail
 view, while extracted text and structured content can be inspected there.
 
-The current Firefox development build supports local Vaults, Capture, Library, Search, MHTML,
+The Mozilla-signed Firefox Linux beta supports local Vaults, Capture, Library, Search, MHTML,
 Export, Import, and synchronization. Enabling synchronization requests Firefox's native optional
 permissions for website content, browsing activity, authentication information, personally
 identifying information, and the selected server origin. Denial or revocation leaves local
-features available and prevents server traffic. Mozilla signing remains disabled until the first
-unlisted distribution initiative on the Roadmap is explicitly authorized.
+features available and prevents server traffic. Install and upgrade it from the verified XPI in
+the GitHub Release; it is not a searchable AMO listing and does not claim AMO-managed updates.
 
 AI-generated summaries, tags, classifications, annotations, and folders are not implemented
 user-facing features. Search materializations are encrypted, rebuildable, local-only, and excluded
@@ -136,8 +142,9 @@ corepack pnpm --filter @awsm/browser-extension build:firefox
 Load `apps/browser-extension/.output/firefox-mv3/manifest.json` as a temporary add-on from
 `about:debugging#/runtime/this-firefox`. Temporary installation is intended for development and
 ends when Firefox restarts. Local use needs no data-transmission permission; selecting
-synchronization presents Firefox's native consent prompt. Signed-XPI installation remains gated
-until the first unlisted beta is authorized.
+synchronization presents Firefox's native consent prompt. Ordinary users should install the
+Mozilla-signed XPI using the
+[Firefox extension installation guide](docs/guides/install-firefox-extension.md).
 
 ## Try a Capture
 

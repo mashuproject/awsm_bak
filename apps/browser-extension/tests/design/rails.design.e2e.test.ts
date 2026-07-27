@@ -87,9 +87,8 @@ test("keeps installation guidance complete with and without JavaScript", async (
   await page.setViewportSize({ width: 1100, height: 900 });
   await page.goto("/#install-awsm");
   await page.getByRole("tab", { name: "Firefox" }).click();
-  await expect(page.locator("#firefox-install")).toContainText(
-    /temporary development installation/iu,
-  );
+  await expect(page.locator("#firefox-install")).toContainText(/Mozilla-signed Linux beta/iu);
+  await expect(page.locator("#firefox-install")).toContainText(/signed XPI/iu);
   await page.evaluate(() => window.scrollTo(0, 0));
   await expectReadableContrast(page);
   await expect(page).toHaveScreenshot("install-firefox.png", {
@@ -101,6 +100,12 @@ test("keeps installation guidance complete with and without JavaScript", async (
   ).toBeVisible();
   await expectReadableContrast(page);
   await expect(page).toHaveScreenshot("landing-expanded-trust-faq.png", {
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator("#firefox-install")).toBeVisible();
+  await expectReadableContrast(page);
+  await expect(page).toHaveScreenshot("install-firefox-narrow.png", {
     fullPage: true,
   });
 

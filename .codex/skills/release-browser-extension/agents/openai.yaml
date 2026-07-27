@@ -1,4 +1,4 @@
 interface:
   display_name: "Release Browser Extension"
-  short_description: "Safely validate and publish browser releases"
-  default_prompt: "Use $release-browser-extension to validate and publish the next browser-extension release safely."
+  short_description: "Sign, prove, and publish browser releases"
+  default_prompt: "Use $release-browser-extension to run or resume the exact Firefox signing candidate, prove its signed XPI locally, publish the proof-gated joint browser Release, and recover safely from any incomplete phase."

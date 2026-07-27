@@ -21,6 +21,12 @@
 
 ---
 
+> **Current release contract:** Plan 19 supersedes this plan's deferred Gate C, tagged-beta,
+> packaging-workflow, and distribution sections. The current workflow signs an untagged candidate,
+> proves that exact Mozilla-signed XPI locally, records proof on the candidate commit, and only then
+> permits an explicit tag to publish the same bytes. Plan 13 remains authoritative for the Capture
+> and Firefox Host implementation; it is not authoritative for release sequencing.
+
 # 1. Purpose
 
 This is the decision-complete implementation plan for replacing Chrome-native MHTML Capture with
@@ -132,7 +138,7 @@ If the official taxonomy cannot accurately describe the payload, stop and return
 implementer must not omit a category or treat encrypted data as uncollected merely because Mozilla
 or the Coordination Server cannot read its plaintext.
 
-## 2.3 Deferred Gate C — external signing authorization
+## 2.3 Completed Gate C — external signing authorization
 
 Implementing and testing the signing workflow does not authorize creating a tag, GitHub Release, or
 AMO submission. Before the first real unlisted submission:
@@ -142,11 +148,9 @@ AMO submission. Before the first real unlisted submission:
 - the user must explicitly authorize the exact beta version/tag submission; and
 - the tagged commit must already satisfy every local and CI acceptance gate in this plan.
 
-The project owner deferred real AMO submission, signed-XPI retrieval, signed-browser proof, tagging,
-and GitHub Release publication to the Roadmap on 2026-07-24. Those actions are not Plan 13
-completion requirements. Complete all local, temporary-install, packaging, metadata, verifier, and
-non-submitting dry-run work without crossing this gate. Do not print secrets or inspect secret
-values.
+The project owner authorized the exact first joint version and two-phase execution in Plan 19.
+That plan owns AMO submission, signed-XPI retrieval, local proof, tagging, publication, and staging
+verification. Do not print secrets or inspect secret values.
 
 # 3. Scope, Deferrals, and Canonical Replacement
 
@@ -165,15 +169,16 @@ values.
 - Firefox MV3 manifest, lifecycle, screenshot, storage, download, and permission adapters;
 - Linux Firefox Stable and ESR testing;
 - mixed Playwright/Selenium E2E orchestration;
-- a non-submitting Mozilla signing and joint-release workflow with synthetic verifier coverage;
+- a two-phase Mozilla signing and proof-gated joint-release workflow with synthetic verifier
+  coverage;
 - live UI state and rendered visual verification;
 - full canonical documentation reconciliation; and
 - destruction and recreation of pre-release development data.
 
 ## 3.2 Explicitly deferred
 
-- real AMO submission, signed-XPI retrieval and installation proof, tag creation, and GitHub Release
-  publication;
+- later public AMO and Chrome Web Store listings, AMO-managed updates, and non-Linux Firefox
+  support;
 - an AWSM archived-page viewer or any Library playback surface;
 - parsing, importing, or rendering arbitrary third-party MHTML;
 - executing captured scripts;
@@ -682,21 +687,21 @@ Before beginning Phase B, Chrome must pass:
 
 ## 8.1 Fixed support boundary
 
-Initial supported Firefox:
+Released Firefox beta support:
 
 - desktop Linux only;
 - current Stable and current ESR;
 - Manifest V3 only;
 - minimum installable version `140.0`; and
-- temporary development installation from the validated unsigned MV3 build.
+- unlisted Mozilla-signed XPI installation from the GitHub Release.
 
 The initial reproducible CI pins are Stable `153.0` and ESR `140.13.0esr`. Store these pins in one
 checked-in test configuration. Download official Mozilla release archives and verify them against
 the corresponding official release SHA512 sums before execution. Updating either pin is an explicit
 browser-test dependency change with manifest and parity reruns.
 
-Do not claim signed distribution, macOS, Windows, Android, public AMO availability, or automatic
-updates. Signed unlisted distribution remains Roadmap work.
+Do not claim macOS, Windows, Android, public AMO availability, or AMO-managed automatic updates.
+Temporary unsigned installation remains available only for development.
 
 ## 8.2 Permanent identity and manifest
 
@@ -857,11 +862,9 @@ Also run one Chrome-to-Firefox and one Firefox-to-Chrome synchronization scenari
 local proof server. Each scenario SHALL mutate through the source client and prove the already-open
 destination Library updates without reload.
 
-### Deferred tagged beta
+### Signed Linux beta
 
-The workflow below is implemented and locally tested but is not a Plan 13 execution requirement.
-Run it only after the Roadmap initiative receives exact version/tag authorization and protected AMO
-configuration.
+Plan 19 owns the exact two-phase release execution. Run:
 
 Run:
 
@@ -876,7 +879,7 @@ Run Stable and ESR in parallel jobs. Do not duplicate every browser-neutral Runt
 both. Runtime contracts remain covered by unit/integration suites; signed-browser jobs cover Host
 boundaries.
 
-# 10. Firefox Packaging and Deferred Signing Gate
+# 10. Firefox Packaging and Two-Phase Signing Gate
 
 ## 10.1 Local packaging
 
@@ -909,13 +912,8 @@ Validate the unsigned Firefox ZIP before signing:
 
 ## 10.2 Workflow contract
 
-This is a prepared future release contract. Plan 13 implements and tests it without creating a tag,
-submitting to AMO, retrieving a signed XPI, or publishing a GitHub Release.
-
-Extend the current tag release workflow or replace it with one browser-extension release workflow;
-do not create competing publishers for the same tag.
-
-When the Roadmap signing initiative is authorized and before its tag, configure:
+Plan 19 supersedes the original tag-time signing design. One workflow owns both phases without
+creating competing publishers. Before candidate signing, configure:
 
 ```text
 Repository variable: FIREFOX_AMO_SIGNING_ENABLED=true
@@ -926,17 +924,28 @@ Protected secret: AMO_JWT_SECRET
 Never echo, transform into an output, upload, or interpolate either secret into a command string
 that can be printed.
 
+The candidate phase SHALL:
+
+1. run only by explicit manual `sign-firefox-candidate` dispatch on an exact pushed commit;
+2. prove package-version, intended tag, repository, commit, and main-branch ancestry;
+3. package and validate deterministic unsigned Firefox and source archives;
+4. submit or resume the exact permanent ID/version through `web-ext sign --channel=unlisted`;
+5. retrieve and validate the Mozilla-signed XPI;
+6. preserve a run-scoped provenance manifest binding all input and output hashes;
+7. create no tag or GitHub Release; and
+8. expose the exact run ID to the local verifier.
+
+The local phase SHALL reproduce the unsigned inputs, prove the exact signed XPI in Firefox Stable,
+Firefox ESR, and both cross-browser directions, and then write success context
+`awsm/firefox-signed-local-proof` on the exact candidate commit. Failure SHALL write failure rather
+than leave stale success.
+
 Every validated `v<package-version>` tag SHALL:
 
-1. prove package-version/tag equality and main-branch ancestry through the existing Plan 12 rules;
-2. run the required Chrome and Firefox build/test jobs;
-3. package and validate the unsigned Firefox source;
-4. submit the exact ID/version through `web-ext sign --channel=unlisted`;
-5. identify the AMO submission by permanent ID and exact version;
-6. poll or resume that exact submission idempotently rather than creating a duplicate version;
-7. retrieve the signed XPI;
-8. run the signed Stable/ESR and cross-browser gates;
-9. rename assets to:
+1. prove package-version/tag equality and main-branch ancestry;
+2. resolve the exact successful proof status and validate its candidate workflow run;
+3. download and revalidate that run's provenance-bound XPI without contacting AMO;
+4. rename assets to:
 
    ```text
    awsm-chrome-v<version>.zip
@@ -945,20 +954,19 @@ Every validated `v<package-version>` tag SHALL:
    awsm-firefox-v<version>.xpi.sha256
    ```
 
-10. revalidate both checksums after artifact transfer; and
-11. create one GitHub Release only after every browser artifact passes.
+5. revalidate both checksums after artifact transfer; and
+6. create one GitHub Release only after every browser artifact passes.
 
-AMO review may outlive one CI job. Persist only non-secret submission identity as a workflow
-artifact. A manual resume path SHALL query the exact add-on ID/version and retrieve a completed
-submission without resubmitting. Pending review creates no GitHub Release. Rejection creates no
-Release and preserves validator output as evidence.
+AMO review may outlive one workflow run. Persist only non-secret submission identity as a workflow
+artifact. A manual resume path SHALL validate the prior run and query the exact add-on ID/version
+without resubmitting. Pending review creates no GitHub Release. Rejection creates no Release.
 
-If `FIREFOX_AMO_SIGNING_ENABLED` is absent or not exactly `true`, a tag follows the existing
-Chrome-only publication path and performs no AMO submission. When it is exactly `true`, the
-Chrome-only publisher is disabled and the joint publisher cannot run until signed Firefox gates
-succeed. Manual dispatch remains a non-publishing dry run and performs no AMO submission.
+If `FIREFOX_AMO_SIGNING_ENABLED` is absent or not exactly `true`, a tag follows the Chrome-only
+publication path and performs no AMO request. When it is exactly `true`, the Chrome-only publisher
+is disabled and the joint publisher requires exact local proof. A validate-only dispatch performs
+no AMO request; only the explicit candidate operation can submit.
 
-## 10.3 Future release documentation
+## 10.3 Release documentation
 
 Update release notes and installation guides so one release describes:
 

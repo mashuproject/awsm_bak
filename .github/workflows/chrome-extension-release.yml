@@ -14,6 +14,19 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      operation:
+        description: Browser release operation
+        required: true
+        type: choice
+        default: validate-only
+        options:
+          - validate-only
+          - sign-firefox-candidate
+      resume_run_id:
+        description: Prior candidate run that preserved an AMO upload identity
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -62,6 +75,7 @@ jobs:
     outputs:
       archive_name: ${{ steps.metadata.outputs.archive_name }}
       checksum_name: ${{ steps.metadata.outputs.checksum_name }}
+      commit: ${{ steps.revision.outputs.commit }}
       firefox_xpi_name: ${{ steps.metadata.outputs.firefox_xpi_name }}
       firefox_checksum_name: ${{ steps.metadata.outputs.firefox_checksum_name }}
       firefox_source_name: ${{ steps.metadata.outputs.firefox_source_name }}
@@ -96,11 +110,14 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: node apps/browser-extension/scripts/chrome-release-metadata.mjs
 
-      - name: Require tagged commit to belong to main
-        if: github.event_name == 'push'
+      - name: Resolve exact release commit
+        id: revision
+        run: echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Require candidate or tagged commit to belong to main
         run: |
           git fetch origin main
-          git merge-base --is-ancestor "$(git rev-list -n 1 "$GITHUB_REF_NAME")" origin/main
+          git merge-base --is-ancestor "${{ steps.revision.outputs.commit }}" origin/main
 
       - name: Lint
         run: corepack pnpm lint
@@ -114,7 +131,7 @@ jobs:
       - name: Build production extension
         run: corepack pnpm build
 
-      - name: Create Chrome archive
+      - name: Create browser archives
         run: corepack pnpm zip
 
       - name: Package and verify browser release inputs
@@ -150,8 +167,10 @@ jobs:
           cd dist
           sha256sum "$ARCHIVE_NAME" > "$CHECKSUM_NAME"
           sha256sum "awsm-firefox-unsigned-v$VERSION.zip" > "awsm-firefox-unsigned-v$VERSION.zip.sha256"
+          sha256sum "$FIREFOX_SOURCE_NAME" > "$FIREFOX_SOURCE_NAME.sha256"
           sha256sum --check "$CHECKSUM_NAME"
           sha256sum --check "awsm-firefox-unsigned-v$VERSION.zip.sha256"
+          sha256sum --check "$FIREFOX_SOURCE_NAME.sha256"
 
       - name: Upload validated release assets
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -163,17 +182,21 @@ jobs:
             dist/awsm-firefox-unsigned-v${{ steps.metadata.outputs.version }}.zip
             dist/awsm-firefox-unsigned-v${{ steps.metadata.outputs.version }}.zip.sha256
             dist/${{ steps.metadata.outputs.firefox_source_name }}
+            dist/${{ steps.metadata.outputs.firefox_source_name }}.sha256
             dist/chrome-release-notes.md
             dist/release-notes.md
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 30
           compression-level: 0
 
-  sign-firefox:
+  sign-firefox-candidate:
     needs: build
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && vars.FIREFOX_AMO_SIGNING_ENABLED == 'true'
+    if: github.event_name == 'workflow_dispatch' && inputs.operation == 'sign-firefox-candidate' && vars.FIREFOX_AMO_SIGNING_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    permissions:
+      actions: read
+      contents: read
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -195,13 +218,24 @@ jobs:
           name: browser-extension-inputs-${{ needs.build.outputs.tag }}
           path: dist
 
+      - name: Validate resumable candidate run
+        if: inputs.resume_run_id != ''
+        env:
+          CANDIDATE_COMMIT: ${{ needs.build.outputs.commit }}
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          RESUME_RUN_ID: ${{ inputs.resume_run_id }}
+        run: node apps/browser-extension/scripts/firefox-proof-status.mjs validate-resume
+
       - name: Restore resumable AMO upload identity
-        id: restore-amo
-        continue-on-error: true
+        if: inputs.resume_run_id != ''
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: firefox-amo-submission-${{ needs.build.outputs.tag }}
+          name: firefox-amo-submission-v${{ needs.build.outputs.version }}-${{ needs.build.outputs.commit }}
           path: amo-resume
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.resume_run_id }}
 
       - name: Reproduce and verify the exact unsigned Firefox package
         env:
@@ -233,35 +267,55 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: firefox-amo-submission-${{ needs.build.outputs.tag }}
+          name: firefox-amo-submission-v${{ needs.build.outputs.version }}-${{ needs.build.outputs.commit }}
           path: apps/browser-extension/.output/firefox-mv3/.amo-upload-uuid
           if-no-files-found: ignore
           include-hidden-files: true
           overwrite: true
           retention-days: 30
 
-      - name: Validate signed XPI and checksum
+      - name: Validate signed XPI and create candidate provenance
         env:
+          CANDIDATE_COMMIT: ${{ needs.build.outputs.commit }}
+          CANDIDATE_PROVENANCE: dist/firefox-candidate-v${{ needs.build.outputs.version }}.json
+          CANDIDATE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           FIREFOX_CHECKSUM_NAME: ${{ needs.build.outputs.firefox_checksum_name }}
-          FIREFOX_XPI_NAME: ${{ needs.build.outputs.firefox_xpi_name }}
+          FIREFOX_SOURCE_ARCHIVE: dist/${{ needs.build.outputs.firefox_source_name }}
+          FIREFOX_XPI: dist/${{ needs.build.outputs.firefox_xpi_name }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          UNSIGNED_ARCHIVE: dist/awsm-firefox-unsigned-v${{ needs.build.outputs.version }}.zip
+          VERSION: ${{ needs.build.outputs.version }}
         run: |
           node apps/browser-extension/scripts/verify-signed-firefox-xpi.mjs \
-            "dist/$FIREFOX_XPI_NAME" \
-            "dist/awsm-firefox-unsigned-v${{ needs.build.outputs.version }}.zip"
+            "$FIREFOX_XPI" \
+            "$UNSIGNED_ARCHIVE"
           cd dist
-          sha256sum "$FIREFOX_XPI_NAME" > "$FIREFOX_CHECKSUM_NAME"
+          sha256sum "$(basename "$FIREFOX_XPI")" > "$FIREFOX_CHECKSUM_NAME"
           sha256sum --check "$FIREFOX_CHECKSUM_NAME"
+          cd ..
+          node apps/browser-extension/scripts/firefox-candidate-provenance.mjs create
+          node apps/browser-extension/scripts/firefox-candidate-provenance.mjs verify
 
-      - name: Upload signed Firefox release assets
+      - name: Upload signed Firefox candidate
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: firefox-extension-${{ needs.build.outputs.tag }}
+          name: firefox-candidate-v${{ needs.build.outputs.version }}-${{ needs.build.outputs.commit }}
           path: |
             dist/${{ needs.build.outputs.firefox_xpi_name }}
             dist/${{ needs.build.outputs.firefox_checksum_name }}
+            dist/firefox-candidate-v${{ needs.build.outputs.version }}.json
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 30
           compression-level: 0
+
+  reject-disabled-firefox-candidate:
+    if: github.event_name == 'workflow_dispatch' && inputs.operation == 'sign-firefox-candidate' && vars.FIREFOX_AMO_SIGNING_ENABLED != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the protected Firefox signing gate
+        run: |
+          echo "FIREFOX_AMO_SIGNING_ENABLED must be exactly true for candidate signing." >&2
+          exit 1
 
   publish-chrome:
     needs: build
@@ -318,48 +372,83 @@ jobs:
             "${prerelease_args[@]}"
 
   publish-joint:
-    needs: [build, sign-firefox]
+    needs: build
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && vars.FIREFOX_AMO_SIGNING_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
+      actions: read
       contents: write
+      statuses: read
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
-      - name: Download validated release assets
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: corepack pnpm install --frozen-lockfile
+
+      - name: Resolve exact local signed proof
+        id: proof
+        env:
+          CANDIDATE_COMMIT: ${{ needs.build.outputs.commit }}
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: node apps/browser-extension/scripts/firefox-proof-status.mjs resolve-proof
+
+      - name: Download validated release inputs
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: browser-extension-inputs-${{ needs.build.outputs.tag }}
           path: dist
 
-      - name: Download signed Firefox release assets
+      - name: Download exact locally proven Firefox candidate
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: firefox-extension-${{ needs.build.outputs.tag }}
+          name: firefox-candidate-v${{ needs.build.outputs.version }}-${{ needs.build.outputs.commit }}
           path: dist
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.proof.outputs.run_id }}
 
-      - name: Revalidate transferred assets
+      - name: Revalidate transferred assets and candidate provenance
         env:
           ARCHIVE_NAME: ${{ needs.build.outputs.archive_name }}
+          CANDIDATE_COMMIT: ${{ needs.build.outputs.commit }}
+          CANDIDATE_PROVENANCE: dist/firefox-candidate-v${{ needs.build.outputs.version }}.json
+          CANDIDATE_RUN_URL: ${{ steps.proof.outputs.run_url }}
           CHECKSUM_NAME: ${{ needs.build.outputs.checksum_name }}
           FIREFOX_CHECKSUM_NAME: ${{ needs.build.outputs.firefox_checksum_name }}
-          FIREFOX_XPI_NAME: ${{ needs.build.outputs.firefox_xpi_name }}
+          FIREFOX_SOURCE_ARCHIVE: dist/${{ needs.build.outputs.firefox_source_name }}
+          FIREFOX_XPI: dist/${{ needs.build.outputs.firefox_xpi_name }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          UNSIGNED_ARCHIVE: dist/awsm-firefox-unsigned-v${{ needs.build.outputs.version }}.zip
+          VERSION: ${{ needs.build.outputs.version }}
         run: |
+          node apps/browser-extension/scripts/firefox-candidate-provenance.mjs verify
+          node apps/browser-extension/scripts/verify-signed-firefox-xpi.mjs \
+            "$FIREFOX_XPI" \
+            "$UNSIGNED_ARCHIVE"
           cd dist
           sha256sum --check "$CHECKSUM_NAME"
           sha256sum --check "$FIREFOX_CHECKSUM_NAME"
           unzip -t "$ARCHIVE_NAME"
-          unzip -t "$FIREFOX_XPI_NAME"
+          unzip -t "$(basename "$FIREFOX_XPI")"
           if [[ "$(unzip -Z1 "$ARCHIVE_NAME" | grep -Fxc 'manifest.json')" -ne 1 ]]; then
             echo "Archive must contain exactly one root manifest.json" >&2
             exit 1
           fi
 
-      - name: Publish GitHub Release
+      - name: Publish joint GitHub Release
         env:
           ARCHIVE_NAME: ${{ needs.build.outputs.archive_name }}
           CHECKSUM_NAME: ${{ needs.build.outputs.checksum_name }}

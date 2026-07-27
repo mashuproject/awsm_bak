@@ -1,14 +1,14 @@
-# Install a Future Signed Firefox Extension on Desktop Linux
+# Install the Signed Firefox Extension on Desktop Linux
 
-This guide applies after AWSM's deferred AMO signing initiative publishes an unlisted
-Mozilla-signed beta for desktop Linux Firefox Stable and ESR 140 or newer. Today, Firefox is
-available only as the temporary development installation described in the project README; no
-signed XPI is currently distributed.
+AWSM is distributed as an unlisted Mozilla-signed beta for desktop Linux Firefox Stable and ESR 140
+or newer. It is available from the project's GitHub Release rather than a public or searchable AMO
+listing. AWSM does not currently claim AMO-managed automatic updates.
 
 ## Verify the download
 
+Open the [latest GitHub Release](https://github.com/mashuproject/awsm_bak/releases/latest).
 Download the matching `awsm-firefox-v<version>.xpi` and
-`awsm-firefox-v<version>.xpi.sha256` files from the same Release. In a terminal opened in the
+`awsm-firefox-v<version>.xpi.sha256` files from that same Release. In a terminal opened in the
 download directory, run:
 
 ```bash
@@ -50,8 +50,11 @@ claim Firefox can render MHTML natively; use a compatible offline viewer when ne
 
 ## Upgrade or remove
 
-Install a newer signed XPI with the same extension ID to upgrade. Firefox preserves extension
-storage during an ordinary upgrade, but creating a Complete Vault Export first is recommended.
+AWSM does not currently provide AMO-managed automatic updates. Check the
+[latest GitHub Release](https://github.com/mashuproject/awsm_bak/releases/latest), verify its
+checksum, and install the newer signed XPI with the same extension ID to upgrade. Firefox preserves
+extension storage during an ordinary upgrade, but creating a Complete Vault Export first is
+recommended.
 
 Remove AWSM from `about:addons` under **Extensions**. Removing the extension can remove its local
 browser storage; export any Vault you need before uninstalling.

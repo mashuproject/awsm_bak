@@ -6,7 +6,7 @@
 
 **Owner:** Engineering
 
-**Last Updated:** 2026-07-24
+**Last Updated:** 2026-07-27
 
 **Implements:** `docs/plans/13-browser-independent-web-page-snapshot-and-firefox-host.md`
 
@@ -262,19 +262,21 @@ The release workflow now has:
 - one Firefox Stable production smoke on relevant pull requests;
 - parallel Firefox Stable/ESR production and Export/Import lanes on main and the nightly schedule;
 - a main/nightly bidirectional live Chrome/Firefox synchronization proof;
-- a future tag-only protected signing gate requiring `FIREFOX_AMO_SIGNING_ENABLED=true`;
-- exact ID/version AMO query, resumable non-secret upload identity, source upload, pending/rejected
-  handling, and AMO SHA-256 verification;
+- an explicit untagged candidate-signing operation requiring
+  `FIREFOX_AMO_SIGNING_ENABLED=true`;
+- exact ID/version AMO query, run-bound resumable non-secret upload identity, source upload,
+  pending/rejected handling, and AMO SHA-256 verification;
 - deterministic unsigned-package reproduction before submission;
-- signed-XPI manifest/signature validation;
-- signed Stable, ESR, and bidirectional cross-browser gates; and
-- one joint GitHub Release only after Chrome and Firefox assets and checksums pass.
+- strict candidate provenance and signed-XPI manifest/signature validation;
+- local signed Stable, ESR, and bidirectional cross-browser gates recorded as an exact-commit
+  status; and
+- a tag-time joint GitHub Release that publishes the proven candidate bytes without AMO access.
 
-Manual dispatch remains a non-publishing dry run and performs no AMO submission. No live submission
-has been made. On 2026-07-24 the project owner deferred Gate C, signed-XPI proof, and joint
-publication to the Roadmap. With the signing variable absent, tag releases remain Chrome-only and
-perform no AMO request; enabling the variable disables that publisher and requires every signed
-Firefox gate before joint publication.
+Plan 19 supersedes that prepared tag-time contract. The current workflow separates an explicit
+untagged candidate-signing dispatch from tag publication, binds the signed XPI to strict
+run-scoped provenance, and permits joint publication only after the exact commit has successful
+local-proof status. Tag publication performs no AMO request and cannot select replacement bytes.
+The live `v0.1.8` execution and final results belong to Plan 19's completion evidence.
 
 Current-worktree verification:
 

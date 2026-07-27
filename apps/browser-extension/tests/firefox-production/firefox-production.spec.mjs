@@ -163,8 +163,8 @@ async function createDriver(lane) {
     .setPreference("browser.download.dir", downloadDirectory)
     .setPreference("browser.download.useDownloadDir", true)
     .setPreference("browser.download.alwaysOpenPanel", false)
-    .setPreference("browser.helperApps.neverAsk.saveToDisk", "multipart/related")
-    .setPreference("xpinstall.signatures.required", false);
+    .setPreference("browser.helperApps.neverAsk.saveToDisk", "multipart/related");
+  if (!SIGNED_INSTALL) options.setPreference("xpinstall.signatures.required", false);
   const service = new firefox.ServiceBuilder(geckodriverBinary).addArguments(
     "--allow-system-access",
   );

@@ -437,6 +437,19 @@ Capture Adapter coverage should include a script-heavy page that remains loading
 runs and prove structured content and normalized text complete without a producer-disconnect
 warning.
 
+Firefox release proof SHALL use two separate phases. Hosted candidate signing binds the repository,
+exact commit, version, intended tag, unsigned archive, source archive, and Mozilla-signed XPI in
+strict run-scoped provenance without creating a tag or Release. A local verifier SHALL reproduce
+the unsigned inputs, validate and install that exact XPI in the repository-pinned Firefox Stable
+and ESR lanes, run both Chrome/Firefox synchronization directions, and record a commit status on
+the exact candidate commit. Tag publication SHALL validate that status and candidate run, publish
+the provenance-bound XPI, and perform no AMO request or hosted real-browser test.
+
+The complete release candidate matrix SHALL also include the repository lint, typecheck, unit,
+integration, build, package, Chrome, Firefox, cross-browser, rendered-design,
+`test:sync-proof`, and `test:e2e:coordination` gates. The last two and all real-browser release
+proof remain local-only and SHALL NOT run in hosted CI.
+
 ---
 
 # Canonical Format Coverage

@@ -136,8 +136,8 @@ async function launchFirefox(profile, reset = true) {
   );
   const options = new firefox.Options()
     .setBinary(resolve(packageRoot, browserConfiguration.stable.executable))
-    .addArguments("-headless", "-profile", browserProfile)
-    .setPreference("xpinstall.signatures.required", false);
+    .addArguments("-headless", "-profile", browserProfile);
+  if (!signedFirefoxInstall) options.setPreference("xpinstall.signatures.required", false);
   const service = new firefox.ServiceBuilder(geckodriverBinary).addArguments(
     "--allow-system-access",
   );

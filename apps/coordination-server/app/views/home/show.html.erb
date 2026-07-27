@@ -208,13 +208,18 @@
             </div>
           </article>
           <article id="firefox-install" class="install-panel" role="tabpanel" data-install-selector-target="panel">
-            <p class="awsm-badge">Tested · development-only</p>
-            <h3>Firefox</h3>
-            <p>
-              Firefox support is tested but currently unsigned. Temporary development installation
-              ends when Firefox restarts; there is no ordinary AMO installation yet.
-            </p>
-            <%= link_to "Firefox development installation guide", public_product_links[:firefox_guide], class: "awsm-button awsm-button--secondary" %>
+            <p class="awsm-badge">Mozilla-signed Linux beta</p>
+            <h3>Firefox on desktop Linux</h3>
+            <ol>
+              <li>Download the signed XPI and matching checksum from the latest Release.</li>
+              <li>Verify the checksum, then open the XPI in Firefox and approve installation.</li>
+              <li>Choose <strong>Continue without sync</strong> and create a local Vault, or explicitly connect a compatible Coordination Server.</li>
+              <li>Open an HTTP(S) page and archive it from the AWSM popup.</li>
+            </ol>
+            <div class="button-row">
+              <%= link_to "Latest Release", public_product_links[:releases], class: "awsm-button" %>
+              <%= link_to "Firefox installation guide", public_product_links[:firefox_guide], class: "awsm-button awsm-button--secondary" %>
+            </div>
           </article>
         </div>
       </div>
@@ -233,10 +238,10 @@
         <article class="faq-item"><h3>What can the Coordination Server see?</h3><p>It stores encrypted opaque records and operational metadata, but does not receive the Vault decryption keys.</p></article>
         <article class="faq-item"><h3>Why do I need both an Account password and a Recovery Phrase?</h3><p>The Account password proves identity to one Coordination Server. The Recovery Phrase is client-held Vault recovery material. They are separate secrets.</p></article>
         <article class="faq-item"><h3>What happens when I lose internet access?</h3><p>The local Library and locally available Capture content remain usable offline. Synchronization waits for connectivity.</p></article>
-        <article class="faq-item"><h3>Where can I install AWSM today?</h3><p>Chrome has a downloadable unpacked preview. Firefox is tested but unsigned and development-only, with temporary installation ending on restart.</p></article>
+        <article class="faq-item"><h3>Where can I install AWSM today?</h3><p>Chrome has a downloadable unpacked preview. Desktop Linux Firefox Stable and ESR have an unlisted Mozilla-signed beta distributed through the GitHub Release. It is not a public AMO listing and does not claim AMO-managed updates.</p></article>
         <article class="faq-item"><h3>Can I host synchronization myself?</h3><p>Yes. A self-hosted Coordination Server still sees operational metadata and controls its own access logs.</p></article>
         <article class="faq-item"><h3>How do I take my archive with me?</h3><p>Complete Export and verified Import provide a portable preservation path outside one browser installation.</p></article>
-        <article class="faq-item"><h3>Can AWSM search or summarize what I save?</h3><p>No. AWSM does not present Search or AI as a shipped feature in this public preview.</p></article>
+        <article class="faq-item"><h3>Can AWSM search or summarize what I save?</h3><p>AWSM provides private per-Vault keyword Search. Optional semantic Search uses either a model downloaded after your explicit action or a remote embedding endpoint you configure after a separate plaintext disclosure. AI-generated summaries are not a shipped feature.</p></article>
       </div>
     </div>
   </section>

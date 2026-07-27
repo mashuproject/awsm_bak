@@ -1,117 +1,139 @@
 ---
 name: release-browser-extension
-description: Safely prepare, validate, publish, and verify a tag-driven browser-extension GitHub Release while keeping real-browser proof local. Use when cutting an AWSM extension release, bumping its release version, recovering from a failed unpublished release run, validating packaged Chrome or Firefox artifacts, or confirming that a staging site points to the published release.
+description: Safely prepare, sign, prove, publish, and verify tag-driven Chrome and Mozilla-signed Firefox browser-extension GitHub Releases while keeping real-browser proof local. Use when cutting an AWSM extension release, running or resuming an unlisted Firefox AMO candidate, recovering from a failed unpublished release, validating packaged Chrome or Firefox artifacts, or confirming that staging points to a published release.
 ---
 
 # Release Browser Extension
 
-Release the browser extension from an exact reviewed commit. Keep expensive real-browser proof
-local and let hosted automation perform reproducible source checks, packaging, checksums, and
-publication.
+Release one exact reviewed commit through separate Firefox-candidate and publication phases. Keep
+real-browser proof local. Let hosted automation build, sign, preserve provenance, enforce proof,
+package checksums, and publish only the already-proven bytes.
 
-## Establish authority and scope
+## Establish authority and current state
 
 1. Read the repository-root `AGENTS.md` and every applicable override completely.
-2. Inspect the current branch, remotes, working tree, package version, tags, Releases, release
-   documentation, workflow, and package scripts. Never infer them from an earlier release.
-3. Identify the authorized repository and branch. Distinguish a working fork from upstream and
+2. Inspect the current branch, remotes, worktree, package version, tags, Releases, workflow,
+   release scripts, manifests, public documentation, and repository-declared commands. Treat these
+   as authoritative when this skill is stale.
+3. Resolve the authorized repository and branch. Distinguish a working fork from upstream and
    staging from production. Honor freezes and branch-switch approval rules.
-4. Confirm that the user's request authorizes public tag and Release creation. Treat deployment,
-   cache purge, upstream push, and production mutation as separate scopes.
-5. Use the repository-pinned package manager and existing release workflow. Do not replace a
-   tag-driven publisher with an ad hoc manual Release.
+4. Confirm authorization separately for candidate signing, tag and Release creation, deployment,
+   cache mutation, upstream push, and production mutation.
+5. Verify only the names and presence of required repository variables and secrets. Never inspect,
+   echo, download, transform, persist, or reproduce credential values.
 
-Never print or retain tokens, OAuth callbacks, credentials, account or zone identifiers, private
-deployment configuration, user data, or full infrastructure inventories. Keep repository guidance
-portable; do not add reference-deployment domains, host aliases, paths, or account topology as
-application defaults.
+Keep repository guidance portable. Never add private domains, host aliases, deployment paths,
+account identifiers, profiles, credentials, or operational topology to tracked source or this
+skill.
 
-## Choose the version
+## Choose and prepare the immutable candidate
 
-Resolve the next version from all of:
+Resolve the version from the package, remote tags and Releases, public download links, SemVer
+rules, and the requested promotion. Never move, delete, recreate, or overwrite a published tag or
+Release.
 
-- the extension package version;
-- existing remote tags and GitHub Releases;
-- versioned public download links;
-- the repository's SemVer and prerelease rules; and
-- the user's intended downstream or upstream promotion.
+Update every owned version, artifact reference, release note, installation guide, public site,
+rendered assertion, architecture/testing document, superseded plan, and Roadmap entry together.
+Keep the Roadmap forward-looking.
 
-Never guess when these disagree. Never move, delete, recreate, or overwrite a published tag or
-Release. For a failed tag with no Release, explain the state and obtain explicit approval before
-deleting or recreating it. Prefer a new version when the user wants an immutable audit trail.
-
-Update every owned version and public artifact reference together. Do not change unrelated fixture
-versions that merely exercise version-shaped data.
-
-## Prepare the exact release commit
-
-1. Make only release-required source, workflow, test, and documentation changes.
-2. Keep hosted CI free of Playwright, Selenium, browser downloads, browser matrices, scheduled
-   browser jobs, and live cross-browser proof unless the user explicitly accepts that quota cost.
-3. Preserve inexpensive hosted gates: dependency installation, lint, typecheck, unit tests,
-   production builds, archive validation, checksums, and Release publication.
-4. Ensure packaging removes only known generated versioned archives before building. Never use a
-   broad destructive cleanup.
-5. Run applicable formatters and static checks.
-6. Inspect ignored files, stage only intended files, review the complete staged diff, and commit
-   with the repository's commit convention.
-
-Do not tag a dirty tree or an unpushed commit. Do not place generated archives, credentials, test
-profiles, logs, or operational evidence in the commit.
-
-## Prove the release locally
-
-Run the repository-declared local release gates against the exact content that will be tagged:
+Run all repository-declared gates applicable to the final candidate, including:
 
 ```bash
 corepack pnpm lint
 corepack pnpm typecheck
 corepack pnpm test
+corepack pnpm test:integration
 corepack pnpm build
 corepack pnpm zip
-corepack pnpm --filter @awsm/browser-extension test:e2e:cross-browser
+corepack pnpm test:e2e:chrome
+corepack pnpm test:e2e:firefox
+corepack pnpm test:e2e:cross-browser
+corepack pnpm test:e2e:design
+corepack pnpm test:sync-proof
+corepack pnpm test:e2e:coordination
 ```
 
-Discover and follow newer repository commands when manifests differ. Require:
+Discover and follow newer commands when manifests differ. Keep both heavyweight Coordination
+Server proofs local; do not add them or real-browser matrices to hosted CI. Validate release
+archives, deterministic Firefox packaging, exact manifest version, expected root layout, source
+reviewability, and stale-archive exclusion.
 
-- all unit and release-workflow tests to pass;
-- Chrome and Firefox production builds to pass static release validation;
-- archives to contain the expected root manifest and current version;
-- stale archives not to contaminate package selection; and
-- every local live Chrome-to-Firefox and Firefox-to-Chrome scenario to pass.
+Inspect all changed rendered states at primary and narrow widths. Run applicable formatters,
+static checks, and skill validation. Stage only intended files, review the complete staged diff,
+commit, push the exact candidate, fetch, and prove local `HEAD` equals the authorized remote branch.
+Do not commit generated packages, profiles, logs, credentials, screenshots, or local evidence.
 
-If a gate fails, diagnose it. Do not bypass, skip, weaken, or move it into hosted CI merely to
-publish. Fix the source, rerun the affected checks, create a new commit, and rerun the local browser
-gate on the final content.
+## Phase 1: obtain the exact signed Firefox candidate
 
-## Publish
+1. Prove the target tag and Release do not exist.
+2. Manually dispatch the workflow's candidate-signing operation on the exact pushed commit.
+3. Record the explicit workflow run ID. Never infer a candidate from “latest,” a version alone, or
+   another branch.
+4. If AMO review is pending, retain the same version and resume through that exact run's
+   non-secret upload identity. Query the permanent add-on ID and exact version; never resubmit
+   changed bytes.
+5. Require the candidate artifact to bind repository, full commit, version, intended tag,
+   operation, permanent add-on ID, candidate run URL, unsigned archive hash, source archive hash,
+   signed XPI name, and signed XPI hash.
+6. Download and validate the run-scoped signed artifact. Reject missing signatures, unexpected
+   payload mutation, checksum mismatch, path ambiguity, manifest drift, or provenance mismatch.
 
-1. Push the exact release commit to the authorized repository.
-2. Re-fetch and prove local `HEAD` equals the intended remote branch.
-3. Prove the target tag and Release do not already exist.
-4. Create the matching annotated `v<version>` tag on that commit and push only that tag.
-5. Monitor the repository's release workflow through completion.
+Candidate signing creates no tag or Release. If source or package bytes change, AMO remediation
+changes bytes, or signed-browser proof exposes a defect, choose a new patch version and repeat from
+a new immutable candidate.
 
-Do not create a second Release manually while the workflow is running. If the workflow fails,
-inspect the failed step and confirm no Release was published before planning recovery. Cancel
-unnecessary hosted browser jobs promptly if an older workflow unexpectedly starts them.
+## Prove the signed bytes locally
 
-## Verify publication
+Run the repository's signed-candidate verifier with the explicit successful candidate run ID. It
+must:
 
-Download the published archive and checksum into a fresh temporary directory. Verify:
+- require a clean authorized branch whose `HEAD` equals the remote branch;
+- prove the tag and Release are still absent;
+- validate the workflow identity, repository, exact commit, run URL, operation, and provenance;
+- reproduce and compare the unsigned package and source archive;
+- validate the exact Mozilla-signed XPI and checksum;
+- run that XPI in repository-pinned Firefox Stable and ESR;
+- run both Chrome-to-Firefox and Firefox-to-Chrome synchronization directions; and
+- write the configured commit-status context on the exact candidate commit.
 
-- the checksum succeeds;
-- the archive passes integrity testing;
-- the root manifest reports the released version;
-- the GitHub Release is public, non-draft, and has the expected assets; and
-- the tag resolves to the intended commit.
+A pending or failed local run must not leave a success status. The success status target URL must
+identify the exact candidate run without exposing local paths, test data, or secrets.
 
-If staging is in scope, inspect its rendered release link. Prefer a repository-level
-`/releases/latest` link when that is the established contract, confirm it resolves to the new
-Release, and verify the page's expected CDN cache status. Do not deploy or purge merely because a
-generic latest-Release redirect changed; mutate staging only when its source or configuration
-actually requires it. Never touch production without separate explicit authorization.
+## Phase 2: tag and publish
 
-Finish by reporting the version, Release URL, tagged commit, artifact and checksum verification,
-local browser results, hosted workflow result, staging result when applicable, commits pushed, and
-working-tree state.
+1. Resolve the exact successful proof status on the candidate commit and validate its target
+   workflow run, repository, workflow path, event, conclusion, and commit.
+2. Create the explicitly authorized annotated `v<version>` tag on that exact commit and push only
+   that tag.
+3. Monitor the tag workflow. It must not contact AMO or sign new bytes.
+4. Require the joint publisher to download the candidate artifact from the proof-bound run,
+   validate provenance again, and publish that exact XPI beside the current Chrome ZIP and
+   checksums.
+5. Retain the explicit Chrome-only publisher only when Firefox signing is exactly disabled.
+
+Do not create a second Release manually while automation is running. If a tag workflow fails,
+inspect the failure and prove whether a Release exists before recovery. A failed tag without a
+Release requires explicit recovery authority; prefer a new version when preserving an immutable
+audit trail.
+
+## Verify publication and optional staging
+
+Independently inspect the public non-draft, non-prerelease Release and exact tag commit. Download
+each published asset and checksum into a fresh temporary directory; verify checksums, archive
+integrity, root manifests, released version, Firefox signature, and exact expected asset set.
+
+When staging is separately authorized:
+
+1. re-inspect live topology and isolation;
+2. deploy an archive made from the exact verified tag, never a dirty worktree;
+3. preserve explicit rollback material;
+4. mutate only the authorized staging service;
+5. verify origin liveness and readiness before any cache mutation;
+6. dry-run and then perform only the exact authorized URL purge;
+7. warm and verify those public URLs, expected cache headers, rendered distribution copy, and
+   Release links; and
+8. prove production was not changed.
+
+Finish by reporting the version, Release URL, tagged commit, candidate and tag workflow runs,
+proof-status result, artifact and checksum verification, local browser and full test results,
+staging result when applicable, commits pushed, and final worktree state.

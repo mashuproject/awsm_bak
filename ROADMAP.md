@@ -99,10 +99,12 @@ bypassing the real Host in release builds.
 
 **Status:** Approved
 
-Authorize an exact version/tag, provide the protected AMO credentials, enable the prepared repository
-signing gate, retrieve the Mozilla-signed unlisted XPI, and pass its Stable/ESR and cross-browser
-release lanes before publishing a joint GitHub Release. Until then, Firefox remains a temporary
-development install and tag releases follow the existing Chrome-only path.
+Execute the decision-complete two-phase candidate-signing, local proof-status, and exact-artifact
+publication contract in
+[Plan 19](docs/plans/19-two-phase-firefox-signing-and-distribution.md). Publish the Mozilla-signed
+unlisted Linux Firefox beta with the joint `v0.1.8` browser-extension Release, then verify the
+tagged public site in staging. Remove this entry only after the Release assets and staging rollout
+are independently verified.
 
 ---
 
@@ -135,12 +137,12 @@ changing ordinary links in the initial static snapshot contract.
 
 **Status:** Candidate
 
-Prepare compatible AWSM versions for Firefox AMO and Chrome Web Store, but announce the first public
-browser-store release only after both listings are live. Complete macOS and Windows Firefox proof,
-store privacy and permission disclosures, listing assets,
-review handling, signed update delivery, release monitoring, and rollback procedures. Preserve the
-separate unlisted Linux Firefox beta and verified GitHub artifacts until this initiative is
-approved and implemented.
+Prepare compatible AWSM versions for a public Firefox AMO listing and Chrome Web Store, but
+announce the first public browser-store release only after both listings are live. Complete macOS
+and Windows Firefox proof, store privacy and permission disclosures, listing assets, review
+handling, signed update delivery, release monitoring, and rollback procedures. Preserve the
+unlisted Linux Firefox beta and verified GitHub artifacts until this initiative is approved and
+implemented.
 
 ---
 

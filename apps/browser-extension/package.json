@@ -1,6 +1,6 @@
 {
   "name": "@awsm/browser-extension",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "private": true,
   "license": "AGPL-3.0-or-later",
   "type": "module",
@@ -12,7 +12,7 @@
     "dev": "wxt",
     "lint": "biome check .",
     "postinstall": "wxt prepare",
-    "test": "node --test scripts/browser-release-workflow.test.mjs scripts/chrome-release-metadata.test.mjs scripts/firefox-signing.test.mjs scripts/prepare-release-output.test.mjs scripts/signed-firefox-xpi.test.mjs && vitest run",
+    "test": "node --test scripts/browser-release-workflow.test.mjs scripts/chrome-release-metadata.test.mjs scripts/firefox-candidate-provenance.test.mjs scripts/firefox-proof-status.test.mjs scripts/firefox-signing.test.mjs scripts/prepare-release-output.test.mjs scripts/signed-firefox-xpi.test.mjs scripts/verify-firefox-release-candidate.test.mjs && vitest run",
     "test:integration": "tsc -p tests/integration/tsconfig.json && LD_LIBRARY_PATH=.output/browser-libs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH} playwright test tests/integration/indexeddb.browser.test.ts --project=chromium",
     "test:e2e": "corepack pnpm test:e2e:chrome && corepack pnpm test:e2e:firefox",
     "test:e2e:chrome": "wxt build --mode e2e && AWSM_EXTENSION_BUILD=.output/chrome-mv3-e2e LD_LIBRARY_PATH=.output/browser-libs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH} playwright test -c playwright.e2e.config.ts",
@@ -22,6 +22,7 @@
     "test:firefox:feasibility": "wxt build -c tests/firefox-feasibility/wxt.config.ts -b firefox --mv3 && playwright test -c tests/firefox-feasibility/playwright.config.mjs",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
+    "release:firefox:verify-candidate": "node scripts/verify-firefox-release-candidate.mjs",
     "zip": "node scripts/prepare-release-output.mjs && corepack pnpm zip:chrome && corepack pnpm zip:firefox",
     "zip:chrome": "wxt zip",
     "zip:firefox": "wxt zip -b firefox --mv3 && node scripts/create-firefox-archive.mjs && node scripts/verify-firefox-release.mjs && node scripts/verify-firefox-archive.mjs"

@@ -16,6 +16,8 @@ RSpec.describe "Plan 16 product site", type: :request do
       "Take your Vault with you",
       "What works today",
       "Why not just use the Wayback Machine?",
+      "Mozilla-signed Linux beta",
+      "private per-Vault keyword Search",
       "Continue without sync",
       "Sign in"
     )
