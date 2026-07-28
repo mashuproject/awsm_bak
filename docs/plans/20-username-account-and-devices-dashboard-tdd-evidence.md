@@ -2,11 +2,11 @@
 
 **Document:** `docs/plans/20-username-account-and-devices-dashboard-tdd-evidence.md`
 
-**Status:** In progress
+**Status:** Complete
 
 **Owner:** Engineering
 
-**Last Updated:** 2026-07-27
+**Last Updated:** 2026-07-28
 
 **Implements:** `docs/plans/20-username-account-and-devices-dashboard.md`
 
@@ -365,14 +365,17 @@ examples, and six verified worker examples.
 
 ## RED
 
-Pending.
+The existing extension Account fixtures, HTTP projections, setup/login forms, settings state, and
+server-selection tests still required the discarded email Account field. Replacing those
+expectations first produced focused failures at each stale boundary before the implementation was
+changed to the username-only contract.
 
 ## GREEN
 
 The extension Account HTTP, Runtime, IndexedDB, setup/login, settings, synchronization, and test
 fixtures now use `username` and `inactiveDeletionAt`. No email alias or alternate decoder was
-added. This task is not yet marked complete because the repository-wide stale-term audit and
-rendered extension proof remain outstanding.
+added. The repository-wide stale-contract audit, rendered extension proof, and complete release
+matrix are recorded in Sections 17–19.
 
 Current regression evidence:
 
@@ -395,7 +398,7 @@ detachment could therefore be misclassified as partial state.
 
 ## GREEN
 
-In progress. The strict `StopUsingSynchronizationServer` command, local completeness refusal,
+The strict `StopUsingSynchronizationServer` command, local completeness refusal,
 offline transition, protected detached authority, Account/server cleanup, and live AppState
 invalidation exist. Cryptographic detached-authority loading now verifies the Device certificate,
 unwraps every retained epoch, opens every Device envelope, and requires envelope/root-key equality.
@@ -470,7 +473,7 @@ replaced in place; the discarded shape is now a tested `REQUEST_INVALID`.
 
 ## GREEN
 
-Partial GREEN:
+Focused GREEN:
 
 ```text
 Plan 15 initial attachment request suite: 8 examples, 0 failures
@@ -507,11 +510,15 @@ Task 12 rendered inspection and complete release matrix.
 
 ## RED
 
-Pending.
+The task-level RED evidence is recorded in Sections 13–15 and the broad-gate defect discoveries in
+Section 17. Release preparation additionally found nondeterministic Chrome ZIP metadata before any
+candidate was pushed or submitted, and staging inspection found stale public cache bodies before
+any cache mutation.
 
 ## GREEN
 
-Pending.
+All source, documentation, design, unsigned browser, signed browser, release, exact-tag staging,
+cache-invalidation, and rendered public requirements are GREEN as recorded in Sections 17–20.
 
 # 17. Full Verification Matrix
 
@@ -734,17 +741,39 @@ Accounts were subsequently reaped through the queued inactivity-deletion pipelin
 verification found zero synthetic Accounts, zero Accounts stuck `Deleting`, and zero retryable
 deletion Jobs.
 
-Public read-only cache inspection found that the four cacheable public pages returned old `HIT`
-bodies rather than the current origin bodies. Dynamic Account pages and the authenticated journeys
-reached the new origin. No cache mutation was performed because Plan 20 requires separate exact
-authorization. Exact-URL invalidation and post-purge rendered verification therefore remain
-pending.
+Public read-only cache inspection found that three of the four cacheable public pages returned old
+`HIT` bodies rather than the current origin bodies. Dynamic Account pages and the authenticated
+journeys reached the new origin.
+
+After receiving separate authorization for only the four exact staging URLs, the pinned Cloudflare
+CLI verified the exact active staging zone and accepted the dry run. Its OAuth profile lacked the
+Cache Purge permission. A narrowly scoped API token successfully performed the filtered zone read,
+but the CLI's live purge transport failed twice without changing cache state. The same token and
+exact four-file body then succeeded through Cloudflare's official purge API.
+
+The successful API response did not prove invalidation. Three successive identity requests and
+three successive browser-compression requests per URL continued to return approximately
+46,000-second-old `HIT` bodies for `/`, `/privacy`, and `/glossary`. `/security` returned the
+current origin body, but its existing cache age also did not reset. Exact-URL invalidation was
+therefore proven insufficient for the current edge state.
+
+After separate explicit authorization, the hostname-only body
+`{"hosts":["awsm.parasquid.dev"]}` passed the pinned CLI dry run and was accepted by Cloudflare's
+official API. No prefix, whole-zone, production, ingress, tunnel, or service mutation was
+performed. Verification then made three successive requests per canonical URL for both
+`Accept-Encoding: identity` and `gzip, deflate, br, zstd`. All 24 responses returned status 200,
+declared `Vary: accept-encoding`, exactly matched the current loopback origin body, and showed
+fresh cache behavior: the first canonical identity request was a `MISS`, followed by low-age
+`HIT` responses; browser-compression requests also returned only low-age current `HIT` bodies.
+
+All four current public pages were then rendered through Firefox at `1280x900` and `390x844` and
+inspected directly. The desktop and narrow layouts were readable and unclipped, long headings and
+glossary terms wrapped cleanly, the narrow navigation collapsed to its intended Menu control, and
+the public-preview banner remained visible without obscuring content.
 
 # 21. Completion Audit
 
 Every source, test, release, signed-browser, exact-tag deployment, origin-health, authenticated
-journey, and rendered Account/Device requirement is proven above. Production, the frozen upstream
-repository, shared ingress, and unauthorized cache state were not changed.
-
-Completion remains pending only on separately authorized invalidation and verification of the four
-proven-stale reference-staging public URLs.
+journey, cache transition, public render, and rendered Account/Device requirement is proven above.
+Production, the frozen upstream repository, shared ingress, and unauthorized cache state were not
+changed. Plan 20 is complete.

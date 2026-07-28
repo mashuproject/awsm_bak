@@ -2,7 +2,7 @@
 
 **Document:** `docs/plans/20-username-account-and-devices-dashboard.md`
 
-**Status:** Approved implementation plan
+**Status:** Complete
 
 **Owner:** Engineering
 
@@ -1795,38 +1795,38 @@ clean staging reset.
 
 Implementation is complete only when every item is true:
 
-- [ ] TDD evidence was created before production changes and contains real RED/GREEN history.
-- [ ] Username is the only Account identifier in schema, web, API, extension, tests, and current
+- [x] TDD evidence was created before production changes and contains real RED/GREEN history.
+- [x] Username is the only Account identifier in schema, web, API, extension, tests, and current
       documentation.
-- [ ] No Account email/reset/recovery compatibility path exists.
-- [ ] Username normalization, permanence, uniqueness, privacy, and enumeration controls pass.
-- [ ] Session records contain only coarse browser family and timestamps.
-- [ ] Any successful authenticated use updates Account activity at most once daily.
-- [ ] Website and extension show the exact current inactivity-deletion date.
-- [ ] `/account` is one responsive, accessible, private/no-store dashboard.
-- [ ] Website Device facts are strictly allowlisted and Device mutation remains extension-owned.
-- [ ] Browser-session individual/all-other controls are Account-isolated and CSRF-protected.
-- [ ] Password change revokes every website and extension session.
-- [ ] Manual deletion requires password plus exact username and has no Export gate.
-- [ ] Receipt polling exposes only bounded, non-identifying status for 24 hours after success.
-- [ ] Manual and inactivity deletion share one idempotent verified-byte pipeline.
-- [ ] Every Account-owned row and opaque byte is deleted before username/Vault-ID reuse.
-- [ ] Storage failure/restart/race tests pass without restoring Account access.
-- [ ] Inactivity reaping is configurable, hourly, lock-safe, irreversible, and notification-free.
-- [ ] Offline detachment refuses incomplete local Vaults and never contacts the old server.
-- [ ] Detachment preserves complete protected local cryptographic authority and Vault usability.
-- [ ] Detached Vaults reattach with the same identity/history and complete epoch readability.
-- [ ] The canonical attachment request accepts all required epochs and has no legacy alternative.
-- [ ] Website code is not a Vault Host and creates no additional Replica.
-- [ ] Privacy/security copy is factual and makes no anonymity or compliance claim.
-- [ ] Architecture, specifications, public pages, plans, guides, and Roadmap agree.
-- [ ] Rails, lint, typecheck, unit, integration, build, package, design, browser, sync-proof, and
+- [x] No Account email/reset/recovery compatibility path exists.
+- [x] Username normalization, permanence, uniqueness, privacy, and enumeration controls pass.
+- [x] Session records contain only coarse browser family and timestamps.
+- [x] Any successful authenticated use updates Account activity at most once daily.
+- [x] Website and extension show the exact current inactivity-deletion date.
+- [x] `/account` is one responsive, accessible, private/no-store dashboard.
+- [x] Website Device facts are strictly allowlisted and Device mutation remains extension-owned.
+- [x] Browser-session individual/all-other controls are Account-isolated and CSRF-protected.
+- [x] Password change revokes every website and extension session.
+- [x] Manual deletion requires password plus exact username and has no Export gate.
+- [x] Receipt polling exposes only bounded, non-identifying status for 24 hours after success.
+- [x] Manual and inactivity deletion share one idempotent verified-byte pipeline.
+- [x] Every Account-owned row and opaque byte is deleted before username/Vault-ID reuse.
+- [x] Storage failure/restart/race tests pass without restoring Account access.
+- [x] Inactivity reaping is configurable, hourly, lock-safe, irreversible, and notification-free.
+- [x] Offline detachment refuses incomplete local Vaults and never contacts the old server.
+- [x] Detachment preserves complete protected local cryptographic authority and Vault usability.
+- [x] Detached Vaults reattach with the same identity/history and complete epoch readability.
+- [x] The canonical attachment request accepts all required epochs and has no legacy alternative.
+- [x] Website code is not a Vault Host and creates no additional Replica.
+- [x] Privacy/security copy is factual and makes no anonymity or compliance claim.
+- [x] Architecture, specifications, public pages, plans, guides, and Roadmap agree.
+- [x] Rails, lint, typecheck, unit, integration, build, package, design, browser, sync-proof, and
       coordination gates pass.
-- [ ] Primary/narrow visual and WCAG 2.2 evidence is inspected and recorded.
-- [ ] Exact `0.2.0` signed/unsigned browser artifacts pass the two-phase proof and Release checks.
-- [ ] Live deployment isolation is re-proven before any staging mutation.
-- [ ] Exact-tag staging reset/deploy/health/journey evidence passes.
-- [ ] Production, shared ingress, frozen upstream, and unauthorized cache state remain unchanged.
+- [x] Primary/narrow visual and WCAG 2.2 evidence is inspected and recorded.
+- [x] Exact `0.2.0` signed/unsigned browser artifacts pass the two-phase proof and Release checks.
+- [x] Live deployment isolation is re-proven before any staging mutation.
+- [x] Exact-tag staging reset/deploy/health/journey evidence passes.
+- [x] Production, shared ingress, frozen upstream, and unauthorized cache state remain unchanged.
 
 # 20. Required Failure Behavior
 
