@@ -87,6 +87,19 @@ function artifactReference(value: CanonicalValue, field: string): Identifier<"Va
   return artifactId;
 }
 
+const BASE_ARTIFACT_ROLES = new Set([
+  "awsm.artifact.primary",
+  "awsm.artifact.screenshot-full",
+  "awsm.artifact.thumbnail",
+  "awsm.artifact.text-extracted",
+  "awsm.artifact.content-structured",
+]);
+
+function validateFormatOnlyBytes(bytes: Uint8Array, field: string): void {
+  const map = exactMap(decodeCanonicalValue(bytes), [0], field);
+  exactCode(mapValue(map, 0), 1, `${field} format`);
+}
+
 function validateBundleDescriptor(value: CanonicalValue): readonly Identifier<"VaultObject">[] {
   const body = exactMap(value, [...Array(12).keys()], "Bundle Descriptor body");
   exactCode(mapValue(body, 0), 1, "Bundle Descriptor format");
@@ -94,9 +107,9 @@ function validateBundleDescriptor(value: CanonicalValue): readonly Identifier<"V
   signedInteger(mapValue(body, 2), "Capture asserted timestamp");
   canonicalUrl(mapValue(body, 3), "Capture original URL");
   canonicalUrl(mapValue(body, 4), "Capture final URL");
-  scopedKey(mapValue(body, 5), "Capture Profile key");
-  scopedKey(mapValue(body, 6), "Capture adapter key");
-  nonnegativeInteger(mapValue(body, 7), "Capture adapter revision");
+  const profile = scopedKey(mapValue(body, 5), "Capture Profile key");
+  const adapter = scopedKey(mapValue(body, 6), "Capture adapter key");
+  const adapterRevision = nonnegativeInteger(mapValue(body, 7), "Capture adapter revision");
   nullable(mapValue(body, 8), (title) =>
     textValue(title, "Captured title", { maxUtf8Bytes: 1_024 }),
   );
@@ -108,12 +121,18 @@ function validateBundleDescriptor(value: CanonicalValue): readonly Identifier<"V
       const reference = exactMap(entry, [0, 1], `Artifact reference ${index}`);
       const role = scopedKey(mapValue(reference, 1), `Artifact reference ${index} role`);
       if (roles.has(role)) throw new TypeError("Bundle Descriptor repeats an Artifact role");
+      if (profile === "awsm.capture.web-page-snapshot" && !BASE_ARTIFACT_ROLES.has(role)) {
+        throw new TypeError("Base web Capture contains an unknown Artifact role");
+      }
       roles.add(role);
       artifactReference(entry, `Artifact reference ${index}`);
       return entry;
     },
     { nonempty: true },
   ).map((entry, index) => artifactReference(entry, `Artifact reference ${index}`));
+  if (profile === "awsm.capture.web-page-snapshot" && !roles.has("awsm.artifact.primary")) {
+    throw new TypeError("Base web Capture is missing its primary Artifact");
+  }
   canonicalSetValue(mapValue(body, 10), "Capture warnings", (entry, index) => {
     const warning = exactMap(entry, [0, 1], `Capture warning ${index}`);
     scopedKey(mapValue(warning, 0), `Capture warning ${index} key`);
@@ -130,14 +149,29 @@ function validateBundleDescriptor(value: CanonicalValue): readonly Identifier<"V
   );
   const provenanceKind = integer(mapValue(provenance, 0), "Bundle provenance kind");
   if (provenanceKind === 1) {
-    arbitraryBytes(mapValue(provenance, 1), "Direct Capture profile provenance");
+    const profileProvenance = arbitraryBytes(
+      mapValue(provenance, 1),
+      "Direct Capture profile provenance",
+    );
+    if (profile === "awsm.capture.web-page-snapshot") {
+      if (adapter !== "awsm.adapter.browser-web-page" || adapterRevision !== 1) {
+        throw new TypeError("Base web Capture adapter identity is unsupported");
+      }
+      validateFormatOnlyBytes(profileProvenance, "Page Snapshot provenance");
+    }
   } else if (provenanceKind === 2) {
     identifierValue(mapValue(provenance, 1), "Vault", "Source Vault ID");
     identifierValue(mapValue(provenance, 2), "Generation", "Source Generation ID");
     identifierValue(mapValue(provenance, 3), "VaultRecord", "Source Record ID");
     identifierValue(mapValue(provenance, 4), "Bundle", "Source Bundle ID");
     identifierValue(mapValue(provenance, 5), "VaultObject", "Source Descriptor ID");
-    arbitraryBytes(mapValue(provenance, 6), "Re-authored profile provenance");
+    const profileProvenance = arbitraryBytes(
+      mapValue(provenance, 6),
+      "Re-authored profile provenance",
+    );
+    if (profile === "awsm.capture.web-page-snapshot") {
+      validateFormatOnlyBytes(profileProvenance, "Page Snapshot provenance");
+    }
   } else {
     throw new TypeError("Unknown Bundle provenance kind");
   }
@@ -160,9 +194,9 @@ function lowerCaseMediaType(value: CanonicalValue): string {
 function validateArtifactObject(value: CanonicalValue): void {
   const body = exactMap(value, [...Array(8).keys()], "Artifact Object body");
   exactCode(mapValue(body, 0), 1, "Artifact Object format");
-  scopedKey(mapValue(body, 1), "Artifact kind");
-  lowerCaseMediaType(mapValue(body, 2));
-  scopedKey(mapValue(body, 3), "Artifact representation key");
+  const kind = scopedKey(mapValue(body, 1), "Artifact kind");
+  const mediaType = lowerCaseMediaType(mapValue(body, 2));
+  const representation = scopedKey(mapValue(body, 3), "Artifact representation key");
   const plaintextLength = nonnegativeInteger(mapValue(body, 4), "Artifact plaintext length");
   const plaintextDigest = identifierValue(
     mapValue(body, 5),
@@ -184,7 +218,63 @@ function validateArtifactObject(value: CanonicalValue): void {
   if (!bytesEqual(plaintextDigest, contractDigest)) {
     throw new TypeError("Artifact wrapper digest does not match the Artifact body");
   }
-  arbitraryBytes(mapValue(body, 7), "Artifact intrinsic metadata");
+  const metadataBytes = arbitraryBytes(mapValue(body, 7), "Artifact intrinsic metadata");
+  validateBaseArtifactMetadata({ kind, mediaType, representation, metadataBytes });
+}
+
+function validateBaseArtifactMetadata(input: {
+  readonly kind: string;
+  readonly mediaType: string;
+  readonly representation: string;
+  readonly metadataBytes: Uint8Array;
+}): void {
+  switch (input.representation) {
+    case "awsm.representation.web-page-zip":
+      if (
+        input.kind !== "awsm.artifact.capture" ||
+        input.mediaType !== "application/vnd.awsm.web-page+zip"
+      ) {
+        throw new TypeError("Page Snapshot Artifact kind or media type is invalid");
+      }
+      validateFormatOnlyBytes(input.metadataBytes, "Page Snapshot intrinsic metadata");
+      return;
+    case "awsm.representation.webp.full":
+    case "awsm.representation.webp.thumbnail": {
+      if (input.kind !== "awsm.artifact.image" || input.mediaType !== "image/webp") {
+        throw new TypeError("WebP Artifact kind or media type is invalid");
+      }
+      const metadata = exactMap(
+        decodeCanonicalValue(input.metadataBytes),
+        [0, 1, 2],
+        "WebP intrinsic metadata",
+      );
+      exactCode(mapValue(metadata, 0), 1, "WebP metadata format");
+      const width = nonnegativeInteger(mapValue(metadata, 1), "WebP width");
+      const height = nonnegativeInteger(mapValue(metadata, 2), "WebP height");
+      if (width < 1 || height < 1) throw new TypeError("WebP dimensions must be positive");
+      if (
+        input.representation === "awsm.representation.webp.thumbnail" &&
+        (width !== 640 || height !== 360)
+      ) {
+        throw new TypeError("Base thumbnail dimensions must be 640 by 360");
+      }
+      return;
+    }
+    case "awsm.representation.text.utf-8":
+      if (input.kind !== "awsm.artifact.text" || input.mediaType !== "text/plain;charset=utf-8") {
+        throw new TypeError("Extracted text Artifact kind or media type is invalid");
+      }
+      validateFormatOnlyBytes(input.metadataBytes, "Extracted text intrinsic metadata");
+      return;
+    case "awsm.representation.structured.cbor-seq":
+      if (input.kind !== "awsm.artifact.structured" || input.mediaType !== "application/cbor-seq") {
+        throw new TypeError("Structured Artifact kind or media type is invalid");
+      }
+      validateFormatOnlyBytes(input.metadataBytes, "Structured Content intrinsic metadata");
+      return;
+    default:
+      throw new TypeError("Unknown base Artifact representation key");
+  }
 }
 
 function validateNoteContent(value: CanonicalValue): void {

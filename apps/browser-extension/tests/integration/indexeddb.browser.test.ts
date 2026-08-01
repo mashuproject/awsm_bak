@@ -29,6 +29,116 @@ test("persists a non-exportable device key and Vault records", async ({ page }) 
   });
 });
 
+test("enforces the canonical storage families, Realms, immutability, and frontier CAS", async ({
+  page,
+}) => {
+  await expect(scenario(page, "canonical-storage")).resolves.toEqual({
+    databaseVersion: 1,
+    stores: [
+      "execution_state",
+      "host_policy_state",
+      "installation_state",
+      "managed_resources",
+      "materializations",
+      "prepared_data",
+      "quarantine",
+      "replica_safety_state",
+      "trusted_secrets",
+      "vault_objects",
+      "vault_records",
+    ],
+    wrappingKeyExtractable: false,
+    wrappingKeyReused: true,
+    realmIsolation: true,
+    immutableIdempotent: true,
+    immutableConflict: "IMMUTABLE_ITEM_CONFLICT",
+    initializationAtomic: true,
+    staleFrontier: "VAULT_CONTEXT_CHANGED",
+    staleWriteAbsent: true,
+  });
+});
+
+test("atomically restores an encrypted canonical Vault after browser restart", async ({ page }) => {
+  await expect(scenario(page, "canonical-vault-initialization")).resolves.toEqual({
+    recoveryWordCount: 12,
+    directoryLabel: "Research vault",
+    baselineRestored: true,
+    genesisRestored: true,
+    genesisSignature: true,
+    frontierRestored: true,
+    epochRestored: true,
+    serviceRestored: true,
+    selectedInDirectory: true,
+    duplicateCreation: "VAULT_ALREADY_EXISTS",
+  });
+});
+
+test("requires Recovery Phrase confirmation before committing a canonical Vault", async ({
+  page,
+}) => {
+  await expect(scenario(page, "canonical-vault-ceremony")).resolves.toEqual({
+    mismatch: "RECOVERY_PHRASE_MISMATCH",
+    directoryCount: 1,
+    selected: true,
+    opened: true,
+    reused: "The Vault creation ceremony is no longer active.",
+  });
+});
+
+test("atomically commits concurrent canonical Captures and returns idempotent outcomes", async ({
+  page,
+}) => {
+  await expect(scenario(page, "canonical-capture-commit")).resolves.toEqual({
+    firstIdempotent: true,
+    bothCommitted: true,
+    recordCount: 4,
+    objectCount: 4,
+    outcomeCount: 2,
+    resolutionCount: 12,
+    artifactCount: 2,
+    reopenedAfterCapture: true,
+  });
+});
+
+test("replays the canonical DAG into an encrypted Frontier-bound live Library", async ({
+  page,
+}) => {
+  const result = (await scenario(page, "canonical-library-projection")) as {
+    updatedCaptureIds: string[];
+    expectedCaptureIds: string[];
+    [key: string]: unknown;
+  };
+  expect(result).toEqual({
+    firstCaptureCount: 1,
+    firstCaptureMatches: true,
+    firstCacheCount: 1,
+    updatedTitles: ["First", "Second"],
+    updatedCaptureIds: result.expectedCaptureIds,
+    expectedCaptureIds: result.expectedCaptureIds,
+    allArtifactsAvailable: true,
+    conflictCount: 0,
+    restartedCaptureCount: 2,
+    cacheCount: 1,
+    cacheCiphertextExcludesTitles: true,
+  });
+});
+
+test("streams canonical multi-frame Artifact wrappers through content-addressed OPFS", async ({
+  page,
+}) => {
+  await expect(scenario(page, "canonical-opfs-artifact")).resolves.toEqual({
+    beforePromotion: false,
+    promoted: true,
+    retainedAfterDiscard: true,
+    frameCount: 2,
+    envelopeStorageIdMatches: true,
+    corruptionDetected: true,
+    repairedPresent: true,
+    orphanRemoved: true,
+    removed: true,
+  });
+});
+
 test("runs the pinned local MiniLM through browser WASM without network fallback", async ({
   page,
 }) => {

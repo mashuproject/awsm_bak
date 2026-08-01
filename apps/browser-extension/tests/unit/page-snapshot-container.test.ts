@@ -4,14 +4,54 @@ import {
   createPageSnapshotBlob,
   decodePageSnapshotManifest,
   PAGE_SNAPSHOT_DOCUMENT_MEDIA_TYPE,
-  PAGE_SNAPSHOT_PROFILE_ID,
+  PAGE_SNAPSHOT_PROFILE_KEY,
   validatePageSnapshot,
 } from "../../src/runtime/page-snapshot";
 
 const encoder = new TextEncoder();
-const capturedAt = "2026-07-23T12:00:00.000Z";
+const capturedAt = Date.parse("2026-07-23T12:00:00.000Z");
 
 describe("canonical page snapshot container", () => {
+  it("uses the canonical scoped Capture Profile key and Unix-millisecond timestamp", () => {
+    const manifest = {
+      version: 1,
+      captureProfileKey: "awsm.capture.web-page-snapshot",
+      capturedAt: 1_800_000_000_000,
+      originalUrl: "https://example.test/",
+      finalUrl: "https://example.test/",
+      topDocumentId: "d000000",
+      documents: [
+        {
+          id: "d000000",
+          originalUrl: "https://example.test/",
+          finalUrl: "https://example.test/",
+          member: "documents/000000.html",
+          mediaType: PAGE_SNAPSHOT_DOCUMENT_MEDIA_TYPE,
+          byteLength: 1,
+          sha256: new Uint8Array(32),
+          scrollX: 0,
+          scrollY: 0,
+        },
+      ],
+      resources: [],
+      omissions: [],
+    } as const;
+
+    expect(decodePageSnapshotManifest(encodeCanonicalCbor(manifest))).toMatchObject({
+      captureProfileKey: "awsm.capture.web-page-snapshot",
+      capturedAt: 1_800_000_000_000,
+    });
+    expect(() =>
+      decodePageSnapshotManifest(
+        encodeCanonicalCbor({
+          ...manifest,
+          captureProfileKey: undefined,
+          captureProfileId: "WebPageSnapshot-v1",
+        }),
+      ),
+    ).toThrow();
+  });
+
   it("writes and validates canonical document/resource/manifest members", async () => {
     const result = await createPageSnapshotBlob({
       capturedAt,
@@ -44,7 +84,7 @@ describe("canonical page snapshot container", () => {
     const validated = await validatePageSnapshot(result.blob);
     expect(validated.manifest).toMatchObject({
       version: 1,
-      captureProfileId: PAGE_SNAPSHOT_PROFILE_ID,
+      captureProfileKey: PAGE_SNAPSHOT_PROFILE_KEY,
       topDocumentId: "d000000",
       documents: [
         {
@@ -92,7 +132,7 @@ describe("canonical page snapshot container", () => {
   it("rejects unresolved document ownership and contradictory frame omissions", async () => {
     const base = {
       version: 1,
-      captureProfileId: PAGE_SNAPSHOT_PROFILE_ID,
+      captureProfileKey: PAGE_SNAPSHOT_PROFILE_KEY,
       capturedAt,
       originalUrl: "https://example.test/",
       finalUrl: "https://example.test/",

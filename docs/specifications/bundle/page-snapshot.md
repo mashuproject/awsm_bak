@@ -28,6 +28,29 @@ The `awsm.capture.web-page-snapshot` profile requires exactly one
 `application/vnd.awsm.web-page+zip`. The plaintext is a streamed ZIP64-capable archive. MHTML is
 derived only when a user downloads it and is never stored or synchronized.
 
+The browser-independent representation key is `awsm.representation.web-page-zip`. Its
+`intrinsicMetadata` bytes are the exact canonical encoding of `{0: 1}`, where key 0 is the
+metadata format. All page-specific facts belong to the authenticated member manifest rather than
+being duplicated in the Artifact Object.
+
+The base optional representations use these exact keys and metadata bytes:
+
+| Role                               | Representation key                        | Intrinsic metadata before encoding |
+| ---------------------------------- | ----------------------------------------- | ---------------------------------- |
+| `awsm.artifact.screenshot-full`    | `awsm.representation.webp.full`           | `{0: 1, 1: width, 2: height}`      |
+| `awsm.artifact.thumbnail`          | `awsm.representation.webp.thumbnail`      | `{0: 1, 1: 640, 2: 360}`           |
+| `awsm.artifact.text-extracted`     | `awsm.representation.text.utf-8`          | `{0: 1}`                           |
+| `awsm.artifact.content-structured` | `awsm.representation.structured.cbor-seq` | `{0: 1}`                           |
+
+Image width and height are positive integers and MUST equal the decoded WebP dimensions. Unknown
+metadata keys, formats, or representation keys fail base-profile validation.
+
+The shared browser Host adapter key is `awsm.adapter.browser-web-page`, starting at revision `1`.
+The Direct Capture `profileProvenance` bytes are the exact canonical encoding of `{0: 1}`. The
+Descriptor already commits to the adapter, revision, Capture timestamp, URLs, warnings, and
+Artifact graph; the page-snapshot manifest owns observation-specific acquisition facts. A future
+provenance field therefore requires an activated feature rather than an unvalidated byte blob.
+
 # 3. Members
 
 Members occur in this exact order:
@@ -50,9 +73,23 @@ paths, or duplicate names. Every member uses the Capture timestamp. Textual medi
 
 # 4. Manifest
 
-`manifest.cbor` is canonical CBOR and contains exactly version `1`, Capture Profile key, Capture
-timestamp, original and final URLs, top document ID `d000000`, ordered document records, ordered
-resource records, and ordered omission records.
+`manifest.cbor` is canonical CBOR and contains exactly these named fields:
+
+| Field               | Exact value or type                                      |
+| ------------------- | -------------------------------------------------------- |
+| `version`           | integer `1`                                              |
+| `captureProfileKey` | `awsm.capture.web-page-snapshot`                         |
+| `capturedAt`        | signed safe integer containing Unix time in milliseconds |
+| `originalUrl`       | normalized fragment-free HTTP(S) URL                     |
+| `finalUrl`          | normalized fragment-free HTTP(S) URL                     |
+| `topDocumentId`     | `d000000`                                                |
+| `documents`         | ordered document-record array                            |
+| `resources`         | ordered resource-record array                            |
+| `omissions`         | ordered omission-record array                            |
+
+The manifest does not carry a legacy profile ID or an ISO timestamp alias. Its `capturedAt`,
+`originalUrl`, and `finalUrl` values MUST exactly equal the corresponding authenticated Descriptor
+facts before the primary Artifact is accepted.
 
 Document IDs and Resource IDs are their zero-padded six-digit sequence positions. Each captured
 member record binds its exact member name, byte length, and 32-byte SHA-256 checksum. Document

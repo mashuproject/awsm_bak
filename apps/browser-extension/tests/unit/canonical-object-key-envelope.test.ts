@@ -18,7 +18,12 @@ import {
   NOTE_CONTENT_OBJECT,
 } from "../../src/domain/canonical/object";
 import { transcript } from "../../src/domain/canonical/transcript";
-import { type CanonicalValue, canonicalMap, canonicalSet } from "../../src/domain/canonical/value";
+import {
+  type CanonicalValue,
+  canonicalMap,
+  canonicalSet,
+  encodeCanonicalValue,
+} from "../../src/domain/canonical/value";
 
 function id<Kind extends Parameters<typeof identifier>[0]>(kind: Kind, fill: number) {
   return identifier(kind, new Uint8Array(32).fill(fill));
@@ -47,11 +52,11 @@ describe("canonical Vault Objects", () => {
       1,
       "awsm.artifact.capture",
       "application/vnd.awsm.web-page+zip",
-      "awsm.representation.page-snapshot-v1",
+      "awsm.representation.web-page-zip",
       payload.byteLength,
       payloadDigest,
       map(1, 1_048_576, 16, payload.byteLength, payloadDigest),
-      new Uint8Array(),
+      encodeCanonicalValue(map(1)),
     ),
   });
 
@@ -71,12 +76,12 @@ describe("canonical Vault Objects", () => {
         "https://example.com/original?x=1",
         "https://example.com/final",
         "awsm.capture.web-page-snapshot",
-        "awsm.adapter.browser-extension",
-        0,
+        "awsm.adapter.browser-web-page",
+        1,
         "Example",
         canonicalSet([map(artifact.objectId, "awsm.artifact.primary")]),
         [],
-        map(1, new Uint8Array()),
+        map(1, encodeCanonicalValue(map(1))),
       ),
     });
     expect(descriptor.referencedObjectIds).toEqual([artifact.objectId]);

@@ -18,6 +18,14 @@ export interface RecoveryCredentialKeys {
   readonly wrappingPublicKey: Uint8Array;
 }
 
+export interface ClientCredentialKeys {
+  readonly signingSeed: Uint8Array;
+  readonly signingPublicKey: Uint8Array;
+  readonly signingSecretKey: Uint8Array;
+  readonly wrappingPrivateKey: Uint8Array;
+  readonly wrappingPublicKey: Uint8Array;
+}
+
 export interface KeyEpoch {
   readonly id: Identifier<"KeyEpoch">;
   readonly key: Uint8Array;
@@ -70,6 +78,27 @@ export async function deriveRecoveryCredential(
     transcript("awsm:recovery-wrapping-key:v1", []),
     32,
   );
+  const sodium = await readySodium();
+  const signing = sodium.crypto_sign_seed_keypair(signingSeed);
+  return {
+    signingSeed,
+    signingPublicKey: Uint8Array.from(signing.publicKey),
+    signingSecretKey: Uint8Array.from(signing.privateKey),
+    wrappingPrivateKey,
+    wrappingPublicKey: Uint8Array.from(sodium.crypto_scalarmult_base(wrappingPrivateKey)),
+  };
+}
+
+export async function createClientCredentialKeys(input?: {
+  readonly signingSeed?: Uint8Array;
+  readonly wrappingPrivateKey?: Uint8Array;
+}): Promise<ClientCredentialKeys> {
+  const signingSeed = input?.signingSeed
+    ? exactBytes(input.signingSeed, 32, "Client signing seed")
+    : crypto.getRandomValues(new Uint8Array(32));
+  const wrappingPrivateKey = input?.wrappingPrivateKey
+    ? exactBytes(input.wrappingPrivateKey, 32, "Client wrapping private key")
+    : crypto.getRandomValues(new Uint8Array(32));
   const sodium = await readySodium();
   const signing = sodium.crypto_sign_seed_keypair(signingSeed);
   return {

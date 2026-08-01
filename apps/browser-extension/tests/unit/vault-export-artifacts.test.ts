@@ -203,7 +203,7 @@ describe("Artifact graph Vault Export", () => {
     const primary = new Uint8Array(
       await (
         await createPageSnapshotBlob({
-          capturedAt,
+          capturedAt: Date.parse(capturedAt),
           originalUrl: metadata.originalUrl,
           finalUrl: metadata.finalUrl,
           documents: [

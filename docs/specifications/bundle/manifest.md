@@ -41,6 +41,10 @@ are owned by `docs/specifications/bundle/page-snapshot.md`. URL normalization re
 retains query parameters. The Descriptor's Required Feature Set determines all understood fields
 and profile behavior.
 
+For that base profile, a Direct Capture uses adapter key `awsm.adapter.browser-web-page`, revision
+`1`, and the exact format-only profile provenance defined by the page-snapshot specification.
+Profile provenance is parsed under the named profile; it is not an unrestricted byte extension.
+
 # 3. Artifact reference codec
 
 ```text

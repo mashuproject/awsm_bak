@@ -229,7 +229,7 @@ export class CaptureRuntime {
       }
       await saveRunning("Package");
       const primary = await this.ports.packageSnapshot({
-        capturedAt: metadata.capturedAt,
+        capturedAt: Date.parse(metadata.capturedAt),
         originalUrl: metadata.originalUrl,
         finalUrl: metadata.finalUrl,
         documents: snapshot.documents,

@@ -3,9 +3,21 @@ import { createServer } from "node:http";
 import { extname, join, normalize } from "node:path";
 
 const root = new URL("../../.output/integration/", import.meta.url).pathname;
+const hpkeCoreRoot = realpathSync(
+  new URL("../../node_modules/@hpke/core", import.meta.url).pathname,
+);
+const scureBip39Root = realpathSync(
+  new URL("../../node_modules/@scure/bip39", import.meta.url).pathname,
+);
 const dependencyRoots = {
   "/vendor/cborg/": `${realpathSync(new URL("../../node_modules/cborg", import.meta.url).pathname)}/`,
   "/vendor/noble-hashes/": `${realpathSync(new URL("../../node_modules/@noble/hashes", import.meta.url).pathname)}/`,
+  "/vendor/scure-bip39/": `${scureBip39Root}/`,
+  "/vendor/scure-base/": `${realpathSync(join(scureBip39Root, "..", "base"))}/`,
+  "/vendor/hpke-core/": `${hpkeCoreRoot}/`,
+  "/vendor/hpke-common/": `${realpathSync(join(hpkeCoreRoot, "..", "common"))}/`,
+  "/vendor/hpke-x25519/": `${realpathSync(new URL("../../node_modules/@hpke/dhkem-x25519", import.meta.url).pathname)}/`,
+  "/vendor/hpke-chacha/": `${realpathSync(new URL("../../node_modules/@hpke/chacha20poly1305", import.meta.url).pathname)}/`,
   "/vendor/libsodium-wrappers-sumo/": `${realpathSync(new URL("../../node_modules/libsodium-wrappers-sumo", import.meta.url).pathname)}/`,
   "/vendor/libsodium-sumo/": `${realpathSync(new URL("../../../../node_modules/.pnpm/libsodium-sumo@0.8.4/node_modules/libsodium-sumo", import.meta.url).pathname)}/`,
   "/vendor/zipjs/": `${realpathSync(new URL("../../node_modules/@zip.js/zip.js", import.meta.url).pathname)}/`,
@@ -19,7 +31,7 @@ if (modelProofRoot !== undefined) dependencyRoots["/model/"] = `${realpathSync(m
 const index = `<!doctype html>
 <html lang="en">
   <head><meta charset="UTF-8"><title>AWSM integration harness</title>
-  <script type="importmap">{"imports":{"@huggingface/transformers":"/vendor/transformers/transformers.web.js","onnxruntime-web/webgpu":"/vendor/onnxruntime/ort.webgpu.min.mjs","onnxruntime-common":"/vendor/onnxruntime-common/dist/esm/index.js","@zip.js/zip.js":"/vendor/zipjs/index.js","@noble/hashes/sha2.js":"/vendor/noble-hashes/sha2.js","cborg":"/vendor/cborg/cborg.js","libsodium-wrappers-sumo":"/vendor/libsodium-wrappers-sumo/dist/modules-sumo-esm/libsodium-wrappers.mjs","libsodium-sumo":"/vendor/libsodium-sumo/dist/modules-sumo-esm/libsodium-sumo.mjs"}}</script></head>
+  <script type="importmap">{"imports":{"@huggingface/transformers":"/vendor/transformers/transformers.web.js","onnxruntime-web/webgpu":"/vendor/onnxruntime/ort.webgpu.min.mjs","onnxruntime-common":"/vendor/onnxruntime-common/dist/esm/index.js","@zip.js/zip.js":"/vendor/zipjs/index.js","@noble/hashes/":"/vendor/noble-hashes/","@scure/bip39":"/vendor/scure-bip39/index.js","@scure/bip39/":"/vendor/scure-bip39/","@scure/base":"/vendor/scure-base/index.js","@hpke/core":"/vendor/hpke-core/esm/mod.js","@hpke/common":"/vendor/hpke-common/esm/mod.js","@hpke/dhkem-x25519":"/vendor/hpke-x25519/esm/mod.js","@hpke/chacha20poly1305":"/vendor/hpke-chacha/esm/mod.js","cborg":"/vendor/cborg/cborg.js","libsodium-wrappers-sumo":"/vendor/libsodium-wrappers-sumo/dist/modules-sumo-esm/libsodium-wrappers.mjs","libsodium-sumo":"/vendor/libsodium-sumo/dist/modules-sumo-esm/libsodium-sumo.mjs"}}</script></head>
   <body><output id="result" aria-live="polite">running</output>
   <script type="module" src="/tests/integration/browser/harness.js"></script></body>
 </html>`;

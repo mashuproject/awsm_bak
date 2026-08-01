@@ -10,19 +10,11 @@ import { readySodium } from "../../crypto/sodium";
 import { decodeCanonicalCbor, encodeCanonicalCbor } from "../../domain/cbor";
 import { DomainValidationError } from "../../domain/errors";
 import { bytesEqual } from "../../domain/hash";
-import {
-  bytes,
-  canonicalRecord,
-  httpUrl,
-  integer,
-  literal,
-  string,
-  timestamp,
-} from "../../domain/validation";
+import { bytes, canonicalRecord, httpUrl, integer, literal, string } from "../../domain/validation";
 import {
   type CreatePageSnapshotInput,
   PAGE_SNAPSHOT_DOCUMENT_MEDIA_TYPE,
-  PAGE_SNAPSHOT_PROFILE_ID,
+  PAGE_SNAPSHOT_PROFILE_KEY,
   type PageSnapshotManifestV1,
   type SnapshotAcquisition,
   type SnapshotCompression,
@@ -199,7 +191,7 @@ function omissionRecord(value: unknown, index: number): SnapshotOmissionV1 {
 function decodeManifestValue(value: unknown): PageSnapshotManifestV1 {
   const input = canonicalRecord(value, "manifest", [
     "version",
-    "captureProfileId",
+    "captureProfileKey",
     "capturedAt",
     "originalUrl",
     "finalUrl",
@@ -241,12 +233,12 @@ function decodeManifestValue(value: unknown): PageSnapshotManifestV1 {
   }
   return {
     version: literal(input.version, 1, "manifest.version"),
-    captureProfileId: literal(
-      input.captureProfileId,
-      PAGE_SNAPSHOT_PROFILE_ID,
-      "manifest.captureProfileId",
+    captureProfileKey: literal(
+      input.captureProfileKey,
+      PAGE_SNAPSHOT_PROFILE_KEY,
+      "manifest.captureProfileKey",
     ),
-    capturedAt: timestamp(input.capturedAt, "manifest.capturedAt"),
+    capturedAt: signedInteger(input.capturedAt, "manifest.capturedAt"),
     originalUrl: httpUrl(input.originalUrl, "manifest.originalUrl"),
     finalUrl: httpUrl(input.finalUrl, "manifest.finalUrl"),
     topDocumentId: literal(input.topDocumentId, "d000000", "manifest.topDocumentId"),
@@ -286,7 +278,7 @@ async function hashBlob(blob: Blob): Promise<Uint8Array> {
 }
 
 interface PreparedSnapshot {
-  readonly capturedAt: string;
+  readonly capturedAt: number;
   readonly date: Date;
   readonly manifest: PageSnapshotManifestV1;
   readonly manifestBytes: Uint8Array;
@@ -295,7 +287,11 @@ interface PreparedSnapshot {
 async function preparePageSnapshot(input: CreatePageSnapshotInput): Promise<PreparedSnapshot> {
   if (input.documents.length === 0)
     throw new DomainValidationError("snapshot.documents", "must contain the top document");
-  const capturedAt = timestamp(input.capturedAt, "snapshot.capturedAt");
+  const capturedAt = signedInteger(input.capturedAt, "snapshot.capturedAt");
+  const capturedDate = new Date(capturedAt);
+  if (!Number.isFinite(capturedDate.valueOf())) {
+    throw new DomainValidationError("snapshot.capturedAt", "is outside the Date range");
+  }
   const documents: SnapshotDocumentV1[] = [];
   const resources: SnapshotResourceV1[] = [];
   let totalBytes = 0;
@@ -339,7 +335,7 @@ async function preparePageSnapshot(input: CreatePageSnapshotInput): Promise<Prep
   }
   const manifest = decodeManifestValue({
     version: 1,
-    captureProfileId: PAGE_SNAPSHOT_PROFILE_ID,
+    captureProfileKey: PAGE_SNAPSHOT_PROFILE_KEY,
     capturedAt,
     originalUrl: input.originalUrl,
     finalUrl: input.finalUrl,
@@ -354,7 +350,7 @@ async function preparePageSnapshot(input: CreatePageSnapshotInput): Promise<Prep
   totalBytes += manifestBytes.byteLength;
   if (totalBytes > MAX_TOTAL_BYTES)
     throw new DomainValidationError("snapshot", "exceeds the total byte budget");
-  return { capturedAt, date: new Date(capturedAt), manifest, manifestBytes };
+  return { capturedAt, date: capturedDate, manifest, manifestBytes };
 }
 
 async function writePreparedSnapshot(

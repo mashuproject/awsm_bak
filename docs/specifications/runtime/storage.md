@@ -52,6 +52,33 @@ Feature owns every new authoritative namespace and its Baseline, reachability, a
 Unknown authoritative or Replica Safety namespaces fail closed. Unknown Materializations are
 disposable.
 
+The canonical Client registry currently declares these revision-1 namespaces:
+
+| Namespace key                            | Family               | Scope        | Mutation           |
+| ---------------------------------------- | -------------------- | ------------ | ------------------ |
+| `awsm.storage.vault-record`              | Vault Records        | Vault        | immutable          |
+| `awsm.storage.key-envelope`              | Vault Objects        | Vault        | immutable          |
+| `awsm.storage.vault-object`              | Vault Objects        | Vault        | immutable          |
+| `awsm.storage.feature-manifest`          | Vault Objects        | Vault        | immutable          |
+| `awsm.storage.artifact-wrapper`          | Vault Objects        | Vault        | immutable          |
+| `awsm.storage.replica-state`             | Replica Safety State | Replica      | mutable CAS state  |
+| `awsm.storage.logical-resolution`        | Replica Safety State | Replica      | mutable resolution |
+| `awsm.storage.vault-directory`           | Installation State   | Installation | mutable            |
+| `awsm.storage.installation-selection`    | Installation State   | Installation | mutable            |
+| `awsm.storage.installation-wrapping-key` | Trusted Secrets      | Installation | immutable          |
+| `awsm.storage.client-secret`             | Trusted Secrets      | Vault        | mutable lifecycle  |
+| `awsm.storage.epoch-secret`              | Trusted Secrets      | Vault        | mutable lifecycle  |
+| `awsm.storage.command-outcome`           | Execution State      | Vault        | immutable          |
+| `awsm.storage.prepared-capture`          | Prepared Data        | Job          | immutable          |
+| `awsm.storage.incoming-quarantine`       | Quarantine           | Remote       | immutable          |
+| `awsm.storage.library-projection`        | Materializations     | Replica      | replaceable        |
+| `awsm.storage.managed-resource`          | Managed Resources    | Installation | immutable          |
+
+Every stored key includes Storage Realm, namespace key, declared scope key, and item key. The
+initial canonical local database is created only from an empty database at schema revision `1`;
+another local schema is discarded and recreated by the owning Client rather than upgraded or
+interpreted through compatibility readers.
+
 # 4. Storage Realms
 
 A Storage Realm cross-cuts every family. Normal, private/incognito, temporary, test, and future

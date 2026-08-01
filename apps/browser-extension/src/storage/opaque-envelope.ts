@@ -1,6 +1,6 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { type Identifier, identifier } from "../domain/canonical/identifiers";
-import { concatBytes, transcript, uint8, uint32be } from "../domain/canonical/transcript";
+import { concatBytes, uint8, uint32be, uint64be } from "../domain/canonical/transcript";
 import {
   type CanonicalValue,
   canonicalMap,
@@ -56,8 +56,45 @@ function integer(value: CanonicalValue, field: string): number {
   return value;
 }
 
+export function createStorageItemIdHasher(envelopeByteLength: number) {
+  if (!Number.isSafeInteger(envelopeByteLength) || envelopeByteLength < 1) {
+    throw new TypeError("Opaque envelope byte length must be a positive safe integer");
+  }
+  const hasher = sha256.create();
+  hasher.update(
+    concatBytes([
+      new TextEncoder().encode("awsm:storage-item-id:v1"),
+      Uint8Array.of(0),
+      uint32be(1),
+      uint64be(envelopeByteLength),
+    ]),
+  );
+  let observed = 0;
+  let finished = false;
+  return {
+    update(bytes: Uint8Array): void {
+      if (finished) throw new TypeError("Storage Item ID hasher is already finalized");
+      observed += bytes.byteLength;
+      if (observed > envelopeByteLength) {
+        throw new TypeError("Opaque envelope exceeds its declared byte length");
+      }
+      hasher.update(bytes);
+    },
+    digest(): Identifier<"StorageItem"> {
+      if (finished) throw new TypeError("Storage Item ID hasher is already finalized");
+      if (observed !== envelopeByteLength) {
+        throw new TypeError("Opaque envelope ended before its declared byte length");
+      }
+      finished = true;
+      return identifier("StorageItem", hasher.digest());
+    },
+  };
+}
+
 function storageItemId(bytes: Uint8Array): Identifier<"StorageItem"> {
-  return identifier("StorageItem", sha256(transcript("awsm:storage-item-id:v1", [bytes])));
+  const hasher = createStorageItemIdHasher(bytes.byteLength);
+  hasher.update(bytes);
+  return hasher.digest();
 }
 
 function validateStreamPayload(payload: Uint8Array): void {

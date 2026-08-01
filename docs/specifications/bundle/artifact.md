@@ -72,6 +72,11 @@ opaque item IDs, pack files, and range transport do not change the Artifact ID.
 The active Capture Required Feature owns accepted combinations. Unknown roles or representation
 codecs fail closed rather than being guessed.
 
+For the base web profile, `docs/specifications/bundle/page-snapshot.md` owns the exact
+representation keys and canonical `intrinsicMetadata` byte schemas. Those bytes are parsed and
+validated after the Artifact Object is authenticated; they are not an unrestricted extension
+payload.
+
 # 5. Availability and hydration
 
 Every authoritative Artifact Object remains in the dependency graph even when its heavy wrapper is

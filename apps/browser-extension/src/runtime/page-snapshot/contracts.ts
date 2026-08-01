@@ -1,4 +1,4 @@
-export const PAGE_SNAPSHOT_PROFILE_ID = "WebPageSnapshot-v1" as const;
+export const PAGE_SNAPSHOT_PROFILE_KEY = "awsm.capture.web-page-snapshot" as const;
 export const PAGE_SNAPSHOT_MIME_TYPE = "application/vnd.awsm.web-page+zip" as const;
 export const PAGE_SNAPSHOT_DOCUMENT_MEDIA_TYPE = "text/html;charset=utf-8" as const;
 
@@ -53,8 +53,8 @@ export interface SnapshotOmissionV1 {
 
 export interface PageSnapshotManifestV1 {
   readonly version: 1;
-  readonly captureProfileId: typeof PAGE_SNAPSHOT_PROFILE_ID;
-  readonly capturedAt: string;
+  readonly captureProfileKey: typeof PAGE_SNAPSHOT_PROFILE_KEY;
+  readonly capturedAt: number;
   readonly originalUrl: string;
   readonly finalUrl: string;
   readonly topDocumentId: "d000000";
@@ -85,7 +85,7 @@ export interface SnapshotResourceSource {
 }
 
 export interface CreatePageSnapshotInput {
-  readonly capturedAt: string;
+  readonly capturedAt: number;
   readonly originalUrl: string;
   readonly finalUrl: string;
   readonly documents: readonly SnapshotDocumentSource[];

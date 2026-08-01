@@ -2,6 +2,7 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { describe, expect, it } from "vitest";
 
 import {
+  digestArtifactPayload,
   type EncryptedArtifactFrame,
   openArtifactFrames,
   sealArtifactFrames,
@@ -38,6 +39,12 @@ describe("bounded Artifact frame encryption", () => {
       plaintextLength: payload.byteLength,
       plaintextDigest: sha256(transcript("awsm:artifact-payload:v1", [payload])),
     };
+    await expect(
+      digestArtifactPayload({
+        plaintextLength: payload.byteLength,
+        source: chunks(payload, 271_111),
+      }),
+    ).resolves.toEqual(contract.plaintextDigest);
     const protectionParameters = new Uint8Array(64).fill(4);
     const frames: EncryptedArtifactFrame[] = [];
     const encodedFrames: Uint8Array[] = [];

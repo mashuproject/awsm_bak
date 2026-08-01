@@ -59,6 +59,33 @@ function assertContract(contract: ArtifactPayloadContract): void {
   if (frameCount > 0x1_0000_0000) throw new RangeError("Artifact frame count exceeds uint32");
 }
 
+export async function digestArtifactPayload(input: {
+  readonly plaintextLength: number;
+  readonly source: AsyncIterable<Uint8Array>;
+}): Promise<Uint8Array> {
+  if (!Number.isSafeInteger(input.plaintextLength) || input.plaintextLength < 0) {
+    throw new TypeError("Artifact plaintext length must be a nonnegative safe integer");
+  }
+  const hasher = artifactDigestHasher(input.plaintextLength);
+  let observedLength = 0;
+  for await (const chunk of input.source) {
+    if (!(chunk instanceof Uint8Array) || chunk.byteLength > FRAME_PLAINTEXT_LIMIT) {
+      throw new TypeError(
+        "Artifact source chunks must be Uint8Array values no larger than one frame",
+      );
+    }
+    observedLength += chunk.byteLength;
+    if (observedLength > input.plaintextLength) {
+      throw new TypeError("Artifact source exceeds its declared plaintext length");
+    }
+    hasher.update(chunk);
+  }
+  if (observedLength !== input.plaintextLength) {
+    throw new TypeError("Artifact source ended before its declared plaintext length");
+  }
+  return hasher.digest();
+}
+
 function frameAad(input: {
   readonly vaultId: Identifier<"Vault">;
   readonly keyEpochId: Identifier<"KeyEpoch">;

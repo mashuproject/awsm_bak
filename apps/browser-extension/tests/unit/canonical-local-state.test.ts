@@ -1,0 +1,137 @@
+import { describe, expect, it } from "vitest";
+
+import { NAMESPACES, NORMAL_STORAGE_REALM } from "../../src/drivers/indexeddb/canonical-schema";
+import { prepareCanonicalVaultCreation } from "../../src/runtime/vault/canonical-create";
+import {
+  decodeCanonicalReplicaState,
+  decodeClientSecretState,
+  decodeEpochSecretState,
+  decodeLogicalResolution,
+  decodeVaultDirectoryEntry,
+  openWrappedLocalState,
+  prepareCanonicalVaultStorage,
+} from "../../src/runtime/vault/canonical-local-state";
+
+async function wrappingKey(): Promise<CryptoKey> {
+  return crypto.subtle.generateKey({ name: "AES-KW", length: 256 }, false, [
+    "wrapKey",
+    "unwrapKey",
+  ]);
+}
+
+describe("canonical local Vault state", () => {
+  it("prepares the complete encrypted initialization transaction without storing Recovery", async () => {
+    const key = await wrappingKey();
+    const creation = await prepareCanonicalVaultCreation({
+      label: "Private research",
+      assertedAt: 123,
+    });
+    const prepared = await prepareCanonicalVaultStorage({
+      creation,
+      label: "Private research",
+      realm: NORMAL_STORAGE_REALM,
+      wrappingKey: key,
+    });
+
+    expect(prepared.commit.immutableItems).toHaveLength(4);
+    expect(prepared.commit.replicaSafetyItems).toHaveLength(4);
+    expect(prepared.commit.trustedSecrets.map(({ namespace }) => namespace).toSorted()).toEqual(
+      [NAMESPACES.clientSecret.key, NAMESPACES.epochSecret.key].toSorted(),
+    );
+    expect(prepared.commit.vaultDirectoryEntry.scopeKey).toBe("installation");
+    expect(prepared.commit.vaultDirectoryEntry.itemKey).toBe(prepared.commit.vaultKey);
+    expect(
+      [
+        ...prepared.commit.immutableItems,
+        ...(prepared.commit.replicaSafetyItems ?? []),
+        prepared.commit.replicaState,
+        prepared.commit.vaultDirectoryEntry,
+        ...prepared.commit.trustedSecrets,
+      ].some(({ bytes }) => new TextDecoder().decode(bytes).includes(creation.recoveryPhrase)),
+    ).toBe(false);
+  });
+
+  it("opens and validates every protected initial local namespace", async () => {
+    const key = await wrappingKey();
+    const creation = await prepareCanonicalVaultCreation({ label: "Vault A", assertedAt: 1 });
+    const prepared = await prepareCanonicalVaultStorage({
+      creation,
+      label: "Vault A",
+      realm: NORMAL_STORAGE_REALM,
+      wrappingKey: key,
+    });
+    const replicaBytes = await openWrappedLocalState({
+      wrappingKey: key,
+      domain: "awsm.local.replica-state",
+      vaultId: creation.ids.vaultId,
+      identity: creation.ids.generationId,
+      wrappedBytes: prepared.commit.replicaState.bytes,
+    });
+    const replica = decodeCanonicalReplicaState(replicaBytes);
+    expect(replica).toMatchObject({
+      vaultId: creation.ids.vaultId,
+      generationId: creation.ids.generationId,
+      causalFrontier: [creation.genesis.recordId],
+      authorityFrontier: [creation.genesis.recordId],
+      continuityRecordIds: [creation.genesis.recordId],
+      currentKeyEpochId: creation.secrets.keyEpoch.id,
+      lifecycle: 1,
+    });
+
+    const clientItem = prepared.commit.trustedSecrets.find(
+      ({ namespace }) => namespace === NAMESPACES.clientSecret.key,
+    );
+    const epochItem = prepared.commit.trustedSecrets.find(
+      ({ namespace }) => namespace === NAMESPACES.epochSecret.key,
+    );
+    if (clientItem === undefined || epochItem === undefined) throw new Error("Missing secrets");
+    const client = await decodeClientSecretState(
+      await openWrappedLocalState({
+        wrappingKey: key,
+        domain: "awsm.local.client-secret",
+        vaultId: creation.ids.vaultId,
+        identity: creation.ids.clientCredentialId,
+        wrappedBytes: clientItem.bytes,
+      }),
+    );
+    const epoch = decodeEpochSecretState(
+      await openWrappedLocalState({
+        wrappingKey: key,
+        domain: "awsm.local.epoch-secret",
+        vaultId: creation.ids.vaultId,
+        identity: creation.secrets.keyEpoch.id,
+        wrappedBytes: epochItem.bytes,
+      }),
+    );
+    expect(client.signingSecretKey).toEqual(creation.secrets.client.signingSecretKey);
+    expect(client.wrappingPrivateKey).toEqual(creation.secrets.client.wrappingPrivateKey);
+    expect(epoch.key).toEqual(creation.secrets.keyEpoch.key);
+
+    const directory = decodeVaultDirectoryEntry(
+      await openWrappedLocalState({
+        wrappingKey: key,
+        domain: "awsm.local.vault-directory",
+        vaultId: creation.ids.vaultId,
+        identity: creation.ids.vaultId,
+        wrappedBytes: prepared.commit.vaultDirectoryEntry.bytes,
+      }),
+    );
+    expect(directory.label).toBe("Vault A");
+
+    const resolutions = await Promise.all(
+      (prepared.commit.replicaSafetyItems ?? []).map(async (item, index) =>
+        decodeLogicalResolution(
+          await openWrappedLocalState({
+            wrappingKey: key,
+            domain: "awsm.local.logical-resolution",
+            vaultId: creation.ids.vaultId,
+            identity: prepared.logicalResolutions[index]?.logicalId ?? new Uint8Array(),
+            wrappedBytes: item.bytes,
+          }),
+        ),
+      ),
+    );
+    expect(resolutions).toEqual(prepared.logicalResolutions);
+    expect(resolutions.every(({ availability }) => availability === 1)).toBe(true);
+  });
+});
