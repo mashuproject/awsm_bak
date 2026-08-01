@@ -125,7 +125,34 @@ keyInventory = {
 keyEpochEntry = {0: keyEpochId, 1: keyEpochKey}
 ```
 
-`continuityProofRoots` is the exact canonical Authority Frontier for key `3`. Every Continuity
+`typedLogicalRoots` is the sorted duplicate-free canonical set of ordinary typed dependency maps
+`{0: dependencyType, 1: logicalId}`. It contains the selected Baseline as a Vault Baseline root and
+every selected causal Frontier Record as a Vault Record root. `opaqueItemInventory` is the sorted
+duplicate-free canonical set of:
+
+```text
+{
+  0: namespace,     // 1 Record, 2 Key Envelope, 3 Vault Object,
+                    // 4 Feature Manifest, 5 Artifact wrapper
+  1: logicalId,
+  2: storageItemId,
+  3: keyEpochId,
+  4: byteLength,
+  5: byteDigest
+}
+```
+
+Both `(namespace, logicalId)` and `storageItemId` are unique. `byteLength` is positive and
+`byteDigest` is SHA-256 over the exact Opaque Storage Item bytes. The Manifest `stateDigest` is
+SHA-256 over the canonical transcript with domain `awsm:complete-export-state-digest:v1` and one
+part: the exact canonical Manifest map containing keys `0` through `6` and `8`, with key `7`
+omitted. The full encoded Manifest inserts the resulting digest at key `7`.
+
+Key Epoch entries are a sorted duplicate-free canonical set. The importer recomputes each Key Epoch
+ID from the Manifest Vault ID and its 32-byte Key Epoch Key. The inventory must contain at least one
+entry.
+
+`continuityProofRoots` is the exact accepted Authority Frontier and is encoded at key `8`. Every Continuity
 Proof Record and authority-semantic dependency reachable from those roots is present in the opaque
 inventory even when a retained proof Event's unrelated causal Content parents are absent.
 
