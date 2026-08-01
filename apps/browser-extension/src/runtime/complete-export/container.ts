@@ -25,6 +25,7 @@ export const COMPLETE_EXPORT_MEMORY_KIB = 65_536 as const;
 export const COMPLETE_EXPORT_ITERATIONS = 3 as const;
 export const COMPLETE_EXPORT_PARALLELISM = 1 as const;
 export const COMPLETE_EXPORT_FRAME_PLAINTEXT_LIMIT = 1_048_576 as const;
+export const COMPLETE_EXPORT_METADATA_LIMIT = 16_777_216 as const;
 const FRAME_TAG_LENGTH = 16;
 const FRAME_PREFIX_LENGTH = 9;
 
@@ -181,6 +182,9 @@ function assertCompleteExportEntryHeader(
   }
   if (!Number.isSafeInteger(input.byteLength) || input.byteLength < 0) {
     throw new TypeError("Complete Export entry byte length must be a nonnegative safe integer");
+  }
+  if (input.kind !== 2 && input.byteLength > COMPLETE_EXPORT_METADATA_LIMIT) {
+    throw new TypeError("Complete Export metadata exceeds the portable bound");
   }
   if (input.byteDigest.byteLength !== 32) {
     throw new TypeError("Complete Export entry digest must contain exactly 32 bytes");
@@ -636,5 +640,134 @@ export async function openCompleteExportStream(input: {
     }
   } finally {
     key.fill(0);
+  }
+}
+
+async function* readableStreamChunks(
+  stream: ReadableStream<Uint8Array>,
+): AsyncIterable<Uint8Array> {
+  const reader = stream.getReader();
+  try {
+    for (;;) {
+      const next = await reader.read();
+      if (next.done) return;
+      yield next.value;
+    }
+  } catch (error) {
+    await reader.cancel(error).catch(() => undefined);
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+async function consumeCompleteExportEntries(input: {
+  readonly plaintext: AsyncIterable<Uint8Array>;
+  readonly onEntryStart: (header: CompleteExportEntryHeader) => Promise<void>;
+  readonly onEntryChunk: (header: CompleteExportEntryHeader, bytes: Uint8Array) => Promise<void>;
+  readonly onEntryEnd: (header: CompleteExportEntryHeader) => Promise<void>;
+}): Promise<{ readonly entryCount: number }> {
+  const reader = new AsyncByteReader(input.plaintext);
+  let entryCount = 0;
+  let previousOpaqueId: Uint8Array | undefined;
+  let sawKeyInventory = false;
+  for (;;) {
+    const encodedHeaderLength = await reader.exactOrEof(4);
+    if (encodedHeaderLength === null) break;
+    if (sawKeyInventory) throw new TypeError("Complete Export Key Inventory must be last");
+    const headerLength = new DataView(
+      encodedHeaderLength.buffer,
+      encodedHeaderLength.byteOffset,
+      4,
+    ).getUint32(0, false);
+    if (headerLength < 1 || headerLength > 4096) {
+      throw new TypeError("Complete Export entry header length is invalid");
+    }
+    const encodedHeader = await reader.exactOrEof(headerLength);
+    if (encodedHeader === null) throw new TypeError("Complete Export entry header is truncated");
+    const header = decodeCompleteExportEntryHeader(encodedHeader);
+    if (entryCount === 0 && header.kind !== 1) {
+      throw new TypeError("Complete Export must place the Manifest first");
+    }
+    if (entryCount > 0 && header.kind === 1) {
+      throw new TypeError("Complete Export may contain only one Manifest first");
+    }
+    if (header.kind === 2) {
+      if (previousOpaqueId !== undefined && compareBytes(previousOpaqueId, header.entryId) >= 0) {
+        throw new TypeError("Complete Export opaque Entry IDs must be sorted unique");
+      }
+      previousOpaqueId = header.entryId;
+    }
+    if (header.kind === 3) sawKeyInventory = true;
+    await input.onEntryStart(header);
+    const digest = sha256.create();
+    const identity = completeExportEntryIdentityHasher(header.kind, header.byteLength);
+    let remaining = header.byteLength;
+    while (remaining > 0) {
+      const chunk = await reader.exactOrEof(
+        Math.min(remaining, COMPLETE_EXPORT_FRAME_PLAINTEXT_LIMIT),
+      );
+      if (chunk === null) throw new TypeError("Complete Export entry body is truncated");
+      digest.update(chunk);
+      identity.update(chunk);
+      await input.onEntryChunk(header, chunk);
+      remaining -= chunk.byteLength;
+    }
+    if (!bytesEqual(digest.digest(), header.byteDigest)) {
+      throw new TypeError("Complete Export entry byte digest is invalid");
+    }
+    if (!bytesEqual(identity.digest(), header.entryId)) {
+      throw new TypeError("Complete Export Entry ID is invalid");
+    }
+    await input.onEntryEnd(header);
+    entryCount += 1;
+  }
+  if (entryCount === 0) throw new TypeError("Complete Export must place the Manifest first");
+  if (!sawKeyInventory) throw new TypeError("Complete Export Key Inventory must be last");
+  return { entryCount };
+}
+
+export async function openCompleteExportEntries(input: {
+  readonly passphrase: string;
+  readonly encrypted: AsyncIterable<Uint8Array>;
+  readonly onEntryStart: (header: CompleteExportEntryHeader) => Promise<void>;
+  readonly onEntryChunk: (header: CompleteExportEntryHeader, bytes: Uint8Array) => Promise<void>;
+  readonly onEntryEnd: (header: CompleteExportEntryHeader) => Promise<void>;
+}): Promise<{
+  readonly entryCount: number;
+  readonly frameCount: number;
+  readonly prefix: CompleteExportPrefix;
+}> {
+  const plaintext = new TransformStream<Uint8Array, Uint8Array>();
+  const writer = plaintext.writable.getWriter();
+  const decrypted = openCompleteExportStream({
+    passphrase: input.passphrase,
+    encrypted: input.encrypted,
+    writePlaintext: async (bytes) => writer.write(bytes),
+  }).then(
+    async (result) => {
+      await writer.close();
+      return result;
+    },
+    async (error) => {
+      await writer.abort(error).catch(() => undefined);
+      throw error;
+    },
+  );
+  const consumed = consumeCompleteExportEntries({
+    plaintext: readableStreamChunks(plaintext.readable),
+    onEntryStart: input.onEntryStart,
+    onEntryChunk: input.onEntryChunk,
+    onEntryEnd: input.onEntryEnd,
+  }).catch(async (error) => {
+    await writer.abort(error).catch(() => undefined);
+    throw error;
+  });
+  try {
+    const [opened, entries] = await Promise.all([decrypted, consumed]);
+    return { ...entries, frameCount: opened.frameCount, prefix: opened.prefix };
+  } catch (error) {
+    await Promise.all([decrypted.catch(() => undefined), consumed.catch(() => undefined)]);
+    throw error;
   }
 }

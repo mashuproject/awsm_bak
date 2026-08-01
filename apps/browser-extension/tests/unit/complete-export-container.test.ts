@@ -3,11 +3,13 @@ import { describe, expect, it } from "vitest";
 import {
   COMPLETE_EXPORT_FRAME_PLAINTEXT_LIMIT,
   COMPLETE_EXPORT_MAGIC,
+  COMPLETE_EXPORT_METADATA_LIMIT,
   decodeCompleteExportEntryHeader,
   decodeCompleteExportPrefix,
   deriveCompleteExportKey,
   encodeCompleteExportEntryHeader,
   encodeCompleteExportPrefix,
+  openCompleteExportEntries,
   openCompleteExportFrame,
   openCompleteExportStream,
   prepareCompleteExportEntry,
@@ -192,6 +194,9 @@ describe("canonical Complete Export container", () => {
       }),
     ).toThrow(/Entry ID/u);
     expect(() => decodeCompleteExportEntryHeader(Uint8Array.of(0xa0))).toThrow(/fields/u);
+    expect(() =>
+      prepareCompleteExportEntry(1, new Uint8Array(COMPLETE_EXPORT_METADATA_LIMIT + 1)),
+    ).toThrow(/metadata/u);
   });
 
   it("normalizes the passphrase to NFC before exact Argon2id derivation", async () => {
@@ -352,4 +357,47 @@ describe("canonical Complete Export container", () => {
     ).rejects.toThrow(/digest/u);
     await expect(consume([manifest, inventory, opaque])).rejects.toThrow(/last/u);
   });
+
+  it("decrypts and authenticates entries through bounded Prepared Data callbacks", async () => {
+    const manifest = prepareCompleteExportEntry(1, Uint8Array.of(1, 2));
+    const opaque = prepareCompleteExportEntry(2, Uint8Array.of(3, 4, 5));
+    const inventory = prepareCompleteExportEntry(3, Uint8Array.of(6));
+    const encrypted: Uint8Array[] = [];
+    await sealCompleteExportStream({
+      passphrase: "correct horse battery staple",
+      salt,
+      nonce,
+      plaintext: sequenceCompleteExportEntries([manifest, opaque, inventory]),
+      write: async (bytes) => {
+        encrypted.push(Uint8Array.from(bytes));
+      },
+    });
+    const observed: { kind: number; chunks: Uint8Array[] }[] = [];
+
+    const result = await openCompleteExportEntries({
+      passphrase: "correct horse battery staple",
+      encrypted: (async function* () {
+        for (const bytes of encrypted) yield bytes;
+      })(),
+      onEntryStart: async (header) => {
+        observed.push({ kind: header.kind, chunks: [] });
+      },
+      onEntryChunk: async (_header, bytes) => {
+        observed.at(-1)?.chunks.push(Uint8Array.from(bytes));
+      },
+      onEntryEnd: async () => undefined,
+    });
+
+    expect(result).toMatchObject({ entryCount: 3 });
+    expect(
+      observed.map(({ kind, chunks }) => [
+        kind,
+        hex(Uint8Array.from(chunks.flatMap((chunk) => [...chunk]))),
+      ]),
+    ).toEqual([
+      [1, "0102"],
+      [2, "030405"],
+      [3, "06"],
+    ]);
+  }, 15_000);
 });

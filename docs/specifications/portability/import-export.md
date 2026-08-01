@@ -94,6 +94,8 @@ entryHeader = {
 
 Manifest is first and Export Key Inventory is last. Opaque items are ordered by Opaque Storage Item
 ID. Duplicate IDs, unknown kinds, mismatched lengths, or trailing data are invalid.
+Manifest and Export Key Inventory entries each have a portable 16 MiB byte limit. Opaque Storage
+Item entries are streamed and use the bounds owned by their canonical storage representation.
 
 `byteDigest` is SHA-256 over the exact entry bytes. An Opaque Storage Item entry uses its canonical
 Storage Item ID as `entryId`. Manifest and Export Key Inventory IDs use SHA-256 over the following
@@ -163,14 +165,24 @@ entry.
 Proof Record and authority-semantic dependency reachable from those roots is present in the opaque
 inventory even when a retained proof Event's unrelated causal Content parents are absent.
 
-These values are protected by the whole package encryption. The importer recomputes every Epoch,
-logical, outer, reachability, and state digest before exposing content.
+These values are protected by the whole package encryption. The importer recomputes every Key
+Epoch ID, every decryptable Record, Object, Feature Manifest, and Artifact logical ID, every outer
+Storage Item ID, the exact reachable inventory, and the state digest before exposing content. A Key
+Envelope logical ID commits to recipient-only HPKE plaintext and therefore remains a signed
+reachable dependency commitment until its intended Recovery or Client Credential opens it. Import
+still validates that the package contains exactly the reachable Key Envelope IDs and authentic
+outer wrappers; opening that Envelope later performs the recipient-only logical-ID verification
+required by `docs/specifications/crypto/crypto.md`.
 
 # 6. Import
 
 Import decrypts into Prepared Data, validates the entire package, and then atomically installs one
 Replica or changes nothing. It creates fresh local Installation State, resolution state, wrappers,
 and secure key storage. It never imports Account sessions, Host Grants, or authoring private keys.
+Compact Prepared Data is reopened under the package-carried Key Epoch Keys and checked against its
+namespace and logical identity. Streamable Artifact wrappers are authenticated frame by frame
+against their reachable Artifact Objects without retaining plaintext. Prepared Data remains
+unavailable to ordinary Runtime reads until all semantic and authority validation succeeds.
 
 If the installation already knows the Vault ID:
 
