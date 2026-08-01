@@ -1,5 +1,10 @@
 import type { Identifier } from "../../domain/canonical/identifiers";
-import { artifactId, decodeVaultObject, type VaultObject } from "../../domain/canonical/object";
+import {
+  artifactId,
+  decodeVaultObject,
+  NOTE_CONTENT_OBJECT,
+  type VaultObject,
+} from "../../domain/canonical/object";
 import {
   type DirectedEdge,
   reduceCausalScalar,
@@ -48,6 +53,7 @@ import {
   reduceCanonicalCollectionFolders,
   reduceCanonicalFolders,
 } from "./canonical-folder-projection";
+import { reduceCanonicalNotes } from "./canonical-note-projection";
 import {
   type CanonicalProjectedTag,
   type CanonicalProjectedTagAssignment,
@@ -89,6 +95,26 @@ export interface CanonicalLibraryCollection {
   readonly folderId: Identifier<"Folder"> | null;
 }
 
+export interface CanonicalLibraryNoteVersion {
+  readonly headCauseId: Identifier<"VaultRecord">;
+  readonly contentObjectId: Identifier<"VaultObject"> | null;
+  readonly title: string | null;
+  readonly body: string | null;
+  readonly bodyDialect: "awsm.note.commonmark" | null;
+  readonly originVaultId: Identifier<"Vault">;
+  readonly memberId: Identifier<"Member">;
+  readonly clientCredentialId: Identifier<"ClientCredential">;
+  readonly assertedAt: number | bigint;
+}
+
+export interface CanonicalLibraryNote {
+  readonly noteId: Identifier<"Note">;
+  readonly targetKind: 1 | 2;
+  readonly targetId: Identifier<"Collection"> | Identifier<"Bundle">;
+  readonly state: 1 | 2 | 3;
+  readonly versions: readonly CanonicalLibraryNoteVersion[];
+}
+
 export interface CanonicalCaptureIdentityConflict {
   readonly kind: "CaptureIdentity";
   readonly bundleId: Identifier<"Bundle">;
@@ -102,10 +128,17 @@ export interface CanonicalCollectionMergeConflict {
   readonly candidateRecordIds: readonly Identifier<"VaultRecord">[];
 }
 
+export interface CanonicalNoteConflict {
+  readonly kind: "Note";
+  readonly noteId: Identifier<"Note">;
+  readonly candidateRecordIds: readonly Identifier<"VaultRecord">[];
+}
+
 export type CanonicalLibraryConflict =
   | CanonicalCaptureIdentityConflict
   | CanonicalCollectionMergeConflict
-  | CanonicalFolderConflict;
+  | CanonicalFolderConflict
+  | CanonicalNoteConflict;
 
 export interface CanonicalLibraryProjection {
   readonly vaultId: Identifier<"Vault">;
@@ -116,6 +149,7 @@ export interface CanonicalLibraryProjection {
   readonly folders: readonly CanonicalProjectedFolder[];
   readonly tags: readonly CanonicalProjectedTag[];
   readonly tagAssignments: readonly CanonicalProjectedTagAssignment[];
+  readonly notes: readonly CanonicalLibraryNote[];
   readonly conflicts: readonly CanonicalLibraryConflict[];
 }
 
@@ -484,6 +518,29 @@ function descriptorFields(object: VaultObject): {
   };
 }
 
+function noteContentFields(object: VaultObject): {
+  readonly title: string | null;
+  readonly body: string;
+  readonly bodyDialect: "awsm.note.commonmark";
+} {
+  if (object.objectType !== NOTE_CONTENT_OBJECT) {
+    throw new TypeError("Note dependency is not a Note Content Object");
+  }
+  const body = exactMap(object.body, [0, 1, 2, 3], "Note Content Object body");
+  exactCode(mapValue(body, 0), 1, "Note Content format");
+  const bodyDialect = mapValue(body, 3);
+  if (bodyDialect !== "awsm.note.commonmark") {
+    throw new TypeError("Note Content Object has an unknown body dialect");
+  }
+  return {
+    title: nullable(mapValue(body, 1), (value) =>
+      textValue(value, "Note title", { maxUtf8Bytes: 1_024 }),
+    ),
+    body: textValue(mapValue(body, 2), "Note body", { allowLineFeed: true, allowEmpty: true }),
+    bodyDialect,
+  };
+}
+
 export class CanonicalLibraryProjectionService {
   readonly replay: CanonicalReplayService;
 
@@ -516,6 +573,7 @@ export class CanonicalLibraryProjectionService {
     const folderProjection = reduceCanonicalFolders(replay);
     const collectionFolderPlacements = reduceCanonicalCollectionFolders(replay, folderProjection);
     const tagProjection = reduceCanonicalTags(replay);
+    const noteProjection = reduceCanonicalNotes(replay);
     const redirectEdges = redirectReduction.edges;
     const objectCache = new Map<string, VaultObject>();
     const loadObject = async (objectId: Identifier<"VaultObject">): Promise<VaultObject> => {
@@ -650,6 +708,46 @@ export class CanonicalLibraryProjectionService {
         };
       })
       .toSorted((left, right) => compareBytes(left.collectionId, right.collectionId));
+    const eventsById = new Map(replay.events.map((event) => [key(event.recordId), event]));
+    const notes = await Promise.all(
+      noteProjection.notes.map(async (note): Promise<CanonicalLibraryNote> => {
+        const targetExists =
+          note.targetKind === 1
+            ? collections.some((collection) => bytesEqual(collection.collectionId, note.targetId))
+            : captures.some((capture) => bytesEqual(capture.bundleId, note.targetId));
+        if (!targetExists) throw new TypeError("Note target is not in the Vault");
+        return {
+          ...note,
+          versions: await Promise.all(
+            note.versions.map(async (version): Promise<CanonicalLibraryNoteVersion> => {
+              const author = eventsById.get(key(version.headCauseId));
+              if (author === undefined)
+                throw new TypeError("Note head author Event is unavailable");
+              if (version.contentObjectId === null) {
+                return {
+                  ...version,
+                  title: null,
+                  body: null,
+                  bodyDialect: null,
+                  originVaultId: vault.replicaState.vaultId,
+                  memberId: vault.clientSecret.memberId,
+                  clientCredentialId: author.signerCredentialId,
+                  assertedAt: author.assertedAt,
+                };
+              }
+              return {
+                ...version,
+                ...noteContentFields(await loadObject(version.contentObjectId)),
+                originVaultId: vault.replicaState.vaultId,
+                memberId: vault.clientSecret.memberId,
+                clientCredentialId: author.signerCredentialId,
+                assertedAt: author.assertedAt,
+              };
+            }),
+          ),
+        };
+      }),
+    );
     return {
       vaultId: vault.replicaState.vaultId,
       generationId: vault.replicaState.generationId,
@@ -659,6 +757,7 @@ export class CanonicalLibraryProjectionService {
       folders: folderProjection.folders,
       tags: tagProjection.tags,
       tagAssignments: tagProjection.assignments,
+      notes,
       conflicts: [
         ...selected.conflicts,
         ...redirectReduction.conflicts.map(
@@ -674,6 +773,7 @@ export class CanonicalLibraryProjectionService {
           }),
         ),
         ...folderProjection.conflicts,
+        ...noteProjection.conflicts,
       ],
     };
   }
@@ -778,11 +878,13 @@ export function encodeCanonicalLibraryProjection(value: CanonicalLibraryProjecti
                 canonicalSet(conflict.subjectCollectionIds),
                 canonicalSet(conflict.candidateRecordIds),
               )
-            : indexedMap(
-                3,
-                canonicalSet(conflict.subjectFolderIds),
-                canonicalSet(conflict.candidateRecordIds),
-              ),
+            : conflict.kind === "Folder"
+              ? indexedMap(
+                  3,
+                  canonicalSet(conflict.subjectFolderIds),
+                  canonicalSet(conflict.candidateRecordIds),
+                )
+              : indexedMap(4, conflict.noteId, canonicalSet(conflict.candidateRecordIds)),
       ),
       value.collections.map((collection) =>
         indexedMap(
@@ -816,12 +918,33 @@ export function encodeCanonicalLibraryProjection(value: CanonicalLibraryProjecti
           assignment.active,
         ),
       ),
+      value.notes.map((note) =>
+        indexedMap(
+          note.noteId,
+          note.targetKind,
+          note.targetId,
+          note.state,
+          note.versions.map((version) =>
+            indexedMap(
+              version.headCauseId,
+              version.contentObjectId,
+              version.title,
+              version.body,
+              version.bodyDialect,
+              version.originVaultId,
+              version.memberId,
+              version.clientCredentialId,
+              version.assertedAt,
+            ),
+          ),
+        ),
+      ),
     ),
   );
 }
 
 export function decodeCanonicalLibraryProjection(bytes: Uint8Array): CanonicalLibraryProjection {
-  const map = exactMap(decodeCanonicalValue(bytes), [...Array(10).keys()], "Library Projection");
+  const map = exactMap(decodeCanonicalValue(bytes), [...Array(11).keys()], "Library Projection");
   exactCode(mapValue(map, 0), LIBRARY_PROJECTION_FORMAT, "Library Projection format");
   const capturesValue = mapValue(map, 4);
   if (!Array.isArray(capturesValue)) throw new TypeError("Library captures must be an array");
@@ -918,9 +1041,71 @@ export function decodeCanonicalLibraryProjection(bytes: Uint8Array): CanonicalLi
         active: booleanValue(mapValue(assignment, 6), "Tag Assignment activity"),
       };
     }),
+    notes: arrayValue(mapValue(map, 10), "Library Notes").map((entry, index) => {
+      const note = exactMap(entry, [0, 1, 2, 3, 4], `Library Note ${index}`);
+      const targetKind = oneOfCodes(mapValue(note, 1), [1, 2] as const, "Note target kind");
+      const state = oneOfCodes(mapValue(note, 3), [1, 2, 3] as const, "Note state");
+      const versions = arrayValue(mapValue(note, 4), "Note versions").map((value, versionIndex) => {
+        const version = exactMap(
+          value,
+          [...Array(9).keys()],
+          `Library Note ${index} version ${versionIndex}`,
+        );
+        const contentObjectId = nullable(mapValue(version, 1), (contentId) =>
+          identifierValue(contentId, "VaultObject"),
+        );
+        const title = nullable(mapValue(version, 2), (text) =>
+          textValue(text, "Note title", { maxUtf8Bytes: 1_024 }),
+        );
+        const body = nullable(mapValue(version, 3), (text) =>
+          textValue(text, "Note body", { allowLineFeed: true, allowEmpty: true }),
+        );
+        const bodyDialect = nullable(mapValue(version, 4), (dialect) => {
+          if (dialect !== "awsm.note.commonmark") {
+            throw new TypeError("Library Note has an unknown body dialect");
+          }
+          return "awsm.note.commonmark" as const;
+        });
+        if (
+          (contentObjectId === null && (title !== null || body !== null || bodyDialect !== null)) ||
+          (contentObjectId !== null && (body === null || bodyDialect === null))
+        ) {
+          throw new TypeError("Library Note version content fields are inconsistent");
+        }
+        return {
+          headCauseId: identifierValue(mapValue(version, 0), "VaultRecord"),
+          contentObjectId,
+          title,
+          body,
+          bodyDialect,
+          originVaultId: identifierValue(mapValue(version, 5), "Vault"),
+          memberId: identifierValue(mapValue(version, 6), "Member"),
+          clientCredentialId: identifierValue(mapValue(version, 7), "ClientCredential"),
+          assertedAt: signedInteger(mapValue(version, 8), "Note asserted timestamp"),
+        };
+      });
+      if (
+        versions.length === 0 ||
+        (state === 1 && (versions.length !== 1 || versions[0]?.contentObjectId === null)) ||
+        (state === 2 && versions.some(({ contentObjectId }) => contentObjectId !== null)) ||
+        (state === 3 && versions.length < 2)
+      ) {
+        throw new TypeError("Library Note state and versions are inconsistent");
+      }
+      return {
+        noteId: identifierValue(mapValue(note, 0), "Note"),
+        targetKind,
+        targetId:
+          targetKind === 1
+            ? identifierValue(mapValue(note, 2), "Collection")
+            : identifierValue(mapValue(note, 2), "Bundle"),
+        state,
+        versions,
+      };
+    }),
     conflicts: conflictsValue.map((entry, index): CanonicalLibraryConflict => {
       if (!(entry instanceof Map)) throw new TypeError(`Library conflict ${index} must be a map`);
-      const kind = oneOfCodes(mapValue(entry, 0), [1, 2, 3] as const, "Library conflict kind");
+      const kind = oneOfCodes(mapValue(entry, 0), [1, 2, 3, 4] as const, "Library conflict kind");
       if (kind === 1) {
         const conflict = exactMap(entry, [0, 1, 2], `Capture identity conflict ${index}`);
         return {
@@ -947,6 +1132,19 @@ export function decodeCanonicalLibraryProjection(bytes: Uint8Array): CanonicalLi
           candidateRecordIds: canonicalSetValue(
             mapValue(conflict, 2),
             "Conflicting Folder Cause IDs",
+            (id) => identifierValue(id, "VaultRecord"),
+            { nonempty: true },
+          ),
+        };
+      }
+      if (kind === 4) {
+        const conflict = exactMap(entry, [0, 1, 2], `Note conflict ${index}`);
+        return {
+          kind: "Note",
+          noteId: identifierValue(mapValue(conflict, 1), "Note"),
+          candidateRecordIds: canonicalSetValue(
+            mapValue(conflict, 2),
+            "Conflicting Note Cause IDs",
             (id) => identifierValue(id, "VaultRecord"),
             { nonempty: true },
           ),

@@ -178,6 +178,7 @@ describe("canonical Client Runtime", () => {
       folders: [],
       tags: [],
       tagAssignments: [],
+      notes: [],
       captures: [
         {
           bundleId,
@@ -245,6 +246,7 @@ describe("canonical Client Runtime", () => {
       folders: [],
       tags: [],
       tagAssignments: [],
+      notes: [],
       conflicts: [
         {
           kind: "CollectionMerge",
@@ -323,6 +325,7 @@ describe("canonical Client Runtime", () => {
       folders: [],
       tags: [],
       tagAssignments: [],
+      notes: [],
       conflicts: [
         {
           kind: "CollectionMerge",
@@ -346,9 +349,10 @@ describe("canonical Client Runtime", () => {
     expect(content.execute).not.toHaveBeenCalled();
   });
 
-  it("exposes exact Collection conflict identities without decrypted projection internals", async () => {
+  it("exposes exact Collection and Note conflict identities without projection internals", async () => {
     const { runtime, library, firstVaultId } = fixture();
     const subjectId = randomIdentifier("Collection");
+    const noteId = randomIdentifier("Note");
     const firstCauseId = randomIdentifier("VaultRecord");
     const secondCauseId = randomIdentifier("VaultRecord");
     vi.mocked(library.load).mockResolvedValue({
@@ -360,11 +364,17 @@ describe("canonical Client Runtime", () => {
       folders: [],
       tags: [],
       tagAssignments: [],
+      notes: [],
       conflicts: [
         {
           kind: "CollectionMerge",
           reason: "Cycle",
           subjectCollectionIds: [subjectId],
+          candidateRecordIds: canonicalSet([firstCauseId, secondCauseId]),
+        },
+        {
+          kind: "Note",
+          noteId,
           candidateRecordIds: canonicalSet([firstCauseId, secondCauseId]),
         },
       ],
@@ -376,6 +386,14 @@ describe("canonical Client Runtime", () => {
           kind: "CollectionMerge",
           reason: "Cycle",
           subjectCollectionIds: [identifierStorageKey(subjectId)],
+          candidateRecordIds: canonicalSet([
+            identifierStorageKey(firstCauseId),
+            identifierStorageKey(secondCauseId),
+          ]),
+        },
+        {
+          kind: "Note",
+          noteId: identifierStorageKey(noteId),
           candidateRecordIds: canonicalSet([
             identifierStorageKey(firstCauseId),
             identifierStorageKey(secondCauseId),
@@ -417,6 +435,7 @@ describe("canonical Client Runtime", () => {
       ],
       tags: [],
       tagAssignments: [],
+      notes: [],
       conflicts: [],
     });
     vi.mocked(content.execute).mockResolvedValue({
@@ -563,6 +582,7 @@ describe("canonical Client Runtime", () => {
       })),
       tags: [],
       tagAssignments: [],
+      notes: [],
       conflicts: [
         {
           kind: "Folder",
@@ -644,6 +664,7 @@ describe("canonical Client Runtime", () => {
       })),
       tags: [],
       tagAssignments: [],
+      notes: [],
       conflicts: [
         {
           kind: "Folder",
@@ -691,6 +712,7 @@ describe("canonical Client Runtime", () => {
       })),
       tags: [],
       tagAssignments: [],
+      notes: [],
       conflicts: [
         {
           kind: "Folder",
@@ -752,6 +774,7 @@ describe("canonical Client Runtime", () => {
           active: true,
         },
       ],
+      notes: [],
       conflicts: [],
     });
     vi.mocked(content.execute).mockResolvedValue({

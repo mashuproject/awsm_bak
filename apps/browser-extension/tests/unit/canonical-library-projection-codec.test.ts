@@ -19,6 +19,7 @@ describe("canonical Library Projection codec", () => {
       folders: [],
       tags: [],
       tagAssignments: [],
+      notes: [],
       conflicts: [
         {
           kind: "CollectionMerge",
@@ -74,6 +75,7 @@ describe("canonical Library Projection codec", () => {
       ],
       tags: [],
       tagAssignments: [],
+      notes: [],
       conflicts: [
         {
           kind: "Folder",
@@ -115,6 +117,49 @@ describe("canonical Library Projection codec", () => {
           targetKind: 1,
           targetId: collectionId,
           active: false,
+        },
+      ],
+      notes: [],
+      conflicts: [],
+    } as unknown as CanonicalLibraryProjection;
+
+    expect(decodeCanonicalLibraryProjection(encodeCanonicalLibraryProjection(value))).toEqual(
+      value,
+    );
+  });
+
+  it("round-trips a complete current Note revision and historical attribution", () => {
+    const vaultId = randomIdentifier("Vault");
+    const noteId = randomIdentifier("Note");
+    const collectionId = randomIdentifier("Collection");
+    const value = {
+      vaultId,
+      generationId: randomIdentifier("Generation"),
+      frontier: [randomIdentifier("VaultRecord")],
+      captures: [],
+      collections: [],
+      folders: [],
+      tags: [],
+      tagAssignments: [],
+      notes: [
+        {
+          noteId,
+          targetKind: 1,
+          targetId: collectionId,
+          state: 1,
+          versions: [
+            {
+              headCauseId: randomIdentifier("VaultRecord"),
+              contentObjectId: randomIdentifier("VaultObject"),
+              title: "Context",
+              body: "A complete **Note**.",
+              bodyDialect: "awsm.note.commonmark",
+              originVaultId: vaultId,
+              memberId: randomIdentifier("Member"),
+              clientCredentialId: randomIdentifier("ClientCredential"),
+              assertedAt: 42,
+            },
+          ],
         },
       ],
       conflicts: [],

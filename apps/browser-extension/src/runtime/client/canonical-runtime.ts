@@ -91,6 +91,11 @@ export type CanonicalClientLibraryConflict =
       readonly kind: "Folder";
       readonly subjectFolderIds: readonly string[];
       readonly candidateRecordIds: readonly string[];
+    }
+  | {
+      readonly kind: "Note";
+      readonly noteId: string;
+      readonly candidateRecordIds: readonly string[];
     };
 
 interface PendingVaultCreation {
@@ -770,11 +775,17 @@ export class CanonicalClientRuntime {
                 subjectCollectionIds: conflict.subjectCollectionIds.map(identifierStorageKey),
                 candidateRecordIds: conflict.candidateRecordIds.map(identifierStorageKey),
               }
-            : {
-                kind: "Folder",
-                subjectFolderIds: conflict.subjectFolderIds.map(identifierStorageKey),
-                candidateRecordIds: conflict.candidateRecordIds.map(identifierStorageKey),
-              },
+            : conflict.kind === "Folder"
+              ? {
+                  kind: "Folder",
+                  subjectFolderIds: conflict.subjectFolderIds.map(identifierStorageKey),
+                  candidateRecordIds: conflict.candidateRecordIds.map(identifierStorageKey),
+                }
+              : {
+                  kind: "Note",
+                  noteId: identifierStorageKey(conflict.noteId),
+                  candidateRecordIds: conflict.candidateRecordIds.map(identifierStorageKey),
+                },
     );
   }
 
