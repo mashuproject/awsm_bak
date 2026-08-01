@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { randomIdentifier } from "../../src/domain/canonical/identifiers";
+import { canonicalMap, canonicalSet } from "../../src/domain/canonical/value";
 import { identifierStorageKey } from "../../src/drivers/indexeddb/canonical-database";
 import type { CanonicalCaptureService } from "../../src/runtime/capture/canonical-service";
 import { CanonicalClientRuntime } from "../../src/runtime/client/canonical-runtime";
+import type { CanonicalContentService } from "../../src/runtime/content/canonical-service";
 import type { CanonicalLibraryProjectionService } from "../../src/runtime/library/canonical-projection";
 import type { CanonicalVaultService } from "../../src/runtime/vault/canonical-service";
 
@@ -45,9 +47,16 @@ function fixture() {
   } as unknown as CanonicalVaultService;
   const captures = { execute: vi.fn() } as unknown as CanonicalCaptureService;
   const library = { load: vi.fn() } as unknown as CanonicalLibraryProjectionService;
+  const content = { execute: vi.fn() } as unknown as CanonicalContentService;
   let setup = 0;
-  const runtime = new CanonicalClientRuntime(vaults, captures, library, () => `setup-${++setup}`);
-  return { runtime, vaults, captures, library, ceremony, firstVaultId, secondVaultId };
+  const runtime = new CanonicalClientRuntime(
+    vaults,
+    captures,
+    library,
+    () => `setup-${++setup}`,
+    content,
+  );
+  return { runtime, vaults, captures, library, content, ceremony, firstVaultId, secondVaultId };
 }
 
 describe("canonical Client Runtime", () => {
@@ -188,5 +197,159 @@ describe("canonical Client Runtime", () => {
         lifecycle: "Active",
       },
     ]);
+  });
+
+  it("resolves exactly the current Collection merge conflict with one acyclic redirect graph", async () => {
+    const { runtime, library, content, firstVaultId } = fixture();
+    const sourceId = randomIdentifier("Collection");
+    const firstDestinationId = randomIdentifier("Collection");
+    const secondDestinationId = randomIdentifier("Collection");
+    const firstCauseId = randomIdentifier("VaultRecord");
+    const secondCauseId = randomIdentifier("VaultRecord");
+    const eventRecordId = randomIdentifier("VaultRecord");
+    vi.mocked(library.load).mockResolvedValue({
+      vaultId: firstVaultId,
+      generationId: randomIdentifier("Generation"),
+      frontier: [randomIdentifier("VaultRecord")],
+      captures: [],
+      collections: [sourceId, firstDestinationId, secondDestinationId].map((collectionId) => ({
+        collectionId,
+        explicitTitle: null,
+        title: "Collection",
+        tailBundleId: null,
+        activeCaptureCount: 0,
+        redirectedTo: null,
+      })),
+      conflicts: [
+        {
+          kind: "CollectionMerge",
+          reason: "MultipleDestinations",
+          subjectCollectionIds: [sourceId],
+          candidateRecordIds: canonicalSet([firstCauseId, secondCauseId]),
+        },
+      ],
+    });
+    vi.mocked(content.execute).mockResolvedValue({
+      commandId: "resolve-collection-1",
+      vaultId: firstVaultId,
+      generationId: randomIdentifier("Generation"),
+      eventRecordId,
+    });
+
+    await expect(
+      runtime.resolveCollectionMergeConflict({
+        expectedVaultId: identifierStorageKey(firstVaultId),
+        commandId: "resolve-collection-1",
+        subjectCollectionIds: [identifierStorageKey(sourceId)],
+        conflictingCauseIds: [
+          identifierStorageKey(secondCauseId),
+          identifierStorageKey(firstCauseId),
+        ],
+        redirects: [
+          {
+            sourceCollectionId: identifierStorageKey(sourceId),
+            destinationCollectionId: identifierStorageKey(secondDestinationId),
+          },
+        ],
+        assertedAt: 20,
+      }),
+    ).resolves.toEqual({ eventRecordId: identifierStorageKey(eventRecordId) });
+    expect(content.execute).toHaveBeenCalledWith({
+      commandId: "resolve-collection-1",
+      vaultId: firstVaultId,
+      type: 10,
+      assertedAt: 20,
+      expectedCausalFrontier: expect.arrayContaining([expect.any(Uint8Array)]),
+      body: canonicalMap([
+        [0, canonicalSet([firstCauseId, secondCauseId])],
+        [
+          1,
+          canonicalSet([
+            canonicalMap([
+              [0, sourceId],
+              [1, secondDestinationId],
+            ]),
+          ]),
+        ],
+      ]),
+    });
+  });
+
+  it("rejects a stale partial Collection conflict without authoring a Resolution Event", async () => {
+    const { runtime, library, content, firstVaultId } = fixture();
+    const sourceId = randomIdentifier("Collection");
+    const destinationId = randomIdentifier("Collection");
+    const firstCauseId = randomIdentifier("VaultRecord");
+    const secondCauseId = randomIdentifier("VaultRecord");
+    vi.mocked(library.load).mockResolvedValue({
+      vaultId: firstVaultId,
+      generationId: randomIdentifier("Generation"),
+      frontier: [randomIdentifier("VaultRecord")],
+      captures: [],
+      collections: [sourceId, destinationId].map((collectionId) => ({
+        collectionId,
+        explicitTitle: null,
+        title: "Collection",
+        tailBundleId: null,
+        activeCaptureCount: 0,
+        redirectedTo: null,
+      })),
+      conflicts: [
+        {
+          kind: "CollectionMerge",
+          reason: "MultipleDestinations",
+          subjectCollectionIds: [sourceId],
+          candidateRecordIds: canonicalSet([firstCauseId, secondCauseId]),
+        },
+      ],
+    });
+
+    await expect(
+      runtime.resolveCollectionMergeConflict({
+        expectedVaultId: identifierStorageKey(firstVaultId),
+        commandId: "resolve-stale-collection",
+        subjectCollectionIds: [identifierStorageKey(sourceId)],
+        conflictingCauseIds: [identifierStorageKey(firstCauseId)],
+        redirects: [],
+        assertedAt: 21,
+      }),
+    ).rejects.toMatchObject({ id: "COLLECTION_MERGE_CONFLICT_CHANGED" });
+    expect(content.execute).not.toHaveBeenCalled();
+  });
+
+  it("exposes exact Collection conflict identities without decrypted projection internals", async () => {
+    const { runtime, library, firstVaultId } = fixture();
+    const subjectId = randomIdentifier("Collection");
+    const firstCauseId = randomIdentifier("VaultRecord");
+    const secondCauseId = randomIdentifier("VaultRecord");
+    vi.mocked(library.load).mockResolvedValue({
+      vaultId: firstVaultId,
+      generationId: randomIdentifier("Generation"),
+      frontier: [randomIdentifier("VaultRecord")],
+      captures: [],
+      collections: [],
+      conflicts: [
+        {
+          kind: "CollectionMerge",
+          reason: "Cycle",
+          subjectCollectionIds: [subjectId],
+          candidateRecordIds: canonicalSet([firstCauseId, secondCauseId]),
+        },
+      ],
+    });
+
+    await expect(runtime.listLibraryConflicts(identifierStorageKey(firstVaultId))).resolves.toEqual(
+      [
+        {
+          kind: "CollectionMerge",
+          reason: "Cycle",
+          subjectCollectionIds: [identifierStorageKey(subjectId)],
+          candidateRecordIds: canonicalSet([
+            identifierStorageKey(firstCauseId),
+            identifierStorageKey(secondCauseId),
+          ]),
+        },
+      ],
+    );
   });
 });

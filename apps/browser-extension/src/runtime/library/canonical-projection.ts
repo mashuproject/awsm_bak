@@ -264,9 +264,27 @@ function eventCollectionTitles(replay: ReplayedCanonicalVault): readonly Collect
   });
 }
 
-function collectionRedirects(replay: ReplayedCanonicalVault) {
+function uniqueRecordIds(
+  values: readonly Identifier<"VaultRecord">[],
+): readonly Identifier<"VaultRecord">[] {
+  return [...new Map(values.map((value) => [key(value), value])).values()];
+}
+
+function sameRecordIdSet(
+  left: readonly Identifier<"VaultRecord">[],
+  right: readonly Identifier<"VaultRecord">[],
+): boolean {
+  const leftKeys = new Set(left.map(key));
+  return leftKeys.size === right.length && right.every((value) => leftKeys.has(key(value)));
+}
+
+export function reduceCollectionRedirects(replay: ReplayedCanonicalVault) {
   const facts = new Map<string, CollectionRedirectFact>();
   const inactive = new Set<string>();
+  const activeEdges = (): readonly DirectedEdge[] =>
+    [...facts.values()]
+      .filter((fact) => !inactive.has(key(fact.causeId)))
+      .flatMap(({ edges }) => edges);
   for (const event of replay.events) {
     if (event.family !== 2) continue;
     if (event.type === 8) {
@@ -288,31 +306,78 @@ function collectionRedirects(replay: ReplayedCanonicalVault) {
       inactive.add(key(revertedId));
     } else if (event.type === 10) {
       const body = exactMap(event.body, [0, 1], "Collection Merge Conflict Resolution body");
-      for (const resolvedId of arrayValue(mapValue(body, 0), "Conflicting Collection Cause IDs")) {
-        const causeId = identifierValue(resolvedId, "VaultRecord");
+      const resolvedIds = arrayValue(mapValue(body, 0), "Conflicting Collection Cause IDs").map(
+        (resolvedId) => identifierValue(resolvedId, "VaultRecord"),
+      );
+      const current = reduceDirectedGraph(activeEdges(), replay.graph);
+      const touchedConflicts = current.conflicts.filter((conflict) =>
+        conflict.candidates.some((candidate) =>
+          resolvedIds.some((resolvedId) => bytesEqual(candidate.causeId, resolvedId)),
+        ),
+      );
+      if (
+        touchedConflicts.length === 0 ||
+        touchedConflicts.some(
+          (conflict) =>
+            !sameRecordIdSet(
+              uniqueRecordIds(conflict.candidates.map(({ causeId }) => causeId)),
+              resolvedIds,
+            ),
+        )
+      ) {
+        throw new TypeError(
+          "Collection resolution does not name one exact current conflict Cause set",
+        );
+      }
+      const affectedSources = new Set<string>();
+      for (const causeId of resolvedIds) {
         const resolved = facts.get(key(causeId));
-        if (resolved === undefined || !replay.graph.isAncestor(resolved.causeId, event.recordId)) {
+        if (
+          resolved === undefined ||
+          inactive.has(key(causeId)) ||
+          !replay.graph.isAncestor(resolved.causeId, event.recordId)
+        ) {
           throw new TypeError("Collection resolution does not observe every named redirect fact");
         }
+        for (const edge of resolved.edges) affectedSources.add(key(edge.sourceId));
         inactive.add(key(causeId));
       }
+      const replacementSources = new Set<string>();
       const edges = arrayValue(mapValue(body, 1), "Resolved Collection redirects").map((entry) => {
         const redirect = exactMap(entry, [0, 1], "Resolved Collection redirect");
+        const sourceId = identifierValue(mapValue(redirect, 0), "Collection");
+        const destinationId = identifierValue(mapValue(redirect, 1), "Collection");
+        const sourceKey = key(sourceId);
+        if (
+          !affectedSources.has(sourceKey) ||
+          replacementSources.has(sourceKey) ||
+          bytesEqual(sourceId, destinationId)
+        ) {
+          throw new TypeError(
+            "Collection resolution redirects do not exactly replace the affected identity set",
+          );
+        }
+        replacementSources.add(sourceKey);
         return {
-          sourceId: identifierValue(mapValue(redirect, 0), "Collection"),
-          destinationId: identifierValue(mapValue(redirect, 1), "Collection"),
+          sourceId,
+          destinationId,
           causeId: event.recordId,
         };
       });
       facts.set(key(event.recordId), { causeId: event.recordId, edges });
+      const replacement = reduceDirectedGraph(activeEdges(), replay.graph);
+      if (
+        replacement.conflicts.some(
+          (conflict) =>
+            conflict.candidates.some(({ causeId }) => bytesEqual(causeId, event.recordId)) ||
+            conflict.subjectIds.some((subjectId) => affectedSources.has(key(subjectId))),
+        )
+      ) {
+        throw new TypeError("Collection resolution does not establish one valid replacement graph");
+      }
     }
   }
-  return reduceDirectedGraph(
-    [...facts.values()]
-      .filter((fact) => !inactive.has(key(fact.causeId)))
-      .flatMap(({ edges }) => edges),
-    replay.graph,
-  );
+  return reduceDirectedGraph(activeEdges(), replay.graph);
 }
 
 function resolveCollectionRedirect(
@@ -431,7 +496,7 @@ export class CanonicalLibraryProjectionService {
     const lifecycleFacts = eventCaptureLifecycles(replay);
     const placementFacts = eventCapturePlacements(replay);
     const titleFacts = eventCollectionTitles(replay);
-    const redirectReduction = collectionRedirects(replay);
+    const redirectReduction = reduceCollectionRedirects(replay);
     const redirectEdges = redirectReduction.edges;
     const objectCache = new Map<string, VaultObject>();
     const loadObject = async (objectId: Identifier<"VaultObject">): Promise<VaultObject> => {
@@ -573,7 +638,9 @@ export class CanonicalLibraryProjectionService {
             subjectCollectionIds: canonicalSet(
               conflict.subjectIds.map((id) => identifierValue(id, "Collection")),
             ),
-            candidateRecordIds: canonicalSet(conflict.candidates.map(({ causeId }) => causeId)),
+            candidateRecordIds: canonicalSet(
+              uniqueRecordIds(conflict.candidates.map(({ causeId }) => causeId)),
+            ),
           }),
         ),
       ],

@@ -32,6 +32,7 @@ export interface CanonicalContentCommand {
   readonly type: number;
   readonly assertedAt: number | bigint;
   readonly body: CanonicalValue;
+  readonly expectedCausalFrontier?: readonly Identifier<"VaultRecord">[];
   readonly dependencies?: readonly TypedDependency[];
   readonly protectionParameters?: Uint8Array;
 }
@@ -54,6 +55,15 @@ export class CanonicalContentService {
         return raced;
       }
       const vault = await this.vaults.openVault(command.vaultId);
+      if (
+        command.expectedCausalFrontier !== undefined &&
+        !sameIdentifierSet(vault.replicaState.causalFrontier, command.expectedCausalFrontier)
+      ) {
+        throw new CanonicalStorageError(
+          "VAULT_CONTEXT_CHANGED",
+          "The accepted causal Frontier changed before the fenced Content Event could commit.",
+        );
+      }
       const prepared = await prepareCanonicalContentEvent({
         vault,
         type: command.type,
@@ -151,4 +161,14 @@ export class CanonicalContentService {
       throw new TypeError("Content outcome Vault ID does not match");
     }
   }
+}
+
+function sameIdentifierSet(
+  left: readonly Identifier<"VaultRecord">[],
+  right: readonly Identifier<"VaultRecord">[],
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every((candidate) => right.some((expected) => bytesEqual(candidate, expected)))
+  );
 }

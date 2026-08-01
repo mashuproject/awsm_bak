@@ -48,6 +48,19 @@ export interface CanonicalClientCollection {
   readonly redirectedTo: string | null;
 }
 
+export type CanonicalClientLibraryConflict =
+  | {
+      readonly kind: "CaptureIdentity";
+      readonly bundleId: string;
+      readonly registrationRecordIds: readonly string[];
+    }
+  | {
+      readonly kind: "CollectionMerge";
+      readonly reason: "MultipleDestinations" | "Cycle";
+      readonly subjectCollectionIds: readonly string[];
+      readonly candidateRecordIds: readonly string[];
+    };
+
 interface PendingVaultCreation {
   readonly expectedVaultId: string | null;
   readonly ceremony: CanonicalVaultCreationCeremony;
@@ -59,6 +72,27 @@ function runtimeError(id: string, message: string): Error {
 
 function selectedVaultId(state: CanonicalClientState): string | null {
   return state.selectedVaultId ?? null;
+}
+
+function sameStringSet(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value) => right.includes(value));
+}
+
+function assertAcyclicRedirects(redirects: ReadonlyMap<string, string>): void {
+  for (const source of redirects.keys()) {
+    let current: string | undefined = source;
+    const seen = new Set<string>();
+    while (current !== undefined) {
+      if (seen.has(current)) {
+        throw runtimeError(
+          "COLLECTION_MERGE_CONFLICT",
+          "The Collection redirects would create a cycle.",
+        );
+      }
+      seen.add(current);
+      current = redirects.get(current);
+    }
+  }
 }
 
 export class CanonicalClientRuntime {
@@ -182,6 +216,28 @@ export class CanonicalClientRuntime {
       redirectedTo:
         collection.redirectedTo === null ? null : identifierStorageKey(collection.redirectedTo),
     }));
+  }
+
+  async listLibraryConflicts(
+    expectedVaultId: string,
+  ): Promise<readonly CanonicalClientLibraryConflict[]> {
+    await this.assertExpectedVault(expectedVaultId);
+    const projection = await this.library.load(identifierFromStorageKey("Vault", expectedVaultId));
+    return projection.conflicts.map(
+      (conflict): CanonicalClientLibraryConflict =>
+        conflict.kind === "CaptureIdentity"
+          ? {
+              kind: "CaptureIdentity",
+              bundleId: identifierStorageKey(conflict.bundleId),
+              registrationRecordIds: conflict.registrationRecordIds.map(identifierStorageKey),
+            }
+          : {
+              kind: "CollectionMerge",
+              reason: conflict.reason,
+              subjectCollectionIds: conflict.subjectCollectionIds.map(identifierStorageKey),
+              candidateRecordIds: conflict.candidateRecordIds.map(identifierStorageKey),
+            },
+    );
   }
 
   async moveCaptures(input: {
@@ -336,6 +392,125 @@ export class CanonicalClientRuntime {
       type: 9,
       assertedAt: input.assertedAt,
       body: canonicalMap([[0, causeId]]),
+    });
+    return { eventRecordId: identifierStorageKey(outcome.eventRecordId) };
+  }
+
+  async resolveCollectionMergeConflict(input: {
+    readonly expectedVaultId: string;
+    readonly commandId: string;
+    readonly subjectCollectionIds: readonly string[];
+    readonly conflictingCauseIds: readonly string[];
+    readonly redirects: readonly {
+      readonly sourceCollectionId: string;
+      readonly destinationCollectionId: string;
+    }[];
+    readonly assertedAt: number | bigint;
+  }): Promise<{ readonly eventRecordId: string }> {
+    await this.assertExpectedVault(input.expectedVaultId);
+    if (
+      input.subjectCollectionIds.length === 0 ||
+      new Set(input.subjectCollectionIds).size !== input.subjectCollectionIds.length ||
+      input.conflictingCauseIds.length === 0 ||
+      new Set(input.conflictingCauseIds).size !== input.conflictingCauseIds.length
+    ) {
+      throw runtimeError(
+        "CONTENT_COMMAND_INVALID",
+        "Collection conflict identities must be unique and nonempty.",
+      );
+    }
+    const vaultId = identifierFromStorageKey("Vault", input.expectedVaultId);
+    for (const collectionId of input.subjectCollectionIds) {
+      identifierFromStorageKey("Collection", collectionId);
+    }
+    const conflictingCauseIds = input.conflictingCauseIds.map((causeId) =>
+      identifierFromStorageKey("VaultRecord", causeId),
+    );
+    const projection = await this.library.load(vaultId);
+    const matchingConflicts = projection.conflicts.filter(
+      (conflict) =>
+        conflict.kind === "CollectionMerge" &&
+        sameStringSet(
+          conflict.subjectCollectionIds.map(identifierStorageKey),
+          input.subjectCollectionIds,
+        ) &&
+        sameStringSet(
+          conflict.candidateRecordIds.map(identifierStorageKey),
+          input.conflictingCauseIds,
+        ),
+    );
+    if (matchingConflicts.length !== 1) {
+      throw runtimeError(
+        "COLLECTION_MERGE_CONFLICT_CHANGED",
+        "The Collection merge Conflict is no longer the exact current Conflict.",
+      );
+    }
+
+    const affected = new Set(input.subjectCollectionIds);
+    const knownCollections = new Set([
+      ...projection.collections.map(({ collectionId }) => identifierStorageKey(collectionId)),
+      ...input.subjectCollectionIds,
+    ]);
+    const replacementSources = new Set<string>();
+    const replacementRedirects = input.redirects.map((redirect) => {
+      if (
+        replacementSources.has(redirect.sourceCollectionId) ||
+        !affected.has(redirect.sourceCollectionId) ||
+        redirect.sourceCollectionId === redirect.destinationCollectionId
+      ) {
+        throw runtimeError(
+          "CONTENT_COMMAND_INVALID",
+          "Collection conflict redirects must name each affected source at most once.",
+        );
+      }
+      if (!knownCollections.has(redirect.destinationCollectionId)) {
+        throw runtimeError(
+          "COLLECTION_NOT_FOUND",
+          "A Collection conflict destination is not in the Vault.",
+        );
+      }
+      replacementSources.add(redirect.sourceCollectionId);
+      return {
+        sourceCollectionId: identifierFromStorageKey("Collection", redirect.sourceCollectionId),
+        destinationCollectionId: identifierFromStorageKey(
+          "Collection",
+          redirect.destinationCollectionId,
+        ),
+      };
+    });
+    const effectiveRedirects = new Map(
+      projection.collections.flatMap(({ collectionId, redirectedTo }) => {
+        const source = identifierStorageKey(collectionId);
+        return redirectedTo === null || affected.has(source)
+          ? []
+          : [[source, identifierStorageKey(redirectedTo)] as const];
+      }),
+    );
+    for (const redirect of input.redirects) {
+      effectiveRedirects.set(redirect.sourceCollectionId, redirect.destinationCollectionId);
+    }
+    assertAcyclicRedirects(effectiveRedirects);
+
+    const outcome = await this.content.execute({
+      commandId: input.commandId,
+      vaultId,
+      type: 10,
+      assertedAt: input.assertedAt,
+      expectedCausalFrontier: projection.frontier,
+      body: canonicalMap([
+        [0, canonicalSet(conflictingCauseIds)],
+        [
+          1,
+          canonicalSet(
+            replacementRedirects.map((redirect) =>
+              canonicalMap([
+                [0, redirect.sourceCollectionId],
+                [1, redirect.destinationCollectionId],
+              ]),
+            ),
+          ),
+        ],
+      ]),
     });
     return { eventRecordId: identifierStorageKey(outcome.eventRecordId) };
   }
