@@ -30,6 +30,13 @@ Before completion, the exporter authenticates and includes:
 - every Key Epoch Key required to read the selected state; and
 - a canonical reachability manifest and package integrity inventory.
 
+Reachability from the selected causal Frontier follows every causal parent and every typed
+dependency. Reachability from the accepted Authority Frontier follows Authority parents and typed
+dependencies, but does not retain an Authority or Lifecycle Event's unrelated causal Content
+parents solely because that Event remains in the Continuity Proof. Vault Object references and
+Feature Manifest requirements are recursive. Every causal Record must belong to the selected
+Generation; Continuity Records may belong to authenticated predecessor Generations.
+
 Materializations, Commands, Jobs, Accounts, sessions, Replica Access Grants, Remotes, local
 availability, Channel Authenticators, Client Credential private keys, Recovery Phrase material,
 logs, and caches are excluded.
