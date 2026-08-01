@@ -1,6 +1,10 @@
 import type { Identifier } from "../../domain/canonical/identifiers";
 import { artifactId, decodeVaultObject, type VaultObject } from "../../domain/canonical/object";
-import { reduceCausalScalar } from "../../domain/canonical/reducers";
+import {
+  type DirectedEdge,
+  reduceCausalScalar,
+  reduceDirectedGraph,
+} from "../../domain/canonical/reducers";
 import {
   arrayValue,
   booleanValue,
@@ -46,6 +50,7 @@ export interface CanonicalLibraryCapture {
   readonly descriptorObjectId: Identifier<"VaultObject">;
   readonly assignedCollectionId: Identifier<"Collection">;
   readonly currentCollectionId: Identifier<"Collection">;
+  readonly effectiveCollectionId: Identifier<"Collection">;
   readonly registrationRecordId: Identifier<"VaultRecord">;
   readonly memberId: Identifier<"Member">;
   readonly clientCredentialId: Identifier<"ClientCredential">;
@@ -69,6 +74,7 @@ export interface CanonicalLibraryCollection {
   readonly title: string;
   readonly tailBundleId: Identifier<"Bundle"> | null;
   readonly activeCaptureCount: number;
+  readonly redirectedTo: Identifier<"Collection"> | null;
 }
 
 export interface CanonicalCaptureIdentityConflict {
@@ -112,6 +118,11 @@ interface CollectionTitleFact {
   readonly collectionId: Identifier<"Collection">;
   readonly causeId: Identifier<"VaultRecord">;
   readonly value: string | null;
+}
+
+interface CollectionRedirectFact {
+  readonly causeId: Identifier<"VaultRecord">;
+  readonly edges: readonly DirectedEdge[];
 }
 
 function key(value: Uint8Array): string {
@@ -241,6 +252,73 @@ function eventCollectionTitles(replay: ReplayedCanonicalVault): readonly Collect
   });
 }
 
+function collectionRedirects(replay: ReplayedCanonicalVault): readonly DirectedEdge[] {
+  const facts = new Map<string, CollectionRedirectFact>();
+  const inactive = new Set<string>();
+  for (const event of replay.events) {
+    if (event.family !== 2) continue;
+    if (event.type === 8) {
+      const body = exactMap(event.body, [0, 1], "Collections Merged body");
+      const destinationId = identifierValue(mapValue(body, 1), "Collection");
+      const edges = arrayValue(mapValue(body, 0), "Source Collection IDs").map((source) => ({
+        sourceId: identifierValue(source, "Collection"),
+        destinationId,
+        causeId: event.recordId,
+      }));
+      facts.set(key(event.recordId), { causeId: event.recordId, edges });
+    } else if (event.type === 9) {
+      const body = exactMap(event.body, [0], "Collection Merge Reverted body");
+      const revertedId = identifierValue(mapValue(body, 0), "VaultRecord");
+      const reverted = facts.get(key(revertedId));
+      if (reverted === undefined || !replay.graph.isAncestor(reverted.causeId, event.recordId)) {
+        throw new TypeError("Collection merge reversion does not name an observed redirect fact");
+      }
+      inactive.add(key(revertedId));
+    } else if (event.type === 10) {
+      const body = exactMap(event.body, [0, 1], "Collection Merge Conflict Resolution body");
+      for (const resolvedId of arrayValue(mapValue(body, 0), "Conflicting Collection Cause IDs")) {
+        const causeId = identifierValue(resolvedId, "VaultRecord");
+        const resolved = facts.get(key(causeId));
+        if (resolved === undefined || !replay.graph.isAncestor(resolved.causeId, event.recordId)) {
+          throw new TypeError("Collection resolution does not observe every named redirect fact");
+        }
+        inactive.add(key(causeId));
+      }
+      const edges = arrayValue(mapValue(body, 1), "Resolved Collection redirects").map((entry) => {
+        const redirect = exactMap(entry, [0, 1], "Resolved Collection redirect");
+        return {
+          sourceId: identifierValue(mapValue(redirect, 0), "Collection"),
+          destinationId: identifierValue(mapValue(redirect, 1), "Collection"),
+          causeId: event.recordId,
+        };
+      });
+      facts.set(key(event.recordId), { causeId: event.recordId, edges });
+    }
+  }
+  return reduceDirectedGraph(
+    [...facts.values()]
+      .filter((fact) => !inactive.has(key(fact.causeId)))
+      .flatMap(({ edges }) => edges),
+    replay.graph,
+  ).edges;
+}
+
+function resolveCollectionRedirect(
+  collectionId: Identifier<"Collection">,
+  edges: readonly DirectedEdge[],
+): Identifier<"Collection"> {
+  const bySource = new Map(edges.map((edge) => [key(edge.sourceId), edge.destinationId]));
+  let current = collectionId;
+  const seen = new Set<string>();
+  while (bySource.has(key(current))) {
+    if (seen.has(key(current)))
+      throw new TypeError("Effective Collection redirects contain a cycle");
+    seen.add(key(current));
+    current = bySource.get(key(current)) as Identifier<"Collection">;
+  }
+  return current;
+}
+
 function selectRegistrations(facts: readonly RegistrationFact[]): {
   readonly accepted: readonly RegistrationFact[];
   readonly conflicts: readonly CanonicalCaptureIdentityConflict[];
@@ -340,6 +418,7 @@ export class CanonicalLibraryProjectionService {
     const lifecycleFacts = eventCaptureLifecycles(replay);
     const placementFacts = eventCapturePlacements(replay);
     const titleFacts = eventCollectionTitles(replay);
+    const redirectEdges = collectionRedirects(replay);
     const objectCache = new Map<string, VaultObject>();
     const loadObject = async (objectId: Identifier<"VaultObject">): Promise<VaultObject> => {
       const objectKey = key(objectId);
@@ -395,6 +474,10 @@ export class CanonicalLibraryProjectionService {
           ...registration,
           lifecycle: lifecycle?.value ?? registration.lifecycle,
           currentCollectionId: placement?.value ?? registration.assignedCollectionId,
+          effectiveCollectionId: resolveCollectionRedirect(
+            placement?.value ?? registration.assignedCollectionId,
+            redirectEdges,
+          ),
           capturedAt: fields.capturedAt,
           originalUrl: fields.originalUrl,
           finalUrl: fields.finalUrl,
@@ -420,13 +503,18 @@ export class CanonicalLibraryProjectionService {
     for (const capture of captures) {
       collectionIds.set(key(capture.assignedCollectionId), capture.assignedCollectionId);
       collectionIds.set(key(capture.currentCollectionId), capture.currentCollectionId);
+      collectionIds.set(key(capture.effectiveCollectionId), capture.effectiveCollectionId);
     }
     for (const title of titleFacts) collectionIds.set(key(title.collectionId), title.collectionId);
+    for (const edge of redirectEdges) {
+      collectionIds.set(key(edge.sourceId), edge.sourceId as Identifier<"Collection">);
+      collectionIds.set(key(edge.destinationId), edge.destinationId as Identifier<"Collection">);
+    }
     const collections = [...collectionIds.values()]
       .map((collectionId): CanonicalLibraryCollection => {
         const active = captures.filter(
           (capture) =>
-            capture.lifecycle === 1 && bytesEqual(capture.currentCollectionId, collectionId),
+            capture.lifecycle === 1 && bytesEqual(capture.effectiveCollectionId, collectionId),
         );
         const tail = active.toSorted((left, right) => {
           if (replay.graph.isAncestor(left.registrationRecordId, right.registrationRecordId)) {
@@ -447,6 +535,12 @@ export class CanonicalLibraryProjectionService {
           title: explicitTitle ?? tail?.title ?? tail?.finalUrl ?? "Empty Collection",
           tailBundleId: tail?.bundleId ?? null,
           activeCaptureCount: active.length,
+          redirectedTo: bytesEqual(
+            resolveCollectionRedirect(collectionId, redirectEdges),
+            collectionId,
+          )
+            ? null
+            : resolveCollectionRedirect(collectionId, redirectEdges),
         };
       })
       .toSorted((left, right) => compareBytes(left.collectionId, right.collectionId));
@@ -532,6 +626,7 @@ export function encodeCanonicalLibraryProjection(value: CanonicalLibraryProjecti
           capture.descriptorObjectId,
           capture.assignedCollectionId,
           capture.currentCollectionId,
+          capture.effectiveCollectionId,
           capture.registrationRecordId,
           capture.memberId,
           capture.clientCredentialId,
@@ -559,6 +654,7 @@ export function encodeCanonicalLibraryProjection(value: CanonicalLibraryProjecti
           collection.title,
           collection.tailBundleId,
           collection.activeCaptureCount,
+          collection.redirectedTo,
         ),
       ),
     ),
@@ -571,27 +667,28 @@ export function decodeCanonicalLibraryProjection(bytes: Uint8Array): CanonicalLi
   const capturesValue = mapValue(map, 4);
   if (!Array.isArray(capturesValue)) throw new TypeError("Library captures must be an array");
   const captures = capturesValue.map((entry, index): CanonicalLibraryCapture => {
-    const capture = exactMap(entry, [...Array(19).keys()], `Library Capture ${index}`);
+    const capture = exactMap(entry, [...Array(20).keys()], `Library Capture ${index}`);
     return {
       bundleId: identifierValue(mapValue(capture, 0), "Bundle"),
       descriptorObjectId: identifierValue(mapValue(capture, 1), "VaultObject"),
       assignedCollectionId: identifierValue(mapValue(capture, 2), "Collection"),
       currentCollectionId: identifierValue(mapValue(capture, 3), "Collection"),
-      registrationRecordId: identifierValue(mapValue(capture, 4), "VaultRecord"),
-      memberId: identifierValue(mapValue(capture, 5), "Member"),
-      clientCredentialId: identifierValue(mapValue(capture, 6), "ClientCredential"),
-      assertedAt: signedInteger(mapValue(capture, 7), "Registration assertedAt"),
-      capturedAt: signedInteger(mapValue(capture, 8), "Capture capturedAt"),
-      originalUrl: textValue(mapValue(capture, 9), "Capture original URL"),
-      finalUrl: textValue(mapValue(capture, 10), "Capture final URL"),
-      title: nullable(mapValue(capture, 11), (value) => textValue(value, "Capture title")),
-      profile: textValue(mapValue(capture, 12), "Capture profile"),
-      adapter: textValue(mapValue(capture, 13), "Capture adapter"),
-      artifactObjectId: identifierValue(mapValue(capture, 14), "VaultObject"),
-      artifactId: identifierValue(mapValue(capture, 15), "Artifact"),
-      artifactStorageItemId: identifierValue(mapValue(capture, 16), "StorageItem"),
-      artifactAvailableLocally: booleanValue(mapValue(capture, 17), "Artifact availability"),
-      lifecycle: oneOfCodes(mapValue(capture, 18), [1, 2] as const, "Capture lifecycle"),
+      effectiveCollectionId: identifierValue(mapValue(capture, 4), "Collection"),
+      registrationRecordId: identifierValue(mapValue(capture, 5), "VaultRecord"),
+      memberId: identifierValue(mapValue(capture, 6), "Member"),
+      clientCredentialId: identifierValue(mapValue(capture, 7), "ClientCredential"),
+      assertedAt: signedInteger(mapValue(capture, 8), "Registration assertedAt"),
+      capturedAt: signedInteger(mapValue(capture, 9), "Capture capturedAt"),
+      originalUrl: textValue(mapValue(capture, 10), "Capture original URL"),
+      finalUrl: textValue(mapValue(capture, 11), "Capture final URL"),
+      title: nullable(mapValue(capture, 12), (value) => textValue(value, "Capture title")),
+      profile: textValue(mapValue(capture, 13), "Capture profile"),
+      adapter: textValue(mapValue(capture, 14), "Capture adapter"),
+      artifactObjectId: identifierValue(mapValue(capture, 15), "VaultObject"),
+      artifactId: identifierValue(mapValue(capture, 16), "Artifact"),
+      artifactStorageItemId: identifierValue(mapValue(capture, 17), "StorageItem"),
+      artifactAvailableLocally: booleanValue(mapValue(capture, 18), "Artifact availability"),
+      lifecycle: oneOfCodes(mapValue(capture, 19), [1, 2] as const, "Capture lifecycle"),
     };
   });
   const conflictsValue = mapValue(map, 5);
@@ -604,7 +701,7 @@ export function decodeCanonicalLibraryProjection(bytes: Uint8Array): CanonicalLi
     ),
     captures,
     collections: arrayValue(mapValue(map, 6), "Library collections").map((entry, index) => {
-      const collection = exactMap(entry, [0, 1, 2, 3, 4], `Library Collection ${index}`);
+      const collection = exactMap(entry, [0, 1, 2, 3, 4, 5], `Library Collection ${index}`);
       const activeCaptureCount = signedInteger(mapValue(collection, 4), "Active Capture count");
       if (typeof activeCaptureCount !== "number" || activeCaptureCount < 0) {
         throw new TypeError("Active Capture count must be a nonnegative safe integer");
@@ -619,6 +716,9 @@ export function decodeCanonicalLibraryProjection(bytes: Uint8Array): CanonicalLi
           identifierValue(value, "Bundle"),
         ),
         activeCaptureCount,
+        redirectedTo: nullable(mapValue(collection, 5), (value) =>
+          identifierValue(value, "Collection"),
+        ),
       };
     }),
     conflicts: conflictsValue.map((entry, index) => {

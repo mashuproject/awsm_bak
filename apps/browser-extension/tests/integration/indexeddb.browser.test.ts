@@ -136,7 +136,9 @@ test("runs the canonical multi-Vault Client facade across restart", async ({ pag
     restoredLifecycle: "Active",
     moved: true,
     collectionTitle: "Reading list",
-    recordCount: 7,
+    merged: true,
+    mergeReverted: true,
+    recordCount: 9,
     restartSelected: "First",
     restartVaultCount: 2,
   });

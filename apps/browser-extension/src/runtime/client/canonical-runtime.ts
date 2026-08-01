@@ -1,4 +1,6 @@
+import { exactMap, identifierValue, mapValue } from "../../domain/canonical/schema";
 import { canonicalMap, canonicalSet } from "../../domain/canonical/value";
+import { bytesEqual } from "../../domain/hash";
 import {
   identifierFromStorageKey,
   identifierStorageKey,
@@ -43,6 +45,7 @@ export interface CanonicalClientCollection {
   readonly title: string;
   readonly tailBundleId: string | null;
   readonly activeCaptureCount: number;
+  readonly redirectedTo: string | null;
 }
 
 interface PendingVaultCreation {
@@ -155,7 +158,7 @@ export class CanonicalClientRuntime {
     const projection = await this.library.load(identifierFromStorageKey("Vault", expectedVaultId));
     return projection.captures.map((capture) => ({
       bundleId: identifierStorageKey(capture.bundleId),
-      collectionId: identifierStorageKey(capture.currentCollectionId),
+      collectionId: identifierStorageKey(capture.effectiveCollectionId),
       artifactId: identifierStorageKey(capture.artifactId),
       capturedAt: capture.capturedAt,
       originalUrl: capture.originalUrl,
@@ -176,6 +179,8 @@ export class CanonicalClientRuntime {
       tailBundleId:
         collection.tailBundleId === null ? null : identifierStorageKey(collection.tailBundleId),
       activeCaptureCount: collection.activeCaptureCount,
+      redirectedTo:
+        collection.redirectedTo === null ? null : identifierStorageKey(collection.redirectedTo),
     }));
   }
 
@@ -236,6 +241,101 @@ export class CanonicalClientRuntime {
         [0, identifierFromStorageKey("Collection", input.collectionId)],
         [1, input.title],
       ]),
+    });
+    return { eventRecordId: identifierStorageKey(outcome.eventRecordId) };
+  }
+
+  async mergeCollections(input: {
+    readonly expectedVaultId: string;
+    readonly commandId: string;
+    readonly sourceCollectionIds: readonly string[];
+    readonly destinationCollectionId: string;
+    readonly assertedAt: number | bigint;
+  }): Promise<{ readonly eventRecordId: string }> {
+    if (
+      input.sourceCollectionIds.length === 0 ||
+      new Set(input.sourceCollectionIds).size !== input.sourceCollectionIds.length ||
+      input.sourceCollectionIds.includes(input.destinationCollectionId)
+    ) {
+      throw runtimeError("CONTENT_COMMAND_INVALID", "Collection merge identities are invalid.");
+    }
+    const collections = await this.listCollections(input.expectedVaultId);
+    const known = new Set(collections.map(({ collectionId }) => collectionId));
+    if (
+      !known.has(input.destinationCollectionId) ||
+      input.sourceCollectionIds.some((collectionId) => !known.has(collectionId))
+    ) {
+      throw runtimeError("COLLECTION_NOT_FOUND", "A merged Collection is not in the Vault.");
+    }
+    const redirects = new Map(
+      collections.flatMap(({ collectionId, redirectedTo }) =>
+        redirectedTo === null ? [] : [[collectionId, redirectedTo] as const],
+      ),
+    );
+    for (const source of input.sourceCollectionIds)
+      redirects.set(source, input.destinationCollectionId);
+    for (const source of redirects.keys()) {
+      let current: string | undefined = source;
+      const seen = new Set<string>();
+      while (current !== undefined) {
+        if (seen.has(current)) {
+          throw runtimeError(
+            "COLLECTION_MERGE_CONFLICT",
+            "The Collection merge would create a cycle.",
+          );
+        }
+        seen.add(current);
+        current = redirects.get(current);
+      }
+    }
+    const outcome = await this.content.execute({
+      commandId: input.commandId,
+      vaultId: identifierFromStorageKey("Vault", input.expectedVaultId),
+      type: 8,
+      assertedAt: input.assertedAt,
+      body: canonicalMap([
+        [
+          0,
+          canonicalSet(
+            input.sourceCollectionIds.map((collectionId) =>
+              identifierFromStorageKey("Collection", collectionId),
+            ),
+          ),
+        ],
+        [1, identifierFromStorageKey("Collection", input.destinationCollectionId)],
+      ]),
+    });
+    return { eventRecordId: identifierStorageKey(outcome.eventRecordId) };
+  }
+
+  async revertCollectionMerge(input: {
+    readonly expectedVaultId: string;
+    readonly commandId: string;
+    readonly redirectCauseId: string;
+    readonly assertedAt: number | bigint;
+  }): Promise<{ readonly eventRecordId: string }> {
+    await this.assertExpectedVault(input.expectedVaultId);
+    const vaultId = identifierFromStorageKey("Vault", input.expectedVaultId);
+    const causeId = identifierFromStorageKey("VaultRecord", input.redirectCauseId);
+    const replay = await this.library.replay.replay(vaultId);
+    const target = replay.events.find((event) => bytesEqual(event.recordId, causeId));
+    if (target === undefined || target.family !== 2 || (target.type !== 8 && target.type !== 10)) {
+      throw runtimeError("CONTENT_COMMAND_INVALID", "The redirect Cause is not reversible.");
+    }
+    const alreadyReverted = replay.events.some((event) => {
+      if (event.family !== 2 || event.type !== 9) return false;
+      const body = exactMap(event.body, [0], "Collection Merge Reverted body");
+      return bytesEqual(identifierValue(mapValue(body, 0), "VaultRecord"), causeId);
+    });
+    if (alreadyReverted) {
+      throw runtimeError("CONTENT_COMMAND_INVALID", "The Collection redirect is already reverted.");
+    }
+    const outcome = await this.content.execute({
+      commandId: input.commandId,
+      vaultId,
+      type: 9,
+      assertedAt: input.assertedAt,
+      body: canonicalMap([[0, causeId]]),
     });
     return { eventRecordId: identifierStorageKey(outcome.eventRecordId) };
   }

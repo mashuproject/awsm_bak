@@ -798,6 +798,8 @@ async function canonicalClientRuntimeScenario(): Promise<unknown> {
       primary: { blob: snapshot.blob },
     });
     const initialLibrary = await runtime.listLibrary(first.vaultId);
+    const originalCollectionId = initialLibrary[0]?.collectionId;
+    if (originalCollectionId === undefined) throw new Error("Initial Collection is unavailable");
     const deleted = await runtime.deleteCaptures({
       expectedVaultId: first.vaultId,
       commandId: "facade-delete",
@@ -835,6 +837,21 @@ async function canonicalClientRuntimeScenario(): Promise<unknown> {
       assertedAt: 14,
     });
     const collections = await runtime.listCollections(first.vaultId);
+    const merge = await runtime.mergeCollections({
+      expectedVaultId: first.vaultId,
+      commandId: "facade-merge",
+      sourceCollectionIds: [destinationCollectionId],
+      destinationCollectionId: originalCollectionId,
+      assertedAt: 15,
+    });
+    const mergedLibrary = await runtime.listLibrary(first.vaultId);
+    await runtime.revertCollectionMerge({
+      expectedVaultId: first.vaultId,
+      commandId: "facade-merge-revert",
+      redirectCauseId: merge.eventRecordId,
+      assertedAt: 16,
+    });
+    const revertedMergeLibrary = await runtime.listLibrary(first.vaultId);
     const records = await storage.listBytes(
       NORMAL_STORAGE_REALM,
       NAMESPACES.vaultRecord.key,
@@ -865,6 +882,8 @@ async function canonicalClientRuntimeScenario(): Promise<unknown> {
         collectionTitle: collections.find(
           ({ collectionId }) => collectionId === destinationCollectionId,
         )?.title,
+        merged: mergedLibrary[0]?.collectionId === originalCollectionId,
+        mergeReverted: revertedMergeLibrary[0]?.collectionId === destinationCollectionId,
         recordCount: records.length,
         restartSelected: restartedState.vaults.find(({ selected }) => selected)?.label,
         restartVaultCount: restartedState.vaults.length,

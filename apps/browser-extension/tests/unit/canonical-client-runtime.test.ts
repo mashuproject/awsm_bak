@@ -154,6 +154,7 @@ describe("canonical Client Runtime", () => {
           descriptorObjectId: randomIdentifier("VaultObject"),
           assignedCollectionId: collectionId,
           currentCollectionId: collectionId,
+          effectiveCollectionId: collectionId,
           registrationRecordId: randomIdentifier("VaultRecord"),
           memberId: randomIdentifier("Member"),
           clientCredentialId: randomIdentifier("ClientCredential"),
