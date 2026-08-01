@@ -137,6 +137,43 @@ describe("canonical local Vault state", () => {
     expect(resolutions.every(({ availability }) => availability === 1)).toBe(true);
   });
 
+  it("includes prepared Fork Objects and resolutions in the one initial transaction", async () => {
+    const key = await wrappingKey();
+    const creation = await prepareCanonicalVaultCreation({ label: "Fork", assertedAt: 1 });
+    const objectId = randomIdentifier("VaultObject");
+    const storageItemId = randomIdentifier("StorageItem");
+    const vaultKey = Array.from(creation.ids.vaultId, (byte) =>
+      byte.toString(16).padStart(2, "0"),
+    ).join("");
+    const resolution = {
+      vaultId: creation.ids.vaultId,
+      kind: 3 as const,
+      logicalId: objectId,
+      storageItemId,
+      keyEpochId: creation.secrets.keyEpoch.id,
+      availability: 1 as const,
+    };
+    const prepared = await prepareCanonicalVaultStorage({
+      creation,
+      label: "Fork",
+      realm: NORMAL_STORAGE_REALM,
+      wrappingKey: key,
+      additionalImmutableItems: [
+        {
+          namespace: NAMESPACES.vaultObject.key,
+          scopeKey: vaultKey,
+          itemKey: Array.from(objectId, (byte) => byte.toString(16).padStart(2, "0")).join(""),
+          bytes: new Uint8Array([1]),
+        },
+      ],
+      additionalLogicalResolutions: [resolution],
+    });
+
+    expect(prepared.commit.immutableItems).toHaveLength(5);
+    expect(prepared.logicalResolutions).toContainEqual(resolution);
+    expect(prepared.commit.replicaSafetyItems).toHaveLength(5);
+  });
+
   it("round-trips the exact latest Vacuum Adoption boundary", async () => {
     const key = await wrappingKey();
     const creation = await prepareCanonicalVaultCreation({ label: "Vault A", assertedAt: 1 });

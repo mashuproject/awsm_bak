@@ -9,6 +9,7 @@ import { CanonicalClientRuntime } from "../../src/runtime/client/canonical-runti
 import type { CanonicalContentService } from "../../src/runtime/content/canonical-service";
 import type { CanonicalLibraryProjectionService } from "../../src/runtime/library/canonical-projection";
 import type { CanonicalSearchService } from "../../src/runtime/search/canonical-service";
+import type { CanonicalForkService } from "../../src/runtime/vault/canonical-fork-service";
 import type { CanonicalLifecycleService } from "../../src/runtime/vault/canonical-lifecycle-service";
 import type { CanonicalVaultService } from "../../src/runtime/vault/canonical-service";
 import type { CanonicalVacuumService } from "../../src/runtime/vault/canonical-vacuum-service";
@@ -62,6 +63,7 @@ function fixture() {
   const search = { load: vi.fn(), query: vi.fn() } as unknown as CanonicalSearchService;
   const lifecycle = { close: vi.fn() } as unknown as CanonicalLifecycleService;
   const vacuumService = { vacuum: vi.fn() } as unknown as CanonicalVacuumService;
+  const forkService = { begin: vi.fn(async () => ceremony) } as unknown as CanonicalForkService;
   let setup = 0;
   const runtime = new CanonicalClientRuntime(
     vaults,
@@ -76,6 +78,7 @@ function fixture() {
     search,
     lifecycle,
     vacuumService,
+    forkService,
   );
   return {
     runtime,
@@ -86,6 +89,7 @@ function fixture() {
     search,
     lifecycle,
     vacuumService,
+    forkService,
     ceremony,
     firstVaultId,
     secondVaultId,
@@ -131,6 +135,30 @@ describe("canonical Client Runtime", () => {
         recoveryPhrase: ceremony.recoveryPhrase,
       }),
     ).rejects.toMatchObject({ id: "VAULT_CREATION_NOT_FOUND" });
+  });
+
+  it("keeps Fork setup memory-only and activates its fresh Vault after phrase confirmation", async () => {
+    const { runtime, forkService, ceremony, firstVaultId, secondVaultId } = fixture();
+    const expectedVaultId = identifierStorageKey(firstVaultId);
+
+    const setup = await runtime.beginVaultFork({ expectedVaultId, assertedAt: 11 });
+    expect(setup).toEqual({ setupId: "setup-1", recoveryPhrase: ceremony.recoveryPhrase });
+    expect(forkService.begin).toHaveBeenCalledWith({
+      sourceVaultId: firstVaultId,
+      assertedAt: 11,
+    });
+    await expect(
+      runtime.confirmVaultFork({
+        setupId: setup.setupId,
+        recoveryPhrase: ceremony.recoveryPhrase,
+      }),
+    ).resolves.toEqual({ vaultId: identifierStorageKey(secondVaultId) });
+    await expect(
+      runtime.confirmVaultFork({
+        setupId: setup.setupId,
+        recoveryPhrase: ceremony.recoveryPhrase,
+      }),
+    ).rejects.toMatchObject({ id: "VAULT_FORK_NOT_FOUND" });
   });
 
   it("rejects stale selection commands before changing the selected Vault", async () => {

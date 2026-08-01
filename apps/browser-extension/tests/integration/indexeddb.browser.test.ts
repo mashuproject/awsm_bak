@@ -158,6 +158,8 @@ test("runs the canonical multi-Vault Client facade across restart", async ({ pag
     restoredNoteBody: "Revised body.",
     restartedNoteTitle: "Context",
     restartedNoteBody: "Revised body.",
+    restartedForkCaptureCount: 2,
+    restartedForkNoteBody: "Revised body.",
     searchCapture: { kind: "Capture", title: "Facade capture" },
     searchNote: { kind: "Note", title: "Context", snippet: "Revised body." },
     searchCoverage: {
@@ -175,12 +177,17 @@ test("runs the canonical multi-Vault Client facade across restart", async ({ pag
     secondVacuumAdvancedGeneration: true,
     postSecondVacuumCaptureCount: 2,
     postSecondVacuumNoteBody: "Revised body.",
+    forkRecoveryWordCount: 12,
+    forkIdentityFresh: true,
+    forkCaptureCount: 2,
+    forkNoteBody: "Revised body.",
+    sourceCaptureCountAfterFork: 2,
     closureIdempotent: true,
     closedWriteRejected: "Closed Vaults cannot author Content Events",
     restartedClosedSearchNote: { kind: "Note", title: "Context", snippet: "Revised body." },
     recordCount: 31,
     restartSelected: "First",
-    restartVaultCount: 2,
+    restartVaultCount: 3,
   });
 });
 

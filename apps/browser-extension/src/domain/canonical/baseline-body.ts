@@ -414,6 +414,12 @@ export function validateVaultBaselineBody(
   value: CanonicalValue,
   context: BaselineBodyContext,
 ): void {
+  assertRequirements(vaultBaselineDependencyRequirements(value), context.dependencies);
+}
+
+export function vaultBaselineDependencyRequirements(
+  value: CanonicalValue,
+): readonly BaselineDependencyRequirement[] {
   const body = exactMap(value, [0, 1, 2, 3, 4, 5], "Vault Baseline body");
   exactCode(mapValue(body, 0), 1, "Vault Baseline body format");
   const kind = oneOfCodes(mapValue(body, 1), [1, 2] as const, "Vault Baseline kind");
@@ -433,7 +439,7 @@ export function validateVaultBaselineBody(
   if ((kind === 1) !== (commitment === null)) {
     throw new TypeError("Baseline kind and predecessor commitment do not match");
   }
-  assertRequirements([...contentRequirements, ...authorityRequirements], context.dependencies);
+  return [...contentRequirements, ...authorityRequirements];
 }
 
 export function contentCheckpointCauseIds(

@@ -1040,15 +1040,30 @@ async function canonicalClientRuntimeScenario(): Promise<unknown> {
     });
     const postSecondVacuumLibrary = await runtime.listLibrary(first.vaultId);
     const postSecondVacuumNotes = await runtime.listNotes(first.vaultId);
+    const forkSetup = await runtime.beginVaultFork({
+      expectedVaultId: first.vaultId,
+      assertedAt: 35,
+    });
+    const fork = await runtime.confirmVaultFork({
+      setupId: forkSetup.setupId,
+      recoveryPhrase: forkSetup.recoveryPhrase,
+    });
+    const forkLibrary = await runtime.listLibrary(fork.vaultId);
+    const forkNotes = await runtime.listNotes(fork.vaultId);
+    await runtime.selectVault({
+      expectedVaultId: fork.vaultId,
+      vaultId: first.vaultId,
+    });
+    const sourceLibraryAfterFork = await runtime.listLibrary(first.vaultId);
     const closure = await runtime.closeVault({
       expectedVaultId: first.vaultId,
       commandId: "facade-close",
-      assertedAt: 35,
+      assertedAt: 36,
     });
     const repeatedClosure = await runtime.closeVault({
       expectedVaultId: first.vaultId,
       commandId: "facade-close",
-      assertedAt: 35,
+      assertedAt: 36,
     });
     let closedWriteRejected: string | undefined;
     try {
@@ -1096,6 +1111,12 @@ async function canonicalClientRuntimeScenario(): Promise<unknown> {
           tagIds: [],
         })
       ).find(({ kind }) => kind === "Note");
+      await restarted.selectVault({
+        expectedVaultId: first.vaultId,
+        vaultId: fork.vaultId,
+      });
+      const restartedForkLibrary = await restarted.listLibrary(fork.vaultId);
+      const restartedForkNotes = await restarted.listNotes(fork.vaultId);
       return {
         recoveryWordCount: secondSetup.recoveryPhrase.split(" ").length,
         selectedAfterCreate,
@@ -1136,6 +1157,8 @@ async function canonicalClientRuntimeScenario(): Promise<unknown> {
         restoredNoteBody: restoredNotes[0]?.versions[0]?.body,
         restartedNoteTitle: restartedNotes[0]?.versions[0]?.title,
         restartedNoteBody: restartedNotes[0]?.versions[0]?.body,
+        restartedForkCaptureCount: restartedForkLibrary.length,
+        restartedForkNoteBody: restartedForkNotes[0]?.versions[0]?.body,
         searchCapture:
           searchCapture === undefined
             ? undefined
@@ -1166,6 +1189,11 @@ async function canonicalClientRuntimeScenario(): Promise<unknown> {
           secondVacuum.successorGenerationId !== secondVacuum.predecessorGenerationId,
         postSecondVacuumCaptureCount: postSecondVacuumLibrary.length,
         postSecondVacuumNoteBody: postSecondVacuumNotes[0]?.versions[0]?.body,
+        forkRecoveryWordCount: forkSetup.recoveryPhrase.split(" ").length,
+        forkIdentityFresh: fork.vaultId !== first.vaultId,
+        forkCaptureCount: forkLibrary.length,
+        forkNoteBody: forkNotes[0]?.versions[0]?.body,
+        sourceCaptureCountAfterFork: sourceLibraryAfterFork.length,
         closureIdempotent: closure.eventRecordId === repeatedClosure.eventRecordId,
         closedWriteRejected,
         restartedClosedSearchNote:

@@ -16,7 +16,7 @@ import {
   sealKeyEnvelope,
 } from "../../crypto/key-envelope";
 import { readySodium } from "../../crypto/sodium";
-import { DEPENDENCY_TYPES } from "../../domain/canonical/dependencies";
+import { DEPENDENCY_TYPES, type TypedDependency } from "../../domain/canonical/dependencies";
 import { advisoryExtensions, EMPTY_REQUIRED_FEATURE_SET_ID } from "../../domain/canonical/features";
 import { type Identifier, keyEpochId, randomIdentifier } from "../../domain/canonical/identifiers";
 import {
@@ -77,6 +77,11 @@ export interface CanonicalVaultCreationDeterminism {
   readonly clientEnvelopePadding?: Uint8Array;
   readonly baselineProtectionParameters?: Uint8Array;
   readonly genesisProtectionParameters?: Uint8Array;
+}
+
+export interface CanonicalInitialContent {
+  readonly checkpoint: ReadonlyMap<number, CanonicalValue>;
+  readonly dependencies: readonly TypedDependency[];
 }
 
 function indexedMap(...values: readonly CanonicalValue[]): ReadonlyMap<number, CanonicalValue> {
@@ -155,6 +160,8 @@ function assertOpenedEnvelope(
 export async function prepareCanonicalVaultCreation(input: {
   readonly label: string | null;
   readonly assertedAt: number | bigint;
+  readonly initialContent?: CanonicalInitialContent;
+  readonly requiredFeatureSetId?: Identifier<"RequiredFeatureSet">;
   readonly deterministic?: CanonicalVaultCreationDeterminism;
 }): Promise<PreparedCanonicalVaultCreation> {
   const deterministic = input.deterministic ?? {};
@@ -227,18 +234,10 @@ export async function prepareCanonicalVaultCreation(input: {
   );
   const clientSlot = indexedMap(keyEpoch.id, 2, ids.clientCredentialId, null, clientKeyEnvelope.id);
   const labelCauses = input.label === null ? [] : canonicalSet([ids.labelCauseId]);
-  const contentCheckpoint = indexedMap(
-    1,
-    indexedMap(input.label, labelCauses),
-    [],
-    [],
-    [],
-    [],
-    [],
-    [],
-    [],
-    [],
-  );
+  const contentCheckpoint =
+    input.initialContent?.checkpoint ??
+    indexedMap(1, indexedMap(input.label, labelCauses), [], [], [], [], [], [], [], []);
+  const requiredFeatureSetId = input.requiredFeatureSetId ?? EMPTY_REQUIRED_FEATURE_SET_ID;
   const authorityCheckpoint = indexedMap(
     1,
     canonicalSet([ids.firstMemberId]),
@@ -255,10 +254,11 @@ export async function prepareCanonicalVaultCreation(input: {
     vaultId: ids.vaultId,
     generationId: ids.generationId,
     dependencies: [
+      ...(input.initialContent?.dependencies ?? []),
       { type: DEPENDENCY_TYPES.KeyEnvelope, id: recoveryKeyEnvelope.id },
       { type: DEPENDENCY_TYPES.KeyEnvelope, id: clientKeyEnvelope.id },
     ],
-    requiredFeatureSetId: EMPTY_REQUIRED_FEATURE_SET_ID,
+    requiredFeatureSetId,
     extensions: advisoryExtensions([]),
     body: indexedMap(1, 1, contentCheckpoint, authorityCheckpoint, indexedMap(1), null),
   });
@@ -271,7 +271,7 @@ export async function prepareCanonicalVaultCreation(input: {
     encodeCanonicalValue(certificate),
     encodeCanonicalValue(recoveryDescriptor),
     keyEpoch.id,
-    EMPTY_REQUIRED_FEATURE_SET_ID,
+    requiredFeatureSetId,
   ]);
   const library = await readySodium();
   const creationProof = indexedMap(
@@ -285,7 +285,7 @@ export async function prepareCanonicalVaultCreation(input: {
       parentRecordIds: [],
       authorityParentRecordIds: [],
       dependencies: [{ type: DEPENDENCY_TYPES.VaultBaseline, id: baseline.recordId }],
-      requiredFeatureSetId: EMPTY_REQUIRED_FEATURE_SET_ID,
+      requiredFeatureSetId,
       extensions: advisoryExtensions([]),
       family: 1,
       type: 1,
@@ -297,7 +297,7 @@ export async function prepareCanonicalVaultCreation(input: {
         certificate,
         recoveryDescriptor,
         keyEpoch.id,
-        EMPTY_REQUIRED_FEATURE_SET_ID,
+        requiredFeatureSetId,
         creationProof,
       ),
     },

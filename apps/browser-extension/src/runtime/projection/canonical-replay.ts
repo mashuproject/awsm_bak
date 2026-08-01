@@ -51,10 +51,8 @@ export class CanonicalReplayService {
     const genesisKey = key(vault.genesis.recordId);
     const baselineKey = key(vault.baseline.recordId);
     const adoption = vault.replicaState.adoption;
-    if (adoption !== null) {
-      const body = exactMap(vault.baseline.body, [0, 1, 2, 3, 4, 5], "Successor Baseline body");
-      graph.addBaseline(vault.baseline.recordId, contentCheckpointCauseIds(mapValue(body, 2)));
-    }
+    const body = exactMap(vault.baseline.body, [0, 1, 2, 3, 4, 5], "Accepted Baseline body");
+    graph.addBaseline(vault.baseline.recordId, contentCheckpointCauseIds(mapValue(body, 2)));
 
     const visit = async (recordId: Identifier<"VaultRecord">): Promise<void> => {
       const recordKey = key(recordId);

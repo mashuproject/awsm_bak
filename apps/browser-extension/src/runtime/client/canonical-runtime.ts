@@ -20,6 +20,7 @@ import type {
   CanonicalLibraryProjectionService,
 } from "../library/canonical-projection";
 import { type CanonicalSearchCoverage, CanonicalSearchService } from "../search/canonical-service";
+import { type CanonicalForkCeremony, CanonicalForkService } from "../vault/canonical-fork-service";
 import { CanonicalLifecycleService } from "../vault/canonical-lifecycle-service";
 import type {
   CanonicalVaultCreationCeremony,
@@ -142,6 +143,11 @@ interface PendingVaultCreation {
   readonly ceremony: CanonicalVaultCreationCeremony;
 }
 
+interface PendingVaultFork {
+  readonly expectedVaultId: string;
+  readonly ceremony: CanonicalForkCeremony;
+}
+
 function runtimeError(id: string, message: string): Error {
   return Object.assign(new Error(message), { id });
 }
@@ -192,6 +198,7 @@ function assertAcyclicFolderParents(parents: ReadonlyMap<string, string>): void 
 
 export class CanonicalClientRuntime {
   private readonly pendingVaultCreations = new Map<string, PendingVaultCreation>();
+  private readonly pendingVaultForks = new Map<string, PendingVaultFork>();
 
   constructor(
     readonly vaults: CanonicalVaultService,
@@ -213,6 +220,10 @@ export class CanonicalClientRuntime {
     ),
     readonly vacuumService: Pick<CanonicalVacuumService, "vacuum"> = new CanonicalVacuumService(
       vaults,
+    ),
+    readonly forkService: Pick<CanonicalForkService, "begin"> = new CanonicalForkService(
+      vaults,
+      captures.artifacts,
     ),
   ) {}
 
@@ -248,7 +259,7 @@ export class CanonicalClientRuntime {
       assertedAt: input.assertedAt,
     });
     const setupId = this.createSetupId();
-    if (this.pendingVaultCreations.has(setupId)) {
+    if (this.pendingVaultCreations.has(setupId) || this.pendingVaultForks.has(setupId)) {
       await ceremony.cancel();
       throw runtimeError("VAULT_CREATION_CONFLICT", "The Vault creation setup ID is not unique.");
     }
@@ -273,6 +284,44 @@ export class CanonicalClientRuntime {
   async cancelVaultCreation(setupId: string): Promise<void> {
     const pending = this.requirePendingCreation(setupId);
     this.pendingVaultCreations.delete(setupId);
+    await pending.ceremony.cancel();
+  }
+
+  async beginVaultFork(input: {
+    readonly expectedVaultId: string;
+    readonly assertedAt: number | bigint;
+  }): Promise<{ readonly setupId: string; readonly recoveryPhrase: string }> {
+    await this.assertExpectedVault(input.expectedVaultId);
+    const ceremony = await this.forkService.begin({
+      sourceVaultId: identifierFromStorageKey("Vault", input.expectedVaultId),
+      assertedAt: input.assertedAt,
+    });
+    const setupId = this.createSetupId();
+    if (this.pendingVaultCreations.has(setupId) || this.pendingVaultForks.has(setupId)) {
+      await ceremony.cancel();
+      throw runtimeError("VAULT_FORK_CONFLICT", "The Fork setup ID is not unique.");
+    }
+    this.pendingVaultForks.set(setupId, {
+      expectedVaultId: input.expectedVaultId,
+      ceremony,
+    });
+    return { setupId, recoveryPhrase: ceremony.recoveryPhrase };
+  }
+
+  async confirmVaultFork(input: {
+    readonly setupId: string;
+    readonly recoveryPhrase: string;
+  }): Promise<{ readonly vaultId: string }> {
+    const pending = this.requirePendingFork(input.setupId);
+    await this.assertExpectedVault(pending.expectedVaultId);
+    const created = await pending.ceremony.confirm(input.recoveryPhrase);
+    this.pendingVaultForks.delete(input.setupId);
+    return { vaultId: identifierStorageKey(created.vaultId) };
+  }
+
+  async cancelVaultFork(setupId: string): Promise<void> {
+    const pending = this.requirePendingFork(setupId);
+    this.pendingVaultForks.delete(setupId);
     await pending.ceremony.cancel();
   }
 
@@ -1613,6 +1662,14 @@ export class CanonicalClientRuntime {
     const pending = this.pendingVaultCreations.get(setupId);
     if (pending === undefined) {
       throw runtimeError("VAULT_CREATION_NOT_FOUND", "The Vault creation ceremony is unavailable.");
+    }
+    return pending;
+  }
+
+  private requirePendingFork(setupId: string): PendingVaultFork {
+    const pending = this.pendingVaultForks.get(setupId);
+    if (pending === undefined) {
+      throw runtimeError("VAULT_FORK_NOT_FOUND", "The Fork ceremony is unavailable.");
     }
     return pending;
   }

@@ -5,6 +5,7 @@ import { identifier, keyEpochId } from "../../src/domain/canonical/identifiers";
 import {
   COMPACT_STORAGE_CLASS,
   decodeOpaqueEnvelope,
+  decodeOpaqueEnvelopePrefix,
   encodeOpaqueEnvelope,
   encodeStreamFrame,
   FRAME_PLAINTEXT_LIMIT,
@@ -91,6 +92,30 @@ describe("opaque storage envelope", () => {
         payload: first,
       }),
     ).toThrow(/final/u);
+  });
+
+  it("validates a bounded Streamable prefix before payload frames arrive", () => {
+    const frame = encodeStreamFrame({
+      index: 0,
+      final: true,
+      ciphertext: new Uint8Array(16).fill(4),
+    });
+    const envelope = encodeOpaqueEnvelope({
+      storageClass: STREAMABLE_STORAGE_CLASS,
+      protectionParameters: new Uint8Array(64).fill(5),
+      payload: frame,
+    });
+
+    expect(decodeOpaqueEnvelopePrefix(envelope.prefixBytes)).toEqual({
+      storageClass: envelope.storageClass,
+      protectionParameters: envelope.protectionParameters,
+      ciphertextLength: envelope.ciphertextLength,
+      ciphertextDigest: envelope.ciphertextDigest,
+      framePlaintextLimit: envelope.framePlaintextLimit,
+      headerBytes: envelope.headerBytes,
+      prefixBytes: envelope.prefixBytes,
+    });
+    expect(() => decodeOpaqueEnvelopePrefix(envelope.prefixBytes.slice(0, -1))).toThrow(/length/u);
   });
 });
 

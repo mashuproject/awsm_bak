@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { openCompactItem } from "../../src/crypto/compact";
+import { contentCheckpointCauseIds } from "../../src/domain/canonical/baseline-body";
 import { DEPENDENCY_TYPES } from "../../src/domain/canonical/dependencies";
 import { advisoryExtensions } from "../../src/domain/canonical/features";
 import { type Identifier, identifier } from "../../src/domain/canonical/identifiers";
@@ -109,6 +110,15 @@ async function registrationReplay(): Promise<{
     replicaStateStorageBytes: new Uint8Array(),
   } satisfies PersistedOpenedCanonicalVault;
   const graph = new CausalGraph();
+  const baselineBody = exactMap(
+    creation.baseline.body,
+    [0, 1, 2, 3, 4, 5],
+    "fixture Baseline body",
+  );
+  graph.addBaseline(
+    creation.baseline.recordId,
+    contentCheckpointCauseIds(mapValue(baselineBody, 2)),
+  );
   graph.add(creation.genesis.recordId, []);
   graph.add(registration.recordId, registration.parentRecordIds);
   return {

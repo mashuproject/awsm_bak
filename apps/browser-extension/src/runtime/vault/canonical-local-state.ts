@@ -384,6 +384,8 @@ export async function prepareCanonicalVaultStorage(input: {
   readonly label: string | null;
   readonly realm: StorageRealm;
   readonly wrappingKey: CryptoKey;
+  readonly additionalImmutableItems?: readonly NamespaceBytes[];
+  readonly additionalLogicalResolutions?: readonly LogicalResolution[];
 }): Promise<PreparedCanonicalVaultStorage> {
   const { creation } = input;
   const { ids } = creation;
@@ -437,6 +439,7 @@ export async function prepareCanonicalVaultStorage(input: {
       keyEpochId: creation.secrets.keyEpoch.id,
       availability: 1,
     },
+    ...(input.additionalLogicalResolutions ?? []),
   ];
   const replicaStateItem = await prepareWrappedLocalStateItem({
     namespace: NAMESPACES.replicaState.key,
@@ -539,6 +542,7 @@ export async function prepareCanonicalVaultStorage(input: {
           itemKey: identifierStorageKey(creation.clientKeyEnvelope.id),
           bytes: creation.clientKeyEnvelope.envelope.bytes,
         },
+        ...(input.additionalImmutableItems ?? []),
       ],
       replicaState: replicaStateItem,
       replicaSafetyItems: resolutionItems,

@@ -275,17 +275,20 @@ function baselineContentState(replay: ReplayedCanonicalVault): {
   };
 }
 
-export function deriveVacuumContentState(
+function deriveContentState(
   replay: ReplayedCanonicalVault,
+  operation: "Vacuum" | "Fork",
 ): CanonicalVacuumContentState {
-  if (replay.vault.replicaState.lifecycle !== 1) {
+  if (operation === "Vacuum" && replay.vault.replicaState.lifecycle !== 1) {
     throw new TypeError("Closed Vaults cannot be Vacuumed");
   }
   const sourceBaseline = baselineContentState(replay);
   const baseline = sourceBaseline.state;
-  const seedCheckpointFacts = sourceBaseline.kind === 2;
+  const seedCheckpointFacts = true;
   if (baseline.activeConflicts.length > 0) {
-    throw new TypeError("Vacuum preflight requires every checkpointed Conflict to be resolved");
+    throw new TypeError(
+      `${operation} preflight requires every checkpointed Conflict to be resolved`,
+    );
   }
   const labels: {
     readonly causeId: Identifier<"VaultRecord">;
@@ -464,7 +467,7 @@ export function deriveVacuumContentState(
           !bytesEqual(candidate.assignedCollectionId, first.assignedCollectionId),
       )
     ) {
-      throw new TypeError("Vacuum preflight found a Capture identity conflict");
+      throw new TypeError(`${operation} preflight found a Capture identity conflict`);
     }
     const registration = candidates.toSorted((left, right) =>
       compareBytes(left.causeId, right.causeId),
@@ -504,7 +507,9 @@ export function deriveVacuumContentState(
     folderProjection.conflicts.length > 0 ||
     noteProjection.conflicts.length > 0
   ) {
-    throw new TypeError("Vacuum preflight requires every active Content Conflict to be resolved");
+    throw new TypeError(
+      `${operation} preflight requires every active Content Conflict to be resolved`,
+    );
   }
   const redirectDestination = (sourceId: Identifier<"Collection">): Identifier<"Collection"> => {
     const destination = redirects.edges.find((edge) => bytesEqual(edge.sourceId, sourceId));
@@ -705,6 +710,18 @@ export function deriveVacuumContentState(
     })),
     activeConflicts: [],
   };
+}
+
+export function deriveVacuumContentState(
+  replay: ReplayedCanonicalVault,
+): CanonicalVacuumContentState {
+  return deriveContentState(replay, "Vacuum");
+}
+
+export function deriveForkContentState(
+  replay: ReplayedCanonicalVault,
+): CanonicalVacuumContentState {
+  return deriveContentState(replay, "Fork");
 }
 
 function decodeAttribution(value: CanonicalValue, field: string): CanonicalCheckpointAttribution {
@@ -1247,6 +1264,7 @@ export function buildVacuumContentCheckpoint(
     readonly createCause?: (
       sourceCauseId: Identifier<"VaultRecord">,
     ) => Identifier<"BaselineCause">;
+    readonly retainDeletedCaptures?: boolean;
   } = {},
 ): BuiltVacuumContentCheckpoint {
   const causeBySource = new Map<string, CanonicalVacuumCauseMapping>();
@@ -1272,9 +1290,15 @@ export function buildVacuumContentCheckpoint(
     value === null ? null : indexedMap(value.bundleId, mapCause(value.registrationCauseId));
 
   const deletedBundles = new Set(
-    state.captures.filter(({ lifecycle }) => lifecycle === 2).map(({ bundleId }) => key(bundleId)),
+    options.retainDeletedCaptures
+      ? []
+      : state.captures
+          .filter(({ lifecycle }) => lifecycle === 2)
+          .map(({ bundleId }) => key(bundleId)),
   );
-  const retainedCaptures = state.captures.filter(({ lifecycle }) => lifecycle === 1);
+  const retainedCaptures = options.retainDeletedCaptures
+    ? state.captures
+    : state.captures.filter(({ lifecycle }) => lifecycle === 1);
   const retainedAssignments = state.tagAssignments.filter(
     ({ targetKind, targetId }) => targetKind !== 2 || !deletedBundles.has(key(targetId)),
   );
@@ -1283,7 +1307,7 @@ export function buildVacuumContentCheckpoint(
   );
   const omissions: CanonicalVacuumOmission[] = [
     ...state.captures
-      .filter(({ lifecycle }) => lifecycle === 2)
+      .filter(({ lifecycle }) => !options.retainDeletedCaptures && lifecycle === 2)
       .map(({ bundleId }) => ({ kind: 1 as const, logicalId: bundleId })),
     ...state.tagAssignments
       .filter(({ targetKind, targetId }) => targetKind === 2 && deletedBundles.has(key(targetId)))

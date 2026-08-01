@@ -249,22 +249,19 @@ export function encodeOpaqueEnvelopePrefix(input: {
   };
 }
 
-export function decodeOpaqueEnvelope(
-  bytes: Uint8Array,
-  options: { readonly compactCeiling?: number } = {},
-): OpaqueEnvelope {
+export function decodeOpaqueEnvelopePrefix(bytes: Uint8Array): OpaqueEnvelopePrefix {
   if (bytes.byteLength < OPAQUE_ENVELOPE_MAGIC.byteLength + 4 + 1) {
-    throw new TypeError("Opaque envelope is truncated");
+    throw new TypeError("Opaque envelope prefix is truncated");
   }
   if (!bytesEqual(bytes.slice(0, 8), OPAQUE_ENVELOPE_MAGIC)) {
     throw new TypeError("Opaque envelope magic is invalid");
   }
   const view = new DataView(bytes.buffer, bytes.byteOffset + 8, 4);
   const headerLength = view.getUint32(0, false);
-  if (headerLength < 1 || headerLength > 4096 || bytes.byteLength < 12 + headerLength) {
+  if (headerLength < 1 || headerLength > 4096 || bytes.byteLength !== 12 + headerLength) {
     throw new TypeError("Opaque envelope header length is invalid");
   }
-  const headerBytes = bytes.slice(12, 12 + headerLength);
+  const headerBytes = bytes.slice(12);
   const decoded = decodeCanonicalValue(headerBytes);
   if (
     !(decoded instanceof Map) ||
@@ -283,18 +280,13 @@ export function decodeOpaqueEnvelope(
   if (storageClass !== COMPACT_STORAGE_CLASS && storageClass !== STREAMABLE_STORAGE_CLASS) {
     throw new TypeError("Unknown storage class");
   }
+  if (ciphertextLength < FRAME_TAG_LENGTH) {
+    throw new TypeError("Ciphertext length is outside the accepted bounds");
+  }
   const expectedFrameLimit = storageClass === COMPACT_STORAGE_CLASS ? 0 : FRAME_PLAINTEXT_LIMIT;
-  if (framePlaintextLimit !== expectedFrameLimit)
+  if (framePlaintextLimit !== expectedFrameLimit) {
     throw new TypeError("Frame plaintext limit is invalid");
-  if (bytes.byteLength !== 12 + headerLength + ciphertextLength) {
-    throw new TypeError("Opaque envelope ciphertext length is invalid");
   }
-  const payload = bytes.slice(12 + headerLength);
-  if (!bytesEqual(sha256(payload), ciphertextDigest)) {
-    throw new TypeError("Opaque envelope ciphertext digest is invalid");
-  }
-  validatePayload(storageClass, payload, options.compactCeiling ?? PORTABLE_COMPACT_CEILING);
-  const exactBytesCopy = Uint8Array.from(bytes);
   return {
     storageClass,
     protectionParameters,
@@ -302,6 +294,37 @@ export function decodeOpaqueEnvelope(
     ciphertextDigest,
     framePlaintextLimit: expectedFrameLimit,
     headerBytes,
+    prefixBytes: Uint8Array.from(bytes),
+  };
+}
+
+export function decodeOpaqueEnvelope(
+  bytes: Uint8Array,
+  options: { readonly compactCeiling?: number } = {},
+): OpaqueEnvelope {
+  if (bytes.byteLength < OPAQUE_ENVELOPE_MAGIC.byteLength + 4 + 1) {
+    throw new TypeError("Opaque envelope is truncated");
+  }
+  if (!bytesEqual(bytes.slice(0, 8), OPAQUE_ENVELOPE_MAGIC)) {
+    throw new TypeError("Opaque envelope magic is invalid");
+  }
+  const view = new DataView(bytes.buffer, bytes.byteOffset + 8, 4);
+  const headerLength = view.getUint32(0, false);
+  if (headerLength < 1 || headerLength > 4096 || bytes.byteLength < 12 + headerLength) {
+    throw new TypeError("Opaque envelope header length is invalid");
+  }
+  const prefix = decodeOpaqueEnvelopePrefix(bytes.slice(0, 12 + headerLength));
+  if (bytes.byteLength !== 12 + headerLength + prefix.ciphertextLength) {
+    throw new TypeError("Opaque envelope ciphertext length is invalid");
+  }
+  const payload = bytes.slice(12 + headerLength);
+  if (!bytesEqual(sha256(payload), prefix.ciphertextDigest)) {
+    throw new TypeError("Opaque envelope ciphertext digest is invalid");
+  }
+  validatePayload(prefix.storageClass, payload, options.compactCeiling ?? PORTABLE_COMPACT_CEILING);
+  const exactBytesCopy = Uint8Array.from(bytes);
+  return {
+    ...prefix,
     prefixBytes: exactBytesCopy.slice(0, 12 + headerLength),
     payload,
     bytes: exactBytesCopy,

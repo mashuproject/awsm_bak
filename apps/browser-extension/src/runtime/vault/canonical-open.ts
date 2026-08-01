@@ -1,4 +1,5 @@
 import { readySodium } from "../../crypto/sodium";
+import { vaultBaselineDependencyRequirements } from "../../domain/canonical/baseline-body";
 import { DEPENDENCY_TYPES, dependencySet } from "../../domain/canonical/dependencies";
 import type { AuthenticatedVaultEvent, VaultBaseline } from "../../domain/canonical/record";
 import { verifyVaultEventSignature } from "../../domain/canonical/record";
@@ -448,7 +449,6 @@ export async function validateInitialVaultAuthority(input: {
   if (!Array.isArray(slotValues) || slotValues.length !== 2) {
     throw new TypeError("Initial authority must contain exactly two Key Envelope slots");
   }
-  const envelopeIds: Uint8Array[] = [];
   let sawClient = false;
   let sawRecovery = false;
   for (const [index, slotValue] of slotValues.entries()) {
@@ -483,14 +483,14 @@ export async function validateInitialVaultAuthority(input: {
       );
       sawClient = true;
     }
-    envelopeIds.push(identifierValue(mapValue(slot, 4), "KeyEnvelope", "Slot Key Envelope ID"));
+    identifierValue(mapValue(slot, 4), "KeyEnvelope", "Slot Key Envelope ID");
   }
   if (!sawClient || !sawRecovery) {
     throw new TypeError("Initial authority is missing a required Key Envelope slot");
   }
   sameCanonical(
     dependencySet(baseline.dependencies),
-    dependencySet(envelopeIds.map((id) => ({ type: DEPENDENCY_TYPES.KeyEnvelope, id }))),
+    dependencySet(vaultBaselineDependencyRequirements(baseline.body)),
     "Initial Baseline dependency closure",
   );
 }
