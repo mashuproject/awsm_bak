@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { validateContentEventBody } from "../../src/domain/canonical/content-bodies";
 import { randomIdentifier } from "../../src/domain/canonical/identifiers";
 import { canonicalMap, canonicalSet } from "../../src/domain/canonical/value";
 import { identifierStorageKey } from "../../src/drivers/indexeddb/canonical-database";
@@ -969,5 +970,203 @@ describe("canonical Client Runtime", () => {
     });
     expect(command?.objects).toHaveLength(1);
     expect(command?.dependencies?.[0]?.id).toEqual(command?.objects?.[0]?.objectId);
+  });
+
+  it("lists, revises, deletes, and restores a Note from exact fenced current heads", async () => {
+    const { runtime, library, content, firstVaultId } = fixture();
+    const noteId = randomIdentifier("Note");
+    const collectionId = randomIdentifier("Collection");
+    const activeCauseId = randomIdentifier("VaultRecord");
+    const deletedCauseId = randomIdentifier("VaultRecord");
+    const frontier = [randomIdentifier("VaultRecord")];
+    const eventRecordId = randomIdentifier("VaultRecord");
+    const projection = (state: 1 | 2, headCauseId: typeof activeCauseId) => ({
+      vaultId: firstVaultId,
+      generationId: randomIdentifier("Generation"),
+      frontier,
+      captures: [],
+      collections: [],
+      folders: [],
+      tags: [],
+      tagAssignments: [],
+      notes: [
+        {
+          noteId,
+          targetKind: 1 as const,
+          targetId: collectionId,
+          state,
+          versions: [
+            {
+              headCauseId,
+              contentObjectId: state === 1 ? randomIdentifier("VaultObject") : null,
+              title: state === 1 ? "Context" : null,
+              body: state === 1 ? "Original" : null,
+              bodyDialect: state === 1 ? ("awsm.note.commonmark" as const) : null,
+              originVaultId: firstVaultId,
+              memberId: randomIdentifier("Member"),
+              clientCredentialId: randomIdentifier("ClientCredential"),
+              assertedAt: 59,
+            },
+          ],
+        },
+      ],
+      conflicts: [],
+    });
+    vi.mocked(library.load).mockResolvedValue(projection(1, activeCauseId));
+    vi.mocked(content.execute).mockResolvedValue({
+      commandId: "note-command",
+      vaultId: firstVaultId,
+      generationId: randomIdentifier("Generation"),
+      eventRecordId,
+    });
+    const vaultId = identifierStorageKey(firstVaultId);
+    const clientNoteId = identifierStorageKey(noteId);
+
+    await expect(runtime.listNotes(vaultId)).resolves.toMatchObject([
+      {
+        noteId: clientNoteId,
+        targetKind: "Collection",
+        targetId: identifierStorageKey(collectionId),
+        state: "Active",
+        versions: [{ headCauseId: identifierStorageKey(activeCauseId), title: "Context" }],
+      },
+    ]);
+    await runtime.reviseNote({
+      expectedVaultId: vaultId,
+      commandId: "note-revise",
+      noteId: clientNoteId,
+      title: "Updated",
+      body: "Revised",
+      assertedAt: 60,
+    });
+    await runtime.deleteNote({
+      expectedVaultId: vaultId,
+      commandId: "note-delete",
+      noteId: clientNoteId,
+      assertedAt: 61,
+    });
+    vi.mocked(library.load).mockResolvedValue(projection(2, deletedCauseId));
+    await runtime.restoreNote({
+      expectedVaultId: vaultId,
+      commandId: "note-restore",
+      noteId: clientNoteId,
+      assertedAt: 62,
+    });
+
+    const commands = vi.mocked(content.execute).mock.calls.map(([command]) => command);
+    expect(commands.map(({ type }) => type)).toEqual([28, 29, 30]);
+    expect(commands.map(({ expectedCausalFrontier }) => expectedCausalFrontier)).toEqual([
+      frontier,
+      frontier,
+      frontier,
+    ]);
+    const revisedObjectId = commands[0]?.objects?.[0]?.objectId;
+    if (revisedObjectId === undefined) throw new Error("Revised Note Object is unavailable");
+    expect(commands[0]?.body).toEqual(
+      canonicalMap([
+        [0, noteId],
+        [1, canonicalSet([activeCauseId])],
+        [2, revisedObjectId],
+      ]),
+    );
+    expect(commands[1]?.body).toEqual(
+      canonicalMap([
+        [0, noteId],
+        [1, canonicalSet([activeCauseId])],
+      ]),
+    );
+    expect(commands[2]?.body).toEqual(
+      canonicalMap([
+        [0, noteId],
+        [1, canonicalSet([deletedCauseId])],
+      ]),
+    );
+  });
+
+  it("resolves one exact Note Conflict by retaining and splitting whole-Note content", async () => {
+    const { runtime, library, content, firstVaultId, createdNoteId } = fixture();
+    const noteId = randomIdentifier("Note");
+    const collectionId = randomIdentifier("Collection");
+    const causes = canonicalSet(Array.from({ length: 3 }, () => randomIdentifier("VaultRecord")));
+    const frontier = [randomIdentifier("VaultRecord")];
+    const eventRecordId = randomIdentifier("VaultRecord");
+    vi.mocked(library.load).mockResolvedValue({
+      vaultId: firstVaultId,
+      generationId: randomIdentifier("Generation"),
+      frontier,
+      captures: [],
+      collections: [],
+      folders: [],
+      tags: [],
+      tagAssignments: [],
+      notes: [
+        {
+          noteId,
+          targetKind: 1,
+          targetId: collectionId,
+          state: 3,
+          versions: causes.map((headCauseId, index) => ({
+            headCauseId,
+            contentObjectId: index === 2 ? null : randomIdentifier("VaultObject"),
+            title: index === 2 ? null : `Version ${index}`,
+            body: index === 2 ? null : `Body ${index}`,
+            bodyDialect: index === 2 ? null : ("awsm.note.commonmark" as const),
+            originVaultId: firstVaultId,
+            memberId: randomIdentifier("Member"),
+            clientCredentialId: randomIdentifier("ClientCredential"),
+            assertedAt: 60 + index,
+          })),
+        },
+      ],
+      conflicts: [{ kind: "Note", noteId, candidateRecordIds: causes }],
+    });
+    vi.mocked(content.execute).mockResolvedValue({
+      commandId: "note-resolve",
+      vaultId: firstVaultId,
+      generationId: randomIdentifier("Generation"),
+      eventRecordId,
+    });
+    const vaultId = identifierStorageKey(firstVaultId);
+
+    await runtime.resolveNoteConflict({
+      expectedVaultId: vaultId,
+      commandId: "note-resolve",
+      noteId: identifierStorageKey(noteId),
+      conflictingCauseIds: causes.map(identifierStorageKey),
+      retainedOriginal: { title: "Merged", body: "Merged body" },
+      splitNotes: [{ title: "Alternate", body: "Alternate body" }],
+      assertedAt: 70,
+    });
+
+    const command = vi.mocked(content.execute).mock.calls[0]?.[0];
+    expect(command).toMatchObject({
+      type: 31,
+      expectedCausalFrontier: frontier,
+      dependencies: [{ type: 6 }, { type: 6 }],
+    });
+    expect(command?.objects).toHaveLength(2);
+    const retainedObjectId = command?.objects?.[0]?.objectId;
+    const splitObjectId = command?.objects?.[1]?.objectId;
+    if (retainedObjectId === undefined || splitObjectId === undefined) {
+      throw new Error("Resolved Note Objects are unavailable");
+    }
+    expect(command?.body).toEqual(
+      canonicalMap([
+        [0, noteId],
+        [1, causes],
+        [2, retainedObjectId],
+        [
+          3,
+          [
+            canonicalMap([
+              [0, createdNoteId],
+              [1, splitObjectId],
+            ]),
+          ],
+        ],
+      ]),
+    );
+    if (command === undefined) throw new Error("Note Resolution command is unavailable");
+    expect(validateContentEventBody(command.type, command.body)).toEqual(command.dependencies);
   });
 });

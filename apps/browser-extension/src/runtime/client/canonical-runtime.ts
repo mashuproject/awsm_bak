@@ -14,7 +14,11 @@ import type {
   CanonicalCaptureService,
 } from "../capture/canonical-service";
 import { CanonicalContentService } from "../content/canonical-service";
-import type { CanonicalLibraryProjectionService } from "../library/canonical-projection";
+import type {
+  CanonicalLibraryNote,
+  CanonicalLibraryProjection,
+  CanonicalLibraryProjectionService,
+} from "../library/canonical-projection";
 import type {
   CanonicalVaultCreationCeremony,
   CanonicalVaultService,
@@ -76,6 +80,26 @@ export interface CanonicalClientTagAssignment {
   readonly targetKind: "Collection" | "Capture";
   readonly targetId: string;
   readonly active: boolean;
+}
+
+export interface CanonicalClientNoteVersion {
+  readonly headCauseId: string;
+  readonly contentObjectId: string | null;
+  readonly title: string | null;
+  readonly body: string | null;
+  readonly bodyDialect: "awsm.note.commonmark" | null;
+  readonly originVaultId: string;
+  readonly memberId: string;
+  readonly clientCredentialId: string;
+  readonly assertedAt: number | bigint;
+}
+
+export interface CanonicalClientNote {
+  readonly noteId: string;
+  readonly targetKind: "Collection" | "Capture";
+  readonly targetId: string;
+  readonly state: "Active" | "Deleted" | "Conflict";
+  readonly versions: readonly CanonicalClientNoteVersion[];
 }
 
 export type CanonicalClientLibraryConflict =
@@ -775,19 +799,7 @@ export class CanonicalClientRuntime {
     if (projection.notes.some((note) => bytesEqual(note.noteId, noteId))) {
       throw runtimeError("NOTE_ID_CONFLICT", "The generated Note ID already exists.");
     }
-    const vault = await this.vaults.openVault(vaultId);
-    const object = encodeVaultObject({
-      vaultId,
-      objectType: NOTE_CONTENT_OBJECT,
-      requiredFeatureSetId: vault.replicaState.requiredFeatureSetId,
-      body: canonicalMap([
-        [0, 1],
-        [1, input.title],
-        [2, input.body],
-        [3, "awsm.note.commonmark"],
-      ]),
-      extensions: advisoryExtensions([]),
-    });
+    const object = await this.createNoteContentObject(vaultId, input.title, input.body);
     const targetKind = input.targetKind === "Collection" ? 1 : 2;
     const outcome = await this.content.execute({
       commandId: input.commandId,
@@ -816,6 +828,177 @@ export class CanonicalClientRuntime {
     });
     return {
       noteId: identifierStorageKey(noteId),
+      eventRecordId: identifierStorageKey(outcome.eventRecordId),
+    };
+  }
+
+  async listNotes(expectedVaultId: string): Promise<readonly CanonicalClientNote[]> {
+    await this.assertExpectedVault(expectedVaultId);
+    const projection = await this.library.load(identifierFromStorageKey("Vault", expectedVaultId));
+    return projection.notes.map((note) => this.clientNote(note));
+  }
+
+  async reviseNote(input: {
+    readonly expectedVaultId: string;
+    readonly commandId: string;
+    readonly noteId: string;
+    readonly title: string | null;
+    readonly body: string;
+    readonly assertedAt: number | bigint;
+  }): Promise<{ readonly eventRecordId: string }> {
+    const { projection, note } = await this.noteCommandContext(input.expectedVaultId, input.noteId);
+    if (note.state !== 1) {
+      throw runtimeError("NOTE_NOT_ACTIVE", "Only an Active Note can be revised.");
+    }
+    const vaultId = identifierFromStorageKey("Vault", input.expectedVaultId);
+    const object = await this.createNoteContentObject(vaultId, input.title, input.body);
+    const outcome = await this.content.execute({
+      commandId: input.commandId,
+      vaultId,
+      type: 28,
+      assertedAt: input.assertedAt,
+      expectedCausalFrontier: projection.frontier,
+      body: canonicalMap([
+        [0, note.noteId],
+        [1, canonicalSet(note.versions.map(({ headCauseId }) => headCauseId))],
+        [2, object.objectId],
+      ]),
+      dependencies: [{ type: DEPENDENCY_TYPES.NoteContentObject, id: object.objectId }],
+      objects: [object],
+    });
+    return { eventRecordId: identifierStorageKey(outcome.eventRecordId) };
+  }
+
+  async deleteNote(input: {
+    readonly expectedVaultId: string;
+    readonly commandId: string;
+    readonly noteId: string;
+    readonly assertedAt: number | bigint;
+  }): Promise<{ readonly eventRecordId: string }> {
+    const { projection, note } = await this.noteCommandContext(input.expectedVaultId, input.noteId);
+    if (note.state !== 1) {
+      throw runtimeError("NOTE_NOT_ACTIVE", "Only an Active Note can be deleted.");
+    }
+    return this.executeNoteHeadEvent(input, projection.frontier, note, 29);
+  }
+
+  async restoreNote(input: {
+    readonly expectedVaultId: string;
+    readonly commandId: string;
+    readonly noteId: string;
+    readonly assertedAt: number | bigint;
+  }): Promise<{ readonly eventRecordId: string }> {
+    const { projection, note } = await this.noteCommandContext(input.expectedVaultId, input.noteId);
+    if (note.state !== 2) {
+      throw runtimeError("NOTE_NOT_DELETED", "Only a Deleted Note can be restored.");
+    }
+    return this.executeNoteHeadEvent(input, projection.frontier, note, 30);
+  }
+
+  async resolveNoteConflict(input: {
+    readonly expectedVaultId: string;
+    readonly commandId: string;
+    readonly noteId: string;
+    readonly conflictingCauseIds: readonly string[];
+    readonly retainedOriginal: { readonly title: string | null; readonly body: string } | null;
+    readonly splitNotes: readonly { readonly title: string | null; readonly body: string }[];
+    readonly assertedAt: number | bigint;
+  }): Promise<{ readonly splitNoteIds: readonly string[]; readonly eventRecordId: string }> {
+    if (
+      input.conflictingCauseIds.length < 2 ||
+      new Set(input.conflictingCauseIds).size !== input.conflictingCauseIds.length
+    ) {
+      throw runtimeError(
+        "NOTE_CONFLICT_CHANGED",
+        "Note Resolution requires every unique current conflict Cause.",
+      );
+    }
+    const { projection, note } = await this.noteCommandContext(input.expectedVaultId, input.noteId);
+    const conflict = projection.conflicts.find(
+      (candidate) =>
+        candidate.kind === "Note" && identifierStorageKey(candidate.noteId) === input.noteId,
+    );
+    if (
+      note.state !== 3 ||
+      conflict?.kind !== "Note" ||
+      !sameStringSet(
+        conflict.candidateRecordIds.map(identifierStorageKey),
+        input.conflictingCauseIds,
+      )
+    ) {
+      throw runtimeError("NOTE_CONFLICT_CHANGED", "The current Note Conflict has changed.");
+    }
+    const vaultId = identifierFromStorageKey("Vault", input.expectedVaultId);
+    const retainedObject =
+      input.retainedOriginal === null
+        ? null
+        : await this.createNoteContentObject(
+            vaultId,
+            input.retainedOriginal.title,
+            input.retainedOriginal.body,
+          );
+    const existingNoteIds = new Set(
+      projection.notes.map(({ noteId }) => identifierStorageKey(noteId)),
+    );
+    const split = [] as {
+      readonly noteId: Identifier<"Note">;
+      readonly object: Awaited<ReturnType<CanonicalClientRuntime["createNoteContentObject"]>>;
+    }[];
+    for (const content of input.splitNotes) {
+      const splitNoteId = this.createNoteId();
+      const splitKey = identifierStorageKey(splitNoteId);
+      if (
+        existingNoteIds.has(splitKey) ||
+        split.some(({ noteId }) => bytesEqual(noteId, splitNoteId))
+      ) {
+        throw runtimeError("NOTE_ID_CONFLICT", "A generated split Note ID already exists.");
+      }
+      split.push({
+        noteId: splitNoteId,
+        object: await this.createNoteContentObject(vaultId, content.title, content.body),
+      });
+    }
+    const objects = [
+      ...(retainedObject === null ? [] : [retainedObject]),
+      ...split.map(({ object }) => object),
+    ];
+    const outcome = await this.content.execute({
+      commandId: input.commandId,
+      vaultId,
+      type: 31,
+      assertedAt: input.assertedAt,
+      expectedCausalFrontier: projection.frontier,
+      body: canonicalMap([
+        [0, note.noteId],
+        [
+          1,
+          canonicalSet(
+            input.conflictingCauseIds.map((causeId) =>
+              identifierFromStorageKey("VaultRecord", causeId),
+            ),
+          ),
+        ],
+        [2, retainedObject?.objectId ?? null],
+        [
+          3,
+          canonicalSet(
+            split.map(({ noteId, object }) =>
+              canonicalMap([
+                [0, noteId],
+                [1, object.objectId],
+              ]),
+            ),
+          ),
+        ],
+      ]),
+      dependencies: objects.map(({ objectId }) => ({
+        type: DEPENDENCY_TYPES.NoteContentObject,
+        id: objectId,
+      })),
+      objects,
+    });
+    return {
+      splitNoteIds: split.map(({ noteId }) => identifierStorageKey(noteId)),
       eventRecordId: identifierStorageKey(outcome.eventRecordId),
     };
   }
@@ -1145,6 +1328,87 @@ export class CanonicalClientRuntime {
     readonly assertedAt: number | bigint;
   }): Promise<{ readonly eventRecordId: string }> {
     return this.changeCaptureLifecycle({ ...input, type: 5 });
+  }
+
+  private clientNote(note: CanonicalLibraryNote): CanonicalClientNote {
+    return {
+      noteId: identifierStorageKey(note.noteId),
+      targetKind: note.targetKind === 1 ? "Collection" : "Capture",
+      targetId: identifierStorageKey(note.targetId),
+      state: note.state === 1 ? "Active" : note.state === 2 ? "Deleted" : "Conflict",
+      versions: note.versions.map((version) => ({
+        headCauseId: identifierStorageKey(version.headCauseId),
+        contentObjectId:
+          version.contentObjectId === null ? null : identifierStorageKey(version.contentObjectId),
+        title: version.title,
+        body: version.body,
+        bodyDialect: version.bodyDialect,
+        originVaultId: identifierStorageKey(version.originVaultId),
+        memberId: identifierStorageKey(version.memberId),
+        clientCredentialId: identifierStorageKey(version.clientCredentialId),
+        assertedAt: version.assertedAt,
+      })),
+    };
+  }
+
+  private async noteCommandContext(
+    expectedVaultId: string,
+    noteId: string,
+  ): Promise<{
+    readonly projection: CanonicalLibraryProjection;
+    readonly note: CanonicalLibraryNote;
+  }> {
+    await this.assertExpectedVault(expectedVaultId);
+    const projection = await this.library.load(identifierFromStorageKey("Vault", expectedVaultId));
+    const note = projection.notes.find(
+      (candidate) => identifierStorageKey(candidate.noteId) === noteId,
+    );
+    if (note === undefined) throw runtimeError("NOTE_NOT_FOUND", "The Note is not in the Vault.");
+    return { projection, note };
+  }
+
+  private async createNoteContentObject(
+    vaultId: Identifier<"Vault">,
+    title: string | null,
+    body: string,
+  ) {
+    const vault = await this.vaults.openVault(vaultId);
+    return encodeVaultObject({
+      vaultId,
+      objectType: NOTE_CONTENT_OBJECT,
+      requiredFeatureSetId: vault.replicaState.requiredFeatureSetId,
+      body: canonicalMap([
+        [0, 1],
+        [1, title],
+        [2, body],
+        [3, "awsm.note.commonmark"],
+      ]),
+      extensions: advisoryExtensions([]),
+    });
+  }
+
+  private async executeNoteHeadEvent(
+    input: {
+      readonly expectedVaultId: string;
+      readonly commandId: string;
+      readonly assertedAt: number | bigint;
+    },
+    expectedCausalFrontier: readonly Identifier<"VaultRecord">[],
+    note: CanonicalLibraryNote,
+    type: 29 | 30,
+  ): Promise<{ readonly eventRecordId: string }> {
+    const outcome = await this.content.execute({
+      commandId: input.commandId,
+      vaultId: identifierFromStorageKey("Vault", input.expectedVaultId),
+      type,
+      assertedAt: input.assertedAt,
+      expectedCausalFrontier,
+      body: canonicalMap([
+        [0, note.noteId],
+        [1, canonicalSet(note.versions.map(({ headCauseId }) => headCauseId))],
+      ]),
+    });
+    return { eventRecordId: identifierStorageKey(outcome.eventRecordId) };
   }
 
   private async requireTag(expectedVaultId: string, tagId: string): Promise<CanonicalClientTag> {

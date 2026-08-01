@@ -943,7 +943,7 @@ async function canonicalClientRuntimeScenario(): Promise<unknown> {
     });
     const tagAssignmentsAfterRemove = await runtime.listTagAssignments(first.vaultId);
     const tags = await runtime.listTags(first.vaultId);
-    await runtime.createNote({
+    const note = await runtime.createNote({
       expectedVaultId: first.vaultId,
       commandId: "facade-note-create",
       targetKind: "Collection",
@@ -953,6 +953,29 @@ async function canonicalClientRuntimeScenario(): Promise<unknown> {
       assertedAt: 29,
     });
     const notes = (await library.load(identifierFromStorageKey("Vault", first.vaultId))).notes;
+    await runtime.reviseNote({
+      expectedVaultId: first.vaultId,
+      commandId: "facade-note-revise",
+      noteId: note.noteId,
+      title: "Context",
+      body: "Revised body.",
+      assertedAt: 30,
+    });
+    const revisedNotes = await runtime.listNotes(first.vaultId);
+    await runtime.deleteNote({
+      expectedVaultId: first.vaultId,
+      commandId: "facade-note-delete",
+      noteId: note.noteId,
+      assertedAt: 31,
+    });
+    const deletedNotes = await runtime.listNotes(first.vaultId);
+    await runtime.restoreNote({
+      expectedVaultId: first.vaultId,
+      commandId: "facade-note-restore",
+      noteId: note.noteId,
+      assertedAt: 32,
+    });
+    const restoredNotes = await runtime.listNotes(first.vaultId);
     const records = await storage.listBytes(
       NORMAL_STORAGE_REALM,
       NAMESPACES.vaultRecord.key,
@@ -1011,7 +1034,12 @@ async function canonicalClientRuntimeScenario(): Promise<unknown> {
         restartedTagName: restartedTags.find(({ tagId }) => tagId === tag.tagId)?.name,
         restartedTagAssignments: restartedTagAssignments.length,
         noteTitle: notes[0]?.versions[0]?.title,
+        revisedNoteBody: revisedNotes[0]?.versions[0]?.body,
+        deletedNoteState: deletedNotes[0]?.state,
+        restoredNoteState: restoredNotes[0]?.state,
+        restoredNoteBody: restoredNotes[0]?.versions[0]?.body,
         restartedNoteTitle: restartedNotes[0]?.versions[0]?.title,
+        restartedNoteBody: restartedNotes[0]?.versions[0]?.body,
         recordCount: records.length,
         restartSelected: restartedState.vaults.find(({ selected }) => selected)?.label,
         restartVaultCount: restartedState.vaults.length,
