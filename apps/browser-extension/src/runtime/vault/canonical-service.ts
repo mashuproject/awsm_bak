@@ -5,7 +5,6 @@ import {
   openCompactItem,
 } from "../../crypto/compact";
 import { openKeyEnvelope } from "../../crypto/key-envelope";
-import { wipe } from "../../crypto/sodium";
 import { DEPENDENCY_TYPES } from "../../domain/canonical/dependencies";
 import type { Identifier } from "../../domain/canonical/identifiers";
 import {
@@ -26,6 +25,7 @@ import { decodeOpaqueEnvelope } from "../../storage/opaque-envelope";
 import {
   type PreparedCanonicalVaultCreation,
   prepareCanonicalVaultCreation,
+  wipePreparedCanonicalVaultCreation,
 } from "./canonical-create";
 import {
   type CanonicalReplicaState,
@@ -124,20 +124,7 @@ export class CanonicalVaultCreationCeremony {
   }
 
   private async wipePreparedSecrets(): Promise<void> {
-    const { client, recovery, keyEpoch } = this.prepared.secrets;
-    await Promise.all([
-      wipe(client.signingSeed),
-      wipe(client.signingSecretKey),
-      wipe(client.wrappingPrivateKey),
-      wipe(recovery.signingSeed),
-      wipe(recovery.signingSecretKey),
-      wipe(recovery.wrappingPrivateKey),
-      wipe(keyEpoch.key),
-      wipe(this.prepared.clientKeyEnvelope.keyEpochKey),
-      wipe(this.prepared.clientKeyEnvelope.bytes),
-      wipe(this.prepared.recoveryKeyEnvelope.keyEpochKey),
-      wipe(this.prepared.recoveryKeyEnvelope.bytes),
-    ]);
+    await wipePreparedCanonicalVaultCreation(this.prepared);
   }
 }
 

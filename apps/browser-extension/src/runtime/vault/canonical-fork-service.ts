@@ -1,5 +1,4 @@
 import { normalizeRecoveryPhrase } from "../../crypto/canonical";
-import { wipe } from "../../crypto/sodium";
 import type { Identifier } from "../../domain/canonical/identifiers";
 import { artifactId, decodeVaultObject } from "../../domain/canonical/object";
 import type {
@@ -10,6 +9,7 @@ import { identifierStorageKey } from "../../drivers/indexeddb/canonical-database
 import { NAMESPACES, type StorageRealm } from "../../drivers/indexeddb/canonical-schema";
 import type { CanonicalArtifactStore } from "../artifact/canonical-store";
 import { CanonicalReplayService } from "../projection/canonical-replay";
+import { wipePreparedCanonicalVaultCreation } from "./canonical-create";
 import { type PreparedCanonicalFork, prepareCanonicalFork } from "./canonical-fork-prepare";
 import type { LogicalResolution } from "./canonical-local-state";
 import { prepareCanonicalVaultStorage } from "./canonical-local-state";
@@ -90,11 +90,13 @@ export class CanonicalForkCeremony {
       await this.wipePreparedSecrets();
       return result;
     } catch (error) {
+      this.active = false;
       await Promise.all(
         this.prepared.artifacts.map(({ representation }) =>
           representation.discard().catch(() => undefined),
         ),
       );
+      await this.wipePreparedSecrets();
       throw error;
     }
   }
@@ -115,21 +117,7 @@ export class CanonicalForkCeremony {
   }
 
   private async wipePreparedSecrets(): Promise<void> {
-    const { creation } = this.prepared;
-    const { client, recovery, keyEpoch } = creation.secrets;
-    await Promise.all([
-      wipe(client.signingSeed),
-      wipe(client.signingSecretKey),
-      wipe(client.wrappingPrivateKey),
-      wipe(recovery.signingSeed),
-      wipe(recovery.signingSecretKey),
-      wipe(recovery.wrappingPrivateKey),
-      wipe(keyEpoch.key),
-      wipe(creation.clientKeyEnvelope.keyEpochKey),
-      wipe(creation.clientKeyEnvelope.bytes),
-      wipe(creation.recoveryKeyEnvelope.keyEpochKey),
-      wipe(creation.recoveryKeyEnvelope.bytes),
-    ]);
+    await wipePreparedCanonicalVaultCreation(this.prepared.creation);
   }
 }
 

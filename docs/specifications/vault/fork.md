@@ -85,7 +85,9 @@ source Continuity Proof.
 
 The Client prepares and verifies the complete destination, atomically installs one new local
 Replica and secure secrets, then reports success. Failure before activation leaves no active
-destination and does not clean source bytes. Several independent Forks may coexist and never merge
+destination and does not clean source bytes. Cancellation and any failed activation attempt discard
+preparation-owned staging, destroy the fresh destination secrets, and consume that Prepared Data;
+retry starts a new Fork preparation. Several independent Forks may coexist and never merge
 automatically.
 
 # 7. Event Re-authoring eligibility

@@ -15,7 +15,7 @@ import {
   type SealedKeyEnvelope,
   sealKeyEnvelope,
 } from "../../crypto/key-envelope";
-import { readySodium } from "../../crypto/sodium";
+import { readySodium, wipe } from "../../crypto/sodium";
 import { DEPENDENCY_TYPES, type TypedDependency } from "../../domain/canonical/dependencies";
 import { advisoryExtensions, EMPTY_REQUIRED_FEATURE_SET_ID } from "../../domain/canonical/features";
 import { type Identifier, keyEpochId, randomIdentifier } from "../../domain/canonical/identifiers";
@@ -65,6 +65,25 @@ export interface PreparedCanonicalVaultCreation {
   readonly genesis: AuthenticatedVaultEvent;
   readonly baselineEnvelope: OpaqueEnvelope;
   readonly genesisEnvelope: OpaqueEnvelope;
+}
+
+export async function wipePreparedCanonicalVaultCreation(
+  prepared: PreparedCanonicalVaultCreation,
+): Promise<void> {
+  const { client, recovery, keyEpoch } = prepared.secrets;
+  await Promise.all([
+    wipe(client.signingSeed),
+    wipe(client.signingSecretKey),
+    wipe(client.wrappingPrivateKey),
+    wipe(recovery.signingSeed),
+    wipe(recovery.signingSecretKey),
+    wipe(recovery.wrappingPrivateKey),
+    wipe(keyEpoch.key),
+    wipe(prepared.clientKeyEnvelope.keyEpochKey),
+    wipe(prepared.clientKeyEnvelope.bytes),
+    wipe(prepared.recoveryKeyEnvelope.keyEpochKey),
+    wipe(prepared.recoveryKeyEnvelope.bytes),
+  ]);
 }
 
 export interface CanonicalVaultCreationDeterminism {

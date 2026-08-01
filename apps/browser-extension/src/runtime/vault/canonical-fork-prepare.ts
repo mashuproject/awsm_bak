@@ -1,4 +1,5 @@
 import { sealCompactItem } from "../../crypto/compact";
+import { EMPTY_REQUIRED_FEATURE_SET_ID } from "../../domain/canonical/features";
 import { type Identifier, randomIdentifier } from "../../domain/canonical/identifiers";
 import {
   ARTIFACT_OBJECT,
@@ -17,6 +18,7 @@ import type { ReplayedCanonicalVault } from "../projection/canonical-replay";
 import {
   type PreparedCanonicalVaultCreation,
   prepareCanonicalVaultCreation,
+  wipePreparedCanonicalVaultCreation,
 } from "./canonical-create";
 import {
   type BuiltForkContentCheckpoint,
@@ -70,6 +72,11 @@ export async function prepareCanonicalFork(input: {
   ) => Promise<LogicalResolution>;
   readonly destinationVaultId?: Identifier<"Vault">;
 }): Promise<PreparedCanonicalFork> {
+  if (
+    !bytesEqual(input.replay.vault.replicaState.requiredFeatureSetId, EMPTY_REQUIRED_FEATURE_SET_ID)
+  ) {
+    throw new TypeError("Fork source Required Feature Set Manifest closure is unavailable");
+  }
   const state = deriveForkContentState(input.replay);
   const destinationVaultId = input.destinationVaultId ?? randomIdentifier("Vault");
   if (bytesEqual(destinationVaultId, input.replay.vault.replicaState.vaultId)) {
@@ -164,23 +171,23 @@ export async function prepareCanonicalFork(input: {
     requiredFeatureSetId: input.replay.vault.replicaState.requiredFeatureSetId,
     deterministic: { ids: { vaultId: destinationVaultId } },
   });
-  const objects = await Promise.all(
-    rebuiltPairs.map(
-      async ({ source, destination }): Promise<PreparedCanonicalForkObject> => ({
-        source,
-        destination,
-        envelope: await sealCompactItem({
-          vaultId: destinationVaultId,
-          keyEpochId: creation.secrets.keyEpoch.id,
-          keyEpochKey: creation.secrets.keyEpoch.key,
-          payloadType: 2,
-          payloadBytes: destination.bytes,
-        }),
-      }),
-    ),
-  );
   const artifacts: PreparedCanonicalForkArtifact[] = [];
   try {
+    const objects = await Promise.all(
+      rebuiltPairs.map(
+        async ({ source, destination }): Promise<PreparedCanonicalForkObject> => ({
+          source,
+          destination,
+          envelope: await sealCompactItem({
+            vaultId: destinationVaultId,
+            keyEpochId: creation.secrets.keyEpoch.id,
+            keyEpochKey: creation.secrets.keyEpoch.key,
+            payloadType: 2,
+            payloadBytes: destination.bytes,
+          }),
+        }),
+      ),
+    );
     for (const sourceObject of artifactObjects) {
       const destinationObject = rebuiltPairs.find(
         ({ source }) => source === sourceObject,
@@ -213,17 +220,20 @@ export async function prepareCanonicalFork(input: {
         }),
       });
     }
+    return {
+      sourceVaultId: input.replay.vault.replicaState.vaultId,
+      sourceGenerationId: input.replay.vault.replicaState.generationId,
+      sourceFrontier: input.replay.vault.replicaState.causalFrontier,
+      content,
+      creation,
+      objects,
+      artifacts,
+    };
   } catch (error) {
-    await Promise.all(artifacts.map(({ representation }) => representation.discard()));
+    await Promise.all(
+      artifacts.map(({ representation }) => representation.discard().catch(() => undefined)),
+    );
+    await wipePreparedCanonicalVaultCreation(creation);
     throw error;
   }
-  return {
-    sourceVaultId: input.replay.vault.replicaState.vaultId,
-    sourceGenerationId: input.replay.vault.replicaState.generationId,
-    sourceFrontier: input.replay.vault.replicaState.causalFrontier,
-    content,
-    creation,
-    objects,
-    artifacts,
-  };
 }
