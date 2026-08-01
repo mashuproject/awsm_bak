@@ -1,450 +1,73 @@
-# Event Model
+# Vault Record and Event Model
 
-**Document:** `architecture/09-event-model.md`
-
-**Status:** Draft
-
-**Owner:** Engineering
+**Status:** Draft target architecture
 
 **Depends On:**
 
-- architecture/02-domain-model.md
-- architecture/08-synchronization.md
-
----
+- `docs/architecture/08-synchronization.md`
+- `docs/specifications/event/event-format.md`
 
 # Purpose
 
-This document defines the Event Model used throughout Archive Platform.
+AWSM has one authenticated hash-linked Vault Record DAG. Events are signed facts; Baselines are
+authenticated state roots. Separate content, authority, or lifecycle logs do not exist.
 
-Events are the authoritative representation of all state changes within a Vault.
+# Record graph
 
-Bundles preserve immutable content.
+```text
+Baseline root
+  -> Event A -> Event C
+  -> Event B -/
 
-Events preserve immutable history.
-
-Together they define the complete state of a Vault.
-
----
-
-# Philosophy
-
-The platform follows an append-only architecture.
-
-Mutable state is never synchronized.
-
-Instead, clients synchronize immutable Events.
-
-Local state is reconstructed by replaying those Events.
-
----
-
-# Commands vs Events
-
-A Command expresses intent.
-
-An Event records something that has already happened.
-
-```
-RenameArchiveCommand
-
-↓
-
-Validation
-
-↓
-
-ArchiveRenamedEvent
+Record parents: causal observations
+Typed dependencies: Objects and other immutable data required by a Record
 ```
 
-Commands never leave the originating client.
+Only Events and Baselines are causal Record nodes. Bundle Descriptors, Artifact Objects, Note
+Content Objects, Key Envelopes, and Feature Manifests are typed dependencies.
 
-Only Events synchronize.
+# Event families
 
----
+- **Content:** Vault label, Captures, Collections, Folders, Tags, and Notes.
+- **Authority:** Genesis, membership, administration, Invitations, Credentials, Key Epochs, and
+  Required Features.
+- **Lifecycle:** Vacuum and Closure.
 
-# Event Lifecycle
+Every Event names the author's complete authenticated accepted Frontier, exact dependencies,
+Required Feature Set, signing Client Credential, asserted timestamp, body, and signature.
 
-```
-User Action
+Every Event also names a complete Authority Parent Frontier containing the maximal Genesis,
+Authority, and Lifecycle Events in its accepted ancestry. This authenticated subgraph of the same
+Record set drives authorization and survives as the Continuity Proof across Vacuum; Content Events
+do not advance it.
 
-↓
+When predecessor Content history is removed, a Baseline assigns fresh Cause IDs to retained Content
+facts. Later remove, revert, supersession, and resolution Events can name those facts without making
+discarded Content Records parents or dependencies. Descendant Content Event Record IDs act as the
+Cause IDs of their facts. Authority and Lifecycle Record IDs remain exact in the Continuity Proof.
 
-Command
+# Time and causality
 
-↓
+Parent ancestry is the source of causality. `assertedAt` and Capture time remain useful signed audit
+and provenance data but never grant authority, resolve conflicts, expire invitations, or select a
+winner. Deterministic Record ID ordering is used only for reducer classes that explicitly permit a
+non-semantic tie break.
 
-Validation
+# Conflict behavior
 
-↓
+Additive immutability does not eliminate semantic conflict: concurrent authority changes, Note
+revisions, merges, or Folder placements may be individually valid yet incompatible together.
+Reducers preserve all heads and either compose, select under an approved deterministic rule, or
+create a scoped Conflict requiring an authorized resolution descendant.
 
-Event
+# Evolution
 
-↓
-
-Append Local Event Log
-
-↓
-
-Upload Event
-
-↓
-
-Other Devices
-
-↓
-
-Replay
-```
-
-Events are immutable.
-
----
-
-# Event Properties
-
-Every Event contains:
-
-- Event ID
-- Vault ID
-- Event Type
-- Device ID
-- Timestamp
-- Parent Event (optional)
-- Event Version
-- Encrypted Payload
-- Signature
-
----
-
-# Event Categories
-
-## Archive Events
-
-Create Archive
-
-Rename Archive
-
-Delete Archive
-
-Restore Archive
-
----
-
-## Bundle Events
-
-Bundle Registered
-
-Bundle Imported
-
-Bundle Removed
-
-`BundleRegistered` is the canonical first-slice Event name. It records that an exact immutable
-Bundle Descriptor and Artifact Object closure was accepted into Vault history. Host-level capture
-completion is operational state and does not introduce a separate synchronized Event.
-
-`BundleRegistered` also records the Capture's initial assigned Collection identity. `CollectionsMerged` records stable identity redirects, `CapturesMoved` records exact assignment changes, and `CollectionMergeReverted` deactivates a named merge fact. These Events preserve user-directed grouping without mutating Bundles or earlier Events.
-
----
-
-## Folder Events
-
-Folder Created
-
-Folder Renamed
-
-Folder Deleted
-
-Bundle Moved
-
-Bundle Removed From Folder
-
----
-
-## Note Events
-
-Note Created
-
-Note Updated
-
-Note Deleted
-
----
-
-## Tag Events
-
-Tag Added
-
-Tag Removed
-
-Tag Renamed
-
----
-
-## Vault Events
-
-Vault Created
-
-Vault Renamed
-
-Vault Shared
-
-Vault Root Key Rotated
-
-Vault Deleted
-
----
-
-## Device Events
-
-Device Added
-
-Device Revoked
-
-Device Trusted
-
-Device Removed
-
----
-
-## AI Events
-
-Artifact Generated
-
-Artifact Removed
-
-Artifact Regenerated
-
----
-
-# Event Payload
-
-The Coordination Server treats the payload as opaque.
-
-Only trusted clients interpret it.
-
-Example:
-
-```
-ArchiveRenamedEvent
-
-↓
-
-Encrypted Payload
-
-old name
-
-new name
-```
-
----
-
-# Event Versioning
-
-Every Event Type has its own schema version.
-
-Clients reject fields outside the canonical Event specification.
-
-Unknown Event Types must be preserved.
-
----
-
-# Event Ordering
-
-Events are totally ordered within a Vault.
-
-Replay order must be deterministic.
-
-Clients should never reorder Events.
-
----
-
-# Event Replay
-
-The runtime rebuilds state entirely from replay.
-
-```
-Vault Created
-
-↓
-
-Archive Created
-
-↓
-
-Bundle Registered
-
-↓
-
-Tag Added
-
-↓
-
-Archive Renamed
-
-↓
-
-Note Added
-```
-
-The resulting state is deterministic.
-
----
-
-# Materialized Views
-
-The runtime maintains local projections.
-
-Examples:
-
-Archive List
-
-Search Projection Materialization
-
-Folder Tree
-
-Tag Index
-
-Timeline
-
-These are caches.
-
-They are never synchronized.
-
-They may be rebuilt at any time.
-
----
-
-# Event Validation
-
-Before appending an Event:
-
-- schema valid
-- permissions valid
-- signature valid
-- dependencies satisfied
-
-Invalid Events are rejected locally.
-
----
-
-# Idempotency
-
-Applying the same Event twice produces the same result as applying it once.
-
-Clients must ignore duplicate Event IDs.
-
----
-
-# Event Dependencies
-
-Some Events depend upon earlier Events.
-
-Example:
-
-```
-Archive Created
-
-↓
-
-Bundle Registered
-```
-
-Dependencies prevent impossible histories.
-
----
-
-# Event Immutability
-
-Events are never edited.
-
-Corrections generate new Events.
-
-Example:
-
-```
-Rename A
-
-↓
-
-Rename B
-```
-
-Never:
-
-```
-Edit Event
-```
-
----
-
-# Event Log
-
-Every Vault owns exactly one append-only Event Log.
-
-```
-Vault
-
-↓
-
-Event Log
-
-↓
-
-Replay
-
-↓
-
-Materialized Views
-```
-
-The Event Log is authoritative.
-
----
-
-# Design Decisions
-
-## Why Commands?
-
-Commands separate user intent from recorded history.
-
----
-
-## Why Replay?
-
-Replay enables debugging, auditing, and deterministic reconstruction.
-
----
-
-## Why Materialized Views?
-
-Views optimize performance while remaining disposable.
-
----
-
-## Why Immutable Events?
-
-Immutable history simplifies synchronization and conflict resolution.
-
----
-
-# Future Extensions
-
-Future Event Types may support:
-
-- comments
-- annotations
-- citations
-- OCR improvements
-- AI workflows
-- plugins
-
-Clients should safely reject unknown Events.
-
----
+Required Vault Features define new authoritative types, reducers, codecs, Baseline state, and
+reachability. An older client stops before the unsupported Event rather than partially receiving or
+writing through it. Advisory Extensions are authenticated but cannot alter required semantics.
 
 # References
 
-- `docs/architecture/10-projection-engine.md`
-- `docs/architecture/11-search.md`
-- `docs/architecture/12-processing-pipeline.md`
+- `docs/specifications/event/event.md`
+- `docs/specifications/event/reducers.md`
+- `docs/specifications/vault/authority.md`

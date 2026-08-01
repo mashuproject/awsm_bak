@@ -1,209 +1,80 @@
 # Zero-Knowledge Architecture
 
-**Document:** `docs/architecture/03-zero-knowledge.md`
-
-**Status:** Draft
-
-**Owner:** Architecture
+**Status:** Draft target architecture
 
 **Depends On:**
 
-- `docs/architecture/00-design-principles.md`
 - `docs/architecture/01-system-overview.md`
-- `docs/architecture/02-domain-model.md`
-- `docs/architecture/glossary.md`
-
----
+- `docs/architecture/04-security-model.md`
 
 # Purpose
 
-This document defines the zero-knowledge boundary for Archive Platform.
+AWSM's default remote-storage boundary is opaque: a Replica Host can authenticate access, enforce
+its own policy, and store or transfer bytes without Vault plaintext or semantic identifiers.
 
-Zero knowledge means the Coordination Server and storage providers can coordinate synchronization, authentication, authorization, billing, and operations without access to plaintext Vault contents or the keys required to decrypt them.
-
----
-
-# Trust Boundary
+# Boundary
 
 ```text
-Plaintext Vault data
-
-↓
-
-Trusted Host + Runtime
-
-↓
-
-Encryption boundary
-
-↓
-
-Encrypted Objects, Events, and wrapped keys
-
-↓
-
-Coordination Server and Object Storage
+trusted Client Runtime
+  plaintext, private keys, Vault IDs, Records, Objects, search
+                         |
+                  randomized encryption
+                         |
+opaque Replica Host
+  Account/session, local Replica handle, Grants, opaque item IDs,
+  byte lengths, storage class, quota, cursors, operational state
 ```
 
-Plaintext exists only inside trusted client environments.
+The Host does not require portable Vault ID, Generation, member, Credential, Record kind, Event
+type, parents, dependencies, Key Epoch, title, URL, search term, or plaintext digest. The Client
+privately reconstructs all protected relationships after retrieval.
 
----
+# Necessary leakage
 
-# Trusted Components
+An opaque Host observes Channel identity, request timing, Hosted Replica association, opaque item
+equality for byte-identical envelopes, item class and length, inventory growth, ranges, quota use,
+and network metadata. Randomized per-destination rewrapping prevents logical equality from being
+inherent across Hosts; copying exact outer bytes deliberately retains correlation.
 
-Trusted components include:
+Padding, batching, traffic shaping, private information retrieval, and stronger metadata
+obscuring are future candidates. AWSM does not describe the base design as hiding access patterns
+or traffic volume.
 
-- Runtime
-- Host integrations that expose platform capabilities
-- Storage Service while operating on local encrypted Objects
-- Capture, Search, AI, Projection, Event, Synchronization, and Trust Services running inside the trusted Runtime
+# Accounts and credentials
 
-Trusted components may access plaintext only when the active Vault is unlocked.
+The reference Host may receive a username and password over TLS and store a password verifier,
+sessions, and Replica Access Grants. It has no email requirement. These values authorize a Channel,
+not decryption. Recovery Phrases, Client Credential private keys, Key Epoch Keys, and plaintext
+never reach an opaque Host.
 
----
+# Remote processing exception
 
-# Untrusted Components
+Local search and AI preserve the default boundary. Sending plaintext to a remote model or embedding
+provider is a separate explicit disclosure and permission choice. It does not weaken opaque Vault
+storage, but that particular processing is not zero knowledge.
 
-Untrusted components include:
+# Recovery discovery
 
-- Coordination Server
-- PostgreSQL or other server metadata stores
-- Object storage providers
-- Redis, queues, logs, metrics, and observability infrastructure
-- CDNs and reverse proxies
+Recovery may privately scan bounded pages of authorized Compact opaque items and attempt HPKE
+opening locally. The Host learns the same inventory reads it would for synchronization but not
+which item, Vault, member, or Epoch matched. An optional encrypted local bootstrap catalog is only
+a disposable optimization.
 
-These components must operate on ciphertext, opaque identifiers, wrapped keys, protocol messages, and coordination metadata only.
-
----
-
-# Server-Visible Data
-
-The Coordination Server may store or observe:
-
-- Account and Vault operational identifiers;
-- broad Object type, ciphertext length, ciphertext SHA-256, and encrypted Object ID;
-- Event ordering timestamp and exact declared dependency Object IDs;
-- Vault Generation identity, number, predecessor, complete retained membership, and recovery deadline;
-- upload, ticket-digest, idempotency, Delivery Cursor, and Purge Job state; and
-- safe operational counters and outcomes.
-
-The reference ephemeral-coordination adapter stores a namespaced Cable-ticket SHA-256 key, its
-Account UUID value, and a TTL in Redis. Redis also observes content-free Action Cable channel
-names and `{vaultId, latestCursor}` wake-up payloads. It receives no raw Cable ticket, Vault
-plaintext, ciphertext payload, key material, URL, title, or semantic metadata.
-
-Complete retained membership leaks encrypted graph shape and recovery size. This bounded leak is
-accepted to prevent unsafe remote deletion. Production promotion requires an explicit traffic-analysis
-and metadata-budget review.
-
-This data exists to coordinate replicas. It must not be sufficient to reconstruct Vault contents.
-
----
-
-# Server-Hidden Data
-
-The server must not receive:
-
-- plaintext Bundle contents
-- plaintext Artifact payloads
-- plaintext Event payloads that reveal Vault semantics
-- Vault Root Keys or unwrapped subordinate keys
-- Search Projection Materializations
-- AI prompts, summaries, embeddings, OCR, notes, tags, or titles in plaintext
-- decrypted archive rendering data
-
----
-
-# Client Responsibilities
-
-The Runtime is responsible for:
-
-- decrypting Vault data after local authorization
-- creating Bundles
-- creating and validating Events
-- encrypting Objects before synchronization
-- wrapping keys for trusted devices
-- rebuilding Projections and Search Projection Materializations locally
-- executing AI processing locally unless the user explicitly enables a remote provider
-
----
-
-# Server Responsibilities
-
-The Coordination Server is responsible for Rails username/password Account authentication, one-Vault
-Account authorization, certified Device authorization, opaque Recovery Kits and Device key
-envelopes, opaque byte durability, exact declared Event closure publication, independent per-Vault
-Delivery Cursors, Generation and Key Epoch fencing, explicit recovery retention, safe purge, and
-advisory notifications. It receives the Account password over TLS but never a Recovery Phrase,
-unwrapped Vault key, Device secret, or email address. Quotas, abuse controls, and shared Vault authority remain
-deferred.
-
-The server never reconstructs Vault state from plaintext. It may validate protocol structure, signatures, permissions, quotas, and object integrity metadata.
-
----
-
-# Metadata Policy
-
-Metadata is classified by necessity.
-
-Operational metadata may remain plaintext when required for coordination:
-
-- Vault ID
-- Device ID
-- protocol version
-- Object Identifier
-- Object Type
-- object size
-- Delivery Cursor
-
-User-visible metadata must be encrypted before synchronization:
-
-- titles
-- URLs where not required for transport or explicit user-visible sharing
-- notes
-- tags
-- summaries
-- extracted text
-- OCR
-- embeddings
-- folder names
-
-When uncertain, metadata is treated as private.
-
----
-
-# AI and Remote Providers
-
-AI is a trusted Runtime capability by default.
-
-Remote AI providers are incompatible with zero knowledge unless the user explicitly opts in for a specific provider, capability, and scope. Opt-in remote processing is an exception to the default trust boundary and must be visible to the user.
-
-Remote provider outputs that become part of the Vault are stored as encrypted Artifacts and recorded by Events.
-
----
-
-# Device Trust
-
-Access to a Vault is granted by wrapping Vault key material for trusted devices.
-
-The server may store wrapped keys but cannot unwrap them. Revocation prevents a device from receiving future wrapped keys or synchronization updates, but it cannot erase data already synchronized to that device.
-
----
+An opened candidate remains untrusted until the Client verifies the Continuity Proof, matching
+Recovery Credential, Authority State, expected Epoch inventory, current Record and dependency
+closure, and selected Frontier. Decryption alone never authenticates a Host-provided post-Vacuum
+Baseline.
 
 # Invariants
 
-- Plaintext does not leave trusted client environments by default.
-- The Coordination Server never possesses unwrapped Vault keys.
-- Search, AI, rendering, and Projection rebuilding do not require backend plaintext access.
-- Synchronization operates on encrypted Objects, encrypted Event payloads, wrapped keys, and coordination metadata.
-- Operational metadata is minimized and never treated as authoritative Vault content.
-
----
+- Semantic validation and authorization occur in trusted Clients.
+- Host policy never becomes portable Vault truth.
+- Logs and diagnostics do not disclose protected guesses or inventories.
+- Zero knowledge is not a claim of anonymity or traffic-analysis resistance.
+- Public claims follow deployed and tested behavior, not this target alone.
 
 # References
 
-- `docs/architecture/04-security-model.md`
-- `docs/architecture/14-trust-and-device-management.md`
-- `docs/architecture/18-cryptography.md`
-- `docs/specifications/crypto/crypto.md`
+- `docs/specifications/storage/opaque-envelope.md`
 - `docs/specifications/protocol/protocol.md`
+- `docs/specifications/vault/replica.md`

@@ -33,20 +33,53 @@ AWSM (Archive What Should Matter) is a local-first, zero-knowledge knowledge pre
 
 Use this precedence when editing or reviewing:
 
-1. `00-design-principles.md` for architectural constraints and `glossary.md` for terminology.
+1. `docs/architecture/00-design-principles.md` for architectural constraints and
+   `docs/architecture/glossary.md` for terminology.
 2. The formal specification that owns the affected format, protocol, or runtime contract.
 3. Draft architecture documents for intent, decomposition, and trade-offs.
 4. The draft PRD, vision, and README for scope and context.
 
-No universal tie-break exists between conflicting formal specifications. Treat such conflicts as design issues and update all affected documents together. Verify claims in `consistency-review.md`; its status is `Review Record`.
+No universal tie-break exists between conflicting formal specifications. Treat such conflicts as
+design issues and update all affected documents together. Verify claims in
+`docs/architecture/consistency-review.md`; it is a review record, not authority.
 
-Explicitly approved plans supersede stale Draft documentation; reconcile every affected document.
+Current explicit user decisions govern until they are reconciled into the living documentation. An
+explicitly approved active plan is the temporary execution authority for the scope it owns and may
+supersede conflicting living Draft documentation while it drives that reconciliation. The plan
+must update every affected living document before its work is complete.
+
+## LIVING DOCUMENTS AND HISTORICAL PLANS
+
+- Product, design-principle, glossary, architecture, and formal specification documents are
+  evergreen living documents. They must describe the current canonical direction rather than the
+  state that happened to exist when they were first written.
+- An explicitly approved active plan may temporarily contain the most current contract for its
+  owned scope. Follow it during execution and reconcile that contract into every affected living
+  document.
+- A plan becomes historical when it is completed, superseded, or abandoned. Use historical plans as
+  evidence about prior intent, implementation hazards, test coverage, and why a choice was made,
+  but do not treat them as current product or architectural authority when living documents or
+  later user decisions diverge.
+- Do not preserve a superseded contract in living documentation merely because an old plan
+  implemented or described it. Apply the current direction and the pre-release compatibility policy
+  literally.
+- When an active plan resolves a current design question, identify and update every affected living
+  document as part of that work. Its temporary authority ends with reconciliation; the plan does
+  not remain a competing canonical source afterward.
+- When inspection finds that living documents diverge from the current direction, update them in
+  the same task when that reconciliation is in scope. If immediate reconciliation would materially
+  expand the authorized task, record an explicit follow-up plan or Roadmap item that names the
+  affected documents and discrepancy; do not silently treat the stale text as canonical.
+- Historical plans may remain unchanged. Do not continually rewrite them to imitate living
+  documentation, and do not cite their stale contracts as evidence of current behavior.
 
 ## DOCUMENTATION COMPLETION POLICY
 
-- A task is not complete until every related document reflects the resulting canonical behavior.
-  Follow the change through product documentation, architecture, formal specifications, plans,
-  testing guidance, operations, examples, and other affected prose rather than updating code alone.
+- A task is not complete until every related living document reflects the resulting canonical
+  behavior. Follow the change through product documentation, architecture, formal specifications,
+  testing guidance, operations, examples, and other affected prose rather than updating code
+  alone. Update the active plan as its execution contract requires, but do not rewrite unrelated
+  historical plans merely to make them current.
 - At task completion, audit `ROADMAP.md` for the corresponding work. Remove an entry when its work
   is fully implemented. When only part of an entry is complete, rewrite it to describe only the
   unresolved future work and remove the implemented details.
@@ -87,21 +120,29 @@ Explicitly approved plans supersede stale Draft documentation; reconcile every a
 
 ## CORE MODEL
 
-| Concept             | Role                                                          |
-| ------------------- | ------------------------------------------------------------- |
-| Vault               | Ownership and cryptographic boundary                          |
-| Object              | Immutable authoritative persistence record                    |
-| Bundle              | Immutable capture package represented by Object semantics     |
-| Event               | Immutable history used to derive logical state                |
-| Projection          | Rebuildable logical derived state                             |
-| Materialization     | Stored/indexed representation of a Projection                 |
-| Runtime             | Platform-independent client business logic                    |
-| Host                | Platform integration; contains no business logic              |
-| Coordination Server | Synchronizes opaque encrypted data; never understands content |
+| Concept            | Role                                                                       |
+| ------------------ | -------------------------------------------------------------------------- |
+| Vault              | Logical encrypted body of authoritative Records and Objects                |
+| Vault Record       | Immutable content-addressed Baseline or signed Event DAG node              |
+| Vault Object       | Immutable typed protected content outside causal history                   |
+| Bundle             | Immutable Capture package represented through Vault Objects                |
+| Replica            | One materialization of a Vault; complete, sparse, stale, or converged      |
+| Event              | Immutable signed accepted fact authored by one Client Credential           |
+| Baseline           | Authenticated state root for one Vault Generation                          |
+| Authority Frontier | Signed Authority/Lifecycle subgraph used for authorization                 |
+| Continuity Proof   | Retained authority subgraph authenticating post-Vacuum Recovery            |
+| Projection         | Rebuildable logical derived state                                          |
+| Materialization    | Stored or indexed representation of a Projection                           |
+| Runtime            | Platform-independent trusted client business logic                         |
+| Host               | Platform integration; contains no business logic                           |
+| Replica Host       | Storage/channel role authoritative only for Host policy and admitted bytes |
+| Account            | Optional Host-local Channel Principal; never portable Vault authority      |
+| Client Credential  | Vault-scoped Event authorship and Key Epoch delivery authority             |
 
 ## CONVENTIONS
 
-- Preserve exact canonical capitalization from the glossary: Vault, Bundle, Object, Manifest, Runtime, Host, Service, Projection, Materialization.
+- Preserve exact canonical capitalization from `docs/architecture/glossary.md`; do not infer an
+  authority identity from ordinary lower-case descriptions of physical devices or servers.
 - Keep architecture technology-independent. Chrome, Firefox, OPFS, IndexedDB, SQLite, Rails, and provider names are implementations or adapters, not architectural abstractions.
 - Add explicit format versions only to self-describing persisted or externally exchanged structures whose owning specification requires them. Do not version transient state or use successor numbering that exposes discarded pre-release designs.
 - Use Commands for requested actions and Events for accepted facts. Commands are local and never synchronized.
@@ -173,7 +214,8 @@ Explicitly approved plans supersede stale Draft documentation; reconcile every a
 - Never conflate Backup with Export, Restore with Import, or a Search Projection Materialization with an authoritative index.
 - Never persist incomplete Bundles or continue when integrity/correctness cannot be established.
 - Never place decrypted content, keys, or plaintext metadata in diagnostics or logs.
-- Do not silently resolve the open choices recorded in `consistency-review.md`; make the decision explicit and reconcile every consumer.
+- Do not promote a future candidate recorded in `ROADMAP.md` or the consistency review into a
+  canonical requirement without an explicit decision; reconcile every consumer when it is decided.
 
 ## COMMANDS
 
@@ -287,6 +329,8 @@ corepack pnpm exec prettier --check <paths...>
 ## NOTES
 
 - Ignore `.omo/`; it is local agent state, not project documentation.
-- Document path metadata is inconsistent: some `Document` and `Depends On` values include `docs/`, others are relative. Do not infer an automated dependency graph without checking targets.
-- `bundle/artifact.md` and `bundle/manifest.md` declare a dependency cycle; edit them atomically when their shared model changes.
+- Living specification `Document` metadata and `Depends On` entries use repository-root paths.
+  Still verify semantic dependencies because the declared graph is not exhaustive.
+- `docs/specifications/bundle/artifact.md` and `docs/specifications/bundle/manifest.md` declare a
+  dependency cycle; edit them atomically when their shared model changes.
 - All specifications are currently Draft v1.0. Only the design principles and glossary are marked Normative.

@@ -6,15 +6,15 @@ This domain defines the platform-independent client Runtime, its Service boundar
 
 ## WHERE TO LOOK
 
-| Concern                        | Document             | Boundary to preserve                                               |
-| ------------------------------ | -------------------- | ------------------------------------------------------------------ |
-| Runtime lifecycle and Services | `runtime.md`         | Host integrates platforms; Runtime owns behavior                   |
-| Long-running execution         | `jobs.md`            | Scheduling, persistence, retry, cancellation, recovery             |
-| Persistence access             | `storage.md`         | Runtime uses Drivers, not OPFS/platform APIs directly              |
-| Capture                        | `capture.md`         | Capability preflight precedes immutable Bundle creation            |
-| Synchronization                | `synchronization.md` | Reconciliation Work Items run within a Synchronization Job         |
-| Search                         | `search.md`          | Query rebuildable Search Projection Materializations               |
-| AI                             | `ai.md`              | Produce Derived Artifacts and Events; never update search directly |
+| Concern                        | Document             | Boundary to preserve                                                            |
+| ------------------------------ | -------------------- | ------------------------------------------------------------------------------- |
+| Runtime lifecycle and Services | `runtime.md`         | Host integrates platforms; Runtime owns behavior                                |
+| Long-running execution         | `jobs.md`            | Scheduling, persistence, retry, cancellation, recovery                          |
+| Persistence access             | `storage.md`         | Runtime uses Drivers, not OPFS/platform APIs directly                           |
+| Capture                        | `capture.md`         | Capability preflight precedes immutable Bundle creation                         |
+| Synchronization                | `synchronization.md` | Receiver pull cycles run within a durable synchronization Job                   |
+| Search                         | `search.md`          | Query rebuildable Search Projection Materializations                            |
+| AI                             | `ai.md`              | Produce local Materializations; shared output requires explicit Vault semantics |
 
 ## SERVICE MODEL
 
@@ -27,9 +27,12 @@ This domain defines the platform-independent client Runtime, its Service boundar
 ## DATA FLOW INVARIANTS
 
 - Capture validates permissions and Host capabilities before freezing input; incomplete Bundles are never stored.
-- Synchronization exchanges opaque authoritative Objects and Events, is resumable/idempotent, and does not make either replica inherently authoritative.
+- Synchronization exchanges opaque Vault Records and Objects, is resumable and idempotent, and
+  does not make either Replica inherently authoritative.
 - Search reads projections; queries never modify stored data and Materializations are rebuildable, local, and unsynchronized.
-- AI consumes decrypted content only inside trusted clients unless explicit user policy permits a remote provider. It emits Derived Artifacts and completion Events; Projection Builders consume those Events.
+- AI consumes decrypted content only inside trusted clients unless explicit user policy permits a
+  remote provider. Output remains a local Materialization unless a separate Required Feature and
+  user Command preserve it as Vault content.
 - Storage caches and indexes remain derived. Authoritative Objects are removed only through defined retention semantics.
 
 ## ANTI-PATTERNS
@@ -44,4 +47,7 @@ This domain defines the platform-independent client Runtime, its Service boundar
 
 ## CROSS-DOCUMENT CHECKS
 
-Runtime changes commonly affect `vault/vault.md`, `storage/object-store.md`, Bundle/Event specs, protocol messages, portability Jobs, and architecture documents `05`, `08`, `10`-`13`, and `19`. Search all of them when changing a Service boundary, Job type, authoritative input, emitted Event, or persisted checkpoint.
+Runtime changes commonly affect `docs/specifications/vault/vault.md`,
+`docs/specifications/storage/object-store.md`, Bundle/Event specs, protocol messages, portability
+Jobs, and architecture documents `05`, `08`, `10`-`13`, and `19`. Search all of them when changing
+a Service boundary, Job type, authoritative input, emitted Event, or persisted checkpoint.

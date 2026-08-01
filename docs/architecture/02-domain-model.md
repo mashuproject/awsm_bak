@@ -1,706 +1,80 @@
 # Domain Model
 
-**Document:** `architecture/02-domain-model.md`
-
-**Status:** Draft
-
-**Owner:** Engineering
+**Status:** Draft target architecture
 
 **Depends On:**
 
-- README.md
-- VISION.md
-- architecture/01-system-overview.md
-
----
+- `docs/architecture/glossary.md`
+- `docs/architecture/01-system-overview.md`
 
 # Purpose
 
-This document defines the initial domain model for Archive Platform. The later Architecture Glossary and formal specifications are authoritative when terminology conflicts with this document.
+This document maps AWSM concepts and cardinalities. The normative glossary and owning formal specs
+win if this explanatory view differs.
 
-Every component in the system—Host, Runtime, Services, Coordination Server, cryptography, AI, and storage—must use the canonical terminology defined in the Architecture Glossary.
-
-This document deliberately separates:
-
-- business concepts
-- archival concepts
-- storage concepts
-
-These layers should not be confused.
-
----
-
-# Domain Overview
-
-The platform models knowledge using immutable snapshots.
-
-The complete hierarchy is:
+# Portable Vault model
 
 ```text
-User
-
-└── Vault
-
-      └── Archive
-
-             ├── Capture #1
-
-             │      └── Bundle
-
-             ├── Capture #2
-
-             │      └── Bundle
-
-             └── Capture #3
-
-                    └── Bundle
+Vault 1
+  |-- 1 Generation currently recognized by a Replica
+  |-- 1..* Vault Members while writable
+  |     |-- 0..1 Administrator role
+  |     |-- 0..* active Client Credentials
+  |     `-- 1 effective Recovery Credential path
+  |-- 0..* Collections
+  |     `-- 0..* Captures (Bundles)
+  |-- 0..* Folders, Tags, Tag Assignments, and Notes
+  |-- 1 authenticated Vault Record DAG per Generation
+  |-- 1 retained cross-Generation Authority Parent Continuity Proof
+  `-- immutable dependency-referenced Vault Objects
 ```
 
-Notice that an **Archive** may contain multiple captures.
+A Vault exists independently of storage location. It may have zero or more Replicas. A Complete
+Export or Backup is a static transfer artifact, not another Replica.
 
-For example:
+# Identity and authority
+
+A Vault Member is portable identity inside one Vault. Administrator is a capability-bearing role,
+not a decryption class. Every member has the same Vault access and recovery class; a member's
+Recovery Phrase controls that member's Recovery Credential.
+
+A Client Credential signs Events on behalf of one member. The physical machine and Client
+Installation are not portable authors. Account is separate Host-local access identity.
+
+# Content model
+
+A Bundle is one immutable Capture. A Collection groups Captures considered observations of the
+same subject. Folder navigation contains Collections; Tags target Collections or Captures; Notes
+target exactly one Collection or Capture. IDs establish identity, while titles and names may be
+duplicated and change through Events.
+
+The Library, Unfiled bucket, Collection Tail, history views, and search results are derived
+Projections. There is no portable `Archive` entity between Vault and Collection.
+
+# Storage and execution model
 
 ```text
-https://rubyonrails.org/
-
-Capture
-
-2026-06-01
-
-↓
-
-Capture
-
-2026-07-01
-
-↓
-
-Capture
-
-2026-08-01
+Client Installation 1 -> 0..* local Replicas
+Client Installation 1 -> 0..* Client Credentials
+Vault 1              -> 0..* Remotes in local Installation State
+Replica Host 1       -> 0..* Hosted Replicas
+Channel Principal *  -> * Hosted Replicas through Replica Access Grants
 ```
 
-Each capture represents a historical snapshot.
-
----
-
-# Layer 1 — Identity
-
-## User
-
-Represents an authenticated identity.
-
-Responsibilities:
-
-- login
-- billing
-- authentication
-- device ownership
-- vault membership
-
-Users do **not** own captures.
-
-Users own access to vaults.
-
----
-
-## Device
-
-Represents a trusted client.
-
-Examples:
-
-- Chrome Extension
-- Firefox Extension
-- Desktop App
-- Mobile App
-
-Each device possesses:
-
-- device identifier
-- encryption credentials
-- synchronization state
-- trusted status
-
-Devices never own data.
-
----
-
-# Layer 2 — Ownership
-
-## Vault
-
-A Vault is the primary ownership boundary.
-
-Everything inside a vault shares:
-
-- encryption keys
-- synchronization state
-- permissions
-- storage quota
-
-A vault contains:
-
-- archives
-- folders
-- notes
-- settings
-- AI configuration
-
-Future:
-
-- team vaults
-- shared vaults
-- organization vaults
-
----
-
-# Layer 3 — Knowledge
-
-## Archive
-
-An Archive represents a logical piece of knowledge.
-
-Examples:
-
-```text
-Ruby on Rails Guides
-
-OpenAI Blog
-
-Personal Tax Return
-
-Machine Learning Notes
-
-Wikipedia - PostgreSQL
-```
-
-An archive is what users browse.
-
-An archive is **not** a single file.
-
-Instead:
-
-```text
-Archive
-
-↓
-
-Capture
-
-↓
-
-Capture
-
-↓
-
-Capture
-```
-
----
-
-## Why?
-
-Suppose a user archives:
-
-https://news.ycombinator.com
-
-today
-
-and again
-
-three months later.
-
-Those should appear as one archive containing multiple historical captures.
-
-Not two unrelated items.
-
----
-
-# Layer 4 — Preservation
-
-## Capture
-
-A Capture represents a single immutable snapshot.
-
-Properties:
-
-- timestamp
-- source URL
-- capture method
-- browser version
-- extension version
-
-Captures never change.
-
-Ever.
-
----
-
-# Bundle
-
-Every capture produces exactly one Bundle.
-
-A Bundle is the complete preserved representation of that capture.
-
-Conceptually:
-
-```text
-Capture
-
-↓
-
-Bundle
-```
-
-The Bundle is immutable.
-
----
-
-A Bundle contains Artifacts, Metadata, and a Manifest.
-
----
-
-# Preserved Artifacts
-
-Preserved Artifacts are original preserved information.
-
-Examples:
-
-```text
-page.mhtml
-
-page.html
-
-screenshot.webp
-
-favicon.ico
-
-cookies.json (optional)
-
-headers.json
-
-response.html
-```
-
-Preserved Artifacts preserve the original capture.
-
-Preserved Artifacts are never regenerated.
-
----
-
-# Derived Artifacts
-
-Derived Artifacts are generated information.
-
-Examples:
-
-```text
-summary.md
-
-tags.json
-
-keywords.json
-
-entities.json
-
-ocr.txt
-
-embeddings.bin
-
-translation.md
-```
-
-Artifacts may be regenerated.
-
-Different AI models may produce different artifacts.
-
----
-
-# Manifest
-
-Every Bundle contains a Manifest.
-
-Example:
-
-```yaml
-bundle_version: 1
-
-capture_time:
-
-browser:
-  artifacts:
-
-  processing_history:
-
-checksums:
-
-encryption:
-```
-
-The Bundle Descriptor describes the Bundle graph. It uses canonical CBOR, remains compact, and
-references each independently encrypted Artifact Object without embedding payload bytes.
-
-It does not contain large binary content.
-
----
-
-# Layer 5 — Storage
-
-The Bundle is transformed into storage objects.
-
-```text
-Bundle Descriptor Object
-
-↓ references
-
-Independently encrypted Artifact Objects
-```
-
----
-
-## Object
-
-Objects are immutable encrypted binary blobs.
-
-Properties:
-
-- object id
-- object hash
-- encrypted payload
-- object size
-
-Objects know nothing about:
-
-- archives
-- captures
-- AI
-
-Objects are storage primitives.
-
----
-
-Objects are content-addressed.
-
-```text
-SHA-256
-
-↓
-
-Object ID
-```
-
----
-
-# Why Chunk?
-
-Large archives become:
-
-```text
-Bundle
-
-↓
-
-Chunk
-
-↓
-
-Object A
-
-Object B
-
-Object C
-```
-
-Advantages:
-
-- resumable uploads
-
-- partial downloads
-
-- deduplication
-
-- corruption isolation
-
----
-
-# Relationships
-
-```text
-User
-
-↓
-
-Vault
-
-↓
-
-Archive
-
-↓
-
-Capture
-
-↓
-
-Bundle
-
-├── Artifacts
-
-└── Manifest
-
-↓
-
-Encrypted Objects
-```
-
-This hierarchy should remain stable.
-
----
-
-# Folders
-
-Folders are user-defined organization.
-
-Example:
-
-```text
-Programming
-
-Finance
-
-Recipes
-
-Travel
-```
-
-Folders reference Archives.
-
-Never captures.
-
----
-
-# Notes
-
-Notes are user-generated content.
-
-Notes belong to Archives.
-
-Not Bundles.
-
-Reason:
-
-A note usually describes the subject.
-
-Not one historical snapshot.
-
-Future enhancement:
-
-Snapshot-specific notes.
-
----
-
-# Tags
-
-Tags belong to Archives.
-
-Not Captures.
-
-Reason:
-
-Users think:
-
-"This is about Ruby."
-
-Not:
-
-"The June capture is Ruby."
-
-AI-generated tags belong to Artifacts.
-
-User tags belong to Archives.
-
----
-
-# AI Outputs
-
-AI always produces Artifacts.
-
-Never preserved Artifacts.
-
-Examples:
-
-```text
-Summary
-
-↓
-
-Artifact
-
-Embedding
-
-↓
-
-Artifact
-
-Translation
-
-↓
-
-Artifact
-```
-
-This allows AI improvements without changing preserved history.
-
----
-
-# Deletion
-
-Deletion occurs at multiple levels.
-
-Delete Capture
-
-↓
-
-Archive remains.
-
-Delete Archive
-
-↓
-
-All captures removed.
-
-Delete Vault
-
-↓
-
-Everything removed.
-
----
-
-# Export
-
-Exporting an Archive exports:
-
-all captures
-
-all bundles
-
-all artifacts
-
-history
-
-manifest
-
-Exporting a Vault exports:
-
-every archive
-
-every folder
-
-every note
-
-every setting
-
----
-
-# Design Decisions
-
-## Why Archives contain Captures
-
-Historical preservation.
-
-Allows:
-
-- scheduled recapture
-- timeline views
-- change detection
-- legal evidence
-
----
-
-## Why Bundles exist
-
-Bundles isolate preservation from storage.
-
-Storage can evolve.
-
-Bundle format remains stable.
-
----
-
-## Why distinguish preserved and derived Artifacts?
-
-Preserved Artifacts are historical facts.
-
-Derived Artifacts are interpretations.
-
-Interpretations change.
-
-Facts do not.
-
----
-
-## Why Objects are storage primitives
-
-Allows:
-
-- new storage engines
-
-- different synchronization protocols
-
-- cloud providers
-
-without affecting users.
-
----
-
-# Future Extensions
-
-The model naturally supports:
-
-Version comparison
-
-↓
-
-Archive timelines
-
-↓
-
-Scheduled captures
-
-↓
-
-Knowledge graphs
-
-↓
-
-AI agents
-
-↓
-
-Encrypted collaboration
-
-↓
-
-Alternative storage providers
-
-without changing the hierarchy.
-
----
-
-# Domain Glossary
-
-| Term     | Meaning                                                                  |
-| -------- | ------------------------------------------------------------------------ |
-| User     | Authenticated identity                                                   |
-| Device   | Trusted client                                                           |
-| Vault    | Cryptographic ownership boundary                                         |
-| Archive  | Logical knowledge item                                                   |
-| Capture  | Immutable historical snapshot                                            |
-| Bundle   | Complete preserved capture                                               |
-| Artifact | Immutable authoritative payload Object referenced by a Bundle Descriptor |
-| Manifest | Bundle metadata                                                          |
-| Object   | Encrypted immutable storage blob                                         |
-
-This glossary is the canonical terminology for the project.
+One installation can be both Client and Host. One Account can access several Hosted Replicas, and
+several Accounts or other principals can access one Hosted Replica when Host policy grants it.
+
+# Lifecycle
+
+- Delete and restore are additive current-state facts until Vacuum.
+- Closure prevents later Events but leaves retained state readable, exportable, and Forkable.
+- Vacuum keeps the Vault identity, replaces Content history with an authenticated successor
+  Baseline, and retains the authority Continuity Proof.
+- Fork creates fresh Vault, authority, keys, Objects, and history from selected logical state.
+- Historical View never moves the writable Frontier backward.
+
+# References
+
+- `docs/specifications/vault/collection.md`
+- `docs/specifications/vault/authority.md`
+- `docs/specifications/vault/replica.md`

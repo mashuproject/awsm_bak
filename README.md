@@ -1,8 +1,8 @@
 # AWSM — Archive What Should Matter
 
 AWSM is a local-first webpage archival platform with optional zero-knowledge synchronization. It
-captures, stores, and presents an archive on the user's device; a Coordination Server is
-optional and receives encrypted data rather than plaintext archive content.
+captures, stores, and presents a Vault in a trusted browser extension; optional synchronization
+services receive encrypted data rather than plaintext archive content.
 
 AWSM was created for the OpenAI Devpost hackathon from a concern with conventional clipping
 services: an archive should not become inaccessible because a provider shuts down, changes
@@ -97,6 +97,27 @@ Account data, session cookies, or CSRF tokens. A signed-in browser privately res
 presentation through a no-store session-status request; anonymous browsers do not make that
 request.
 
+## Architecture direction
+
+The living architecture and formal specifications describe AWSM's next canonical foundation, not
+additional behavior claimed for the current v0.2.0 extension or server. In that target model, a
+Vault is location-independent and may have zero or more local, peer, headless, or Hosted Replicas;
+trusted Clients pull and validate opaque immutable items without one privileged origin.
+
+Portable Vault membership uses per-member Recovery Phrases and Client Credentials. Administrator
+roles govern shared Vault coordination but do not create a different decryption class. Host
+Accounts remain username-based local access identities with no email and no intrinsic relationship
+to a Vault Member. The Account dashboard manages the Host channel and storage, not a duplicate web
+Vault.
+
+The current implementation still contains an earlier single-user Device, Recovery Kit,
+Generation-aware server, and one-synchronized-Vault-per-Account experiment. A later implementation
+effort will replace those pre-release formats, schemas, APIs, fixtures, and development/staging data
+with the canonical design. It will not add compatibility readers or migration paths for discarded
+experiments. See the [living PRD](docs/plans/01-mvp-prd.md),
+[system overview](docs/architecture/01-system-overview.md), and
+[consistency review](docs/architecture/consistency-review.md).
+
 ## Quick start: local-only Chrome extension
 
 ### Requirements
@@ -183,10 +204,11 @@ After a successful Capture:
 7. Download the locally stored MHTML if desired.
 
 Core archive functionality remains available because the Capture and its local Artifacts do not
-depend on a server. A user who explicitly applies synchronized storage relief can remove local MHTML
-and screenshot wrappers after AWSM verifies their encrypted server copies. Those remote-only
-Artifacts require the configured Account and a network connection until retrieved again; compact
-Library data remains local.
+depend on a server. In the current implementation, a user who explicitly applies synchronized
+storage relief can remove selected local heavy wrappers after AWSM verifies their encrypted server
+copies. Those remote-only Artifacts require the configured Account and a network connection until
+retrieved again; compact Library data remains local. The target architecture instead always warns
+without claiming global redundancy, because no decentralized Client can know every surviving copy.
 
 ## Optional synchronization
 
@@ -210,12 +232,13 @@ synchronization and follow its signup link to create the Account on the Rails we
 to the extension, enter the server origin, grant browser access, and log in. See the [Coordination
 Server development guide](apps/coordination-server/README.md) for operations and troubleshooting.
 
-The client encrypts Vault content before transmission. The server stores opaque encrypted Objects,
-Events, Artifacts, and wrapped keys; it does not receive the keys needed to decrypt plaintext Vault
-content. Fresh Chrome and Firefox installations recover the Account's synchronized Vault with the
-current 12-word Recovery Phrase, certify a new Device, and download the active encrypted
-Generation. Rails password changes revoke sessions without changing Vault keys. Production quotas,
-billing, shared object storage, and production deployment hardening remain future work.
+The client encrypts Vault content before transmission. The current server stores encrypted items
+plus pre-release semantic coordination metadata; it does not receive the keys needed to decrypt
+Vault plaintext. Fresh Chrome and Firefox installations recover the synchronized Vault with the
+current 12-word Recovery Phrase, establish fresh local synchronization authority, and download the
+active encrypted state. Rails password changes revoke sessions without changing Vault keys.
+Production quotas, billing, shared object storage, and production deployment hardening remain
+future work.
 
 ## Development
 
@@ -243,7 +266,7 @@ apps/browser-extension/     Chrome Host, Runtime, local storage, and user interf
 apps/coordination-server/   Rails coordination service for opaque encrypted data
 docs/architecture/          architectural intent and system boundaries
 docs/specifications/        formal formats, protocols, and Runtime contracts
-docs/plans/                 approved implementation plans and TDD evidence
+docs/plans/                 living PRD plus historical implementation plans and TDD evidence
 ```
 
 Product intent begins in [VISION.md](VISION.md). Architectural constraints are defined by the
@@ -280,18 +303,18 @@ product direction or responsibility for the project's decisions and claims.
 ## Design principles
 
 - **Local first:** Captures are created, encrypted, stored, and viewed on the client.
-- **Cloud optional:** A Coordination Server synchronizes encrypted data but is not required for core
-  archive use.
+- **Replicas optional:** Local use needs no Host; authorized local, peer, or hosted Replicas may
+  synchronize opaque encrypted data.
 - **Preserve first, interpret later:** Original source Artifacts are retained independently from
   future derived interpretations.
 - **Immutable originals:** Captures and their authoritative Objects are not edited in place.
 - **No plaintext server dependency:** The server must not require plaintext user content or
   unwrapped Vault keys.
 
-AWSM treats a web Capture as one immutable Bundle graph. Its MHTML, screenshot, thumbnail,
-normalized text, and structured content are independently encrypted Artifacts. This preserves the
-source while supporting bounded-memory storage, integrity verification, portable Complete Export
-and Import, and future locally derived capabilities.
+AWSM treats a web Capture as one immutable Bundle graph. Its canonical page snapshot, screenshot,
+thumbnail, normalized text, and structured content are independently encrypted Artifacts. MHTML is
+derived on demand. This preserves the source while supporting bounded-memory storage, integrity
+verification, portable Complete Export and Import, and future locally derived capabilities.
 
 ## Release process
 

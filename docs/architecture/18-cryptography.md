@@ -1,400 +1,62 @@
-# Cryptography Specification
+# Cryptographic Architecture
 
-**Document:** `architecture/18-cryptography.md`
-
-**Status:** Draft
-
-**Owner:** Engineering
+**Status:** Draft target architecture
 
 **Depends On:**
 
-- architecture/03-zero-knowledge.md
-- architecture/04-security-model.md
-- architecture/14-trust-and-device-management.md
-- architecture/16-archive-protocol.md
-
----
+- `docs/architecture/04-security-model.md`
+- `docs/specifications/crypto/crypto.md`
 
 # Purpose
 
-This document specifies the cryptographic architecture used throughout Archive Platform.
+Cryptography protects semantic identity, authorship, content confidentiality, Key Epoch delivery,
+and opaque storage representations without tying the Vault to one Host or Account.
 
-The goal is to protect Vault contents while allowing an untrusted Coordination Server to synchronize encrypted data.
+# Canonical primitives
 
-This document defines cryptographic responsibilities and key relationships.
+- deterministic restricted CBOR for protected semantic structures;
+- SHA-256 for domain-separated logical and outer identifiers;
+- Ed25519 for Vault Event and possession signatures;
+- HKDF-SHA256 for domain-separated symmetric derivation;
+- XChaCha20-Poly1305 for compact and streamable content encryption; and
+- HPKE Base mode with X25519, HKDF-SHA256, and ChaCha20-Poly1305 for Key Envelopes.
 
-Formal cryptographic specifications own the exact canonical algorithms and vectors. This document
-owns responsibilities and relationships and must remain consistent with those specifications.
+The exact transcripts and codecs live in the formal specifications and require golden vectors.
 
----
+# Key Epoch model
 
-# Design Goals
+There is no Vault Root Key. Each Epoch Key is independently random, and its ID commits to that key.
+Content keys derive within one Epoch and cannot derive another Epoch. Retained history may require
+several readable Epochs; one effective Epoch receives new protected content.
 
-The cryptographic architecture must provide:
+# Credential delivery
 
-- zero-knowledge storage
-- authenticated encryption
-- explicit canonical algorithms
-- key rotation
-- device enrollment
-- algorithm agility
-- deterministic key derivation where appropriate
+Each eligible Client and Recovery Credential receives an HPKE Key Envelope for every required
+Epoch. Signed Authority Events bind exact logical Envelope IDs and recipient sets. The opaque outer
+envelope hides target kind and semantic identity from Hosts.
 
----
+# Recovery
 
-# Philosophy
+Fresh 128-bit entropy becomes a 12-word English BIP39 phrase. AWSM derives independent recovery
+signing and wrapping keys directly from the recovered entropy using fixed domains. It does not use
+an optional BIP39 passphrase or bind derivation to an Account, Host, Vault ID, or value discoverable
+only after decryption.
 
-The client owns plaintext.
+# Content and storage encryption
 
-The server owns ciphertext.
+Canonical inner Records and Objects retain stable logical IDs. Each Replica destination uses fresh
+outer nonce and padding, producing a different Opaque Storage Item ID. Every nonce, padding byte,
+header, context, frame position, final flag, plaintext length, and payload digest required by the
+construction is authenticated.
 
-Encryption occurs before synchronization.
+# Limitations and erasure
 
-Decryption occurs only on trusted devices.
-
----
-
-# Trust Boundary
-
-```
-Plaintext
-
-↓
-
-Client Runtime
-
-↓
-
-Encryption Boundary
-
-↓
-
-Ciphertext
-
-↓
-
-Coordination Server
-
-↓
-
-Object Storage
-```
-
-Plaintext never crosses the encryption boundary.
-
----
-
-# Key Hierarchy
-
-```
-Recovery Phrase entropy
-
-├── Recovery Kit wrapping key
-└── Recovery administrator seed
-        ↓
-  encrypted Recovery Kit
-        ↓
-  key-epoch root keys
-
-Certified Device wrapping key
-        ↓
-  signed Device key envelopes
-        ↓
-  key-epoch root keys
-
-Active key-epoch root key
-
-├── Bundle Key
-├── Event Key
-├── Artifact Key
-├── Metadata Key
-└── Future Keys
-```
-
-Keys should be derived rather than randomly generated independently where appropriate.
-
-The Account password is an identity credential and never participates in Vault cryptography.
-Local-only Vaults use their mandatory local Device slot. A synchronized Vault uses Recovery
-Generation authority and certified Device envelopes. Each encrypted Object binds the Key Epoch whose
-root key derives its encryption key.
-
----
-
-# Key Responsibilities
-
-## Account Password
-
-Rails receives the password over TLS, verifies it against the Account password digest, and never
-returns it to the extension. Password change revokes Account and VaultDevice sessions but does not
-rotate or recover Vault keys.
-
-## Recovery Phrase
-
-The 12-word Recovery Phrase encodes 128 bits of client-generated entropy. Domain-separated
-derivation produces a Recovery Kit wrapping key and recovery administrator signing seed. The phrase,
-entropy, and derived secrets never cross the server boundary or persist after a ceremony.
-
----
-
-## Vault Root Key
-
-Root of the Vault's cryptographic hierarchy.
-
-Used to derive subordinate keys.
-
----
-
-## Bundle Key
-
-Protects immutable Bundle contents.
-
----
-
-## Event Key
-
-Protects encrypted Event payloads.
-
----
-
-## Artifact Key
-
-Protects derived Artifacts.
-
----
-
-## Metadata Key
-
-Protects synchronized encrypted metadata.
-
----
-
-# Device Keys
-
-Each trusted device possesses:
-
-- Device Private Key
-- Device Public Key
-
-Private keys remain on the device.
-
-Public keys are synchronized.
-
----
-
-# Wrapped Keys
-
-Key-epoch root keys are wrapped individually for each certified Device. Each envelope is signed by
-the active recovery administrator and bound to the Device certificate, Recovery Generation, Vault,
-and Key Epoch. The Coordination Server stores wrapped keys only.
-
-The initial browser Host uses a non-exportable device key to wrap the Vault Root Key locally. Local-only Vaults do not persist a passphrase wrapper. A passphrase-derived wrapper exists only inside a user-created Vault Package and is independent of local unlock state.
-
-Bundle Descriptor, Artifact, Event, and Projection keys are context-derived and are not stored as
-individually wrapped keys in the initial implementation.
-
----
-
-# Encryption Pipeline
-
-```
-Compact Object
-
-↓ canonical serialize and encrypt
-
-Inline encrypted record
-
-Artifact stream
-
-↓ chunk-frame and encrypt
-
-External immutable wrapper
-```
-
-Encryption precedes synchronization.
-
-Large Artifact encryption and hashing are incremental and bounded-memory.
-
----
-
-# Event Encryption
-
-Only Event payloads require confidentiality.
-
-Routing information required for synchronization may remain unencrypted if necessary.
-
-Sensitive metadata should remain encrypted whenever practical.
-
----
-
-# Artifact Encryption
-
-Artifacts remain immutable and are encrypted independently before storage. Each Artifact key uses
-domain `vault:artifact:v1` and its Artifact Object UUID as context. The authenticated wrapper binds
-the header and every monotonically indexed frame, including a final empty frame when the plaintext
-is empty. Readers validate wrapper and plaintext length/checksum before successful completion.
-
----
-
-# Metadata Protection
-
-User-visible synchronized metadata should be encrypted.
-
-Examples include:
-
-- archive titles
-- notes
-- tags
-- AI summaries (if synchronized)
-
-Operational metadata required for coordination may remain plaintext.
-
-Examples include:
-
-- protocol version
-- block identifiers
-- timestamps required for synchronization
-- device identifiers
-
----
-
-# Authentication
-
-Every encrypted object should provide integrity protection.
-
-Tampered ciphertext must be detected before use.
-
----
-
-# Key Rotation
-
-The platform supports independent rotation of:
-
-- Vault Root Key
-- Device Keys
-
-Future versions may support independent rotation of subordinate keys.
-
-Rotation procedures should minimize unnecessary data re-encryption.
-
----
-
-# Algorithm Agility
-
-Cryptographic algorithms must be versioned.
-
-Encrypted objects should record:
-
-- algorithm identifier
-- key version
-- object format version
-
-Before the first release, these identifiers describe only the canonical current formats and do not authorize alternate readers.
-
----
-
-# Randomness
-
-All cryptographic randomness must originate from the host platform's cryptographically secure random number generator.
-
----
-
-# Secure Storage
-
-Long-lived secrets should use platform secure storage where available.
-
-Examples:
-
-- WebCrypto non-exportable keys
-- macOS Keychain
-- Windows DPAPI / Credential Manager
-- Linux Secret Service
-
-An adapter that cannot meet the secure-storage contract must report the capability as unavailable rather than weakening storage.
-
----
-
-# Synchronization
-
-The Coordination Server stores only:
-
-- ciphertext
-- wrapped keys
-- encrypted Event payloads
-- encrypted Blocks
-
-The server never derives plaintext.
-
----
-
-# Cryptographic Versioning
-
-Every encrypted object records:
-
-- format version
-- key version
-- algorithm version
-
-Only objects using the canonical current cryptographic formats are readable before the first release.
-
----
-
-# Future Extensions
-
-The architecture should support:
-
-- post-quantum cryptography after an explicit future design decision
-- hardware-backed keys
-- threshold recovery
-- shared Vaults
-- delegated decryption
-- tenant-managed keys
-
-These should not require redesigning the key hierarchy.
-
----
-
-# Design Decisions
-
-## Why a Key Hierarchy?
-
-Derived keys isolate cryptographic domains and simplify future rotation.
-
----
-
-## Why Wrapped Keys?
-
-Each certified Device receives independent key-epoch access without exposing an unwrapped key to
-the server.
-
----
-
-## Why Algorithm Agility?
-
-Cryptographic algorithms evolve. Object formats should accommodate future replacement.
-
----
-
-## Why Encrypt Before Synchronization?
-
-The server should never observe plaintext application data.
-
----
-
-# Open Questions
-
-Should Metadata Keys be derived directly from the Vault Root Key or through an intermediate key hierarchy?
-
-Should Vault Root Key rotation be automatic after device revocation?
-
-What explicit release policy should govern any future cryptographic format change?
-
-How should shared Vaults derive participant-specific keys?
-
----
+Key rotation protects future writes but does not revoke old keys or plaintext already possessed.
+Vacuum changes accepted history but cannot erase offline copies. Secure deletion claims are limited
+to exact locally verified bytes and platform guarantees.
 
 # References
 
-- `docs/architecture/19-testing-strategy.md`
-- `docs/specifications/bundle/bundle.md`
-- `docs/specifications/event/event.md`
-- `docs/specifications/protocol/protocol.md`
+- `docs/specifications/crypto/key-derivation.md`
+- `docs/specifications/crypto/object-encryption.md`
+- `docs/specifications/storage/opaque-envelope.md`

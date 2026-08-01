@@ -1,115 +1,109 @@
-# Archive Synchronization Protocol
+# Opaque Replica Protocol Specification
 
-**Document:** `specifications/protocol/protocol.md`
+**Document:** `docs/specifications/protocol/protocol.md`
 
 **Version:** 1.0
 
-**Status:** Draft
+**Status:** Draft target contract
 
 **Depends On:**
 
-- architecture/glossary.md
-- event/event-format.md
-- http-api.openapi.yaml
+- `docs/specifications/storage/opaque-envelope.md`
+- `docs/specifications/vault/replica.md`
 
----
+# 1. Authority and implementation status
 
-# 1. Purpose and Authority
+This document defines the canonical target semantics for access to an opaque Hosted Replica. The
+checked-in generated `http-api.openapi.yaml` describes the currently implemented experimental API
+and does not yet implement this target. A later implementation change must replace the executable
+API and regenerate that artifact; this documentation reconciliation does not edit generated
+runtime contracts or pretend the target is live.
 
-This specification defines transport-independent synchronization sequencing, durability, fencing,
-recovery, and retry semantics. `http-api.openapi.yaml` owns the canonical HTTPS methods, paths,
-headers, statuses, and JSON shapes. Conflicts are specification defects and SHALL be reconciled in
-both documents.
+# 2. Trust boundary
 
-# 2. Canonical Protocol
+The Host authenticates a Channel Principal and evaluates Host-local Replica Access Grants. It
+stores and transfers exact Opaque Storage Items. It does not validate Vault IDs, Generations,
+Events, parents, dependencies, members, Credentials, Key Epochs, or content. Trusted Clients do all
+semantic validation after pull.
 
-Before the first release, exactly one strict protocol exists. HTTPS uses unversioned `/api` routes
-and requires `Awsm-Protocol-Version: 1`; a missing or different value fails. There is no handshake,
-negotiation, alternate message envelope, unknown-field preservation, compatibility reader, or
-fallback transport.
+# 3. Base operations
 
-# 3. Trust Boundary
+An implementation exposes these operations under one strict wire contract:
 
-The trusted client validates and encrypts authoritative Objects and Events. The untrusted
-Coordination Server receives immutable ciphertext plus the minimum opaque metadata needed for
-transfer, dependency closure, ordering discovery, Generation fencing, and safe retention. It never
-interprets plaintext or commands client eviction.
+| Operation                       | Required capability           | Semantics                          |
+| ------------------------------- | ----------------------------- | ---------------------------------- |
+| Read service policy             | authenticated principal       | bounded transfer and paging limits |
+| List granted Replicas           | authenticated principal       | Host-local handles only            |
+| Create or manage Hosted Replica | `awsm.replica.manage`         | Host-local lifecycle               |
+| Enumerate opaque items          | `awsm.replica.inventory.read` | snapshot-bounded pages             |
+| Read opaque item or range       | `awsm.replica.item.read`      | exact immutable bytes              |
+| Admit opaque item               | `awsm.replica.item.write`     | immutable verified outer bytes     |
+| Read or wait for Wake Hint      | `awsm.replica.hint.read`      | advisory cursor only               |
+| Publish Wake Hint               | `awsm.replica.hint.write`     | advisory cursor advancement        |
 
-# 4. Opaque Upload
+Accounts, usernames, passwords, bearer tokens, sessions, quotas, and Grant management use the
+Host's owning API. No email field is part of the reference Account model.
 
-When an Account without a Vault attaches its first Replica, the client supplies the Vault's current
-active Generation identity and any nonnegative Generation number. The Service records that exact
-Generation as its first known active Generation with no server-side predecessor, even when the
-authenticated encrypted Generation Object names earlier history. Attachment does not renumber the
-Generation, infer missing predecessor rows, or interpret its encrypted contents.
+# 4. Item admission
 
-The client begins an upload with immutable identity, broad Object type, exact byte length,
-ciphertext SHA-256, and target Generation. Events additionally declare their canonical ordering
-timestamp and lexically sorted unique dependency Object IDs. Dependencies must already exist in an
-eligible upload or durable scope; placeholder records are prohibited.
+The client supplies one complete Compact item or one resumable Streamable item. The Host validates
+the exact outer envelope, limits, ciphertext digest, and domain-separated Opaque Storage Item ID
+without interpreting protected semantics.
 
-Parts use short-lived scoped tickets. Repeated identical parts succeed and conflicting parts fail.
-Finalization streams every part in order, verifies whole-Object length and checksum, durably installs
-the immutable bytes, then records `DurableUncommitted`. This state is invisible to all read paths.
+Admission is immutable:
 
-# 5. Event Closure Publication
+- absent ID plus valid exact bytes stores one item;
+- existing ID plus identical bytes is idempotent success;
+- existing ID plus different bytes is an integrity conflict; and
+- an incomplete stream is invisible to inventory until final verification and atomic promotion.
 
-One commit names one finalized Event, its exact bound dependency list, and the active Generation ID
-and number. Under a Vault lock, the Service requires the entire closure to be durable and eligible.
-It atomically commits newly introduced records, records active membership, persists one Event commit,
-assigns one per-Vault Delivery Cursor, and records one `EventCommitted` delivery change.
+Resumable transfer uses Host-local opaque upload IDs and exact byte offsets. Tickets and upload IDs
+never enter Vault state. A Host may reject admission for quota, policy, or rate limits.
 
-If the immutable Event and exact dependency closure are already committed and are all members of
-the requested active Generation, the commit is an idempotent acknowledgement. This includes a
-closure retained into a successor Generation: the Service does not create another Event commit,
-advance the Delivery Cursor, or reject the request merely because the original commit named the
-predecessor Generation. A changed dependency declaration or a closure absent from the active
-Generation still conflicts.
+# 5. Inventory
 
-The Delivery Cursor orders acceptance for incremental discovery only. Canonical Event replay order
-continues to come from the Event specification. A late Event with an older ordering timestamp still
-receives the next Delivery Cursor and remains discoverable.
+Inventory pages contain only Opaque Storage Item ID, storage class, exact total byte length, and a
+Host-local immutable-item cursor. A request fixes a snapshot cursor. Following pages return items
+after the caller's position and no later than that snapshot. Ordering is bytewise Opaque Storage
+Item ID or another exact Host-documented stable opaque order and has no Vault meaning.
 
-# 6. Replica Reads
+The Host MUST NOT expose another Hosted Replica's inventory. The client treats the page as an
+untrusted availability claim and verifies every downloaded item.
 
-Active enumeration pages the complete active Generation membership in lexical Object-ID order.
-Change paging captures a snapshot cursor and returns only changes after the requested cursor and no
-later than that snapshot. Downloads require active membership and a scoped ticket; clients verify
-the reconstructed ciphertext length and SHA-256 before accepting it.
+# 6. Reads and ranges
 
-Action Cable sends only a Vault ID and latest cursor as an advisory wake-up. A receiver refetches
-canonical changes. Duplicate, delayed, or absent hints do not affect correctness.
+Compact items are read in full. Streamable items permit exact byte ranges aligned or expanded under
+the outer framing contract. Responses bind item ID, complete length, returned range, and outer
+digest metadata. A partial response is never interpreted as a complete Artifact.
 
-# 7. Generation Compare-and-Swap
+# 7. Wake Hints
 
-Generation zero is explicit. One successor candidate may exist per Vault. The candidate declares the
-active predecessor, exact observed head cursor, successor number, and encrypted Generation Object.
-The client submits the complete retained Object-ID set in globally sorted pages and seals it with
-count and SHA-256 commitments. The Service automatically includes the successor Generation Object
-and verifies that every retained Event's declared dependencies are retained.
+A successful item admission may advance an opaque per-Hosted-Replica hint cursor. A Client may wait
+for or poll that cursor, then performs ordinary inventory pull. Hints contain no Vault ID, Record
+ID, type, member, or semantic change and may be duplicated, delayed, coalesced, or lost.
 
-Activation compares predecessor ID, predecessor number, and head cursor under the Vault lock. It
-atomically commits candidate records, installs successor membership, supersedes the predecessor,
-advances the head, and records `GenerationActivated`. Any intervening active commit fails the CAS.
-A superseded Generation cannot accept writes or reactivate.
+# 8. Concurrency and consistency
 
-# 8. Recovery and Purge
+Opaque items are additive and immutable, so concurrent admission cannot overwrite Vault history.
+The Host uses ordinary strongly consistent transactions for Grants, quotas, item promotion, cursor
+advancement, and reaping. Conditional writes protect those Host-local rows. The Host does not
+implement a portable Vault spinlock, Generation head, or Event sequencer.
 
-Superseded Generation membership remains available only through explicit recovery resources until
-its deadline. Recovery never changes active state or performs a server-side merge.
+# 9. Privacy
 
-A durable Purge Job snapshots targeted superseded Generations, makes them unavailable for new
-recovery transfers, detaches their memberships, and deletes only records unreferenced by every
-remaining active, candidate, or retained Generation. Success requires verified byte absence and a
-committed permanent tombstone. Jobs resume idempotently after partial failure and cannot be
-cancelled after snapshot.
+The Host minimizes logs and responses. Cross-principal existence is non-disclosing. Transfer
+capabilities, authenticators, session data, inventory, identifiers, and operational IDs are
+sensitive. Diagnostic text never includes item bytes, secrets, or protected guesses.
 
-# 9. Idempotency and Outcomes
+# 10. Strictness
 
-Every mutating control request carries an idempotency UUID. The Service binds Account, operation,
-key, method, canonical path, and exact request-body digest. An identical replay reconstructs the
-same logical result with fresh ephemeral tickets; a changed request conflicts. Immutable natural
-identifiers provide additional protection but do not replace idempotency.
+The one initial protocol rejects unknown required fields, duplicate fields, malformed base64url,
+unsafe integers, unsupported methods, and invalid outer envelopes. There is no pre-release
+compatibility reader, alternate old schema, field alias, or downgrade. Required Vault Feature
+evolution occurs inside encrypted items and is invisible to the Host.
 
-Failures use stable outcome identifiers and never expose plaintext, credentials, cross-Account
-existence, or validation exception text.
+# References
+
+- `docs/specifications/protocol/messages.md`
+- `docs/specifications/protocol/errors.md`
+- `docs/specifications/runtime/synchronization.md`

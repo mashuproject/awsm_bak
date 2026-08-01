@@ -6,209 +6,62 @@
 
 **Status:** Draft
 
----
+**Depends On:**
+
+- `docs/specifications/portability/import-export.md`
+- `docs/specifications/runtime/storage.md`
 
 # 1. Purpose
 
-This specification defines snapshot-based backup for Vault recovery.
+A Backup preserves authenticated Vault state outside active Replica synchronization. It is a
+Transfer Artifact, not a Replica, Remote, retention promise, or global redundancy fact.
 
-Backup is not Export. Export produces a portable interchange package. Backup creates recovery points optimized for restoring a Vault replica after device loss, corruption, or operator error.
+# 2. Backup Set
 
----
+A Backup Set has one local backup identity, protection profile, destination, and immutable
+Snapshots. Each Snapshot binds one Vault ID, Generation ID, exact Frontier, Required Feature Set,
+state digest, complete logical reachability, complete Continuity Proof, and exact stored-entry
+inventory.
 
-# 2. Design Goals
+A Snapshot may reference earlier entries in the same verified Backup Set for deduplication. The
+dependency graph is explicit, content-addressed, and closed under retention. No Snapshot relies on
+an active Replica or Host after successful verification.
 
-Backup MUST provide:
+# 3. Protection
 
-- durable recovery points
-- snapshot identity
-- incremental operation
-- integrity verification
-- encrypted storage
-- resumable execution through the Runtime Job Framework
+Backup protection uses either the Complete Export passphrase profile or a separately configured
+local backup key protected by the platform secure store. It includes required Key Epoch Keys but
+excludes Client Credential and Recovery Credential private keys, Accounts, sessions, and Channel
+Authenticators. Losing both backup protection and every member Recovery path may make restored
+authoring unavailable.
 
----
+# 4. Creation
 
-# 3. Backup Model
+Creation authenticates the selected Frontier, retrieves every required wrapper, writes immutable
+entries, verifies the destination byte-for-byte, then commits the Snapshot manifest last. An
+interrupted uncommitted Snapshot is cleanup state and is never reported as a successful backup.
 
-Conceptually:
+# 5. Retention
 
-```text
-Vault
+Retention deletes only Snapshots explicitly selected by policy and only entries unreachable from
+every retained Snapshot. Vacuum does not inspect or rewrite Backup Sets. A predecessor Snapshot may
+remain available after the active Vault adopts a successor.
 
-↓
+# 6. Restore boundary
 
-Snapshot
+Restore validates the complete Snapshot before activation and follows Vault ID collision and
+Generation rules in `restore.md`. A superseded Snapshot never silently merges into a successor or
+rewinds the selected Vault.
 
-↓
+# 7. Invariants
 
-Backup Set
-
-↓
-
-Recovery Plan
-
-↓
-
-Restore
-```
-
-Snapshots describe which authoritative Objects belong to a recovery point. Backup Sets store or reference the Objects required to reconstruct that Snapshot.
-
----
-
-# 4. Backup Job
-
-Every Backup operation SHALL execute as a Backup Job submitted to the Runtime Job Framework.
-
-The Backup Service defines backup behavior. The Job Framework owns:
-
-- scheduling
-- persistence
-- retries
-- cancellation
-- progress reporting
-- recovery after interruption
-
----
-
-# 5. Snapshot
-
-A Snapshot is an immutable logical view of a Vault at a point in time.
-
-Every Snapshot SHALL include:
-
-- Snapshot ID
-- Vault ID
-- creation timestamp
-- Vault version
-- object manifest
-- parent Snapshot ID, for incrementals
-- integrity metadata
-
-Snapshots are metadata. They do not contain decrypted Vault contents.
-
----
-
-# 6. Backup Set
-
-A Backup Set contains or references the authoritative Objects required by one Snapshot.
-
-Backup Sets MAY contain:
-
-- Bundle Descriptor and Artifact Objects, including external Artifact wrappers
-- Event Log Segment Objects
-- Wrapped Key Objects
-- Vault Metadata Objects
-- Snapshot Manifest Objects
-
-Backup Sets SHALL NOT contain:
-
-- Projections
-- Search Projection Materializations
-- Search settings, model references, protected remote credentials, Jobs, and checkpoints
-- caches
-- Runtime state
-- Job queues
-- diagnostics
-
----
-
-# 7. Incremental Backup
-
-Incremental backups contain only Objects not already present in an earlier Backup Set for the same Vault lineage.
-
-Because Objects are immutable and identified by Object Identifier, incrementals SHALL reference existing Objects rather than duplicate them when possible.
-
----
-
-# 8. Encryption
-
-Backup preserves encrypted Objects.
-
-Backup SHALL NOT require plaintext Vault contents. If a Backup Set is stored outside trusted devices, all Object payloads remain encrypted and Wrapped Keys remain wrapped.
-
----
-
-# 9. Integrity
-
-Backup SHALL verify every Object before adding it to a Backup Set.
-
-A complete Backup implementation SHALL source remote-only Artifact wrappers through the Runtime
-Artifact resolver, using the exact active or retained Recovery Snapshot scope owned by its Snapshot.
-It MUST NOT silently omit them, rehydrate the source device, or serialize device-local availability.
-
-Backup Set manifests SHALL include sufficient integrity metadata to detect:
-
-- missing Objects
-- corrupted Objects
-- incorrect Snapshot lineage
-- incompatible Vault versions
-
----
-
-# 10. Retention
-
-Retention policy determines which Backup Sets remain available.
-
-Retention MAY be based on:
-
-- age
-- count
-- storage quota
-- user pinning
-
-Retention MUST NOT delete Objects required by retained Snapshots.
-
----
-
-# 11. Restore Relationship
-
-Restore begins by constructing a Recovery Plan from one or more Backup Sets.
-
-Backup does not execute Restore. Restore validates and applies Backup Sets according to `docs/specifications/portability/restore.md`.
-
----
-
-# 12. Diagnostics
-
-The Backup Service SHOULD expose:
-
-- active Backup Job
-- Snapshot ID
-- object count
-- uploaded or copied Object count
-- skipped Object count
-- verification failures
-
-Diagnostics SHALL NOT expose decrypted user content.
-
----
-
-# 13. Invariants
-
-- Backup creates recovery points.
-- Backup is Snapshot-based.
-- Backup preserves authoritative Objects only.
-- Backup never stores Projections, Search Projection Materializations, Search settings, model
-  references, protected remote credentials, Search Jobs, or Search checkpoints.
-- Backup execution is a Runtime Job.
-- Backup does not require plaintext Vault contents.
-- Complete Backup includes every reachable Artifact wrapper regardless of source-device availability.
-
----
-
-# 14. Vault Generation Boundary
-
-A Backup Set records the opaque Vault Generation number and root ID that it captures. Vault Vacuum does not inspect, rewrite, or delete existing Backup Sets. Retention policy remains responsible for them.
-
-A Backup Set from a superseded generation MUST NOT merge into the active generation. It is eligible only for isolated recovery as a retired generation or restoration into a new Vault for manual recovery.
-
----
+- A Backup does not synchronize or receive Events.
+- Backup success requires independent destination verification.
+- Retention never deletes a retained Snapshot dependency.
+- Local availability markers and Materializations are excluded.
+- Backup existence is not tracked as portable Vault redundancy.
 
 # References
 
 - `docs/specifications/portability/restore.md`
-- `docs/specifications/storage/object-store.md`
-- `docs/specifications/runtime/jobs.md`
-- `docs/specifications/vault/vault.md`
+- `docs/specifications/vault/vacuum.md`

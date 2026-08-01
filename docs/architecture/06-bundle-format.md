@@ -1,90 +1,57 @@
-# Bundle Graph Architecture
+# Bundle and Artifact Architecture
 
-**Document:** `architecture/06-bundle-format.md`
-
-**Status:** Draft
-
-**Version:** 1.0
-
-**Owner:** Engineering
+**Status:** Draft target architecture
 
 **Depends On:**
 
-- `architecture/02-domain-model.md`
-- `architecture/04-security-model.md`
-- `architecture/05-client-runtime.md`
-
----
+- `docs/architecture/02-domain-model.md`
+- `docs/specifications/bundle/bundle.md`
 
 # Purpose
 
-A Bundle is the immutable logical preservation package created by one Capture. Its canonical shape
-is an Object graph: one compact encrypted Bundle Descriptor references independently encrypted
-Artifact Objects. It is not a directory, archive file, or monolithic byte stream.
+A Bundle is one immutable Capture identity and dependency graph, not a file format. AWSM separates
+small semantic metadata from large payload transport in the spirit of Git plus Git LFS.
 
-# Lifecycle
+# Graph
 
 ```text
-Capture acquisition
-  → prepare PRIMARY and best-effort Artifact wrappers
-  → validate Artifact records and checksums
-  → create and encrypt Bundle Descriptor
-  → prove exact Event/Object dependency closure
-  → atomically register descriptor, Artifacts, Event, and Projection
+generated Bundle ID
+  -> content-addressed Bundle Descriptor Object
+       -> content-addressed Artifact Object
+            -> randomized streamable encrypted wrapper
 ```
 
-Only a fully validated graph becomes authoritative. `PRIMARY` is mandatory. Optional failures omit
-the relevant Artifact reference and create a typed warning; they never create a dangling reference.
+The Descriptor commits to intrinsic Capture provenance, profile, exact Artifact roles, and
+warnings. Each Artifact Object commits to logical payload digest, byte length, representation
+metadata, and wrapper contract. The heavy wrapper can be hydrated, evicted, ranged, or physically
+repacked without changing the Artifact ID.
 
-# Descriptor and Artifacts
+# Identity
 
-The descriptor contains Capture metadata plus sorted references. Each reference records a fresh
-Artifact Object UUID, Kind, Role, MIME type, acquisition time, plaintext length, and SHA-256
-checksum. It contains no payloads, filenames, storage paths, availability, or Export state.
+Bundle, Collection, Folder, Tag, and Note IDs are random stable entity identities. Record and
+Object IDs are domain-separated SHA-256 digests of exact canonical authenticated bytes. An Opaque
+Storage Item ID identifies only one randomized outer envelope. These identities are never
+interchangeable.
 
-The initial web Capture graph supports:
+# Capture profile
 
-- mandatory canonical AWSM page-snapshot `PRIMARY`;
-- best-effort full WebP screenshot and 640×360 WebP `THUMBNAIL`;
-- best-effort canonical semantic `CONTENT_STRUCTURED`; and
-- normalized UTF-8 `TEXT_EXTRACTED` derived from the same semantic stream.
+The base web profile preserves a canonical inert page-snapshot ZIP as mandatory primary Artifact.
+Full screenshot, thumbnail, structured content, and extracted text are optional typed Artifacts.
+MHTML is a derived download rather than synchronized content.
 
-Artifact wrappers use authenticated chunk framing and are stored independently. This permits
-bounded-memory capture, verification, viewing, Vacuum accounting, synchronization, and Export,
-including payloads beyond 4 GiB.
+# Completeness
 
-# Identity, Immutability, and Validation
+The Runtime prepares and verifies the complete mandatory graph before Bundle Registered admits it.
+Optional failures become exact Descriptor warnings; there are no dangling optional references.
+Local absence after Storage Relief is availability state, not a different Bundle.
 
-Bundle IDs, descriptor Object IDs, and Artifact Object IDs are distinct fresh UUIDs. Hashes verify
-bytes and never assign identity. Equal content is not deduplicated. Every Object and Artifact is
-immutable; corrections or enrichment create additive Objects and Events.
+# Portability
 
-Readers fail closed on non-canonical encoding, unknown fields or variants, invalid Role/Kind/MIME
-contracts, duplicate Roles/IDs, missing mandatory content, dependency-closure mismatches, warning
-mismatches, or any wrapper/plaintext integrity failure.
-
-# Storage and Portability
-
-Compact descriptor and Artifact records are authoritative persistence records. External encrypted
-Artifact wrappers are part of their Artifact Objects; the Artifact Store owns path derivation and
-streaming. Projection thumbnails and indexes remain rebuildable.
-
-A Vault Package is an interchange container around a captured Vault Generation, not a Bundle
-serialization. Complete packages contain every wrapper. Selective packages may contain
-authenticated omissions only where the Import and Export Specification permits them.
-
-# Design Consequences
-
-- Page snapshots, screenshots, thumbnails, and text can be fetched or exported independently.
-- A server or local selective replica can coordinate opaque Artifact availability without learning
-  semantic content.
-- Vacuum follows descriptor-to-Artifact reachability and can reclaim exact wrapper bytes.
-- Structured content can feed local Search without decrypting full snapshots or screenshots.
+Complete Export transports the graph and all required wrappers as entries in a larger package. The
+package is not the Bundle's canonical form and never assigns semantic filenames or paths.
 
 # References
 
-- `docs/specifications/bundle/bundle.md`
 - `docs/specifications/bundle/manifest.md`
 - `docs/specifications/bundle/artifact.md`
-- `docs/specifications/crypto/object-encryption.md`
-- `docs/specifications/portability/import-export.md`
+- `docs/specifications/bundle/page-snapshot.md`

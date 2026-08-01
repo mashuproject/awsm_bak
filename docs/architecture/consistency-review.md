@@ -1,271 +1,209 @@
-# Architecture Consistency Review
-
-**Document:** `docs/architecture/consistency-review.md`
-
-**Status:** Review Record
-
-**Reviewed Against:** `docs/plans/02-chrome-extension-capture-vertical-slice.md`
-
-**Last Updated:** 2026-07-18
-
----
-
-# 1. Executive Summary
-
-The architecture now consistently treats the Runtime as the application, Hosts as platform integrations, Services as owners of business logic, and the Runtime Job Framework as the execution mechanism for long-running work.
-
-The most important correction was clarifying the authoritative model: immutable Objects are the authoritative persistence records, while Bundles, Event Log Segments, Wrapped Keys, and Vault Metadata are Object Types with semantics defined by their specifications. Registries, stores, Projections, Search Materializations, and UI views are derived or operational views over those Objects.
-
-The review also separated Backup from Import/Export, added Capture capability preflight, normalized Search Index terminology into Search Projection Materializations, and documented Job-based execution for Synchronization, Import, Export, Backup, and Restore.
-
----
-
-# 2. Global Terminology Changes
-
-| Older wording                            | Current wording                                      | Reason                                                                       |
-| ---------------------------------------- | ---------------------------------------------------- | ---------------------------------------------------------------------------- |
-| Search Index                             | Search Projection Materialization                    | Search owns no authoritative data; indexes are rebuildable materializations. |
-| Capture workflow                         | Capture Job pipeline                                 | Capture is long-running work owned by the Runtime Job Framework.             |
-| Upload/download synchronization          | Synchronization reconciliation                       | Synchronization converges replicas through Work Items and checkpoints.       |
-| Backup as export package                 | Snapshot-based Backup Set                            | Backup creates recovery points; Export creates interchange packages.         |
-| Bundle/Event as only authoritative state | Authoritative Objects with Bundle/Event Object Types | Matches Object Store authority while preserving Bundle/Event semantics.      |
-
----
-
-# 3. Cross-Document Inconsistencies Resolved
-
-## 3.1 Authoritative Object Model
-
-**Document:** `docs/specifications/vault/vault.md`
-
-**Section:** Vault Contents and Authoritative State
-
-**Existing text:** The authoritative state of a Vault consisted exclusively of immutable Bundles and immutable Events.
-
-**Conflict:** The current architecture says Objects are immutable and authoritative. Treating Bundles and Events as the only authoritative layer bypassed the Object Store abstraction.
-
-**Replacement:** Vault authoritative state consists of immutable Objects whose Object Types include
-Bundle Descriptor Objects, Artifact Objects, Event Log Segment Objects, Wrapped Key Objects, and
-Vault Metadata Objects.
-
-**Ripple effects:** Bundle Registry and Event Store are now logical views over authoritative Objects. Search Projection, Device Registry, Trust Registry, and Synchronization State are derived or operational.
-
-**Other documents updated:** `docs/specifications/storage/object-store.md`, `docs/specifications/portability/backup.md`, `docs/specifications/portability/import-export.md`, `docs/specifications/portability/restore.md`.
-
----
-
-## 3.2 Search Index as Architectural Concept
-
-**Document:** `docs/specifications/runtime/search.md`
-
-**Section:** Architecture, Projection Materializations, Rebuild, Encryption
-
-**Existing text:** Search used “indexes” as the main architectural object.
-
-**Conflict:** The current architecture prefers Projection and Materialization for rebuildable derived state. Search should query projections and not own authoritative data.
-
-**Replacement:** Search docs now describe Search Projection Materializations. Search executes queries; Projection Builders maintain Materializations.
-
-**Ripple effects:** Vault no longer lists Search Index as a top-level Vault component. It lists Search Projection.
-
-**Other documents updated:** `docs/specifications/vault/vault.md`, `docs/specifications/runtime/ai.md`, `docs/architecture/01-system-overview.md`, `docs/architecture/05-client-runtime.md`, `docs/architecture/11-search.md`.
-
----
-
-## 3.3 Missing Capture Capability Preflight
-
-**Document:** `docs/specifications/runtime/capture.md`
-
-**Section:** Capture Pipeline
-
-**Existing text:** The pipeline began with permission validation and then froze page state.
-
-**Conflict:** Capture must begin with capability/preflight so the Runtime can adapt to Host capabilities and Capture Profiles.
-
-**Replacement:** The Capture Pipeline now includes capability preflight after permission validation and before page freeze.
-
-**Ripple effects:** Capture Profiles now define mandatory Host capabilities as well as required Artifacts. Invariants now require preflight before Bundle generation.
-
-**Other documents updated:** None required beyond Capture Service Specification.
-
----
-
-## 3.4 Long-Running Work Outside the Job Framework
-
-**Document:** `docs/specifications/runtime/synchronization.md`
-
-**Section:** Synchronization Job Lifecycle, Retry, Recovery
-
-**Existing text:** Synchronization owned checkpoints, retries, and recovery directly.
-
-**Conflict:** The Runtime Job Framework owns scheduling, persistence, retries, cancellation, and recovery for long-running work.
-
-**Replacement:** Synchronization now defines Work Items and reconciliation behavior, while execution runs as a Synchronization Job. Checkpoints and retries are persisted/scheduled through the Job Framework.
-
-**Ripple effects:** Job types now include Backup Job and Restore Job, and job dependencies are explicitly DAG-ready.
-
-**Other documents updated:** `docs/specifications/runtime/jobs.md`, `docs/specifications/portability/import-export.md`, `docs/specifications/portability/backup.md`, `docs/specifications/portability/restore.md`, `docs/architecture/05-client-runtime.md`.
-
----
-
-## 3.5 Backup Duplicated Import/Export
-
-**Document:** `docs/specifications/portability/backup.md`
-
-**Section:** Entire document
-
-**Existing text:** Backup duplicated the Import and Export Specification.
-
-**Conflict:** Backup is not Export. Backup creates recovery points and is Snapshot-based.
-
-**Replacement:** Backup is now specified as Snapshot → Backup Set → Recovery Plan → Restore, executed as a Backup Job.
-
-**Ripple effects:** Restore consumes Backup Sets and constructs Recovery Plans. Import/Export remains the public interchange format.
-
-**Other documents updated:** `docs/specifications/portability/restore.md`, `docs/specifications/portability/import-export.md`, `docs/specifications/runtime/jobs.md`, `docs/architecture/20-deployment-and-operations.md`.
-
----
-
-## 3.6 AI Projection Ownership
-
-**Document:** `docs/specifications/runtime/ai.md`
-
-**Section:** Responsibilities, Projection Integration
-
-**Existing text:** AI could be read as interacting with search indexes.
-
-**Conflict:** AI must not update search, Bundles, or Projections directly.
-
-**Replacement:** AI produces Derived Artifacts and Runtime Events. Projection Builders consume AI completion events and update Search Projection Materializations.
-
-**Ripple effects:** Search terminology is now consistent with Projection Builder ownership.
-
-**Other documents updated:** `docs/specifications/runtime/search.md`.
-
----
-
-# 4. Architectural Refactoring Recommendations
-
-1. Treat the Object Store as the persistence root. Domain-specific specs define Object Type semantics.
-2. Keep all long-running workflows behind Runtime Jobs, including import/export, backup/restore, sync, capture, AI, projection rebuild, and garbage collection.
-3. Use Projection for logical derived state and Materialization for storage/index implementations.
-4. Keep Capture Profiles versioned and capability-aware so Hosts can vary without changing Runtime business logic.
-5. Keep Backup, Restore, Import, and Export separate: Backup is recovery; Export is interchange; Restore is idempotent recovery; Import is package ingestion.
-
----
-
-# 5. Updated Dependency Graph
-
-```text
-Design Principles
-↓
-Glossary
-↓
-Core Identifiers ── Object Store ── Crypto
-↓                  ↓               ↓
-Vault ─────────────┴──── Bundle ─── Event
-↓                         ↓         ↓
-Runtime ─ Jobs ─ Storage ─ Capture ─ Synchronization
-↓        ↓       ↓         ↓         ↓
-Search   AI      Backup    Import/Export    Protocol
-↓        ↓       ↓
-Projection Materializations
-↓
-Restore
-```
-
-The graph is intentionally layered: Hosts integrate platforms; Runtime Services own behavior; Storage Drivers adapt persistence; Protocol transports synchronize opaque authoritative Objects and Events.
-
----
-
-# 6. Documents Requiring Revision, Ordered by Priority
-
-Completed in this review:
-
-1. `docs/specifications/vault/vault.md`
-2. `docs/specifications/storage/object-store.md`
-3. `docs/specifications/runtime/capture.md`
-4. `docs/specifications/runtime/synchronization.md`
-5. `docs/specifications/runtime/jobs.md`
-6. `docs/specifications/runtime/search.md`
-7. `docs/specifications/runtime/ai.md`
-8. `docs/specifications/portability/backup.md`
-9. `docs/specifications/portability/import-export.md`
-10. `docs/specifications/portability/restore.md`
-11. `docs/architecture/01-system-overview.md`
-12. `docs/architecture/05-client-runtime.md`
-13. `docs/architecture/11-search.md`
-14. `docs/architecture/20-deployment-and-operations.md`
-
-Recommended next review pass, but not required before MVP implementation starts:
-
-1. `docs/architecture/10-projection-engine.md` - verify Projection Builder wording against Search Projection Materialization terminology.
-2. `docs/architecture/12-processing-pipeline.md` - verify AI artifact Events and Projection ownership against the runtime AI specification.
-
----
-
-# 7. Remaining Unresolved Architectural Questions
-
-The following questions remain intentionally unresolved and are outside the first MVP slice:
-
-1. What is the minimum Restore flow required for MVP second-device recovery?
-2. Which Backup retention policy should exist in MVP, if any?
-3. How much operational metadata leakage is acceptable for synchronization routing?
-
-The following current decisions are resolved by the approved Capture plans:
-
-1. The synchronized Vault Event is `BundleRegistered`.
-2. The first Capture Profile is `WebPageSnapshot-v1`: the canonical page snapshot is mandatory and
-   a lossy full-page WebP preview is best effort.
-3. Chrome implements Phase A; the Linux Firefox Host implements local-first and permission-gated
-   synchronization parity. Plan 19 completed exact signed-XPI proof and joint GitHub Release
-   distribution for the unlisted desktop-Linux beta; public browser-store listings remain a
-   separate Roadmap initiative.
-4. Bundle serialization is deterministic ZIP with canonical CBOR.
-5. The initial browser Storage Driver is IndexedDB.
-6. Bundle, Event, and Projection keys are context-derived with HKDF-SHA256.
-7. Interrupted live page acquisition fails safely and requires manual retry.
-
----
-
-# 8. Start Readiness
-
-The architecture is ready to start the first MVP slice if that slice is scoped to:
-
-```text
-Host capability preflight
-↓
-Capture Job
-↓
-Capture Result
-↓
-Bundle Descriptor and Artifact Objects
-↓
-Local Object Store
-↓
-BundleRegistered Vault Event
-↓
-Library Projection Materialization
-```
-
-Synchronization, multi-device Restore, remote Backup, and AI can be added after this slice using the same Runtime Job and authoritative Object model.
-
----
-
-# 9. Deleted Captures and Vault History Rewrite Reconciliation
-
-Plan section 15 replaces the pre-release `LibraryGroupRemoved` model. The canonical lifecycle uses explicit Bundle-ID Commands, encrypted `CapturesDeleted`/`CapturesRestored` Events, Active/Deleted Library Projection state, encrypted Vault Generation manifests, and explicit Vault Vacuum.
-
-The owning formal contract is `docs/specifications/vault/vacuum.md`; intent and trade-offs are in `docs/architecture/21-vault-history-rewrite.md`. Vault, Event, Object Store, Runtime Storage/Jobs/Synchronization, protocol errors, Backup, Restore, content storage, glossary, and testing strategy now share the same reachability and generation-fencing model.
-
-The browser slice implements local generation activation and collection with one IndexedDB
-transaction. The Coordination Server now separately proves opaque remote Generation activation,
-recovery retention, and purge through independent HTTP/Cable replicas. Trusted Runtime integration
-remains deferred. Vacuum and remote purge explicitly exclude old Backup Sets, exports, offline
-replicas, and already transferred copies and are not Secure Scrub.
-
-# 10. Collection Management Reconciliation
-
-Plan section 16 replaces transient URL-only UI grouping with stable, Event-backed Collection identities. The canonical model assigns a Collection ID in `BundleRegistered`, routes only exact fragmentless URL matches automatically, and records user-directed Merge, Move, Extract, and Undo through `CollectionsMerged`, `CapturesMoved`, and `CollectionMergeReverted`.
-
-The owning formal contract is `docs/specifications/vault/collection.md`. The glossary, Event and Command specifications, Runtime capture contract, Event model, Projection engine, Vault Vacuum, history-rewrite architecture, and testing strategy now share its assignment, redirect, atomicity, replay, and Vacuum semantics. Collection Materializations remain encrypted and rebuildable; immutable Captures and accepted Events are never edited.
+# Canonical Architecture Consistency Review
+
+**Status:** Review Record — reconciled target; repository verification complete
+
+**Evidence scope:** repository checkout inspected 2026-08-01
+
+**Implementation scope:** documentation only
+
+# 1. Result
+
+AWSM's evergreen living documentation now describes one target architecture: a local-first,
+location-independent encrypted Vault materialized by zero or more Replicas, operated by trusted
+Clients, and optionally stored through opaque Replica Hosts. Portable Vault authority, Host-local
+channel access, and Client-local API access are independent domains.
+
+This is a repository-evidence conclusion about the target documents. It is not deployed-state
+evidence and does not claim that the browser extension, Rails application, staging, or production
+already implements the target. The current implementation remains an earlier pre-release Device,
+Recovery Kit, Root Key, semantic-Host, and linear-Generation experiment where the inspected code,
+generated OpenAPI, and current public pages say so.
+
+# 2. Authority used
+
+The reconciliation applied the repository authority order:
+
+1. `00-design-principles.md` for cross-cutting constraints;
+2. `glossary.md` for canonical terms;
+3. owning formal specifications for exact contracts;
+4. the architecture series for component relationships; and
+5. the living PRD, Vision, Roadmap, and README for product scope and evidence boundaries.
+
+The two gitignored architecture-freeze working ledgers under `tmp/` supplied decision evidence.
+They are not canonical sources after reconciliation. Numbered plans other than the living PRD were
+left unchanged as historical records.
+
+# 3. Canonical model
+
+| Boundary                 | Reconciled contract                                                                |
+| ------------------------ | ---------------------------------------------------------------------------------- |
+| Vault                    | logical, encrypted, location-independent, and complete as a concept                |
+| Replica                  | one complete, sparse, stale, or converged materialization; no portable Replica ID  |
+| Client Installation      | trusted container that may manage several Vaults, Replicas, and Credentials        |
+| Client Credential        | portable Event-signing and key-delivery authority for one member                   |
+| Account                  | optional username-based Host-local Channel Principal with no email                 |
+| Replica Host             | storage/channel role; may be opaque and may coexist with a Client role             |
+| Vault Member             | equal cryptographic and Recovery class; authority independent of Account access    |
+| Vault Administrator      | portable governance role; one or more while a lineage remains writable             |
+| Record model             | one signed DAG plus its Authority Parent subgraph; Event and Baseline Record kinds |
+| Event model              | 14 Authority, 31 Content, and 2 Lifecycle base Event types                         |
+| State                    | deterministic reduction of one authenticated Frontier in one Generation            |
+| Time                     | signed audit/provenance only; never portable causality or authority                |
+| Synchronization          | receiver-initiated pull with local validation and no privileged origin             |
+| Hosting                  | immutable opaque item admission, inventory, reads, ranges, and Wake Hints          |
+| Encryption               | independent Key Epoch Keys, per-member Recovery, no portable Vault Root Key        |
+| History rewrite          | Vacuum resets Content history but retains an authority Continuity Proof            |
+| Independent continuation | state-only Fork with fresh Vault, authority, Object, and entity IDs                |
+| Persistence              | eleven logical storage families plus separately classified adjacent state          |
+| Evolution                | Required Vault Features for semantics; Advisory Extensions only for ignorable data |
+| Search                   | private rebuildable Materialization over authenticated Vault content               |
+
+# 4. Exact contract ownership
+
+The core specifications now own one initial canonical substrate:
+
+- restricted deterministic CBOR, transcript framing, typed dependencies, and typed 32-byte IDs;
+- three protected storage format identifiers for outer envelope, Vault Record, and Vault Object;
+- Ed25519 Event signatures, SHA-256 identities, HKDF-SHA256 derivation,
+  XChaCha20-Poly1305 content protection, and RFC 9180 HPKE Key Envelopes;
+- one Event and Baseline envelope, signed causal and Authority Parent Frontiers, exhaustive base
+  type registries, reducer classes, and conflict fences;
+- Initial Baseline plus Genesis bootstrap, Vacuum successor proof, Closure, Historical View, Fork,
+  and Event Re-authoring;
+- exact authority ceremonies for Invitations, membership, administration, Client and Recovery
+  Credentials, Key Epochs, Key Delivery, and feature activation;
+- exact Collection, Folder, Tag, Note, lifecycle, conflict, and Baseline checkpoint structures;
+- protected logical Objects separated from randomized destination-specific Opaque Storage Items;
+  and
+- Complete Export, Backup, Restore, opaque Host, Runtime, Job, Capture, Search, and persistence
+  boundaries.
+
+The generated HTTP OpenAPI remains owned by executable Rails routes and therefore remains current-
+implementation evidence until implementation convergence replaces and regenerates it.
+
+# 5. Contradictions closed during review
+
+The audit did more than rename terms. It closed these implementation-significant contradictions:
+
+1. Artifact wrappers are randomized physical representations resolved through Replica Safety
+   State, not portable typed dependencies. Artifact Object ID remains the logical identity.
+2. Vault Object IDs commit to Vault ID as well as type and canonical bytes, so a state-only Fork
+   cannot reuse source Object identity accidentally.
+3. Genesis depends only on the Initial Baseline. Initial Key Envelope slots live in the Baseline
+   closure, avoiding duplicate dependency claims and content-addressing cycles.
+4. Existing-Credential Enrollment is signed by the existing active Credential; recovery-authorized
+   Enrollment is signed by the proposed Credential with separate Recovery authorization.
+5. Invitation Creation binds both Redemption and Cancellation public verifiers while neither
+   bearer secret enters portable history. A cancellation receipt binds a verifiable cancellation
+   request, and one Redemption Authority serializes terminal use.
+6. Authority Baselines retain the exact active Invitation, conflict candidate, receipt, Recovery,
+   Epoch, Administrator, and fence state needed to continue without predecessor reachability.
+7. Collection and Tag Baselines retain direct reversible redirect facts and controlling Cause IDs,
+   not only transitive destinations, so Vacuum does not silently make active merges permanent.
+8. Every retained predecessor Content fact needing a continuing cause identity receives a fresh
+   Baseline Cause ID. Post-Baseline Content Events can name exact facts without retaining source
+   Event identity, reachability, or invented ancestry.
+9. Self-resignation ends contribution immediately but does not claim immediate cryptographic
+   exclusion; obtainable old-Epoch updates remain best-effort until a later Epoch or Host cutoff.
+10. Synchronization remains pull. Destination item admission is a separate idempotent workflow that
+    prepares one fresh representation per logical item and destination.
+11. Replica Safety State such as wrapper availability is not a disposable Projection, while Search
+    indexes and other algorithm-dependent Materializations remain rebuildable and absent from
+    Vacuum Baselines.
+12. Shared transcript labels, dependency codes, Artifact digest domains, Host success outcomes, and
+    protocol metadata were made internally exact instead of retaining competing spellings.
+13. Capture and Note Baselines preserve Historical Attribution without treating source member or
+    Credential identifiers as authority after a state-only Fork.
+14. The earlier assumption that Vacuum could discard both Content and authority history made fresh
+    phrase-only Recovery unable to prove that the Vacuum signer was an Administrator. The canonical
+    Event envelope now signs a separate Authority Parent Frontier, and Vacuum permanently retains
+    that compact Genesis-to-current Continuity Proof while discarding unrelated Content parents.
+
+# 6. CAP and conflict posture
+
+Portable Vault state favors availability and partition tolerance. Disconnected valid work is
+accepted locally and later converges by authenticated DAG union plus deterministic type-specific
+reduction. AWSM does not claim a linearizable global head, trusted clock, global freshness, or
+global redundancy knowledge.
+
+Conflicts are scoped rather than universal. Scalar presentation facts use causal precedence and a
+non-time Record ID tie-break. Unique Note content, authority ambiguity, redirect cycles, sibling Key
+Epochs, and sibling Vacuum successors retain every candidate and require their exact resolution or
+an informed Vacuum/Fork choice. Narrow fences block only the unsafe capability wherever possible.
+
+# 7. Current implementation boundary
+
+Repository inspection, summarized in `implementation-convergence-impact.md`, found current browser
+and Rails code organized around the superseded experiment. Accordingly this reconciliation did
+not:
+
+- change browser or Rails product behavior;
+- change database schemas, routes, executable protocol types, or generated OpenAPI;
+- relabel current Rails public pages as if target behavior shipped;
+- implement the canonical glossary renderer;
+- reset development, test, staging, or production data;
+- inspect or mutate staging, production, Cloudflare, GitHub, or any other external service; or
+- add compatibility readers, migrations, aliases, or dual formats.
+
+Current public pages remain current-implementation copy. The Roadmap retains deterministic
+rendering of the tracked canonical glossary as implementation work, preventing a second editable
+definition source without pretending that behavior exists today.
+
+# 8. Deliberately future work
+
+Foundational Vault semantics are no longer Roadmap questions. Genuine product or Host-policy work
+remains forward-looking, including:
+
+- implementation of the canonical Client and opaque Host substrate;
+- exact generated HTTP routes and transport adapters;
+- Host-local billing/resource responsibility, grace, suspension, and reaping policy;
+- optional former-member Recovery Snapshots;
+- direct peer and headless transports, thin and web Clients, and Runtime API Grants;
+- activity-review and abuse-assistance views built on signed Event evidence;
+- selective transfer, richer Notes, additional storage backends, and later Required Features; and
+- release, native-platform, AI, accessibility, and operational initiatives already owned by the
+  Roadmap.
+
+These candidates may add implementations or explicit Required Features. They may not silently
+reinterpret the canonical initial substrate.
+
+# 9. Implementation handoff
+
+`implementation-convergence-impact.md` is the cold-start impact map. It identifies current browser
+and Rails modules, persistence and schema replacement, generated artifacts, test replacement,
+public surfaces, implementation slices, destructive development reset consequences, and the later
+authorization boundary for reference staging.
+
+No implementation plan should use old numbered plans as current requirements. It must reconcile
+the executable system directly to the living principles, glossary, owning formal specifications,
+architecture, and PRD, deleting superseded experimental behavior instead of migrating it.
+
+# 10. Verification record
+
+Repository-only verification completed on 2026-08-01:
+
+- a local-reference checker covered 68 living Markdown files; every Markdown link resolved;
+- 448 backticked Markdown document paths resolved, and every declared `Depends On` Markdown path
+  used a repository-root path;
+- mechanical registry and body-owner checks found exactly 14 Authority, 31 Content, and 2 Lifecycle
+  Event types plus 11 logical storage families;
+- negative terminology searches found discarded names only in explicit current-implementation
+  evidence or canonical statements that reject those concepts;
+- `git diff --check` passed;
+- `corepack pnpm exec prettier --check` passed for every changed Markdown file; and
+- `corepack pnpm lint` passed, including the design-system check and Biome over 405 files with zero
+  errors or warnings.
+
+The unchanged generated HTTP OpenAPI remains current-code evidence and was not reformatted or
+regenerated. No product source, Rails view, database, live deployment, browser state, staging,
+production, Cloudflare, or other external service was changed or used as proof. Because this was a
+documentation-only reconciliation with no rendered surface change, no visual assertion is part of
+this review.
+
+# References
+
+- `docs/architecture/00-design-principles.md`
+- `docs/architecture/glossary.md`
+- `docs/plans/01-mvp-prd.md`
+- `docs/architecture/implementation-convergence-impact.md`
+- `ROADMAP.md`

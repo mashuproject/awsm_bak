@@ -1,59 +1,114 @@
-# Protocol Resources and Outcomes
+# Opaque Replica Protocol Resources
 
-**Document:** `specifications/protocol/messages.md`
+**Document:** `docs/specifications/protocol/messages.md`
 
 **Version:** 1.0
 
-**Status:** Draft
+**Status:** Draft target contract
 
 **Depends On:**
 
-- protocol.md
-- http-api.openapi.yaml
-
----
+- `docs/specifications/protocol/protocol.md`
 
 # 1. Purpose
 
-This document indexes the canonical protocol resources. It does not define a generic message
-envelope. Exact HTTPS shapes belong to `http-api.openapi.yaml`; transport-independent behavior
-belongs to `protocol.md`.
+This document fixes the transport-neutral resource fields that the target executable HTTP API must
+represent. JSON names below are normative API names; protected Vault serialization remains CBOR.
 
-# 2. Control Resources
+# 2. Encodings
 
-- Service policy reports effective retention, upload, paging, ticket, and notification limits.
-- Vault attachment creates a provisional Vault and uploads the client's current active Generation
-  under its existing nonnegative Generation number; completion publishes that Generation as the
-  server's first known active Generation without inventing unavailable predecessors.
-- Upload resources expose resumable part state and renew scoped tickets.
-- Event closure commits publish exactly one Event and its declared dependencies, or idempotently
-  acknowledge that the exact immutable closure is already an active-Generation member.
-- Active records provide full-replica enumeration and ticketed download.
-- Changes provide snapshot-bounded incremental delivery by per-Vault Delivery Cursor.
-- Generation candidates accept successor metadata, retained pages, sealing, activation, and discard.
-- Recoveries expose one exact superseded Generation without changing the active head.
-- Purges expose durable non-cancellable deletion progress.
+Thirty-two-byte opaque IDs and digests use unpadded base64url. Byte lengths and cursors are JSON
+safe nonnegative integers. Timestamps appear only in Host policy resources and use RFC 3339 UTC.
+Unknown properties are rejected.
 
-# 3. Binary Transfer Resources
+# 3. Hosted Replica summary
 
-Upload-part and download URLs carry short-lived unguessable capabilities. Transfer requests still
-require protocol and request IDs but do not carry Account credentials. The Service persists only a
-SHA-256 digest of each capability. Binary bodies use `application/octet-stream`; JSON middleware
-does not parse them.
+```text
+{
+  "replica_handle": string,
+  "capabilities": string[],
+  "quota_bytes": integer | null,
+  "stored_bytes": integer
+}
+```
 
-# 4. Advisory Notification
+The handle is Host-local and opaque. Capabilities are the exact keys from
+`docs/specifications/vault/replica.md`. This resource contains no Vault ID, label, member, or
+Generation.
 
-`VaultChangesChannel` accepts one Account-owned Vault ID and publishes exactly `vaultId` and
-`latestCursor`. The payload is a wake-up signal, never trusted state transfer.
+# 4. Inventory page
 
-# 5. Outcomes
+```text
+{
+  "snapshot_cursor": integer,
+  "next_position": string | null,
+  "items": [
+    {
+      "storage_item_id": base64url32,
+      "storage_class": "compact" | "streamable",
+      "byte_length": integer,
+      "ciphertext_digest": base64url32
+    }
+  ]
+}
+```
 
-Every non-success JSON response contains `outcome`, `retryable`, and `requestId`, plus only the
-optional fields admitted by OpenAPI. Clients branch on the stable outcome identifier, not HTTP
-diagnostic prose. Cross-Account requests use non-disclosing not-found or conflict outcomes.
+Items are strictly ordered and duplicate-free. `next_position: null` completes this snapshot. A
+later pull obtains a new snapshot cursor; a cursor is never a Vault clock.
 
-# 6. Strictness
+# 5. Admission result
 
-Unknown properties, malformed identifiers, unsafe integers, non-canonical timestamps, invalid
-checksums, unsorted or duplicate dependency/reachability lists, and undocumented resource paths are
-rejected. No unknown-field preservation or protocol negotiation exists in the pre-release contract.
+```text
+{
+  "storage_item_id": base64url32,
+  "byte_length": integer,
+  "admission": "stored" | "already_present",
+  "hint_cursor": integer
+}
+```
+
+Resumable stream preparation additionally returns an opaque `upload_handle`, accepted byte offset,
+maximum part length, and short-lived transfer capability. Finalization returns the ordinary
+Admission result only after complete outer verification.
+
+# 6. Read metadata
+
+```text
+{
+  "storage_item_id": base64url32,
+  "storage_class": "compact" | "streamable",
+  "byte_length": integer,
+  "ciphertext_digest": base64url32,
+  "accepted_range": {"start": integer, "end_exclusive": integer} | null
+}
+```
+
+The binary response body is exact stored outer bytes or the stated range. HTTP content metadata
+must agree with this resource or equivalent headers.
+
+# 7. Wake Hint
+
+```text
+{"hint_cursor": integer}
+```
+
+It is an advisory indication that inventory may have changed. It carries no item list or protected
+identifier.
+
+# 8. Outcome
+
+```text
+{
+  "outcome": string,
+  "retryable": boolean,
+  "request_id": string,
+  "retry_after_seconds": integer | null
+}
+```
+
+Only `errors.md` may add outcome-specific safe fields. Diagnostic prose is not machine-readable.
+
+# References
+
+- `docs/specifications/protocol/errors.md`
+- `docs/specifications/vault/replica.md`

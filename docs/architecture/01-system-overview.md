@@ -1,672 +1,80 @@
 # System Architecture Overview
 
-**Document:** `architecture/01-system-overview.md`
-
-**Status:** Draft
-
-**Owner:** Engineering
+**Status:** Draft target architecture
 
 **Depends On:**
 
-- README.md
-- VISION.md
-- docs/plans/01-mvp-prd.md
-
----
+- `docs/architecture/00-design-principles.md`
+- `docs/architecture/glossary.md`
 
 # Purpose
 
-This document defines the high-level architecture of Archive Platform.
+AWSM is a local-first encrypted preservation system. Its canonical architecture separates one
+location-independent Vault from the Clients that operate it, the Replicas that materialize it, and
+the optional Hosts that expose Replica access.
 
-Rather than describing implementation details, it establishes the major system components, their responsibilities, and the boundaries between them.
-
-Subsequent architecture documents (cryptography, synchronization, local storage, APIs, AI, etc.) refine the concepts introduced here.
-
----
-
-# Architectural Goals
-
-The architecture is designed to satisfy the following requirements simultaneously:
-
-- Local-first operation
-- Zero-knowledge storage
-- Offline capability
-- Immutable preservation
-- Multi-device synchronization
-- AI-assisted knowledge management
-- Horizontal scalability
-- Long-term maintainability
-
-These goals take precedence over implementation convenience.
-
----
-
-# High-Level Architecture
+# System shape
 
 ```text
-                          User
-
-                           │
-
-            ┌──────────────┴──────────────┐
-            │                             │
-
-            ▼                             ▼
-
-    Browser Extension              Web Application
-
-            │                             │
-
-            └──────────────┬──────────────┘
-
-                           │
-
-                 Trusted Client Runtime
-
-          Capture
-          Search
-          AI
-          Encryption
-          Local Database
-          Object Store
-          Synchronization
-
-                           │
-
-                  Encrypted Sync Protocol
-
-                           │
-
-                           ▼
-
-                  Coordination Server
-
-        Authentication
-        Opaque Object Coordination
-        Delivery Cursors and Hints
-        Generation and Purge Coordination
-
-        Future: Device Registry, Billing,
-                Sharing Coordination
-
-                           │
-
-                           ▼
-
-                 Encrypted Object Storage
+                          person
+                             |
+                 trusted Client Installation
+          Commands, keys, Capture, Events, replay, search
+                     /                  \
+             local Replica          optional Remotes
+                                      /          \
+                              peer Client    Replica Host
+                                              opaque Replica
 ```
 
----
-
-# Architectural Principles
-
-The platform consists of two trust domains.
-
-## Trusted Domain
-
-Trusted components have access to decrypted user content.
-
-Examples:
-
-- Browser extension
-- Desktop application (future)
-- Mobile application (future)
-
-These clients possess encryption keys.
-
----
-
-## Untrusted Domain
-
-Untrusted components never have access to plaintext archives.
-
-Examples:
-
-- Rails backend
-- PostgreSQL
-- Object storage
-- CDN
-- Background workers
-
-These services coordinate synchronization but cannot decrypt content.
-
----
-
-# Core Concepts
-
-The platform revolves around six primary concepts.
-
-## User
-
-Represents a human identity.
-
-Responsibilities:
-
-- authentication
-- billing
-- device ownership
-- vault membership
-
-A user does not directly own archived content.
-
-Instead, users own vaults.
-
----
-
-## Vault
-
-A Vault is the primary ownership and cryptographic boundary.
-
-Everything stored within a vault shares a common trust model.
-
-A vault contains:
-
-- objects
-- AI artifacts
-- notes
-- folders
-- Search Projection Materializations
-- configuration
-
-Future capabilities:
-
-- shared vaults
-- organization vaults
-- read-only vaults
-- imported vaults
-
----
-
-## Capture
-
-A Capture represents a snapshot of information at a specific moment.
-
-Captures are immutable.
-
-Examples:
-
-- web page
-- PDF
-- image
-- email
-- EPUB
-- Markdown document
-
-Every successful capture produces one immutable Bundle.
-
----
-
-## Object
-
-Objects are immutable storage-service units.
-
-Objects are immutable.
-
-Objects are addressed by stable Object Identifiers and verified by integrity metadata.
-
-Objects never change after creation.
-
-Examples:
-
-- encrypted Bundle Descriptor and Artifact Objects
-- encrypted Block
-- wrapped key
-- Event Log segment
-
-Objects may reference other objects.
-
----
-
-## Artifact
-
-Artifacts are immutable payload Objects referenced by a Bundle Descriptor. They may contain
-preserved source material or derived information and are independently encrypted and stored.
-
-Examples:
-
-- primary capture representation
-- screenshots
-- extracted text
-- summaries
-- OCR
-- embeddings
-- translations
-
-Derived Artifacts may be regenerated by creating new immutable Artifacts and Events. Preserved capture Artifacts are not modified.
-
----
-
-## Device
-
-Devices are trusted clients.
-
-Examples:
-
-- Chrome extension
-- Firefox extension
-- Desktop application
-- Mobile application
-
-Every device possesses cryptographic credentials allowing access to one or more vaults.
-
----
-
-# System Components
-
-## Browser Extension
-
-Primary client.
-
-Responsibilities:
-
-- capture
-- encryption
-- local storage
-- AI inference
-- search
-- synchronization
-- archive rendering
-
-The browser extension is considered the reference implementation.
-
----
-
-## Web Application
-
-Secondary client.
-
-Responsibilities:
-
-- browsing
-- administration
-- billing
-- account management
-- vault management
-- device management
-
-The web application should provide access to the archive from any browser while preserving the zero-knowledge model.
-
-It is not responsible for capture.
-
----
-
-## Coordination Server
-
-Coordinates encrypted data exchange for one synchronized Vault per authenticated Account.
-
-Responsibilities:
-
-- authenticate requests
-- receive encrypted objects
-- distribute updates
-- resolve synchronization metadata
-- maintain opaque Generation membership and delivery cursors
-- issue content-free Action Cable wake-up hints
-
-It never decrypts user data.
-
----
-
-## Object Storage
-
-Stores encrypted immutable objects.
-
-Properties:
-
-- append-only
-- content-addressed
-- versioned
-- replicated
-
-The storage layer treats every object as opaque binary data.
-
----
-
-# Data Flow
-
-## Capture
-
-```text
-User
-
-↓
-
-Capture Page
-
-↓
-
-Extract Metadata
-
-↓
-
-Generate Bundle
-
-↓
-
-Run AI
-
-↓
-
-Encrypt Objects
-
-↓
-
-Store Locally
-
-↓
-
-Submit Synchronization Job
-```
-
----
-
-## Synchronization
-
-```text
-Local Object or Event
-
-↓
-
-Encrypted Upload
-
-↓
-
-Rails API
-
-↓
-
-Object Storage
-
-↓
-
-Device Notifications
-
-↓
-
-Other Devices Download
-
-↓
-
-Decrypt
-
-↓
-
-Store Locally
-```
-
-Ordinary synchronization installs newly learned Artifact wrappers locally. A user may later run
-repeatable storage maintenance that proves exact active-Generation membership and ciphertext
-metadata before removing only eligible heavy wrappers. Their immutable Object records remain local,
-and the Runtime retrieves, verifies, and normally restores those wrappers on demand. Complete Export
-streams remote-only wrappers without changing their device-local availability.
-
----
-
-## Search
-
-```text
-User Query
-
-↓
-
-Encrypted local Search Projection Materializations
-
-↓
-
-Ranked Capture and passage identifiers
-
-↓
-
-Re-authenticate the selected passage
-
-↓
-
-Render and focus Capture detail
-```
-
-The server never participates in search.
-
----
-
-# Object Lifecycle
-
-Every stored Object follows the same lifecycle.
-
-```text
-Create
-
-↓
-
-Encrypt
-
-↓
-
-Hash
-
-↓
-
-Store Locally
-
-↓
-
-Synchronize
-
-↓
-
-Replicate
-
-↓
-
-Restore
-
-↓
-
-Verify
-
-↓
-
-Read
-
-↓
-
-Retain
-```
-
-Objects are never modified after creation.
-
----
-
-# Trust Boundaries
-
-The architecture intentionally minimizes trust.
-
-The backend must never require:
-
-- plaintext content
-- encryption keys
-- Search Projection Materializations
-- AI prompts
-- archive contents
-
-Compromising the backend should not expose user archives.
-
----
-
-# AI Architecture
-
-Artificial intelligence is treated as a client capability.
-
-Pipeline:
-
-```text
-Capture
-
-↓
-
-Decrypt
-
-↓
-
-AI Provider
-
-↓
-
-Artifacts
-
-↓
-
-Encrypt
-
-↓
-
-Synchronize
-```
-
-The synchronization layer remains AI-agnostic.
-
----
-
-# Metadata
-
-Metadata is divided into two categories.
-
-## Public Metadata
-
-Visible to the backend.
-
-Examples:
-
-- Object Identifier
-- vault ID
-- object size
-- creation timestamp
-- synchronization sequence
-- MIME type (optional)
-- Object Type
-
-Public metadata enables synchronization.
-
----
-
-## Private Metadata
-
-Encrypted.
-
-Examples:
-
-- title
-- URL
-- summary
-- notes
-- tags
-- extracted text
-- AI outputs
-
-Private metadata remains inaccessible to the service provider.
-
----
-
-# Design Decisions
-
-## Why Immutable Objects?
-
-Advantages:
-
-- integrity
-- auditability
-- reproducibility
-- synchronization simplicity
-- historical preservation
-
-Alternatives considered:
-
-Mutable document storage.
-
-Rejected because it complicates synchronization and weakens archival guarantees.
-
----
-
-## Why Local First?
-
-Advantages:
-
-- offline operation
-- privacy
-- responsiveness
-- reduced infrastructure cost
-
-Alternatives considered:
-
-Cloud-first architecture.
-
-Rejected because it conflicts with zero-knowledge processing and introduces unnecessary latency.
-
----
-
-## Why Vaults?
-
-Vaults separate ownership from identity.
-
-Benefits:
-
-- simpler cryptography
-- organization support
-- shared archives
-- import/export
-- independent backup
-- future enterprise features
-
-Alternatives considered:
-
-User-owned archives.
-
-Rejected because ownership, permissions, and encryption become tightly coupled.
-
----
-
-## Why Client AI?
-
-Benefits:
-
-- privacy
-- offline support
-- provider flexibility
-- user choice
-
-Alternatives considered:
-
-Server-side AI.
-
-Rejected because it violates the zero-knowledge design goals.
-
----
-
-# Portable Vault Import Boundary
-
-Complete Vault Import is a trusted-client operation. The Host stages opaque package bytes and
-streams encrypted Artifact wrappers; the Runtime authenticates and replays the complete package,
-creates fresh local credentials and Projections, and directs one Driver activation transaction.
-No Coordination Server participates. Import creates a new locked Vault, never merges with an
-existing Vault, and is distinct from Backup Restore.
-
-# Open Questions
-
-How should Vault sharing operate?
-
-How should deleted Objects be garbage-collected?
-
-How should large Object streaming behave?
-
-How should background synchronization operate on mobile devices?
-
-These questions are addressed in later architecture documents.
-
----
+A browser extension is one Client Installation. Desktop, mobile, headless, and API-driven clients
+can implement the same trusted Runtime. An installation may also expose a Replica as a Host.
+
+# Core boundaries
+
+- **Vault:** stable logical identity, authenticated Record DAG, Objects, members, keys, and current
+  state.
+- **Replica:** one stored materialization of that Vault, possibly complete, on-demand, stale, or
+  offline.
+- **Client:** trusted software that can decrypt, validate, author through a Client Credential, and
+  provide user or API workflows.
+- **Host:** a service boundary that authenticates Channel Principals and exposes a Replica. An
+  opaque Host need not be a Client.
+- **Account:** optional Host-local login identity. It is not a Vault member or cryptographic owner.
+
+# Data flow
+
+Capture creates immutable Bundle and Artifact Objects locally. A signed Vault Event admits them to
+one hash-linked DAG. Other Replicas pull opaque randomized storage items, decrypt and validate them
+locally, and reduce compatible concurrent history deterministically. Search and AI indexes remain
+local rebuildable Materializations unless a user explicitly preserves a result as Vault content.
+
+# Consistency model
+
+Vault work is available during network partitions and may temporarily diverge. Causal ancestry and
+deterministic reducers converge compatible work; scoped conflicts retain every authenticated head
+for explicit resolution. Host-local Account, Grant, quota, and cursor state may use ordinary
+strong database consistency without becoming Vault causality.
+
+# History and evolution
+
+Genesis authenticates an Initial Baseline. Vacuum signs a complete successor Baseline and starts a
+fresh Generation while retaining the Vault ID. Its Authority Parent subgraph remains as the
+Continuity Proof required for phrase-only recovery; discarded Content history does not. A Fork
+creates a new Vault from selected logical state without copying source history or authority.
+Required Vault Features explicitly evolve authoritative semantics; advisory extensions cannot
+change them.
+
+# Implementation status
+
+This document is the canonical target direction. The current extension and coordination-server
+code still contain earlier single-user Device and recovery experiments. Current public claims must
+continue to follow tested implementation until code, schemas, generated API, and staging are
+separately reconciled.
 
 # References
 
 - `docs/architecture/02-domain-model.md`
 - `docs/architecture/03-zero-knowledge.md`
-- `docs/architecture/04-security-model.md`
-- `docs/architecture/05-client-runtime.md`
-- `docs/architecture/06-bundle-format.md`
+- `docs/architecture/08-synchronization.md`
+- `docs/specifications/vault/vault.md`

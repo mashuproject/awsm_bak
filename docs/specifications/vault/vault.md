@@ -1,315 +1,158 @@
 # Vault Specification
 
-**Document:** `specifications/vault/vault.md`
+**Document:** `docs/specifications/vault/vault.md`
 
 **Version:** 1.0
 
 **Status:** Draft
 
----
+**Depends On:**
+
+- `docs/specifications/core/serialization.md`
+- `docs/specifications/event/event-format.md`
+- `docs/specifications/event/reducers.md`
+- `docs/specifications/vault/authority.md`
 
 # 1. Purpose
 
-A Vault is the authoritative logical container for archived information.
+A Vault is AWSM's encrypted, location-independent logical body of authoritative Records and
+Objects. It may be materialized by zero or more Replicas. A Replica, Client Installation, Host,
+Account, export, projection, or database is never the Vault itself.
 
-A Vault contains authoritative Objects, cryptographic material, and derived Projections.
+# 2. Identity and scope
 
-Every preserved object belongs to exactly one Vault.
+A Vault has one random 32-byte Vault ID. The ID survives synchronization and Vacuum. A Fork has a
+fresh Vault ID. Names, Accounts, members, Hosts, URLs, timestamps, and content do not determine the
+ID.
 
-A Vault is independent of any particular device or server.
+A Vault is multi-member-capable from creation. The creator becomes its first Vault Member and
+first Vault Administrator. Membership and administration are portable Authority State. Account
+access and Host policy are not.
 
----
+# 3. Generation and history
 
-# 2. Design Goals
+A Vault Generation is one continuous Record DAG rooted at exactly one Vault Baseline. Initial
+creation uses an Initial Baseline authenticated by the parentless Genesis Event. Vacuum retains
+the Vault ID, creates a fresh Generation ID and successor Baseline, and ends the predecessor
+Generation.
 
-A Vault MUST provide:
+Portable authority continuity crosses that causal reset through the signed Authority Parent
+subgraph. Genesis is its initial root; each Vacuum Event becomes the Authority Parent anchor for
+the successor Generation. The resulting Continuity Proof is part of the Vault's permanent
+cryptographic identity evidence even though discarded Content history is not successor state.
 
-- a stable identity
-- cryptographic isolation
-- synchronization boundaries
-- deterministic replay
-- offline operation
-- long-term portability
+The active Vault state is the deterministic reduction of one authenticated accepted causal Record
+Frontier in one Generation plus its exact Authority Frontier and Continuity Proof. A timestamp,
+arrival order, Host cursor, Replica, or Account never selects the state.
 
----
+# 4. Baseline body
 
-# 3. Logical Model
+The `baselineBody` in `docs/specifications/event/event-format.md` is this exact canonical CBOR map:
 
-```
-Workspace
-
-├── Vault
-│
-├── Vault
-│
-└── Vault
-```
-
-A Workspace manages one or more Vaults.
-
-Each Vault is logically independent.
-
-Workspace membership and the device-local active Vault selection are operational state. They MUST NOT combine Vault Root Keys, authoritative history, synchronization state, or Object identity across Vaults.
-
-Exactly one registered Vault SHALL be active whenever a Workspace contains a Vault. New Commands execute only in the named active Vault context. Changing the active Vault is local and MUST NOT produce a Vault Event.
-
----
-
-# 4. Vault Identity
-
-Every Vault SHALL possess:
-
-- Vault ID
-- Vault Version
-- Creation Timestamp
-- encrypted Event-derived Name
-
-The Vault ID MUST remain stable for the lifetime of the Vault.
-
-The initial Vault name SHALL be recorded by `VaultCreated`. Later names SHALL be recorded by `VaultRenamed`. Names are labels rather than identifiers, MAY be duplicated across Vaults, and MUST remain encrypted outside trusted clients.
-
-A local client MAY maintain an encrypted rebuildable name cache so that Vault names remain visible while Vault contents are locked. Such a cache is a Materialization: it is not authoritative, synchronized, or required in Backup.
-
----
-
-# 5. Vault Contents
-
-Conceptually a Vault contains:
-
-```
-Vault
-
-├── Authoritative Object Store
-├── Bundle Registry
-├── Event Store
-├── Projection Store
-├── Search Projection
-├── Device Registry
-├── Trust Registry
-├── Key Material
-└── Synchronization State
+```text
+{
+  0: 1,                    // baselineBodyFormat
+  1: baselineKind,         // 1 Initial, 2 Vacuum successor
+  2: contentCheckpoint,    // canonical map owned by vault/collection.md
+  3: authorityCheckpoint,  // canonical map owned by vault/authority.md
+  4: lifecycleCheckpoint,  // section 4.1
+  5: predecessorCommitment // section 4.2; null for Initial
+}
 ```
 
-Only authoritative Objects are authoritative.
-
-All other components are derived or operational.
-
----
-
-# 6. Authoritative State
-
-The authoritative state of a Vault consists exclusively of immutable Objects whose Object Types are defined by their specifications.
-
-Examples include:
-
-- Bundle Descriptor and Artifact Objects
-- Event Objects
-- Event Log Segment Objects
-- Wrapped Key Objects
-- Vault Metadata Objects
-
-Bundle Registries, Event Stores, Search Projections, and UI views are logical interpretations or materializations of authoritative Objects. Every derived or operational representation MUST be reproducible from authoritative Objects.
-
----
-
-# 7. Bundle Registry
-
-The Bundle Registry is a Projection over authoritative Bundle Descriptor and Artifact Objects plus
-Vault Events.
-
-Bundles are immutable.
-
-Bundles are never modified after registration.
-
-Bundles MAY enter Deleted through Events and remain historically addressable until explicitly removed by the Vault Vacuum retention policy.
-
----
-
-# 8. Event Store
-
-The Event Store is a logical view over authoritative Event Objects or Event Log Segment Objects.
-
-Replay of the Event Store reconstructs all mutable state.
-
-Events are append-only.
-
-Vault Vacuum MAY replace the authoritative Event history with a verified successor Vault Generation. Existing Event Objects remain immutable; replacement history uses new Objects and identifiers where contents change.
-
----
-
-# 9. Projection Store
-
-The Projection Store contains derived state.
-
-Examples include:
-
-- folder hierarchy
-- tag assignments
-- favorites
-- recently viewed
-- user preferences
-
-Projections MAY be deleted and rebuilt.
-
----
-
-# 10. Search Projection
-
-The Search Projection is a derived structure.
-
-It MAY contain:
-
-- encrypted metadata
-- encrypted keyword Materializations
-- encrypted passage vectors and Capture centroids
-
-Search Materializations MUST be rebuildable.
-
----
-
-# 11. Device Registry
-
-The Device Registry records trusted devices participating in the Vault.
-
-Examples:
-
-- browser extension
-- desktop application
-- mobile application
-
-Device enrollment and revocation occur through Events.
-
----
-
-# 12. Trust Registry
-
-The Trust Registry records trust relationships.
-
-Examples include:
-
-- enrolled devices
-- wrapped vault keys
-- revoked devices
-- key rotation history
-
-## 12.1 Local Vault Key Slots
-
-A client MAY store multiple local device wrappers for the same Vault Root Key when device enrollment requires them.
-
-The initial browser implementation SHALL create one mandatory device slot backed by a non-exportable local device wrapping key. It SHALL NOT create or persist a local passphrase slot.
-
-Every slot SHALL include an explicit slot version, wrapping algorithm identifier, Vault ID, and Device ID where applicable.
-
-A local AES-KW device slot SHALL be verified after unwrap using a Vault verifier derived from the Vault Root Key and bound to the slot metadata.
-
-A synchronized Vault SHALL have one active Recovery Generation, one active key epoch, an encrypted
-Recovery Kit, and one signed key envelope per authorized Device and readable key epoch. One Account
-SHALL own at most one synchronized Vault. Account authentication does not wrap Vault keys or grant
-cryptographic access. Additional Vaults in the local Workspace remain local-only unless a future
-contract changes the one-Vault Account rule.
-
-An export key envelope belongs to a Vault Package, not to the Vault Trust Registry or local key-slot collection.
-
-The Vault Root Key MUST NOT be persisted unwrapped.
-
-Key slots protect the Vault Root Key. Bundle, Event, and Projection keys are derived from the unwrapped Vault Root Key according to the Key Derivation Specification.
-
----
-
-# 13. Synchronization State
-
-Synchronization State records operational information such as:
-
-- synchronization cursor
-- last successful synchronization
-- pending uploads
-- pending downloads
-
-Synchronization State SHALL NOT alter Vault semantics.
-
----
-
-# 14. Replica Model
-
-A Vault MAY have multiple replicas.
-
-Examples:
-
-- browser extension
-- desktop application
-- synchronization backend
-
-Replicas synchronize through the Archive Synchronization Protocol.
-
-Replicas SHALL converge through successful synchronization.
-
----
-
-# 15. Ownership
-
-Bundles belong to a Vault.
-
-Events belong to a Vault.
-
-Devices participate in a Vault.
-
-Replicas store copies of a Vault.
-
----
-
-# 16. Portability
-
-A Vault SHOULD be exportable.
-
-A Complete Vault Package MAY be imported only as a new Vault with the package's stable Vault ID.
-Import preserves the exact active Generation, head, Events, Objects, and encrypted Artifact bytes;
-it never merges with or replaces an existing Vault. The importing Device creates a fresh Device ID,
-non-exportable device key, slot, and verifier. Rebuildable Projections and encrypted Workspace name
-cache are derived locally. The imported Vault commits manually locked.
-
-Export SHALL preserve:
-
-- authoritative Objects
-- cryptographic metadata
-- version information
-
-Implementations MAY exclude ephemeral caches.
-
----
-
-# 17. Versioning
-
-A Vault SHALL declare:
-
-- Vault Version
-- Bundle Specification Version
-- Event Specification Version
-- Protocol Version
-
----
-
-# 18. Invariants
-
-A Vault possesses a single stable identity.
-
-Authoritative Objects are immutable.
-
-Derived state is disposable.
-
-Replicas converge through synchronization.
-
-Object identities never migrate between Vaults.
-
-Every persisted Vault-owned record, Runtime Job, Projection, and operational lease MUST identify its Vault. Reads, enumeration, replay, recovery, and destructive work MUST remain scoped to that Vault.
-
-Event Log Segment Objects are append-only by protocol semantics.
-
----
+The enclosing Baseline supplies the Vault ID, Generation ID, Required Feature Set, Advisory
+Extensions, and complete typed dependency roots. The body does not duplicate those fields.
+
+Checkpoint codecs assign fresh Baseline Cause IDs to retained Content facts that later Content
+Events may remove, revert, supersede, or resolve by name. A consistent mapping is reused when one
+retained source cause controls several facts. These identifiers are authenticated state local to
+this Baseline and Generation, not DAG parents, predecessor dependencies, or stable entity IDs.
+
+Cause remapping applies only to Content facts whose source Content Events are discarded. Authority
+and Lifecycle Event Record IDs remain exact in the Continuity Proof. The authority checkpoint MUST
+equal state independently derived at the proof's Generation anchor.
+
+## 4.1 Lifecycle checkpoint
+
+```text
+{
+  0: lifecycleState // 1 Open; Closure is never a continuing Baseline state
+}
+```
+
+A Closed Vault cannot be Vacuumed into an Open successor. Forking a Closed state creates a new
+Vault and new authority rather than reopening it.
+
+## 4.2 Predecessor commitment
+
+For a Vacuum successor:
+
+```text
+{
+  0: predecessorGenerationId,
+  1: predecessorFrontier,       // sorted complete Record ID set
+  2: predecessorStateDigest     // replay digest defined by vault/vacuum.md
+}
+```
+
+This is an integrity commitment, not a dependency reference. It MUST NOT keep predecessor Records
+reachable. The matching predecessor Vacuum Event authenticates the successor Baseline. Exact
+Authority and Lifecycle Records remain separately preserved only through the Continuity Proof.
+
+# 5. Initial Baseline and Genesis
+
+Creation constructs and hashes the complete Initial Baseline before Genesis. It contains the empty
+new-Vault content state, or the selected state-only Fork content, plus initial authority, key
+delivery, label state, object closure, and Required Feature Set. Genesis then binds the Baseline
+ID and independently proves the initial authority described by
+`docs/specifications/vault/authority.md`.
+
+Genesis is the first accepted Event Frontier. The Initial Baseline is its typed dependency and is
+not its parent, avoiding a content-addressing cycle. A successor Baseline is itself the causal root
+of its Generation; no second Genesis is created. Its authenticating predecessor Vacuum Event is
+the Authority Parent anchor rather than a Baseline dependency, avoiding a content-addressing cycle.
+
+# 6. Authoritative and local state
+
+Current portable state consists of authenticated Vault Records and Vault Objects reachable from the
+current Baseline and later accepted Events. The Continuity Proof is separate portable
+authentication evidence: its exact prior Authority and Lifecycle Records remain available, while
+unrelated Content parents named in those signed Records need not. It grants no authority beyond the
+state derived from its own signed subgraph. Replica Safety State records which state and proof a
+local Replica recognizes; it does not create portable facts.
+
+Materializations, search indexes, user-interface state, Commands, Jobs, pending Captures,
+quarantine, local key wrappers, Remotes, Accounts, sessions, Replica Access Grants, quotas, logs,
+and exports are outside Vault authority.
+
+# 7. Closed Vaults
+
+A Vault is Closed when the accepted authority reduction has no Administrator. A member may also
+author an explicit Closure Event while at least one Administrator exists. Closure accepts no later
+Events in that Vault. Retained members may still read, verify, export, and Fork the state available
+to them. Closing never remotely erases a Replica.
+
+Lifecycle family type `2`, explicit Closure, has the exact empty map body `{}`. Its signer MUST be
+an unambiguous current Administrator. Derived Closure from a Membership End or Administrator End
+that removes the final Administrator creates no synthetic Event; the signed cause is sufficient.
+
+# 8. Invariants
+
+- Every continuing Vault Generation has exactly one authenticated Baseline root.
+- Every writable Vault has at least one Administrator.
+- Every portable fact is derivable from Records, Objects, and the active Required Feature Set.
+- The Baseline is authoritative state, not a cache or projection.
+- Baseline Cause IDs preserve exact fact references without preserving predecessor reachability.
+- Baselines never preserve Content transition history solely for compatibility or audit
+  convenience.
+- Continuity Proof retention is required for independent authority and Recovery verification, not
+  audit convenience.
+- Search and other rebuildable state never enter a Baseline.
+- Host-local policy never enters Vault state.
 
 # References
 
-bundle/bundle.md
-
-event/event.md
-
-protocol/protocol.md
+- `docs/specifications/vault/vacuum.md`
+- `docs/specifications/vault/collection.md`
+- `docs/specifications/vault/authority.md`
+- `docs/specifications/vault/fork.md`

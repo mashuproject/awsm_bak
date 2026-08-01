@@ -13,4 +13,5 @@ blob-report/
 !.env.template
 !.env.*.template
 .omo/
+tmp/
 AGENTS.override.md

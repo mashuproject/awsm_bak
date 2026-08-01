@@ -1,64 +1,84 @@
-# Vault History Rewrite
+# Vault History Rewrite Architecture
 
-**Document:** `docs/architecture/21-vault-history-rewrite.md`
-
-**Version:** 1.0
-
-**Status:** Draft
-
-**Owner:** Engineering
+**Status:** Draft target architecture
 
 **Depends On:**
 
-- `docs/architecture/00-design-principles.md`
-- `docs/architecture/07-content-storage.md`
-- `docs/architecture/08-synchronization.md`
+- `docs/architecture/09-event-model.md`
 - `docs/specifications/vault/vacuum.md`
 
-## Intent
+# Purpose
 
-Logical deletion alone cannot reclaim immutable Bundle storage. AWSM therefore uses Git-like reachability: a Vault History Rewrite builds a new verified generation that excludes deleted Captures, switches the authoritative root, and makes the predecessor's unreferenced Objects eligible for garbage collection.
+AWSM normally preserves additive immutable history. Vacuum is the explicit exception: an informed
+Administrator makes the current state at one exact Frontier the new Baseline of a successor
+Generation.
+
+# Transition
 
 ```text
-Active generation
-      │ build without Deleted
-      ▼
-Verified successor ── atomic head switch ──▶ authoritative
-      │
-      └── predecessor-only Objects ──▶ garbage collection
+predecessor Baseline -> Record DAG -> exact Frontier -> signed Vacuum Event
+                                                |
+                                      successor Baseline
+                                                |
+                                      successor Event DAG
 ```
 
-Immutability applies to Objects, not to which immutable Object graph is authoritative. Replacement history receives a new generation identity; no Bundle, Event, Manifest, or identifier is edited in place.
+The Vacuum Event is terminal in the predecessor and authenticates the already content-addressed
+successor Baseline. The Baseline has no causal parents and only a non-reachability commitment to
+the old Frontier, avoiding a content-addressing cycle and keeping old history out of successor
+reachability.
 
-Between generation creation and Vacuum, new immutable Objects and Events form an append tail recorded atomically in the local active head. The immutable manifest is the generation base; base plus tail is its complete reachability root. Vacuum verifies that union against storage, then folds retained tail entries into the successor immutable manifest with an empty tail. This permits ordinary append-only capture without rewriting a manifest in place.
+The Vacuum Event also advances the signed Authority Parent Frontier and becomes the successor's
+cross-Generation authority anchor. The compact Continuity Proof retains Genesis and the Authority
+and Lifecycle subgraph needed to prove that transition. It does not retain unrelated causal Content
+parents merely because their IDs remain signed into those Event bytes.
 
-## Product model
+# Inclusion rule
 
-The Library exposes Active Collections first and a collapsed Deleted accordion beneath them. Delete is reversible until Vacuum. Vacuum is manual, lives inside Deleted, processes all currently Deleted Captures, and is suggested only under meaningful storage pressure. Individual and Collection deletion share one Bundle-ID-based domain operation: the Command resolves the current effective Collection to explicit Bundle IDs.
+The Baseline retains every fact needed to identify, authenticate, interpret, reference, or
+reconstruct current state. It omits facts whose only remaining purpose is to describe predecessor
+transition history or superseded state. Every future Required Feature must provide its own
+Baseline codec and equivalence proof.
 
-A Collection is a stable Event-backed logical identity, not an authoritative Object or mutable
-container. `CollectionsMerged`, `CapturesMoved`, and `CollectionMergeReverted` preserve
-user-directed topology. Vacuum retains or rewrites the minimum management history needed to
-reproduce each retained Capture's effective Collection, including filtering mixed move Events under
-new Event IDs. A management Event anchored to a reclaimed Capture descriptor is rewritten against a
-retained descriptor; merge reversals remap a rewritten merge Event ID. It aborts on unknown topology
-dependencies before activation.
+Retained Capture provenance, effective organization, members, Administrators, active Credentials,
+Recovery state, required Key Epochs and Envelopes, features, conflicts, and dependencies survive.
+Deleted Captures selected for omission and their Capture-scoped Tags and Notes do not. Search and
+other Materializations never enter the Baseline.
 
-## Rewrite policy
+The successor assigns fresh Baseline Cause IDs to every retained Content fact that later Content
+Events may need to name. It reuses one mapping wherever the same predecessor cause controls several
+checkpoint facts. These identities preserve exact state operations without retaining source
+Content Event identity, reachability, or invented ancestry. Authority and Lifecycle identities are
+not remapped because the Continuity Proof must remain independently verifiable.
 
-Unchanged Objects are reused. Objects exclusively owned by Deleted Captures are omitted. Mixed-reference structures require type-specific rewrite handlers and new identifiers. Unknown types stop the Job. The predecessor ID is audit metadata rather than a reachability edge.
+# Adult Administrator decision
 
-The browser implementation may combine activation and physical deletion in one IndexedDB transaction. Larger Drivers may activate first and perform resumable asynchronous collection, but must preserve the same visible atomic boundary.
+Before signature, the Client surfaces every known conflict, divergent or unpublished branch,
+unavailable dependency, omission, and consequence. It offers only valid options. One current
+Administrator chooses; there is no quorum or forced delay. Invalid or incomplete source state still
+fails closed.
 
-The browser Driver persists a plaintext-opaque Job lease containing only random Job and generation identifiers, stage, and timestamp. Acquiring it fences new authoritative writes before analysis. Because activation, Materialization publication, collection, head replacement, and lease removal share one IndexedDB transaction, a terminated worker exposes either the predecessor plus an abandoned pre-activation lease or the complete successor. Startup removes only such abandoned pre-activation leases; it never rolls back an activated successor.
+# Replica adoption
 
-## Trade-offs
+Another Replica may adopt only after full verification. It may first Fork the predecessor, create
+a Complete Export, recover eligible captures, decline, or postpone. Concurrent successor
+Generations remain siblings. No Replica can force deletion of independently retained history.
 
-Vacuum maximizes local storage reclamation without re-encrypting retained content. It cannot guarantee removal from disconnected copies and therefore is deliberately weaker than Secure Scrub. Generation metadata adds a small opaque synchronization signal so stale replicas cannot resurrect predecessor history.
+# Fork distinction
 
-## References
+Fork is state copying into a new Vault: fresh identities, keys, authority, Objects, Baseline, and
+Genesis, with no source Event graph. Complete Export is a static package that may retain the exact
+source graph. Historical View derives old state without moving the writable Frontier backward.
 
-- `docs/specifications/vault/vacuum.md`
-- `docs/architecture/07-content-storage.md`
-- `docs/architecture/08-synchronization.md`
+# Garbage Collection
+
+Vacuum changes accepted shared history; local Garbage Collection reclaims bytes afterward. It
+traces every locally recognized Generation, Continuity Proof, and preservation root. This
+distinction is essential because an offline Replica, Backup, or export may retain predecessor data
+indefinitely.
+
+# References
+
+- `docs/specifications/vault/vault.md`
+- `docs/specifications/portability/import-export.md`
 - `docs/architecture/10-projection-engine.md`

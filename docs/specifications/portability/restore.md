@@ -1,231 +1,73 @@
 # Restore Specification
 
-**Document:** `specifications/portability/restore.md`
+**Document:** `docs/specifications/portability/restore.md`
 
 **Version:** 1.0
 
 **Status:** Draft
 
----
+**Depends On:**
+
+- `docs/specifications/portability/backup.md`
+- `docs/specifications/portability/import-export.md`
 
 # 1. Purpose
 
-The Restore System reconstructs a Vault from one or more Backup Sets.
+Restore installs one fully verified Backup Snapshot as local Replica state. It never rewrites the
+Backup, invents missing authority, or silently overwrites an existing Vault.
 
-Restore validates integrity before modifying persistent state. Every Restore operation executes as a Restore Job through the Runtime Job Framework.
+# 2. Validation
 
----
+Before activation, Restore decrypts into Prepared Data and verifies package framing, Snapshot and
+entry digests, Vault Record and Object canonical forms, all signatures and authority, Required
+Features, Baseline authentication, the complete current causal and dependency closure, the complete
+Continuity Proof, every wrapper, and the final state digest. It does not require discarded Content
+parents named only inside retained Continuity Event bytes.
 
-# 2. Design Goals
+Unknown Required Features, unavailable entries, corrupt wrappers, wrong protection secrets, or
+incomplete history fail the entire Restore. No partially restored Vault appears in the Workspace.
 
-Restore MUST provide:
+# 3. Activation
 
-- deterministic recovery
-- integrity verification
-- resumable execution
-- idempotent execution
-- partial recovery
-- fault tolerance
+For an unknown Vault ID, activation creates one local Replica, secure Key Epoch storage, protected
+resolution and Replica Safety State, and fresh Installation State. It creates no Account, Remote,
+Replica Access Grant, Recovery Phrase, or Client Credential private key.
 
----
+For a known Vault ID, Restore applies the same collision rules as Complete Import:
 
-# 3. Restore Model
+- never rewind an active descendant;
+- fast-forward only after ordinary immutable and semantic validation;
+- verify and explicitly adopt a Vacuum successor;
+- preserve divergent or unpublished local work through an offered safe outcome; and
+- never keep two active Workspace entries with the same Vault ID.
 
-Conceptually:
+# 4. Authoring after restore
 
-Backup Set
+Restored epoch keys permit reading the static Snapshot but do not impersonate a member. Continued
+authoring requires an active Client Credential enrolled through a valid current Recovery Phrase or
+Invitation. If the restored state is Closed or the user is a former member, it remains readable
+and Forkable but not writable in that Vault.
 
-↓
+# 5. Superseded state
 
-Recovery Plan
+A predecessor-generation Snapshot may be viewed, exported, or Forked in isolation. It does not
+merge into the successor. The user may restore it as a state-only Fork with fresh identity and
+authority when independent continued work is desired.
 
-↓
+# 6. Failure and cleanup
 
-Restore Execution
+Activation is one atomic safety-state transition. Failure before it leaves no active Replica.
+Cleanup of Prepared Data is idempotent and cannot delete Backup bytes or another Realm's state.
 
-↓
+# 7. Invariants
 
-Verification
-
-↓
-
-Projection Rebuild
-
-↓
-
-Recovered Vault
-
----
-
-# 4. Recovery Plan
-
-Before restoration begins, the Runtime SHALL construct a Recovery Plan.
-
-The plan SHALL determine:
-
-- required Objects
-- already available Objects
-- missing Objects
-- verification steps
-- execution order
-
-No persistent changes occur during planning.
-
----
-
-# 5. Restore Modes
-
-Supported modes include:
-
-- Clean Restore
-- Merge Restore
-- Verify Only
-
-Future modes MAY be introduced.
-
----
-
-# 6. Clean Restore
-
-Clean Restore reconstructs a Vault into an empty destination.
-
-All required Objects SHALL be restored.
-
----
-
-# 7. Merge Restore
-
-Merge Restore imports Objects that are not already present.
-
-Existing immutable Objects SHALL NOT be replaced.
-
-Conflict handling is defined by the Event Model.
-
----
-
-# 8. Verify Only
-
-Verify Only validates:
-
-- manifests
-- checksums
-- encryption envelopes
-- object availability
-
-Persistent state SHALL remain unchanged.
-
----
-
-# 9. Restore Execution
-
-Restore SHALL:
-
-1. submit a Restore Job
-2. verify Backup integrity
-3. construct Recovery Plan
-4. restore authoritative Objects
-5. verify restored Objects
-6. rebuild Projections and Materializations
-7. resume Runtime services
-
----
-
-# 10. Object Verification
-
-Each restored Object SHALL be verified before becoming authoritative.
-
-Objects failing verification SHALL be rejected.
-
-Every successfully restored Artifact wrapper is local. Restore SHALL NOT copy, infer, or retain
-remote-only availability, storage-relief Jobs, or source-device operational state.
-
----
-
-# 11. Projection Rebuild
-
-After successful restoration, the Runtime SHALL rebuild:
-
-- search projections
-- tag projections
-- AI projections
-- timeline projections
-
-Projection rebuilding SHALL occur locally.
-
----
-
-# 12. Encryption
-
-Encrypted Objects SHALL remain encrypted throughout Restore.
-
-Key availability SHALL be verified before restoration begins.
-
-Restore SHALL NOT decrypt Objects unless required for validation.
-
----
-
-# 13. Recovery Failures
-
-Interrupted Restore operations SHALL be resumable.
-
-Previously restored immutable Objects SHALL NOT be duplicated.
-
----
-
-# 14. Diagnostics
-
-The Restore System SHOULD expose:
-
-- restore progress
-- restored object count
-- verification status
-- estimated completion
-- rebuild progress
-
----
-
-# 15. Completion
-
-Restore completes only after:
-
-- all authoritative Objects restored
-- verification succeeds
-- Projections and Materializations rebuilt
-- Runtime resumes normal operation
-
----
-
-# 16. Invariants
-
-Restore is idempotent.
-
-Authoritative Objects remain immutable.
-
-Verification precedes acceptance.
-
-Projection and Materialization rebuilding never modifies authoritative Objects.
-
-Restore execution is a Runtime Job.
-
-Restored wrapper absence is corruption unless a later, separately confirmed storage-relief Job
-creates current device-local remote-only state after active-server proof.
-
----
-
-# 17. Superseded Generations
-
-Restore MUST compare the Backup Set's Vault Generation number and root ID with the target. A superseded generation MUST NOT merge into the active Vault. It may be restored only into an isolated retired generation or a new Vault for explicit manual recovery.
-
-Vault Vacuum is not Backup destruction or cryptographic erasure; old Backup Sets and offline replicas remain outside its deletion boundary.
-
----
+- Restore is client-side and fully authenticated.
+- A Host receipt never proves Snapshot validity.
+- Epoch key possession alone does not create Event-authoring authority.
+- Existing local work is never silently discarded.
+- Restore does not make a Backup into a live Replica.
 
 # References
 
-- `docs/specifications/portability/backup.md`
-
-- `docs/specifications/portability/import-export.md`
-
-- `docs/specifications/storage/object-store.md`
-
-- `docs/specifications/runtime/search.md`
+- `docs/specifications/vault/replica.md`
+- `docs/specifications/vault/vacuum.md`

@@ -1,12 +1,16 @@
 # Page Snapshot Container Specification
 
-**Document:** `specifications/bundle/page-snapshot.md`
+**Document:** `docs/specifications/bundle/page-snapshot.md`
 
 **Version:** 1.0
 
 **Status:** Draft
 
-**Depends On:** `artifact.md`, `manifest.md`, `../runtime/capture.md`
+**Depends On:**
+
+- `docs/specifications/bundle/artifact.md`
+- `docs/specifications/bundle/manifest.md`
+- `docs/specifications/runtime/capture.md`
 
 ---
 
@@ -19,7 +23,8 @@ application or executable replay.
 
 # 2. Artifact Contract
 
-`WebPageSnapshot-v1` requires exactly one `PRIMARY` Artifact with Kind `CAPTURE` and MIME type
+The `awsm.capture.web-page-snapshot` profile requires exactly one
+`awsm.artifact.primary` Artifact with kind `awsm.artifact.capture` and media type
 `application/vnd.awsm.web-page+zip`. The plaintext is a streamed ZIP64-capable archive. MHTML is
 derived only when a user downloads it and is never stored or synchronized.
 
@@ -45,7 +50,7 @@ paths, or duplicate names. Every member uses the Capture timestamp. Textual medi
 
 # 4. Manifest
 
-`manifest.cbor` is canonical CBOR and contains exactly version `1`, Capture Profile ID, Capture
+`manifest.cbor` is canonical CBOR and contains exactly version `1`, Capture Profile key, Capture
 timestamp, original and final URLs, top document ID `d000000`, ordered document records, ordered
 resource records, and ordered omission records.
 
@@ -83,12 +88,13 @@ cleanup occurs after success, cancellation, failure, and startup reconciliation.
 
 Readers reject non-canonical CBOR, member order or namespace changes, unknown/duplicate/encrypted
 entries, unsupported compression, size or count violations, unresolved IDs, contradictory
-omissions, and length or checksum mismatch before accepting the `PRIMARY`.
+omissions, and length or checksum mismatch before accepting the primary Artifact.
 
 # 7. MHTML Derivative
 
 The download derivative uses deterministic MIME boundaries and Content-IDs derived from the
-`PRIMARY` checksum and member identities, CRLF line endings, and 76-column base64. It removes
+primary Artifact ID and member identities, CRLF line endings, and 76-column base64. It
+removes
 scripts, inline event handlers, meta refresh, active JavaScript URLs, and form submission; disables
 form controls; maps captured documents and resources to `cid:`; makes missing automatic references
 inert; and applies a restrictive Content Security Policy. Ordinary HTTP(S) anchors remain explicit

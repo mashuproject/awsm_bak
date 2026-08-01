@@ -1,418 +1,57 @@
-# Extension Framework
+# Client Extension Framework
 
-**Document:** `architecture/17-extension-framework.md`
-
-**Status:** Draft
-
-**Owner:** Engineering
+**Status:** Draft target architecture
 
 **Depends On:**
 
-- architecture/05-client-runtime.md
-- architecture/09-event-model.md
-- architecture/10-projection-engine.md
-- architecture/12-processing-pipeline.md
-
----
+- `docs/architecture/05-client-runtime.md`
+- `docs/specifications/event/commands.md`
 
 # Purpose
 
-This document defines the Extension Framework used to extend Archive Platform.
+Client extensions add adapters, processors, views, and local workflows without bypassing Runtime
+authority, storage, privacy, or Required Feature rules. This concept is distinct from the Firefox
+or Chrome browser extension, which is itself a Client Installation.
 
-Extensions add functionality without modifying the core runtime.
+# Boundary
 
-The framework is capability-based and event-driven.
+An extension manifest declares stable extension identity, code revision, minimum Runtime features,
+requested capabilities, contributed adapters or views, and storage namespaces. The Runtime grants
+least privilege and mediates every call.
 
-Extensions execute entirely within the trusted client runtime.
+Extensions may:
 
----
+- submit Commands;
+- observe sanitized projection updates;
+- provide Capture or file adapters;
+- contribute local processors and Materializations;
+- render capability-scoped UI; and
+- request explicit network or platform operations.
 
-# Design Goals
+They may not access raw private keys, write Vault Records or Replica Safety State directly, bypass
+canonical validation, invent an authoritative field, or treat local storage as authority.
 
-The framework must provide:
+# Authoritative evolution
 
-- isolation
-- stability
-- one canonical extension API
-- capability-based security
-- deterministic behavior
-- offline operation
-- strict API validation
+A local-only extension can use Advisory Extensions, Managed Resources, Jobs, and Materializations
+within their limits. If its data must synchronize or affect reduction, the extension requires a
+Required Vault Feature with exact Object/Event codes, reducers, Baseline codec, reachability, and
+unsupported-client behavior.
 
----
+# Isolation and failure
 
-# Philosophy
+Untrusted or third-party code runs in the strongest practical sandbox. Inputs and outputs are
+bounded and schema-checked. Crashes disable the extension or fail its Command without corrupting
+Vault state. Network access is origin-scoped and user-visible.
 
-The core runtime owns authoritative state.
+# Licensing
 
-Extensions contribute functionality.
-
-Extensions never bypass validation.
-
-The shipped browser extension UI follows the normative repository-root `DESIGN.md`. Generated
-tokens, locally hosted typography, motion rules, and reusable primitives come from the
-`@awsm/design-system` workspace package. Popup, Library, and synchronization surfaces may compose
-those primitives but do not own a parallel palette or type system.
-
-Library sort and Grid/Compact List choices are non-authoritative device-local UI preferences. They
-are strictly decoded from the `ui_preferences` store under the `library` key, are replaceable
-without affecting a Vault, and are excluded from synchronization, Export, and Import. Their absence
-selects Newest plus Grid; corrupt optional preference data may fall back for the current session
-without changing authoritative state.
-
----
-
-# Architecture
-
-```
-Extension
-
-↓
-
-Extension Host
-
-↓
-
-Core Runtime
-
-↓
-
-Commands
-
-↓
-
-Events
-
-↓
-
-Projection Engine
-```
-
-The Extension Host mediates all interactions.
-
----
-
-# Extension Lifecycle
-
-```
-Discover
-
-↓
-
-Load
-
-↓
-
-Validate
-
-↓
-
-Initialize
-
-↓
-
-Execute
-
-↓
-
-Shutdown
-```
-
-Extensions should be restartable without affecting the Vault.
-
----
-
-# Extension Manifest
-
-Each extension provides a manifest.
-
-Required fields:
-
-- Extension ID
-- Name
-- Version
-- Author
-- API Version
-- Requested Capabilities
-- Entry Point
-
-Optional fields:
-
-- Description
-- Homepage
-- License
-- Supported Platforms
-
----
-
-# Capabilities
-
-Extensions request explicit capabilities.
-
-Examples:
-
-Capture
-
-Search
-
-Processing
-
-Projection
-
-Commands
-
-Notifications
-
-Settings
-
-Storage (future)
-
-Capabilities must be approved by the user before activation.
-
----
-
-# Extension Types
-
-The framework supports multiple extension types.
-
-## Capture Adapters
-
-Examples:
-
-- Browser Adapter
-- PDF Import
-- Email Import
-
----
-
-## Search Providers
-
-Possible future examples:
-
-- Code Search
-- Image Search
-- Citation Search
-
-The current Search Runtime does not expose plugin Search providers. Adding one requires a separate
-provider-boundary, privacy, ranking, and licensing design.
-
----
-
-## Processors
-
-Examples:
-
-- OCR
-- AI Summary
-- Thumbnail Generation
-- Duplicate Detection
-
----
-
-## Projections
-
-Examples:
-
-- Reading Statistics
-- Knowledge Graph
-- Citation Index
-
----
-
-## UI Extensions
-
-Examples:
-
-- Sidebar panels
-- Inspector views
-- Context menus
-- Toolbar actions
-
-UI extensions should communicate through public APIs only.
-
----
-
-# Commands
-
-Extensions may request Commands.
-
-Examples:
-
-CreateArchiveCommand
-
-CreateTagCommand
-
-AddBundleCommand
-
-Commands undergo normal validation.
-
----
-
-# Events
-
-Extensions may observe Events.
-
-Examples:
-
-ArchiveCreatedEvent
-
-BundleRegisteredEvent
-
-ArtifactCreatedEvent
-
-DeviceRevokedEvent
-
-Extensions must treat Events as immutable.
-
-Extensions cannot emit Events directly.
-
----
-
-# Extension APIs
-
-Stable APIs include:
-
-- Command API
-- Event Subscription API
-- Search API
-- Bundle API (read-only)
-- Artifact API
-- Settings API
-- Notification API
-
-Each API is independently versioned.
-
----
-
-# Sandboxing
-
-Extensions execute in an isolated environment.
-
-Restrictions include:
-
-- no direct database access
-- no direct Event Log modification
-- no direct Projection modification
-- no filesystem access unless granted
-- no unrestricted network access unless granted
-
-The host mediates all privileged operations.
-
----
-
-# Versioning
-
-The Extension API uses semantic versioning.
-
-Breaking changes require a new major version.
-
-Older extensions should continue functioning whenever practical.
-
----
-
-# Error Handling
-
-Extension failures are isolated.
-
-If an extension crashes:
-
-- unload extension
-- record diagnostics
-- continue runtime operation
-
-One faulty extension must not compromise the Vault.
-
----
-
-# Performance
-
-The host may enforce:
-
-- CPU limits
-- memory limits
-- execution timeouts
-- concurrency limits
-
-Extensions should avoid blocking the user interface.
-
----
-
-# Security
-
-Extensions execute with the principle of least privilege.
-
-Users may revoke granted capabilities at any time.
-
-The framework should clearly indicate which capabilities an extension has been granted.
-
----
-
-# Testing
-
-Extension authors should be able to test against a reference runtime.
-
-The SDK should provide:
-
-- mock Event Log
-- mock Projection Engine
-- mock Search API
-- protocol simulators
-
----
-
-# Future Extensions
-
-Possible future extension points include:
-
-- synchronization hooks
-- custom processors
-- workflow automation
-- export formats
-- visualization modules
-- collaborative tools
-
----
-
-# Design Decisions
-
-## Why Commands Instead of Events?
-
-The runtime remains the sole authority responsible for validating and recording history.
-
----
-
-## Why Capability-Based Security?
-
-Explicit capabilities reduce the impact of faulty or malicious extensions.
-
----
-
-## Why Stable APIs?
-
-Before the first release, extensions target only the canonical current Runtime API.
-
----
-
-## Why Sandboxing?
-
-Isolation improves reliability and security.
-
----
-
-# Open Questions
-
-Should extensions be signed before installation?
-
-Should organizations be able to define extension allowlists?
-
-Should extensions support background services that survive UI shutdown?
-
-How should extension updates be coordinated with API version changes?
-
----
+Extension APIs may interoperate with independently implemented software, but the project does not
+copy strong-copyleft reference code without explicit relicensing review. Dependencies and bundled
+models retain their applicable notices and licenses.
 
 # References
 
-- `docs/architecture/18-cryptography.md`
-- `docs/architecture/19-testing-strategy.md`
+- `docs/architecture/12-processing-pipeline.md`
+- `docs/specifications/core/serialization.md`
 - `docs/specifications/runtime/runtime.md`

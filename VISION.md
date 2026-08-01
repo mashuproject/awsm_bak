@@ -1,350 +1,155 @@
-# VISION.md
+# AWSM Vision
 
-# Archive Platform Vision
-
-> **Knowledge belongs to its owner.**
-
----
+> Knowledge should remain under the control of the people who preserve it.
 
 # Purpose
 
-Archive Platform exists to preserve digital knowledge in a manner that is durable, private, searchable, and independent of any particular service or vendor.
+The web is ephemeral. Articles disappear, pages change, discussions are removed, and services end.
+Bookmarks preserve locations, not knowledge. Cloud clipping and AI products often require people to
+trade away privacy or continued access for convenience.
 
-The modern web is increasingly ephemeral. Articles disappear, websites are redesigned, discussions are deleted, and online services change or cease to exist. Existing bookmarking systems preserve only links. Traditional note-taking applications preserve user notes but often fail to preserve the original source material with high fidelity.
+AWSM exists to preserve digital knowledge faithfully, privately, searchably, and independently of
+any particular vendor or service.
 
-Archive Platform addresses this problem by treating digital knowledge as something worth preserving permanently.
+# Vision
 
-The platform captures information at a point in time, preserves it faithfully, enriches it locally using artificial intelligence, encrypts it, and synchronizes it between trusted devices without exposing its contents to the service provider.
+AWSM is a local-first encrypted knowledge-preservation platform. Trusted Clients capture,
+organize, search, and interpret content. A Vault can exist through any number of local, peer, or
+hosted Replicas without one canonical cloud copy. Optional Hosts store and transfer opaque data but
+do not need the keys or semantic metadata required to read it.
 
----
+The browser extension is the first Client, not the limit of the platform. Desktop, mobile,
+headless, API-driven, and future thin Clients should share one portable Vault architecture.
 
-# Vision Statement
+# What trustworthy means
 
-Archive Platform is a local-first, zero-knowledge knowledge preservation platform.
+AWSM is trustworthy when:
 
-The platform enables users to collect, preserve, organize, search, and enrich digital knowledge while ensuring that only the user controls access to the underlying content.
+- original observations remain independently verifiable;
+- plaintext and private keys stay in trusted Clients by default;
+- ordinary use remains useful offline and during service failure;
+- no synchronization provider becomes the owner or sole source of Vault truth;
+- current state, history rewrites, conflicts, and destructive consequences are honest;
+- recovery belongs to each Vault Member rather than a service operator;
+- complete export and independent Fork remain available; and
+- formats, implementations, and providers can evolve without trapping knowledge.
 
-The cloud exists solely as a coordination layer for synchronization.
+# Guiding principles
 
----
+## Local first
 
-# Mission
+Capture, encryption, decryption, Event authoring, replay, organization, rendering, keyword search,
+and ordinary AI processing happen in trusted Clients. A Remote is optional. Network partition may
+delay convergence but does not stop permitted local work.
 
-To become the most trustworthy platform for preserving personal knowledge.
+An On-demand Replica may deliberately evict heavy wrappers while retaining compact authority and
+retrieval knowledge. Storage Relief is an informed availability trade-off, never a claim that some
+other copy certainly exists.
 
-Trustworthiness is defined by four properties:
+## Opaque remote storage
 
-- The platform preserves information faithfully.
-- The platform protects user privacy.
-- The platform remains usable for decades.
-- The platform avoids vendor lock-in.
+A Replica Host authenticates its own Channel Principals, applies Grants and quota, and stores
+randomized Opaque Storage Items. Account is one optional Host-local login model, not a Vault
+identity. A username and password can open a synchronization Channel without deriving keys,
+granting membership, or turning the website into a duplicate Vault application.
 
----
+Traffic timing, item sizes, and Host-local associations remain observable. AWSM should minimize and
+describe that metadata rather than make an impossible claim of perfect anonymity.
 
-# Problem Statement
+## Immutable preservation
 
-Current solutions typically optimize one aspect of digital knowledge management while compromising another.
+A Capture is an immutable Bundle of preserved Artifacts. Corrections, labels, organization, Notes,
+derived interpretations, and lifecycle changes are additive signed Events. The system never edits
+an original observation in place.
 
-Bookmark managers preserve URLs but not content.
+Delete remains reversible until an informed Vacuum establishes a new Baseline. Vacuum cannot erase
+copies held elsewhere. A member who disagrees can preserve history through Complete Export or make
+an independent state-only Fork.
 
-Web clipping applications frequently store plaintext on centralized servers.
+## Members are cryptographic peers
 
-Cloud-based AI knowledge systems require users to upload private information for processing.
+Every Vault Member receives the same access and recovery class. Roles govern shared Vault
+coordination, not whose copy is more real or who deserves recovery. One or more Administrators may
+authorize Invitation creation, membership, security transitions, Vacuum, and Closure; each has
+independent disclosed authority and is treated as an adult. Cancelling one Invitation requires its
+separately retained or delegated Cancellation Capability rather than Administrator status alone.
 
-Offline tools often lack synchronization or multi-device support.
+Each member controls a Recovery Phrase and may enroll a fresh Client Credential without another
+client remaining online. Possession of that phrase is possession of sensitive Vault access. A
+compact signed Continuity Proof survives Vacuum so recovery can authenticate the current Baseline
+without trusting a storage Host.
 
-No widely adopted platform simultaneously provides:
+## Explicit evolution
 
-- faithful archival
-- strong privacy
-- offline operation
-- synchronization
-- AI enrichment
-- extensibility
+AWSM has one signed hash-linked Record DAG, an Authority Parent subgraph of those same Records,
+deterministic reduction, and canonical Baselines. Required Vault Features explicitly define new
+authoritative data, reducers, reachability, and unsupported-client behavior. Advisory Extensions
+cannot quietly change meaning.
 
-Archive Platform aims to combine these capabilities into a single coherent system.
+Before the first compatibility obligation exists, AWSM implements one clean canonical design and
+discards superseded experiments rather than preserving them as permanent complexity.
 
----
+## AI augments preserved knowledge
 
-# Guiding Principles
+Search, embeddings, OCR, summaries, and other generated views are replaceable local
+Materializations by default. Better models rebuild better indexes without migrating false
+authority. A generated result becomes shared Vault content only through an explicit user action and
+typed portable contract.
 
-## Principle 1 — Local First
+Remote plaintext processing is a visible exception that requires separate consent and exact
+provider scope. Zero-knowledge storage never disguises that disclosure.
 
-The user's device is the primary computing environment.
+## Open, portable architecture
 
-The cloud is a replication mechanism, not the application.
+Vault semantics are independent of browser, framework, database, cloud, authentication method,
+storage provider, and AI provider. Clients and Hosts are composable roles. Complete Exports and
+Backups are static transfer artifacts, while Replicas remain live synchronization participants.
 
-If the synchronization service becomes unavailable, users should still be able to:
-
-- browse archives
-- search archives
-- generate AI summaries
-- edit notes
-- organize folders
-- read captured pages
-
-without degradation.
-
-Heavy captured payloads are the deliberate exception a user may choose for a connected Account.
-After exact encrypted-copy proof and explicit confirmation, a device may retain their immutable
-Artifact records while dropping selected local wrappers. Their content then requires Account and
-network access until an integrity-checked retrieval restores it or serves it transiently. Compact
-Library content remains local, and Complete Export remains complete.
-
----
-
-## Principle 2 — Zero Knowledge
-
-User content must never be readable by the service provider.
-
-The backend must not possess the cryptographic material required to decrypt user archives.
-
-Every architectural decision should preserve this property.
-
-If a proposed feature requires server-side access to decrypted content, it should be considered incompatible with the platform unless explicitly implemented as an optional opt-in service.
-
----
-
-## Principle 3 — Immutable Preservation
-
-Captures represent historical records.
-
-Once a capture has been created, it must never be modified.
-
-Corrections, summaries, annotations, OCR, translations, and other derived information are stored separately.
-
-This separation preserves the authenticity of the original capture.
-
----
-
-## Principle 4 — AI Augments Knowledge
-
-Artificial intelligence should enhance archived information rather than replace it.
-
-AI-generated content is considered derived information.
-
-Examples include:
-
-- summaries
-- tags
-- keyword extraction
-- semantic embeddings
-- translations
-- entity recognition
-- document classification
-
-Generated artifacts should always remain linked to their original capture.
-
----
-
-## Principle 5 — Open Architecture
-
-The platform should remain independent of any particular vendor.
-
-Components should be replaceable.
-
-Examples include:
-
-AI providers
-
-- Local LLMs
-- Ollama
-- LM Studio
-- OpenAI
-- Anthropic
-- Gemini
-- future providers
-
-Storage
-
-- local filesystem
-- S3
-- Cloudflare R2
-- Backblaze
-- MinIO
-
-Authentication
-
-- private username/password
-- OAuth
-- enterprise SSO
-
-The architecture should minimize coupling to external services.
-
----
-
-# Architectural Constraints
-
-Every implementation must satisfy the following constraints.
-
-## Client Responsibilities
-
-The client performs:
-
-- capture
-- encryption
-- decryption
-- search
-- indexing
-- AI inference
-- archive rendering
-- synchronization
-- conflict resolution
-- local storage relief and integrity-checked remote Artifact retrieval
-
-The client is the trusted execution environment.
-
----
-
-## Server Responsibilities
-
-The backend performs:
-
-- authentication
-- authorization
-- billing
-- encrypted object storage coordination
-- synchronization
-- device management
-- sharing coordination
-- quota management
-- observability
-
-The backend is intentionally unaware of archive contents.
-
----
-
-# Preservation Model
-
-The platform is built around immutable Vault history.
-
-Rather than thinking in terms of "web pages", the system stores Bundles and Events.
-
-Examples include:
-
-- web pages
-- PDFs
-- images
-- emails
-- EPUB files
-- Markdown documents
-- office documents
-- transcripts
-- scanned documents
-
-Every content type follows the same lifecycle.
+# Product shape
 
 ```text
-Capture Request
-
-↓
-
-Immutable Bundle
-
-↓
-
-Independent encrypted Artifacts
-
-↓
-
-Vault Events
-
-↓
-
-Derived Projections
+external source
+  -> trusted Capture adapter
+  -> immutable Bundle and Artifact Objects
+  -> signed Vault Event DAG
+  -> local Library and Search projections
+  -> optional opaque Replica synchronization
 ```
 
-This abstraction allows new content types to be introduced without redesigning the platform.
+Collections group observations of one subject. Folders organize Collections. Tags and Notes can
+target a Collection or exact Capture. Names and titles are presentation, never identity.
 
----
+# Long-term capabilities
 
-# Long-Term Objectives
+The stable architecture should admit new Capture adapters, peer transports, scheduled Capture,
+change comparison, semantic retrieval, citation-grounded assistance, encrypted collaboration,
+desktop and mobile Clients, self-hosted headless Clients, and alternative opaque Hosts without
+redesigning the Vault or granting a provider plaintext access.
 
-The architecture should support future capabilities including:
+# Anti-goals
 
-- semantic search
-- duplicate detection
-- change detection
-- scheduled captures
-- AI-assisted research
-- citation generation
-- knowledge graphs
-- timeline visualization
-- archive comparison
-- collaborative sharing through encrypted permissions
+AWSM is not intended to become:
 
-without requiring changes to the underlying storage model.
+- a cloud-first editor whose service is the source of truth;
+- a social network, advertising system, or surveillance platform;
+- a centralized plaintext AI corpus;
+- a collaborative wiki with hidden last-writer-wins data loss;
+- a retention promise that claims to know every extant copy; or
+- a compatibility museum for abandoned pre-release formats.
 
----
+# Decision test
 
-# Design Philosophy
+A proposal should answer:
 
-The platform values correctness over convenience.
+1. Does it preserve faithful source evidence?
+2. Does it keep plaintext and authority inside the correct trust boundary?
+3. Can permitted work continue offline?
+4. Does it converge without silently discarding authenticated work?
+5. Can a person export or Fork without the provider?
+6. Does it add a real semantic need rather than a provider-specific shortcut?
+7. Is any irreversible consequence clear before action?
 
-It is preferable to preserve more information than less.
+# North star
 
-It is preferable to retain immutable history than overwrite it.
-
-It is preferable to keep computation on trusted devices than centralize it.
-
-It is preferable to expose explicit design decisions rather than hidden behavior.
-
----
-
-# Success Criteria
-
-The platform is successful if users trust it as the permanent home for their digital knowledge.
-
-Specifically, users should believe that:
-
-- their archives cannot be read by the service provider
-- their information remains accessible without network connectivity
-- their knowledge can outlive individual web services
-- their data can be exported without loss
-- the platform can continue evolving without requiring fundamental architectural redesign
-
----
-
-# Anti-Goals
-
-Archive Platform is not intended to become:
-
-- a collaborative wiki
-- a social network
-- a cloud-first document editor
-- an advertising platform
-- an analytics platform
-- a surveillance platform
-- a centralized AI service requiring plaintext access
-
-Features that compromise the platform's core principles should not be introduced merely for convenience.
-
----
-
-# Decision Framework
-
-Future architectural decisions should be evaluated using the following questions:
-
-1. Does this preserve user ownership of knowledge?
-
-2. Does this maintain zero-knowledge guarantees?
-
-3. Can this function offline?
-
-4. Does this preserve immutable history?
-
-5. Does this reduce vendor lock-in?
-
-6. Can this evolve without redesigning the platform?
-
-If a proposal fails multiple questions, it should be reconsidered.
-
----
-
-# The North Star
-
-Archive Platform is not simply a browser extension, a Rails application, or a synchronization service.
-
-It is a platform for preserving human knowledge in a manner that remains private, durable, searchable, and under the complete control of its owner.
-
-Everything else is an implementation detail.
+AWSM is not a browser extension, Rails service, or cloud account. It is a durable encrypted Vault
+architecture through which people can preserve and understand knowledge on their own terms.

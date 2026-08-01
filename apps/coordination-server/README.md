@@ -3,6 +3,13 @@
 The Coordination Server is AWSM's Rails application for authenticated synchronization and opaque
 storage coordination. It must not receive or interpret plaintext Vault content.
 
+This guide describes the currently implemented v0.2.0 experimental service. The canonical target
+is the narrower opaque Replica Host in
+`docs/architecture/15-coordination-server.md` and `docs/specifications/protocol/protocol.md`.
+Current Device, Recovery, Generation, and one-Account/one-Vault behavior will be replaced during a
+separately approved implementation effort; this operational guide does not claim that target is
+already live.
+
 ## Development with Docker Compose
 
 From the repository root, build and start Rails, PostgreSQL, and Redis for the first time:

@@ -1,6 +1,6 @@
 # Command Specification
 
-**Document:** `specifications/event/commands.md`
+**Document:** `docs/specifications/event/commands.md`
 
 **Version:** 1.0
 
@@ -8,248 +8,82 @@
 
 **Depends On:**
 
-- event.md
-- event-format.md
-
----
+- `docs/specifications/event/event.md`
+- `docs/specifications/event/event-format.md`
+- `docs/specifications/vault/authority.md`
 
 # 1. Purpose
 
-Commands represent requests to modify Vault state.
+A Command is an ephemeral request to one trusted Client Runtime. Commands are local workflow
+inputs, never Vault Records, and never synchronized. An accepted Command may atomically produce
+Events, Objects, local state, or no change.
 
-Commands are validated by the client runtime.
+# 2. Context
 
-Successful Commands produce one or more Events.
+A Vault-writing Command identifies the local Client Credential, exact Vault and Generation,
+expected accepted Frontier, Command type, canonical input, and a Runtime-local idempotency key.
+User-interface context, timestamps, Account sessions, and Remote selection are local fields and
+MUST NOT become Event authority unless the owning Event schema explicitly requires a value.
 
-Commands are never synchronized.
+# 3. Execution
 
-Commands are not part of the permanent history.
+The Runtime MUST:
 
----
+1. resolve the selected Vault and make its keys available through the normal open flow;
+2. validate input, Required Features, dependencies, authority, conflicts, and scoped fences;
+3. prepare every immutable Object and exact Event body;
+4. compare-and-swap the complete accepted Frontier at commit;
+5. if the Frontier changed, discard unsigned or signed candidates and revalidate from step 2;
+6. atomically commit every authoritative result and coupled Replica Safety update, or none; and
+7. update disposable Materializations only in the same commit or by replay afterward.
 
-# 2. Design Goals
+Commands do not edit an Event, append to a partial parent set, or treat Host acceptance as Vault
+acceptance.
 
-Commands MUST provide:
+# 4. Authorization
 
-- explicit intent
-- validation
-- deterministic event generation
-- atomic execution
+Ordinary content and organization Commands require one active member using an active Client
+Credential. Authority, lifecycle, conflict-resolution, and rewrite Commands use their exact Event
+rules. A Host-local Channel Principal or Replica Access Grant may permit transport but never
+substitutes for portable Vault authorization.
 
----
+# 5. Offline and fenced work
 
-# 3. Command Lifecycle
+When protected writes are fenced or the author is no longer a member, the Runtime avoids knowingly
+creating an invalid Event. It may keep a complete Capture result in Prepared Data, offer Fork or
+Export, or later create a valid Event through the defined Event Re-authoring flow. Prepared output
+is not authoritative and is never presented as synchronized Vault state.
 
-```
-User
+# 6. Command families
 
-↓
+The initial Runtime exposes Commands for:
 
-Command
+- Vault creation, selection, label, Fork, Export, Vacuum, adoption, and Closure;
+- Capture registration, deletion, restoration, Collection routing and organization;
+- Folder, Tag, and Note creation and management;
+- Invitation, membership, administration, Credential, recovery, Key Epoch, and feature workflows;
+- synchronization, Storage Relief, retrieval, integrity checking, and local Garbage Collection.
 
-↓
+The exact Event bodies are owned by `docs/specifications/vault/authority.md`,
+`docs/specifications/vault/collection.md`, and `docs/specifications/vault/vacuum.md`. Runtime-only
+Commands such as select, open, synchronize, retrieve, export, and collect need not produce Events.
 
-Validation
+# 7. Failure and idempotency
 
-↓
+Validation failure produces no authoritative output. Stable workflow keys make retries safe, but
+portable idempotency depends on authenticated logical identities and Event semantics rather than a
+synchronized Command ID. Partial success is prohibited at every declared atomic boundary.
 
-Transaction
+# 8. Invariants
 
-↓
-
-Events
-
-↓
-
-Projection Update
-```
-
-Commands exist only during execution.
-
----
-
-# 4. Command Structure
-
-Every Command SHALL contain:
-
-- Command ID
-- Command Type
-- Command Version
-- Issuing Device ID
-- Creation Timestamp
-- Payload
-
-Optional fields MAY include:
-
-- Correlation ID
-- Extension ID
-- User Interface Context
-
----
-
-# 5. Validation
-
-Every Command MUST be validated before execution.
-
-Validation SHALL verify:
-
-- required fields
-- schema compliance
-- capability authorization
-- business rules
-- referenced object existence (where applicable)
-
-Validation failures MUST NOT produce Events.
-
----
-
-# 6. Transactions
-
-Command execution SHALL occur within a Transaction.
-
-Transactions MUST either:
-
-- produce all Events, or
-- produce none.
-
-Partial execution is prohibited.
-
----
-
-# 7. Event Production
-
-A Command MAY produce:
-
-- zero Events (e.g. a no-op)
-- one Event
-- multiple Events
-
-The Event sequence MUST be deterministic.
-
----
-
-# 8. Determinism
-
-Given:
-
-- identical Vault state
-- identical Command
-- identical runtime version
-
-the generated Events MUST be equivalent.
-
----
-
-# 9. Idempotency
-
-Commands are not required to be idempotent.
-
-Events MUST remain idempotent.
-
-Implementations MAY detect duplicate Commands to improve user experience, but replay correctness MUST depend on Events rather than Commands.
-
----
-
-# 10. Authorization
-
-Command execution SHALL verify that the issuing principal possesses all required capabilities.
-
-Capability evaluation occurs before Event generation.
-
----
-
-# 11. Extensions
-
-Extensions SHALL submit Commands through the same public API used by first-party components.
-
-Extensions MUST NOT append Events directly to the Event Log.
-
----
-
-# 12. Standard Commands
-
-Examples include:
-
-- CapturePage
-- RegisterBundle
-- RemoveBundle
-- AddTag
-- RemoveTag
-- CreateFolder
-- RenameFolder
-- MoveBundle
-- AddNote
-- EnrollDevice
-- RevokeDevice
-- RotateVaultKey
-
-This list is informative rather than exhaustive.
-
-`CapturePage` is the first browser Host Command. It requests capability preflight and live
-acquisition through the Capture Service. Successful execution prepares the complete immutable
-Bundle Descriptor and Artifact Object graph before atomically producing `BundleRegistered`.
-Mandatory Capture failure produces no Vault Event.
-
-`DeleteCaptures` and `RestoreCaptures` name a non-empty, duplicate-free canonical list of explicit Bundle IDs. They reject the entire request when any Bundle is absent from the expected Active or Deleted state. Accepted requests produce `CapturesDeleted` and `CapturesRestored` respectively.
-
-`MergeCollections` redirects explicit source Collection identities into the user-selected destination and produces `CollectionsMerged`. `MoveCaptures` assigns explicit Bundle IDs to an existing Collection. `ExtractCaptures` assigns explicit Bundle IDs to one newly generated Collection. Both membership Commands produce `CapturesMoved`.
-
-`UndoLibraryOperation` names the Event receipt returned by the latest reversible Collection operation. It produces an inverse `CapturesMoved` or `CollectionMergeReverted` only when the original effect is still current; otherwise it fails atomically with `LIBRARY_STATE_CHANGED`.
-
-`VacuumVault` is a local destructive Runtime Job request. It never synchronizes as a Command and processes the Deleted snapshot established after acquiring the active-generation fence.
-
-`CreateVault` creates a new cryptographically independent Vault and accepts its initial normalized name plus independent local key-slot choices. Accepted creation produces `VaultCreated` atomically with the new Vault.
-
-`RenameVault` requires the named Vault to be active and unlocked. It accepts one normalized name and produces `VaultRenamed`. Repeating the current canonical name is a no-op and produces no Event.
-
-`SelectActiveVault` changes the device-local active Vault, manually locks both the previous and selected Vault contexts, and produces no Event. It MUST fail when its expected active Vault no longer matches persisted Workspace state or when Vault-scoped authoritative work prevents a safe context transition.
-
----
-
-# 13. Error Handling
-
-Execution MAY fail because of:
-
-- validation errors
-- authorization failures
-- integrity failures
-- storage failures
-- cryptographic failures
-
-Failures MUST leave Vault state unchanged.
-
----
-
-# 14. Invariants
-
-Commands are ephemeral.
-
-Commands are never synchronized.
-
-Commands never appear in the Event Log.
-
-Commands never modify Projections directly.
-
-Commands never bypass validation.
-
-Transactions are atomic.
-
----
-
-# 15. Unsupported Commands
-
-Command semantics outside this specification are unsupported, including:
-
-- additional Command types
-- additional validation rules
-- richer authorization models
-
-Runtimes MUST reject unsupported Commands rather than attempting partial execution.
-
----
+- Commands are ephemeral and local.
+- Only a Client Credential authors a Vault Event on behalf of a member.
+- Every committed Event names the complete accepted causal and Authority Parent Frontiers.
+- Projections never become authority through Command execution.
+- No Command bypasses Required Feature, authority, or dependency validation.
 
 # References
 
-- event.md
-- event-format.md
-- protocol/protocol.md
+- `docs/specifications/vault/collection.md`
+- `docs/specifications/vault/vacuum.md`
+- `docs/specifications/runtime/runtime.md`

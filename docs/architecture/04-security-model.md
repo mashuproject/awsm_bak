@@ -1,399 +1,75 @@
 # Security Model
 
-**Document:** `architecture/04-security-model.md`
-
-**Status:** Draft
-
-**Owner:** Engineering
+**Status:** Draft target architecture
 
 **Depends On:**
 
-- architecture/03-zero-knowledge.md
+- `docs/architecture/03-zero-knowledge.md`
+- `docs/architecture/18-cryptography.md`
 
----
+# Goals
 
-# Purpose
+AWSM protects Vault confidentiality and integrity from opaque Hosts, network attackers, malformed
+imports, and unauthorized authors while retaining useful offline operation. It cannot retract data
+or keys already possessed by an authorized or compromised member.
 
-This document defines the security architecture of Archive Platform.
+# Trust principals
 
-It specifies:
+- A Vault Member is portable authority and receives the same cryptographic access class as every
+  other member.
+- A Vault Administrator independently governs invitations, removal, role changes, security
+  transitions, Vacuum, and Closure. No quorum is implied.
+- A Client Credential signs Events for one member. It is the immediate portable author.
+- A Recovery Credential derives from that member's Recovery Phrase and can enroll a replacement
+  Client Credential without another online client.
+- A Channel Principal and Replica Access Grant authorize one Host interface only.
 
-- trust relationships
-- cryptographic ownership
-- key hierarchy
-- device authorization
-- vault access
-- revocation strategy
+# Key model
 
-It intentionally does **not** specify cryptographic algorithms. Those are defined in the Cryptography document.
+AWSM has no Vault Root Key. Each Key Epoch has an independent random symmetric key. Content and
+outer-item keys are domain-separated from the applicable Epoch Key. HPKE envelopes deliver each
+Epoch Key to every eligible Client and Recovery Credential.
 
----
+The Recovery Phrase is 12-word English BIP39 for 128 bits of fresh client entropy. Possession is
+possession of that member's recovery authority and must be treated like a sensitive private key.
 
-# Security Goals
+# Revocation and future protection
 
-The platform must ensure:
+Membership or Credential end is an immutable Authority Event. It cannot make already obtained
+plaintext, keys, Replicas, exports, or Forks disappear. Administrator removal and adversarial
+Credential revocation create a narrow protected-write fence until a new Key Epoch excludes the
+target. Self-resignation and voluntary own-Credential retirement do not globally stop other
+members from capturing.
 
-1. Only trusted devices can decrypt vault contents.
-2. The backend cannot decrypt user data.
-3. Compromising one device should not permanently compromise a vault.
-4. Multiple devices can safely share a vault.
-5. Devices can be revoked.
-6. Cryptographic material can evolve without redesigning the platform.
+A resigned member loses portable authority and any promise of later Events or keys but may retain a
+readable historical Replica. Obtainable old-Epoch updates may remain decryptable on a best-effort
+basis until an excluding transition. Joining again uses a new Invitation and fresh member identity;
+it never revives old authority.
 
----
+# Conflicts and hostile behavior
 
-# Security Domains
+All Vault Events are signed and hash-linked. Timestamps are audit assertions, not authorization or
+ordering authority. Equivocation and incompatible authority heads are retained, surfaced, and
+scoped. Deterministic rules resolve only classes where automatic composition is safe; security-
+sensitive conflicts require explicit authorized resolution.
 
-There are three logical trust domains.
+# Threat limitations
 
-```text
-                User
+The model does not prevent an authorized member from copying plaintext, an Administrator from
+using their disclosed independent powers, a compromised Client from acting with its keys, a Host
+from withholding opaque items, or loss of the final surviving wrapper. Cryptography detects
+mutation but does not guarantee availability or good judgment.
 
-                  │
+# Invariants
 
-        Trusted Devices
-
-        Chrome
-        Firefox
-        Desktop
-        Mobile
-
-                  │
-
-         Encrypted Transport
-
-                  │
-
-        Coordination Server
-
-                  │
-
-         Object Storage
-```
-
-Only trusted devices possess plaintext vault keys.
-
----
-
-# Identity
-
-A user account represents an authenticated identity.
-
-The account is **not** the cryptographic owner of archived content.
-
-Instead:
-
-```text
-Account
-
-↓
-
-Vault
-```
-
-One Account owns at most one synchronized Vault directly. A future separately approved
-authorization model may add:
-
-- shared vaults
-- organization vaults
-- delegated access
-
-Account authentication does not establish Device trust or by itself grant cryptographic Vault
-access. Rails receives the Account password over TLS and verifies its digest. The extension then
-uses a certified Device and locally protected key envelopes to access Vault content. The server
-never receives a Recovery Phrase or unwrapped Vault key. The isolated black-box proof creates and
-authenticates an ordinary test Account through the same public Account/session contract as clients;
-there is no alternate credential path.
-
----
-
-# Key Hierarchy
-
-Every key has exactly one responsibility.
-
-```text
-Master Secret
-
-↓
-
-Vault Root Key
-
-├── Bundle Key
-├── Event Key
-├── Artifact Key
-└── Metadata Key
-```
-
-No key should serve multiple purposes.
-
----
-
-# Identity Key
-
-The Identity Key uniquely identifies or authenticates a user account.
-
-Responsibilities:
-
-- authenticate vault membership
-- establish trust
-- sign authorization requests
-
-It does **not** encrypt archive content.
-
----
-
-# Device Key
-
-Every trusted device generates its own key pair during registration.
-
-The private key never leaves the device.
-
-Responsibilities:
-
-- authenticate the device
-- receive encrypted vault keys
-- sign synchronization requests
-
-Compromising one device should not expose private keys from other devices.
-
----
-
-# Vault Root Key
-
-The Vault Root Key is the root encryption key for a Vault.
-
-Responsibilities:
-
-- authorize access to vault contents
-- derive or wrap subordinate keys
-- enable new devices to access the vault
-
-The Vault Root Key is never stored unencrypted.
-
----
-
-# Bundle Key
-
-Every Bundle receives its own context-specific encryption key derived from the Vault Root Key using the Bundle ID, Vault ID, domain label, and key version.
-
-Responsibilities:
-
-- encrypt the immutable bundle
-- isolate compromise
-- enable future key rotation
-
-Bundle Keys are not persisted in the initial implementation. Trusted clients reconstruct them deterministically according to the Key Derivation Specification.
-
-The same pattern applies to Event and Projection keys with distinct domain labels and contexts.
-
----
-
-# Object Encryption
-
-Bundles are encrypted first.
-
-Only then are they serialized into storage Objects or Blocks.
-
-The storage layer never interprets cryptographic semantics.
-
-Instead:
-
-```text
-Bundle
-
-↓
-
-Encrypt
-
-↓
-
-Ciphertext
-
-↓
-
-Store As Objects / Blocks
-```
-
-This keeps the storage layer unaware of plaintext semantics.
-
----
-
-# Device Enrollment
-
-Adding a new Device requires the Account password and the current 12-word Recovery Phrase. It does
-not require another Device to be online.
-
-```text
-New Device
-
-↓
-
-Generate Device Key Pair
-
-↓
-
-Request Access
-
-↓
-
-Enter And Confirm Recovery Phrase
-
-↓
-
-Recovery Authority Certifies Device And Wraps Key Epochs
-
-↓
-
-Synchronization Begins
-```
-
-The coordination server relays encrypted messages but cannot read them.
-
-## Initial Local Browser Slot
-
-Before multi-device enrollment exists, the browser Host stores one mandatory local device wrapper for the Vault Root Key using a non-exportable device key. Local onboarding does not create or retain a passphrase wrapper.
-
-Export passphrases protect individual Vault Packages. They are not local unlock credentials, recovery settings, or persistent Vault state.
-
----
-
-# Device Revocation
-
-Revocation prevents future synchronization.
-
-Revoking a device:
-
-- invalidates its registration
-- prevents receiving new vault updates
-- prevents uploading new bundles
-
-Revocation **does not** erase previously synchronized local data.
-
-If a Device is believed to be compromised, ordinary removal blocks future server access. Future
-Protection additionally creates a new Recovery Generation, Recovery Phrase, and Key Epoch so the
-removed Device cannot decrypt subsequently accepted content.
-
----
-
-# Key Rotation
-
-The architecture supports independent rotation.
-
-Possible rotations:
-
-- Identity Key
-- Device Key
-- Vault Root Key
-- Bundle Keys
-
-Rotating one key should minimize impact on unrelated components.
-
-For example, rotating a Vault Root Key should **not** require re-encrypting every Bundle immediately. Subordinate keys can be rewrapped or rederived gradually according to the cryptography specification.
-
----
-
-# Authentication vs Encryption
-
-Authentication proves identity.
-
-Encryption protects data.
-
-These are separate concerns.
-
-Examples:
-
-| Action          | Authentication | Encryption |
-| --------------- | -------------- | ---------- |
-| Login           | ✓              | ✗          |
-| Upload Bundle   | ✓              | ✓          |
-| Download Bundle | ✓              | ✓          |
-| Billing         | ✓              | ✗          |
-
----
-
-# Forward Secrecy
-
-Future versions may support stronger forward secrecy for device-to-device communication.
-
-This is outside the MVP.
-
----
-
-# Account Recovery and Stale-Replica Discard
-
-Archive Platform deliberately separates:
-
-- account recovery
-- vault recovery
-
-Losing Account credentials does not erase an already enrolled Device's local access because its
-Device material remains sufficient. AWSM collects no email address and provides no Account password
-reset. No administrator or server-side Account action can derive a Recovery Phrase or Vault key. A
-fresh installation can recover the synchronized Vault with the Account password and current
-Recovery Phrase even when no enrolled Device remains.
-
-Stale-Replica discard is different: it keeps the stale Vault read-only, offers a Complete Export,
-requires explicit loss acknowledgement, verifies the complete active server Replica, and atomically
-replaces the original synchronized Vault without creating another Vault.
-
-Vault replacement is the explicit response when Recovery Phrase authority may be compromised. It
-requires a verified Complete Export, rewrites the exact active Vault closure under a new Vault
-identity and keys, atomically promotes that candidate, revokes the source Devices, and purges the
-old synchronized ciphertext. It cannot erase an adversary's independent copies.
-
----
-
-# Security Events
-
-The system should record security events, including:
-
-- device enrollment
-- device revocation
-- vault key rotation
-- failed authentication
-- recovery attempts
-
-Security logs should avoid exposing private archive metadata.
-
----
-
-# Security Assumptions
-
-The platform assumes:
-
-- operating systems enforce local permissions
-- TLS protects transport
-- browsers implement WebCrypto correctly
-- users protect their devices with OS-level authentication
-
-Compromise of a trusted client falls outside the zero-knowledge guarantees.
-
----
-
-# Vault Package Import Security
-
-The Export passphrase, passphrase-derived key, and recovered raw Root Key are confined to the
-trusted Runtime and never persisted or logged. The raw Root Key exists only in a scoped callback
-long enough to create a fresh local slot and verifier and is wiped on exit. Authentication errors
-are deliberately indistinguishable. Complete validation precedes destination writes, and identity
-collisions fail closed without modifying or cleaning the existing Vault.
-
-# Open Questions
-
-Should vault access require approval from one device or multiple devices?
-
-Should enterprise vaults support hardware-backed keys?
-
-Should users be able to export wrapped vault keys?
-
-Should hardware security modules be supported?
-
-These questions are deferred until enterprise features are designed.
-
----
+- Account passwords never derive Vault keys.
+- Administrator status never grants another member's Recovery Phrase or private key.
+- A Host cannot author a Vault Event.
+- Unknown Required Features fail closed.
+- Destructive rewrites require precise consequences and verified source closure.
 
 # References
 
-- architecture/05-local-storage.md
-- architecture/06-bundle-format.md
-- architecture/08-synchronization.md
+- `docs/specifications/vault/authority.md`
+- `docs/specifications/crypto/crypto.md`
+- `docs/architecture/19-testing-strategy.md`

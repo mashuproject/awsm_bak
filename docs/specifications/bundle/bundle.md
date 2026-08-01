@@ -1,6 +1,6 @@
 # Bundle Specification
 
-**Document:** `specifications/bundle/bundle.md`
+**Document:** `docs/specifications/bundle/bundle.md`
 
 **Version:** 1.0
 
@@ -8,65 +8,63 @@
 
 **Depends On:**
 
-- `artifact.md`
-- `manifest.md`
-- `../storage/object-store.md`
-
----
+- `docs/specifications/bundle/manifest.md`
+- `docs/specifications/bundle/artifact.md`
+- `docs/specifications/storage/object-store.md`
 
 # 1. Purpose
 
-A Bundle is an immutable Capture package represented by Object semantics. It is a logical graph,
-not a container file: one compact Bundle Descriptor Object describes the Capture and references one
-independently encrypted Artifact Object for each successfully produced payload.
+A Bundle is one immutable Capture identity and its authoritative Object graph. It is not a
+container file. A Bundle Descriptor identifies one generated Bundle ID and references every
+Artifact Object successfully preserved by that Capture.
 
 # 2. Graph
 
-Every Bundle SHALL contain exactly one Bundle Descriptor and one or more Artifact references. The
-initial `WebPageSnapshot-v1` Capture Profile requires `PRIMARY` and permits `SCREENSHOT_FULL`,
-`THUMBNAIL`, `TEXT_EXTRACTED`, and `CONTENT_STRUCTURED`.
+```text
+Bundle ID
+  -> Bundle Descriptor Object
+       -> Artifact Object(s)
+            -> independently streamable encrypted wrapper
+```
 
-The descriptor Object ID is independent of the Bundle ID. Each Artifact ID is its Object ID. All
-identifiers are fresh canonical UUIDs and SHALL NOT be derived from content. Artifact references
-SHALL be ordered by Artifact Object ID.
+The Bundle ID is a stable generated entity ID. The Descriptor and Artifact IDs are protected
+content digests. Re-encryption, storage relocation, hydration, and wrapper framing never replace
+the Bundle ID.
 
-# 3. Completeness and Registration
+# 3. Registration
 
-`BundleRegistered` SHALL reference the Bundle Descriptor Object and every Artifact Object directly.
-Its Object closure SHALL exactly equal the descriptor plus the descriptor's Artifact references.
-The Runtime SHALL validate and atomically commit that complete closure before the Bundle becomes
-visible. No incomplete Bundle may be authoritative.
+The trusted Runtime fully prepares and verifies the Descriptor, Artifact Objects, mandatory
+wrappers, and exact typed dependency closure before authoring Bundle Registered. That Event admits
+the logical graph atomically while Replica Safety State atomically records each verified wrapper
+representation. A mandatory acquisition failure produces no Event. An optional failure is an
+authenticated Descriptor warning and absence, not an incomplete reference.
 
-Optional Artifact acquisition failure does not make the committed graph incomplete: the descriptor
-omits the Artifact and `BundleRegistered` records the corresponding typed warning. `PRIMARY`
-failure rejects the Capture.
+Bundle Registered directly depends on the Descriptor. The Descriptor's typed references reach the
+Artifact Objects; Replica Safety State resolves their randomized wrappers. An Event does not
+flatten the Object closure into redundant dependencies.
 
-# 4. Persistence and Portability
+# 4. Immutability and lifecycle
 
-The descriptor is a compact inline encrypted Object. Artifact payloads are independently framed,
-encrypted, and stored through the Artifact Store. Bundle semantics do not assign filenames or
-container paths to Artifacts.
+Neither a Bundle nor any Object in its graph mutates. Delete, restore, Collection assignment,
+Folder placement, Tags, Notes, search, and derived representations are Event-derived or local
+state. A new capture of the same URL is a distinct Bundle.
 
-Export packages carry the descriptor Object record, Artifact Object records, and Artifact wrappers
-as separate entries. Package coverage may be Complete or Selective as defined by the Import and
-Export Specification. Export is not the canonical representation of a Bundle.
+# 5. Portability
 
-# 5. Validation and Invariants
+Complete Export includes every reachable Descriptor, Artifact Object, and wrapper. Selective
+Export follows its explicit closure contract. A package is a transfer artifact, not the canonical
+Bundle representation. No filename, path, Host, Account, or Remote carries Bundle meaning.
 
-Readers SHALL reject unknown fields, versions, Kinds, Roles, duplicate Object IDs, duplicate Roles,
-invalid MIME contracts, closure mismatches, warning mismatches, or checksum/length failures.
+# 6. Invariants
 
-- Bundles and their identifiers never mutate.
-- Artifact payloads never live inside the descriptor.
-- Filenames and storage paths carry no Bundle semantics.
-- Checksums verify bytes but do not determine identity.
-- Projections and caches are not part of the Bundle graph.
+- One Bundle has one stable Bundle ID and one accepted Descriptor.
+- Artifact payload bytes never live inside the Descriptor.
+- Every accepted graph has complete authenticated mandatory dependencies.
+- A missing expected local wrapper is unavailable or corrupt local state, not Bundle mutation.
+- Derived Artifacts never silently replace preserved Artifacts.
 
 # References
 
-- `artifact.md`
-- `manifest.md`
-- `page-snapshot.md`
-- `../event/event.md`
-- `../storage/object-store.md`
-- `../portability/import-export.md`
+- `docs/specifications/event/event.md`
+- `docs/specifications/vault/collection.md`
+- `docs/specifications/portability/import-export.md`

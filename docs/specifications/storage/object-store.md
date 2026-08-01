@@ -1,184 +1,178 @@
 # Object Store Specification
 
-**Document:** `specifications/storage/object-store.md`
+**Document:** `docs/specifications/storage/object-store.md`
 
 **Version:** 1.0
 
 **Status:** Draft
 
+**Depends On:**
+
+- `docs/specifications/core/identifiers.md`
+- `docs/specifications/core/serialization.md`
+- `docs/specifications/storage/opaque-envelope.md`
+- `docs/specifications/vault/vault.md`
+
 ---
 
 # 1. Purpose
 
-The Object Store provides the canonical persistence layer for immutable authoritative Objects.
+The Object Store persists immutable authoritative Vault Records, Vault Objects, Key Envelopes,
+Feature Manifests, and Artifact wrappers while keeping protected logical identity separate from
+randomized physical storage representation.
 
-The Object Store is independent of:
+# 2. Logical item classes
 
-- browser APIs
-- filesystem APIs
-- cloud storage providers
-- synchronization protocols
+The store recognizes protected logical item types through exact typed specifications. It provides
+two physical byte paths:
 
-Implementations may store Objects in OPFS, local filesystems, relational databases, object storage services, or other persistence mechanisms.
+- Compact items for bounded canonical Records, Objects, Manifests, Envelopes, and local catalogs;
+  and
+- Streamable items for large encrypted Artifact wrappers.
 
----
+An item may have one protected logical ID and several destination-specific Opaque Storage Item IDs.
+The store MUST NOT treat an opaque ID as the logical reference used inside Vault data.
 
-# 2. Design Goals
+# 3. Immutability
 
-The Object Store MUST provide:
+For a logical content ID, exact canonical authenticated bytes are immutable. For an Opaque Storage
+Item ID, exact outer bytes are immutable.
 
-- immutable storage
-- deterministic retrieval
-- integrity verification
-- implementation independence
-- efficient streaming
+`put` has only these valid results:
 
----
+- create the absent exact item;
+- report idempotent success for byte-identical existing content; or
+- reject an identifier collision.
 
-# 3. Object Model
+No operation overwrites, patches, appends to, or reinterprets an accepted item. Multipart and
+Prepared Data are outside the accepted store until final verification and promotion.
 
-Every stored Object consists of:
+# 4. Trusted-client acceptance
 
-- Object Identifier
-- Object Type
-- Object Version
-- Payload
-- Integrity Information
+A trusted client accepts an item only after:
 
-The Object Store treats the payload as opaque bytes. Object semantics are authoritative only through the specification that defines the Object Type.
+1. verifying its outer envelope and Opaque Storage Item ID;
+2. decrypting under an authorized Key Epoch or target wrapping key;
+3. parsing exact canonical inner bytes;
+4. recomputing the protected logical ID and expected type;
+5. verifying signatures, authority, parents, Required Features, and typed dependencies where
+   applicable;
+6. proving the complete required closure; and
+7. committing the item, active frontier change, and Replica Safety State atomically.
 
----
+Host Storage Admission, download completion, or a matching outer digest is insufficient.
 
-# 4. Object Types
+# 5. Resolution state
 
-The storage layer recognizes only broad storage categories.
+Each client Replica keeps protected Replica Safety State that maps exact protected logical IDs to
+the local and Remote Opaque Storage Item IDs known to represent them. The mapping MAY include the
+verified Key Epoch used to open an item.
 
-Examples include:
+The mapping is acceleration, not Vault truth. A client can rebuild it by enumerating one authorized
+opaque inventory and decrypting and validating candidates. A Replica Host cannot create or
+interpret it.
 
-- BundleDescriptor
-- Artifact
-- Event
-- Block
-- WrappedKey
-- EventLogSegment
-- ProjectionSnapshot
+# 6. Artifact wrappers
 
-Interpretation of Object contents is delegated to higher-level specifications.
+The compact Artifact Object commits to the complete logical payload digest, plaintext length,
+representation metadata, and stream integrity contract. Its Artifact ID is the compact Object's
+Object Identifier.
 
----
+The corresponding streamable wrapper MAY be Present or Evicted in one client Replica. Its absence
+does not remove the Artifact from the authoritative inventory. A retrieved wrapper becomes Present
+only after every frame and the complete logical payload contract verify.
 
-# 5. Operations
+Frames, multipart parts, pack files, ranges, and physical chunks never receive independent Vault
+Object IDs or reachability semantics.
 
-Every implementation SHALL support:
+# 7. Replica-local availability
 
-- PutObject
-- GetObject
-- HasObject
-- DeleteObject
-- ListObjects
-- VerifyObject
+For every reachable eligible wrapper, one client Replica records exactly one:
 
----
+- `Present`: complete verified wrapper exists locally;
+- `Evicted`: intentional local absence with no claim that another copy exists; or
+- `UnexpectedlyMissing`: bytes expected locally are absent or fail verification.
 
-# 6. Immutability
+Availability is Replica Safety State and does not synchronize as portable Vault truth. Storage
+Relief may change Present to Evicted only after the unconditional data-loss warning. Retrieval may
+change Evicted to Present only after full verification.
 
-Objects MUST NOT be modified after successful storage.
+# 8. Enumeration and retrieval
 
-Replacing an Object requires storing a new Object with a different identifier.
+A trusted local Object Store MAY enumerate logical items by exact type and scope. An opaque Hosted
+Replica enumerates only Opaque Storage Item IDs, storage class, ciphertext length and digest,
+outer format, and Host-local cursor or admission token.
 
----
+A Remote request uses opaque IDs resolved by trusted local state. Recovery may enumerate all
+authorized compact opaque items and attempt private opening; the Host supplies no semantic filter.
 
-# 7. Streaming
+# 9. Reachability
 
-Implementations SHOULD support streaming writes and reads.
+Trusted-client reachability traces:
 
-Large Objects SHOULD NOT require complete in-memory buffering.
+- the active Vault Baseline and accepted Vault Record Frontier;
+- causal parent references;
+- Typed Dependency References;
+- retained predecessor Generations;
+- Recovery Snapshots;
+- pending and Prepared operations;
+- Complete Export or Backup construction roots while owned by the Runtime; and
+- every explicit local preservation root.
 
-An Artifact Object has a compact authoritative record and an external encrypted Artifact wrapper.
-The record binds the Artifact Object ID to the exact wrapper byte length and SHA-256 checksum. The
-Object Store SHALL treat that pair as one immutable Object and SHALL NOT report a successful read
-until both wrapper and plaintext integrity validation complete.
+Replica Garbage Collection may delete an item only after a complete current trace proves it is not
+reachable from any root. A predecessor commitment in a successor Baseline is audit linkage, not a
+reachability edge.
 
-Complete Vault Import installs an Artifact Object by streaming the already encrypted wrapper
-unchanged into the validated destination Vault namespace, checking its exact bound length and
-SHA-256, and then atomically committing its compact Object record with the full imported graph.
-Prepared wrappers are not authoritative before that transaction and SHALL be removed on failure.
+An opaque Replica Host cannot run semantic Garbage Collection. It may delete exact opaque items
+when instructed by an authorized trusted client, apply disclosed non-semantic Host policy, or reap
+an entire Hosted Replica. None proves global unreachability.
 
----
+# 10. Transaction boundary
 
-# 8. Integrity
+Authoritative compact metadata and large wrapper bytes may use different Persistence Backends. A
+Runtime uses Prepared Data, Execution State, and Replica Safety State to make cross-backend work
+restart-safe.
 
-Every Object MUST possess integrity metadata.
+An operation that cannot atomically commit all physical parts MUST use a sealed candidate protocol:
 
-Integrity verification SHALL occur before the Object is returned to higher layers.
+1. prepare immutable bytes under a stable Job identity;
+2. persist exact counts, lengths, and digests;
+3. verify every part after durable write;
+4. atomically publish the logical item and Safety State; and
+5. reclaim abandoned Prepared Data after the outcome is known.
 
-An Artifact Object record may remain authoritative while its wrapper is intentionally absent from
-one device. That absence is valid only when a strict Vault-scoped remote-only availability row exists;
-otherwise it is corruption. The row is operational state and MUST NOT alter the Object, identifier,
-Bundle reference, Event graph, or synchronized inventory.
+No incomplete Bundle, Baseline, Artifact, or authority dependency becomes reachable.
 
----
+# 11. Import and synchronization
 
-# 9. Namespaces
+External bytes enter Quarantine. Trusted local preparation enters Prepared Data. The two states
+MUST NOT share validation, promotion, or cleanup assumptions.
 
-Objects MAY be partitioned internally.
+Synchronization is requester-initiated pull. A received item is not accepted merely because a
+Remote stored it. Import and Restore apply the same identifier, type, closure, and atomicity checks
+as ordinary local construction.
 
-Partitioning SHALL NOT affect Object identifiers.
+# 12. Unknown types and features
 
----
+Unknown protected logical types or Required Vault Features remain bounded Quarantine and fail
+semantic acceptance. When the outer envelope is understood, a client MAY preserve and relay exact
+opaque bytes without advancing its trusted frontier or reclaiming related data.
 
-# 10. Storage Independence
+Unknown derived or Materialization namespaces are disposable under their registry contract and
+never become authoritative through persistence.
 
-Implementations MAY use:
+# 13. Invariants
 
-- OPFS
-- IndexedDB
-- Local filesystem
-- SQLite
-- Object storage services
-- Other persistent stores
-
-Storage backends SHALL expose identical semantics.
-
----
-
-# 11. Deletion
-
-Deletion removes the local replica only.
-
-Deletion does not redefine the logical history of the Vault.
-
-Retention policies are defined elsewhere.
-
-Vault Vacuum is the supported retention policy defined by `docs/specifications/vault/vacuum.md`. It removes only Objects proven unreachable from the verified active successor Vault Generation.
-
-Manual storage relief is not Object deletion. After explicit confirmation, it may remove local
-wrappers only for eligible heavy Artifact roles after proving that each exact Object is a committed
-member of the authenticated server's active Generation. It atomically records intentional absence
-around the file removal and is restart-reconciled. Compact wrappers remain local.
-
----
-
-# 12. Invariants
-
-Objects are immutable.
-
-Object identifiers are stable.
-
-Payloads are opaque.
-
-Integrity verification is mandatory.
-
-Objects are the authoritative persistence records; higher-level specifications define how Object
-Types such as Bundle Descriptors, Artifacts, Event Log Segments, and Wrapped Keys affect Vault
-state.
-
----
+- Accepted logical and outer items are immutable.
+- Protected logical references never depend on one Host's opaque IDs.
+- Absence is intentional only when exact Replica Safety State says Evicted.
+- No client claims another copy exists or is durable.
+- No Host infers semantic reachability from opaque inventory.
+- Complete validation precedes authoritative promotion.
+- Physical layout changes do not change logical identity.
 
 # References
 
-bundle/bundle.md
-
-vault/vault.md
-
-core/identifiers.md
+- `docs/specifications/storage/opaque-envelope.md`
+- `docs/specifications/runtime/storage.md`
+- `docs/specifications/vault/vacuum.md`

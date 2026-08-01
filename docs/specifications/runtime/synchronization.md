@@ -1,6 +1,6 @@
-# Runtime Synchronization Service
+# Runtime Synchronization Specification
 
-**Document:** `specifications/runtime/synchronization.md`
+**Document:** `docs/specifications/runtime/synchronization.md`
 
 **Version:** 1.0
 
@@ -8,163 +8,101 @@
 
 **Depends On:**
 
-- runtime.md
-- ../protocol/protocol.md
-- ../event/event-format.md
+- `docs/specifications/protocol/protocol.md`
+- `docs/specifications/vault/replica.md`
+- `docs/specifications/event/event.md`
 
----
+# 1. Purpose
 
-# Purpose
+Synchronization lets a receiving Client pull opaque items from an authorized source Replica,
+authenticate them locally, and converge its Replica without granting the source semantic authority.
+There is no distinguished origin, server, or global sequence.
 
-This specification defines trusted Runtime responsibilities for the implemented opaque
-Coordination Server integration.
+# 2. Triggers
 
-# Responsibilities
+A Client may pull on explicit refresh, Vault open, local schedule, network reconnection, or an
+untrusted Wake Hint. Hints contain no authoritative fact and merely cause another pull. Background
+frequency is installation policy and may respect power, data, and privacy settings.
 
-The Synchronization Service SHALL encrypt and semantically validate local authoritative records,
-maintain independent local Replica state, upload dependencies before Events, retain local content
-until durable closure acknowledgement, fetch snapshot-bounded changes, download and verify opaque
-bytes, and replay Events in canonical Event order rather than Delivery Cursor order.
+Each bounded pull cycle runs as a durable pull-synchronization Job. Its Execution State owns the
+Remote, Realm, inventory snapshot and page position, retry state, Quarantine references, and safe
+aggregate progress. A Job checkpoint is local resumption state, never a delivery acknowledgement or
+portable Frontier.
 
-Ordinary Pull SHALL preserve a valid remote-only marker when the same Artifact remains in the active
-Generation, while installing newly learned wrappers locally by default. Upload SHALL reuse exact
-already-committed remote-only Objects without opening local storage, but MUST fail safely if neither
-a verified local wrapper nor an exact durable server Object is available.
+# 3. Pull pipeline
 
-It SHALL subscribe before initial fetch, treat Action Cable only as a wake-up, generation-guard
-reconciliation, poll after missed lifecycle events, and converge when every hint is lost.
+For each configured source Remote, the Client:
 
-# Coordination Server Switching
+1. authenticates its Channel Principal under that Host's policy;
+2. reads bounded opaque inventory or set-difference pages using a Host-local cursor;
+3. fetches unknown immutable outer items into Quarantine;
+4. verifies outer framing and Opaque Storage Item IDs;
+5. attempts authorized decryption without leaking semantic guesses to the Host;
+6. authenticates canonical inner IDs, signatures, causal and Authority Parents, dependencies,
+   Required Features, and exact Event semantics;
+7. promotes valid items and advances accepted local Frontier and availability atomically.
 
-Changing Coordination Servers is a persisted reconciliation operation, not logout followed by new
-onboarding. The Runtime SHALL keep the source Account, source coordinator, and source Cable active
-while it probes and authenticates an isolated candidate context. A failed probe, authentication,
-Vault mismatch, integrity failure, or read-only conflict MUST leave the source context active and
-capable of synchronizing later mutations.
+A Replica becomes current by pulling and validating what it lacks. Separately, a Client may
+materialize randomized opaque representations at a writable Replica Host through immutable item
+admission. That destination-write workflow is not Synchronization, creates no origin, and does not
+advance the writing Client's accepted Frontier.
 
-The Runtime SHALL accept either an empty candidate Account or exactly one candidate Vault with the
-same Vault ID and cryptographically verified Root Key. It SHALL authenticate every immutable byte
-and dependency closure before classification. It SHALL classify only these outcomes:
+For one logical item and destination, the Client prepares and durably records one fresh outer
+representation before admission. Ambiguous failures retry those exact bytes and ID; confirmed
+presence prevents another rewrap. A different Hosted Replica destination receives independently
+randomized bytes so inventories are not correlated by avoidable equality.
 
-- `PublishLocal` when the candidate Account is empty;
-- `Union` when both Replicas name the same Generation and their immutable intersection agrees;
-- `FastForwardCandidate` when the local direct successor and the candidate's exact recovered base
-  prove candidate ancestry;
-- `FastForwardLocal` when the candidate direct successor and the source's exact recovered base prove
-  local ancestry; or
-- conflict when ancestry is unavailable or Generations diverged.
+# 4. DAG convergence
 
-Numeric Generation order alone is never ancestry proof. Different Vault IDs are a candidate failure;
-the same Vault ID with a different Root Key or immutable bytes is an integrity failure. The Runtime
-MUST NOT overwrite either side to resolve a switch conflict.
+Synchronization unions valid immutable Records and Objects. Concurrent Events remain sibling DAG
+heads. Reducers compose compatible facts, preserve scoped conflicts, and never choose by arrival or
+Host cursor. A new local Event names the complete accepted Frontier, naturally joining all heads
+the author observed.
 
-Candidate uploads SHALL publish dependencies before Events and use persisted idempotency
-checkpoints. Local Replica activation, active Account credential promotion, candidate server
-configuration, Projections, name cache, and synchronization state SHALL commit in one IndexedDB
-transaction. Only after that commit may the Runtime replace the coordinator, revoke the prior
-session, and erase prior credentials. A response from the source context MUST NOT commit after
-promotion.
+Captures may continue during ordinary disconnection. A security fence may keep a completed Capture
+in Prepared Data until a valid Event can be authored. Transport failure never deletes or rolls back
+already accepted local work.
 
-A candidate-head race before any candidate authority changes permits one fresh comparison. The
-Runtime SHALL journal the first Event whose returned Delivery Cursor proves that the candidate
-accepted new authority before marking its local checkpoint committed. If the candidate Generation
-then changes, the operation SHALL terminate as a conflict, retain the source as the active context,
-and report truthfully that verified append-only history reached the candidate before the concurrent
-change. It MUST NOT retry as a read-only comparison, claim that the candidate was unchanged, or
-attempt a compensating deletion.
+# 5. Generation transitions
 
-The persisted Server Switch Job SHALL resume after Worker termination at candidate authentication,
-comparison, remote preparation/activation, local preparation/activation, promotion, and prior
-revocation. Candidate authentication expiry retains the same Job and expected candidate Account
-identity before and after remote application. Locking aborts candidate transport and moves the Job
-to `WaitingForUnlock`; unlock revalidates both authority fences before resuming. Byte-identical
-prepared Artifact wrappers MAY be reused after validation, while incomplete or mismatched wrappers
-MUST be removed and downloaded again.
+A discovered Vacuum successor remains an untrusted candidate until full verification, including
+the Continuity Proof from Genesis through its predecessor Vacuum Event. A Client with no
+incompatible predecessor work may offer adoption. Divergent work requires Fork Before Adoption,
+eligible Event Re-authoring, Export, decline, or postponement. Synchronization never silently unions
+predecessor work into a successor or discards it.
 
-Remote application (`PublishLocal`, `FastForwardCandidate`, and `Union`) SHALL source a missing
-remote-only wrapper through the active source server and stream it to the candidate with bounded
-memory. `FastForwardLocal` installs a fully local candidate Replica and atomically clears obsolete
-availability and storage-relief rows. Candidate promotion MUST reject a missing dependency and never
-promote an incomplete Replica.
+# 6. Completeness and freshness
 
-# Generation Supersession
+A Client proves completeness only relative to a selected observed Frontier, its complete current
+causal and dependency closure, and its complete Continuity Proof. Content parents named only by
+retained Continuity Events need not remain available. A source may hide a later internally complete
+branch. Without another Replica, trusted sequencer, trusted time, or retained checkpoint, global
+freshness is not provable and MUST NOT be claimed.
 
-Every write names the expected active Generation. On supersession or head conflict, the Runtime
-quarantines unpublished local work and performs an explicit reconciliation. It MUST NOT silently
-reset, merge recovery history, or append against a stale Generation.
+# 7. Sparse wrappers
 
-# Stale Replica discard
+Compact Records and Objects synchronize independently from heavy wrappers. The Client hydrates a
+wrapper from any authorized Remote that can supply exact bytes, verifies every frame and final
+contract, and may later perform Storage Relief. No inventory response proves another durable copy.
 
-On a stale Generation, the Runtime SHALL make the synchronized Vault read-only except for reads and
-Complete Export. Resolution SHALL require either a successful Export or an explicit two-part skip
-confirmation that names permanent loss of unpublished local state. It SHALL download and verify the
-complete active server Replica, rebuild Projections, and atomically replace the stale Vault in place.
-It SHALL NOT create another Vault, re-author stale content, silently merge, or partially activate.
+# 8. CAP and consistency
 
-Preparation journals each replacement Artifact ID before its wrapper write. If the Runtime restarts
-before activation, startup SHALL remove only those provisional wrappers and restore the Job to
-explicit Conflict. Activation atomically replaces authoritative and derived state and clears stale
-availability/maintenance rows. A restart after activation retains the committed server Replica.
+The portable Vault is availability- and partition-tolerant: disconnected members may author valid
+work, then converge through deterministic DAG reduction. It does not promise immediate global
+consistency. A Host's Account, Grant, quota, and cursor updates may use ordinary strongly
+consistent database transactions because they are local policy, not Vault causality.
 
-# Account Scope
+# 9. Invariants
 
-One Account owns at most one synchronized Vault. Rails Account authentication establishes identity
-only. The Runtime stores independent Account and VaultDevice sessions, protected local Device
-identity, encrypted Recovery Kit metadata, and signed key-epoch envelopes. It never derives Vault
-keys from the Account password. Account Commands, credentials, Jobs, checkpoints, Delivery Cursors,
-and wake-up hints are operational state and never authoritative Vault history.
+- Synchronization is pull-oriented and receiver-validated.
+- Opaque inventory order has no semantic meaning.
+- A Host cursor is not a Vault clock.
+- No Remote is mandatory or privileged.
+- Valid unknown Required Features are preserved but not semantically accepted.
+- Local accepted work survives temporary inability to synchronize.
 
-# Initial Attach and Device Recovery
+# References
 
-For an Account without a synchronized Vault, the Runtime SHALL generate the first Recovery
-Generation, Key Epoch, encrypted Recovery Kit, Device identity, Device certificate, and Device key
-envelope. It SHALL submit them only after the user confirms all 12 Recovery Phrase words. Initial
-attach is atomic; failure leaves the local Vault local-only and retains no phrase.
-
-For an Account with a synchronized Vault but no matching local Device, the Runtime SHALL require the
-current Recovery Phrase, decrypt and validate the Recovery Kit, create and certify a fresh Device,
-prove possession of its signing key, install every readable Key Epoch, and atomically activate the
-verified downloaded Replica. Enrollment never requires another Device to be online.
-
-A returning Device SHALL exchange a signed one-use challenge for a VaultDevice session. Ordinary
-Device removal revokes server access but cannot erase previously downloaded content.
-
-# Future Protection and Vault Replacement
-
-Future Protection SHALL use compare-and-swap on the current Recovery Generation. It creates a new
-Recovery Phrase, Recovery Generation, and Key Epoch, reissues retained-Device envelopes, and makes
-offline unpublished old-epoch work replay under the active epoch before upload. Already published
-history retains its original Key Epoch.
-
-Vault replacement SHALL require a current verified Complete Export and explicit safe-storage
-confirmation. The Runtime rewrites the exact active closure under a fresh Vault identity and keys,
-validates the provisional remote candidate, and activates it with an atomic source fence. Failure
-before activation leaves the source authoritative. After activation it atomically promotes local
-authority, revokes source Devices, and tracks server purge to completion. The old Recovery Phrase
-cannot enroll into the replacement Vault.
-
-Synchronized Vacuum SHALL treat authentication expiry at any remote activation checkpoint as an
-authentication boundary, not as local completion. It SHALL retain deleted content and the
-journaled candidate, erase authenticated secrets, expose `AuthenticationRequired`, and permit
-resume only after successful authentication and current-Replica reconciliation. It MUST NOT commit
-local Vacuum deletion before the remote successor Generation is durably activated.
-
-# Operational State
-
-Upload progress, Delivery Cursors, retry schedules, availability, and notification bookkeeping are
-local operational state, not authoritative Events and not synchronized content. Commands remain
-local requested actions; accepted facts become authoritative Events only through Runtime rules.
-
-Manual storage relief SHALL synchronize first, enumerate only locally present `PRIMARY` and
-`SCREENSHOT_FULL` wrappers referenced by Active or Deleted captures, and prove exact active
-membership/type/length/checksum immediately before each removal. Skipped or mismatched wrappers stay
-local. Sign-out warns when remote-only wrappers depend on Account access but does not delete compact
-local content or availability rows.
-
-# Security
-
-The Runtime rejects malformed identifiers, mismatched immutable metadata, ciphertext checksum or
-length failures, rollback, omitted dependency closure, and malicious server responses. Plaintext,
-unwrapped keys, Search Materializations, Search settings, model references, protected remote
-credentials, Search Jobs, Search checkpoints, and content-derived metadata never enter protocol
-requests.
+- `docs/specifications/event/reducers.md`
+- `docs/specifications/vault/vacuum.md`
+- `docs/specifications/storage/opaque-envelope.md`

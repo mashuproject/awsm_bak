@@ -1,6 +1,6 @@
 # Design Principles
 
-**Document:** `architecture/00-design-principles.md`
+**Document:** `docs/architecture/00-design-principles.md`
 
 **Status:** Normative
 
@@ -10,262 +10,295 @@
 
 # Purpose
 
-This document defines the architectural principles that govern all design decisions within Archive Platform.
+These principles govern AWSM product and architecture decisions. They outrank implementation
+convenience. The normative glossary owns terminology; formal specifications own exact contracts.
 
-These principles take precedence over implementation convenience.
+# 1. Preserve before interpreting
 
-Whenever two designs are technically feasible, the design that best satisfies these principles should be preferred.
+Capture the most faithful valid representation available before enrichment, extraction, ranking,
+or summarization. A best-effort Capture records exact omissions and warnings rather than pretending
+that unavailable representations were preserved.
 
----
+Interpretation is additive. It never mutates an original Capture.
 
-# 1. Preserve Before Interpret
+# 2. Authoritative data is immutable
 
-The primary purpose of the platform is preservation.
+Vault Records, Objects, Bundles, Artifacts, and their identifiers never change after acceptance.
+Correction, deletion, restoration, organization, enrichment, authority changes, and lifecycle
+changes create new signed facts.
 
-Captured information should be stored as faithfully as possible before any interpretation, indexing, summarization, or transformation occurs.
+Physical storage may repack, stream, compress, or relocate exact logical bytes without changing
+their identity.
 
-Derived data must never replace original data.
+# 3. The client owns plaintext
 
----
+Only trusted Client Installations decrypt Vault content, hold unwrapped Vault keys, derive semantic
+state, run private Search, and author Vault Events. Plaintext, unwrapped keys, Recovery Phrases,
+content-derived metadata, and Search Materializations never cross the opaque Replica Host boundary.
 
-# 2. Original Data Is Immutable
+A remote AI Provider is a separate explicit plaintext disclosure, never an implicit consequence of
+synchronization.
 
-Original captured content is never modified.
+# 4. Hosts coordinate; they do not become Vault authority
 
-Corrections, annotations, tags, summaries, and metadata are represented as new events rather than modifications of archived content.
+A Replica Host may authenticate Channel Principals, enforce exact Grants, admit opaque bytes,
+apply quotas, and manage its own lifecycle. It cannot determine Vault membership, portable
+Administrator authority, semantic validity, causal history, conflict resolution, or safe Vault
+reachability.
 
-Immutability simplifies synchronization, auditing, replay, and long-term preservation.
+Account access, Replica Access Grants, and portable Vault authority remain separate. No Hosted
+Replica is canonical merely because it is always online or acknowledges a write.
 
----
+# 5. The Vault is logical and every Replica is optional
 
-# 3. Client Owns Plaintext
+A Vault has no singular physical home, origin, or coordination attachment. It may have zero or more
+local, direct, or Hosted Replicas. A Complete Export or Backup is a portability or recovery
+artifact, not another live Replica.
 
-Plaintext exists only within trusted client runtimes.
+Adding or losing a Replica must not change the Vault's identity or portable authority.
 
-The server stores encrypted data and coordination metadata only.
+# 6. Local-first availability is the default
 
-This principle applies to all future features unless an explicit exception is documented.
+A trusted client continues every safe operation from locally available data during a network
+partition. Captures and ordinary member work do not wait for a Coordination Server, another
+Replica, or an Administrator unless that exact operation needs remote bytes or governance
+authority.
 
----
+Local success is reported as local success. It is never misrepresented as Remote acknowledgement,
+global publication, or global durability.
 
-# 4. The Server Coordinates, Never Understands
+# 7. Synchronization is requester-initiated pull
 
-The coordination server manages:
+A Replica asks one configured Remote for opaque inventory and missing bytes, validates them
+locally, and accepts only complete authenticated results. Publishing candidate ciphertext to a
+Host is Host Storage Admission, not semantic synchronization acceptance. Wake Hints only prompt a
+pull.
 
-- synchronization
-- authentication
-- authorization
-- device trust
-- storage coordination
-- tenant management
+Correctness must not depend on push delivery, permanent connections, background timers, browser
+lifecycle, or a singular server head.
 
-The server does not interpret archive contents.
+# 8. Prefer availability with verified convergence
 
-It should never require decrypted archive data to fulfill its responsibilities.
+Network Partition tolerance is required. Ordinary Vault content favors local availability and
+later deterministic convergence instead of a linearizable global view. Server-local Accounts,
+sessions, Grants, quotas, and lifecycle changes favor consistency within that Host's policy plane.
 
----
+The Vault Record DAG proves ancestry and exposes concurrency. Event-family reducers decide whether
+accepted siblings combine, converge deterministically, or require explicit resolution.
 
-# 5. Events Represent History
+# 9. Use causality, not clocks, for correctness
 
-State is derived from events.
+A descendant is causally later than its ancestors. Concurrent siblings have no intrinsic physical
+order. Signed timestamps support provenance, audit, and approximate presentation only; they never
+establish portable authority or select a conflict winner.
 
-Events record facts that occurred.
+Host arrival order, Delivery Cursor, identifiers, and asserted time cannot manufacture causal
+precedence.
 
-Current state is a projection derived from replaying those facts.
+# 10. Store causes; derive consequences
 
-History is authoritative.
+Portable state records the signed facts and cryptographic material from which membership,
+Administrator authority, credential eligibility, Key Epoch state, lifecycle, conflicts, and
+Future Protection are derived. Do not persist duplicate reason, status, eligibility, or workflow
+flags that can disagree with those causes.
 
-State is disposable.
+A user workflow may commit several causally ordered Events together without hiding them inside a
+generic mutation list.
 
----
+# 11. Fence narrowly
 
-# 6. Projections Are Disposable
+Start from the best coherent user experience. Fence only the smallest operation or authority
+domain whose continuation would:
 
-Any projection must be reproducible solely from the Event Log.
+- reveal protected plaintext, keys, or metadata;
+- accept invalid or ambiguous authority;
+- commit corrupt, incomplete, or unsupported authoritative state;
+- cause an undisclosed irreversible loss; or
+- make a false security, synchronization, redundancy, or integrity claim.
 
-Deleting a projection must never result in data loss.
+An offline Administrator, unavailable Remote, conflict in another state family, incomplete
+topology knowledge, or missing optimization does not by itself block unrelated valid work.
 
-Rebuilding projections should always be supported.
+# 12. Preserve work when publication is unsafe
 
----
+When a write capability is fenced, prefer a complete explicit pending result, later Event
+Re-authoring, Fork, Complete Export, or another active Vault over silent loss. Pending work is not
+authoritative and must never appear synchronized or accepted.
 
-# 7. Protocols Over Transports
+Authority transitions and destructive operations are never re-authored as ordinary content.
 
-Application behavior is defined by protocols.
+# 13. Treat informed users and Administrators as adults
 
-HTTP, WebSockets, gRPC, and future transports are implementation details.
+Explain exact consequences before destructive, irreversible, privacy-reducing, or availability-
+reducing operations. Show known conflicts, missing dependencies, unpublished branches, and
+preservation choices. If the resulting transition remains valid, permit the informed user or
+authorized Administrator to proceed.
 
-The protocol remains stable even when transports evolve.
+Warnings do not become unverifiable guarantees. Storage Relief remains available after an
+unconditional last-copy warning because no client can know global redundancy.
 
----
+# 14. Membership and administration are portable
 
-# 8. Specifications Over Implementations
+Every Vault is multi-member-capable. Every member has the same class of cryptographic access and an
+independent Recovery Credential. Vault Administrator authority governs portable membership and
+lifecycle decisions; it does not create a stronger decryption class.
 
-Bundle formats, event schemas, cryptographic formats, and synchronization protocols are defined independently of any programming language or framework.
+Any one current Administrator may act independently. AWSM does not introduce a quorum merely to
+protect adults from authority explicitly granted to them.
 
-The Rails server and browser runtime are reference implementations.
+# 15. Historical access cannot be revoked retroactively
 
----
+No system can make a former member forget plaintext or destroy independent keys, Replicas,
+Exports, Forks, or screenshots. Member or Client Credential removal changes continuing authority.
+A fresh Key Epoch provides only future cryptographic exclusion.
 
-# 9. Offline First
+Product copy must state this boundary precisely.
 
-Every feature should function without continuous network connectivity whenever practical.
+# 16. Recovery is member-scoped and independent
 
-Synchronization is opportunistic.
+Every member receives the same kind of Recovery Phrase and Recovery Credential. A Recovery Phrase
+restores that member's currently valid portable authority; it does not recover an Account, another
+Vault, ended membership, or revoked Administrator authority.
 
-The local Vault remains authoritative for the user's logical data and immutable records. After an
-explicit user action and exact Coordination Server proof, a device may omit selected heavy encrypted
-Artifact wrappers while retaining their authoritative Object records. Compact Library content stays
-local; remote-only payload access requires the configured Account and network.
+Recovery derivation cannot depend on a value available only after decrypting the Vault. Opaque
+Hosts receive no recovery fingerprint or phrase oracle.
 
----
+Phrase-only recovery after Vacuum must remain independently verifiable. Vacuum may flatten
+discarded Content history, but it retains the compact signed Continuity Proof needed to establish
+the successor Baseline's Administrator authorization from Genesis. A Host-provided Baseline is
+never trusted merely because it decrypts.
 
-# 10. Synchronization Is Eventual
+# 17. Complete data is accepted atomically
 
-The platform favors eventual consistency over strong consistency.
+AWSM never persists or advertises an incomplete authoritative Bundle, Baseline, authority
+transition, dependency closure, or conflict resolution. Expensive preparation may be paged and
+restartable, but activation validates the exact sealed result and commits the authoritative fact
+and Replica Safety State atomically.
 
-Temporary divergence between devices is expected.
+Prepared Data and Quarantine remain inert until their owning validation and promotion contract
+succeeds.
 
-Given successful synchronization, all trusted devices should converge to the same logical state.
+# 18. Projections are disposable
 
----
+Projections and Materializations never become Vault truth, synchronization input, Baseline content,
+or Complete Export requirements. Their identity binds every source and algorithm choice affecting
+the result. Changing Search or Projection semantics builds a new Materialization instead of
+migrating authoritative data.
 
-# 11. Encryption Before Synchronization
+Vacuum Adoption invalidates predecessor-Generation Materializations.
 
-Data is encrypted before leaving the trusted client.
+# 19. Stable logical families outrank feature stores
 
-Synchronization never requires plaintext.
+Persistent data is classified by authority, trust, scope, durability, lifecycle, validation,
+deletion safety, and transaction requirements. New features normally add typed namespaces inside
+the existing Logical Storage Families rather than new physical stores.
 
-Object storage never receives unencrypted archive content.
+There is no persistent miscellaneous family. A genuinely new trust or lifecycle boundary justifies
+an explicit schema decision instead of hiding it.
 
----
+# 20. Protocols are transport- and provider-neutral
 
-# 12. Least Privilege
+Vault identity, synchronization, authority, encryption, and convergence semantics do not depend on
+HTTP, WebSocket, Rails, a browser API, a cloud provider, or a particular database. Hosts and Drivers
+adapt those mechanisms behind explicit interfaces.
 
-Every component receives only the permissions necessary to perform its responsibilities.
+Direct, hosted, local-socket, LAN, and future transports use the same semantic contracts.
 
-This applies to:
+# 21. Canonical encoding is singular and deterministic
 
-- extensions
-- devices
-- services
-- future shared vault participants
+Every authoritative semantic item has one canonical deterministic CBOR representation. Compact
+and streamable ciphertext use one defined outer envelope family. JSON is an API or human-readable
+view and never participates in authoritative identity, signatures, or encryption authentication.
 
----
+Content identifiers are domain-separated, non-self-referential digests of exact canonical bytes.
+Physical framing and randomized Host-specific wrapping do not change protected logical identity.
 
-# 13. Capability-Based Extensibility
+# 22. Extension points have explicit safety classes
 
-Extensions interact with the platform through explicitly granted capabilities.
+A Required Vault Feature may add correctness-relevant semantics only through explicit
+Administrator activation and exact Feature Manifests. A client that lacks support preserves safe
+opaque bytes but stops semantic acceptance and authoring at the last understood frontier.
 
-They request commands.
+An Advisory Extension may be ignored only because the stable envelope forbids it from affecting
+authority, state, dependencies, validation, Baselines, reachability, rendering, or security.
 
-They do not mutate authoritative state directly.
+# 23. Unknown correctness semantics fail closed
 
----
+Unknown formats, Event types, Required Features, authoritative namespaces, dependency types, and
+cryptographic requirements never receive guessed meaning. Safe opaque preservation is allowed; a
+fallback interpretation is not.
 
-# 14. Determinism Wherever Practical
+Unknown optional operational capabilities may disable that operation without invalidating
+unrelated local Vault use.
 
-Given identical inputs, identical software versions, and identical configuration, the platform should produce equivalent outputs.
+# 24. Pre-release designs are replaced, not migrated
 
-Non-deterministic behavior must be explicitly justified and documented.
+Until the user establishes a compatibility obligation, AWSM has one canonical current design.
+Superseded formats, readers, writers, aliases, fallbacks, dual schemas, migration paths, and old
+development data have no standing. Framework-required schema migrations express only the current
+schema and do not imply preservation.
 
----
+Self-describing persisted boundaries use their appropriate initial format number. They do not
+advertise discarded experiments as prior public versions.
 
-# 15. Version Persisted Boundaries
+# 25. Portability artifacts retain honest boundaries
 
-Self-describing persisted and externally exchanged formats should include an explicit format version when their owning specification requires it.
+Complete Export, Backup, Restore, Import, Fork, Replica, and Historical View are distinct. Export
+does not synchronize. Backup is not interchange. Restore reconstructs from Backup. Fork creates a
+fresh Vault. Historical View moves no writable pointer.
 
-Examples include:
+Vacuum may make a smaller later Export possible only through an explicit destructive Vault
+transition with its normal informed-choice rules.
 
-- bundles
-- events
-- cryptographic formats
+# 26. Security claims require evidence
 
-Transient application state, local Commands, UI models, and in-process interfaces are not versioned speculatively.
+Cryptographic transcripts, identifier construction, reducer behavior, omission resistance,
+equivocation, recovery, partition convergence, Vacuum, Closure, and opaque-Host metadata boundaries
+require deterministic vectors, property tests, adversarial tests, and end-to-end proof at the
+applicable Client Installation surface.
 
----
+A successful response, stored ciphertext, or single passing path proves only that narrow result.
 
-# 16. Pre-release Designs Are Replaced
+# Architectural review checklist
 
-Before the user explicitly declares the first release, the repository contains exactly one canonical current design.
+Before accepting a design, verify:
 
-Discarded pre-release formats, data, readers, upgrade paths, aliases, and documentation are removed rather than preserved.
+1. Which data is authoritative, derived, local operational, Host policy, or ephemeral?
+2. Which Client, Host, Replica, member, credential, and Generation scopes apply?
+3. Can an opaque Host learn a protected identity, relationship, type, or content-derived fact?
+4. Does the operation remain safe while offline or partitioned?
+5. What exact signed cause authorizes the transition at its Authority Frontier?
+6. How do every possible concurrent sibling and stale branch reduce?
+7. Is any timestamp, Host cursor, or arrival order being asked to prove causality?
+8. Are dependencies complete and atomically accepted before authority advances?
+9. Is a fence narrower than the failure it protects against?
+10. Does the user receive exact consequences and realizable preservation choices?
+11. Can the design honestly know redundancy, freshness, deletion, or delivery, or must it avoid the
+    claim?
+12. Does a new persisted field duplicate a derivable consequence?
+13. Does a new feature fit an existing namespace and Required Feature boundary?
+14. Can Projections and indexes be deleted and rebuilt?
+15. Do Complete Export, Backup, Restore, Fork, and Replica semantics remain distinct?
+16. Does the design introduce compatibility support that has not been authorized?
+17. Which deterministic, adversarial, multi-Replica, and rendered-product evidence proves it?
 
-After the first release, compatibility policy requires an explicit user decision. It is never inferred from pre-release development history.
+# Non-goals
 
----
+AWSM does not attempt to provide:
 
-# 17. Open Standards Where Practical
-
-Prefer documented, widely implemented standards over proprietary formats.
-
-Examples include:
-
-- MHTML
-- CBOR
-- JSON
-- MIME
-- HTTPS
-
-Platform-specific formats should be isolated behind adapters.
-
----
-
-# 18. Fail Safely
-
-Unexpected failures should preserve user data.
-
-If correctness cannot be guaranteed, the platform should refuse the operation rather than risk silent corruption.
-
----
-
-# 19. Test Architectural Guarantees
-
-Testing should focus on validating architectural invariants rather than implementation details.
-
-Architectural guarantees define correctness.
-
----
-
-# 20. Simplicity Over Cleverness
-
-A simpler architecture with clear responsibilities is preferred over a more sophisticated design with hidden complexity.
-
-Optimization should follow demonstrated need rather than speculation.
-
----
-
-# Architectural Review Checklist
-
-Every new feature should answer the following questions:
-
-1. Does it preserve original captured data?
-2. Does it introduce mutable authoritative state?
-3. Does plaintext leave the trusted client?
-4. Can it operate offline?
-5. Is it represented as events where appropriate?
-6. Can derived state be rebuilt?
-7. Does it violate the zero-knowledge model?
-8. Does it introduce unnecessary coupling?
-9. Is it versioned?
-10. Can it evolve without breaking existing archives?
-
-If any answer is "yes" to a potential violation, the design should undergo an explicit architectural review.
-
----
-
-# Non-Goals
-
-The platform is not designed to:
-
-- optimize for server-side processing of user content
-- require permanent online connectivity
-- depend on proprietary storage providers
-- require a single programming language implementation
-- sacrifice long-term preservation for short-term convenience
-
----
+- server-side plaintext Search or content interpretation;
+- a global user or username identity;
+- a canonical Hosted Replica, server head, or global transaction;
+- proof that a Replica holds the last copy or that another copy will survive;
+- retroactive revocation of learned plaintext or historical keys;
+- trusted global time for Vault authority;
+- automatic abuse detection or moral judgment in portable Vault semantics;
+- automatic identity merging from matching names or URLs;
+- arbitrary code execution through Advisory Extensions; or
+- compatibility with discarded pre-release experiments.
 
 # References
 
-This document applies to all architecture and specification documents in the repository.
+- `docs/architecture/glossary.md`
+- `docs/specifications/`
+- `VISION.md`

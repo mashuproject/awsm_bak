@@ -9,102 +9,139 @@
 **Depends On:**
 
 - `docs/specifications/vault/vault.md`
-- `docs/specifications/event/event.md`
+- `docs/specifications/event/reducers.md`
 - `docs/specifications/storage/object-store.md`
-- `docs/specifications/runtime/jobs.md`
-- `docs/specifications/runtime/storage.md`
 
-## 1. Purpose
+# 1. Purpose
 
-Vault Vacuum reclaims storage occupied by Captures in the Deleted state. It creates and verifies a successor Vault Generation, atomically makes that generation authoritative, and deletes Objects unreachable from it. Existing Objects are never modified.
+Vacuum is an irreversible Vault History Rewrite. It makes the complete logical state at one exact
+predecessor Frontier the new authoritative Baseline, omits eligible predecessor-only state, and
+starts a fresh Generation. Garbage Collection is a separate local operation.
 
-Vault Vacuum is not Projection compaction, key rotation, cryptographic erasure, Backup retention, or Secure Scrub.
+# 2. Authorization and preflight
 
-## 2. Capture lifecycle
+Any Replica may prepare a Vacuum, but any one current Vault Administrator must sign its Vacuum
+Event. No Host, Account, Replica, quorum, or ownership status adds authority.
 
-`CapturesDeleted` moves explicit Bundle IDs from Active to Deleted. `CapturesRestored` moves explicit Bundle IDs from Deleted to Active. Deleted Captures MUST remain authenticatable, viewable, downloadable, and restorable until Vacuum activates a successor generation.
+Before signing, the trusted client MUST disclose every known conflict, divergent or unpublished
+branch, unavailable required dependency, omitted Capture-scoped Note or Tag assignment, and other
+irreversible consequence. It MUST offer only outcomes it can verify, including resolving first,
+preserving through Fork or Complete Export, postponing, or knowingly selecting the successor.
+Administrator choice cannot make an invalid transition valid.
 
-Collection deletion and restoration MUST resolve the current Collection to explicit Bundle IDs before the Command is accepted. Later or concurrent Captures of the same page are not affected. Collection identity and membership follow `docs/specifications/vault/collection.md`.
+# 3. Successor construction
 
-## 3. Vault Generation
+The preparer MUST:
 
-A Vault Generation is an encrypted immutable authoritative reachability manifest for one stable Vault ID. It contains a version, Vault ID, generation ID, monotonic generation number, creation time, initiating Device ID, reason, retained authoritative Object identifiers, ordered retained Event identifiers, and integrity metadata.
+1. authenticate and replay the exact predecessor Frontier and dependency closure;
+2. fail closed on unknown Required Features, state domains, or unavailable dependencies;
+3. derive complete current content, authority, lifecycle, keys, and reachability;
+4. omit Deleted Captures and state whose only remaining purpose is predecessor history;
+5. retain every fact needed to identify, authenticate, interpret, reference, or reconstruct current
+   state;
+6. assign one fresh Baseline Cause ID to every distinct retained Content cause that later Content
+   operations must name and use that mapping consistently across all checkpoint facts controlled by
+   the same cause;
+7. reuse unchanged immutable Objects where valid;
+8. encode the canonical successor Baseline and compute its Record ID;
+9. independently replay or decode it and prove state equivalence to the selected result;
+10. construct the terminal predecessor Vacuum Event; and
+11. retain the complete Continuity Proof rooted at that Event.
 
-Generation zero MUST be created and encrypted atomically with a new Vault; it MUST NOT be inferred. Its reason is `Initial`, its generation number is zero, and its reachability sets are empty. A Vacuum successor has reason `Vacuum` and increments the active generation number by exactly one.
+The Cause mapping is complete for every retained Content observed-remove target, reversible
+redirect, scalar head, and unresolved Content Conflict candidate. It is protected inside the
+successor Baseline but is not serialized as a source-to-destination lookup table. No predecessor
+Content Record becomes a dependency merely because it supplied a retained fact.
 
-A successor MAY record its predecessor generation ID as lineage metadata. That scalar identifier MUST NOT constitute a live Object reference or keep the predecessor graph reachable.
+The Continuity Proof is different: it retains exact Genesis, Authority, and Lifecycle Event bytes,
+their signed Authority Parent subgraph, and every compact dependency required to validate that
+subgraph. Ordinary Content parents named by those Events may remain unresolved. This is the minimum
+portable proof that the Vacuum signer was authorized and that a fresh Recovery client is not
+trusting a Host-provided self-asserted Baseline.
 
-The active generation head is operational coordination state. In addition to the immutable manifest root, it records canonical sorted opaque Object and Event identifiers appended since that manifest was created. Every authoritative append updates this tail in the same transaction. Complete active reachability is the union of the immutable manifest and this append tail; Vacuum MUST verify that union exactly covers authoritative storage and folds all retained tail entries into the successor manifest. Synchronization exposes only the opaque generation root/number and its normal cursor, not the local tail list. Activation MUST compare-and-swap the head observed at Vacuum preflight.
+Search indexes and all other Materializations are absent. Adoption invalidates predecessor-scoped
+Materializations and rebuilds them from successor state.
 
-The local browser slice serializes authoritative writes by acquiring a persisted opaque Vacuum lease before taking its snapshot. Capture, delete, restore, Merge, Move, Extract, and Undo commits MUST check that no lease exists in the same transaction as their authoritative writes. A lease abandoned before activation is safe to discard on restart because the browser slice activates and collects in one transaction; a committed activation deletes its lease in that transaction.
+# 4. Vacuum Event body
 
-## 4. Vacuum algorithm
+Lifecycle family type `1` body:
 
-Vacuum SHALL:
+```text
+{
+  0: predecessorGenerationId,
+  1: predecessorFrontier,       // exact complete sorted Record ID set
+  2: successorGenerationId,     // fresh random 32-byte ID
+  3: successorBaselineId,       // dependency type 2
+  4: predecessorStateDigest,    // section 5
+  5: successorStateDigest,      // MUST equal selected retained state digest
+  6: omissionDigest             // section 5
+}
+```
 
-1. require an unlocked Vault;
-2. snapshot all Captures currently in Deleted;
-3. authenticate every retained Bundle Descriptor, Artifact wrapper, and authoritative Event;
-4. abort on an unsupported authoritative Object or Event type;
-5. compute retained and unreachable dependency closure;
-6. reuse unchanged immutable Objects and rewrite only affected immutable structures under new identifiers;
-7. create and encrypt the successor generation manifest;
-8. replay and verify retained logical state before activation;
-9. atomically activate the successor and remove unreachable local Object/Event records, Projection
-   rows, and obsolete operational outcomes before deleting their external Artifact wrapper files;
-10. report deleted Capture count and actual reclaimed bytes without plaintext content in diagnostics.
+The Event's parents MUST equal `predecessorFrontier`; its Generation is the predecessor. Its only
+dependency is the successor Baseline. It is accepted only when the signer is an unambiguous current
+Administrator and the successor Baseline passes full verification.
 
-`VaultCreated` and `VaultRenamed` are supported authoritative Events. Vacuum MUST authenticate and retain them byte-for-byte, include them in successor reachability, rebuild the Vault Name Projection, and prove that the final name and source Event remain unchanged before activation.
+Its Authority Parents MUST equal the predecessor's complete Authority Frontier. As a Lifecycle
+Event it advances that Frontier and becomes the cross-Generation Authority Parent anchor for the
+successor. The successor Baseline authority checkpoint MUST equal Authority State derived after the
+Vacuum Event; Vacuum changes no membership, role, Credential, feature, Key Epoch, fence, or Closure
+fact.
 
-Every Vacuum lease, estimate, snapshot, reachability query, activation, and collection operation MUST be scoped to one Vault ID and MUST NOT inspect or modify another Vault in the same Workspace.
+# 5. Digests
 
-After successful Vacuum, every pre-Vacuum Active Capture MUST remain Active and authenticatable, Deleted MUST be empty, and no active reference may point to an omitted Object.
+Each digest is:
 
-Reachability for a retained Bundle SHALL include its descriptor and every Artifact Object referenced
-by that descriptor. Reclaimable bytes for an Artifact use the exact external wrapper length, with
-safe counters beyond 4 GiB. Startup reconciliation SHALL remove orphan wrapper files but SHALL treat
-a committed Artifact record with a missing or corrupt wrapper as corruption.
+```text
+SHA-256(Transcript(domain, [canonicalCheckpointBytes]))
+```
 
-Vacuum MUST retain or rewrite `CollectionsMerged`, `CapturesMoved`, and
-`CollectionMergeReverted` whenever they affect a retained Capture's effective Collection. It MAY
-omit facts concerning only reclaimed Captures or identities with no retained members. A mixed
-`CapturesMoved` Event MUST be rewritten under a new Event ID with only retained moves. Any retained
-management Event whose dependency Object is reclaimed MUST be rewritten under a new Event ID and
-anchored to a retained Capture descriptor. When a rewritten `CollectionMergeReverted` names a
-rewritten `CollectionsMerged` Event, it MUST name the replacement Event ID. Verification MUST prove
-that each retained Capture remains in the same effective Collection and that every retained Event's
-declared Object dependencies are in successor reachability.
+The domains are `awsm:vacuum-predecessor-state:v1`, `awsm:vacuum-successor-state:v1`, and
+`awsm:vacuum-omission:v1`. The omission checkpoint canonically lists omitted logical identities by
+typed ID and reason class; it contains no plaintext labels or content. It is decision evidence,
+not successor reachability.
 
-## 5. Failure and cancellation
+# 6. Adoption and divergence
 
-Failure before activation leaves the predecessor authoritative. Failure after activation leaves the successor authoritative and cleanup MUST be resumable. An implementation using one local storage transaction for activation and collection satisfies this boundary because transaction abort exposes the complete predecessor and commit exposes the complete successor.
+Vacuum Adoption is local Replica Safety State, not an Event. A Replica adopts only after verifying
+the Vacuum Event, successor Baseline, complete available closure, and replay equivalence.
 
-Cancellation is allowed only before activation. Garbage collection MUST never use an unverified or inactive manifest.
+A Replica with no incompatible predecessor work may switch Generations. A Replica with divergent
+or unpublished work MUST NOT silently discard or union it. The user may Fork Before Adoption,
+Complete Export, recover eligible Captures through Event Re-authoring, decline, or postpone.
+Concurrent Vacuum successors are sibling choices and never auto-merge.
 
-## 6. Synchronization boundary
+# 7. Garbage Collection and exports
 
-Synchronization peers SHALL exchange opaque active generation number and root ID. A superseded generation cannot submit authoritative history into the active generation and MUST receive `VAULT_GENERATION_SUPERSEDED`. A stale replica with unpublished work is quarantined for explicit recovery rather than merged or deleted automatically.
+Adoption changes recognized shared history but does not delete bytes. Replica Garbage Collection
+may later remove items proven unreachable from every locally recognized Generation, preservation
+root, pending workflow, and safety fence. Vacuum cannot erase offline copies or exports.
 
-## 7. Backup and erasure boundary
+Complete Export may preserve the predecessor before Vacuum. A smaller-export flow may explicitly
+Vacuum and adopt first, with the same disclosures. A state-only Fork is a distinct Vault and is not
+a history-preserving export.
 
-Vacuum does not inspect or remove exports, old Backup Sets, or offline replicas. A superseded Backup Set MUST NOT merge into a newer active generation. Vacuum does not rotate the Vault Root Key and MUST NOT be described as Secure Scrub or guaranteed erasure.
+The Continuity Proof is a permanent preservation root even after Adoption. Garbage Collection MAY
+remove discarded Content parents referenced only by signed causal-parent fields in that proof; it
+MUST retain every Authority Parent Record and typed dependency needed to validate the proof from
+Genesis to the current Vacuum Event.
 
-## 8. Invariants
+# 8. Invariants
 
-- Vault ID remains stable.
-- Existing Objects are never modified.
-- Only verified successor history becomes authoritative.
-- Deleted Captures are recoverable before activation and unavailable afterward.
-- Retained Captures survive Vacuum byte-for-byte.
-- Unknown dependencies fail closed.
-- Retained Captures preserve their effective Collection membership.
+- Vault ID remains stable; Generation ID changes.
+- The predecessor Event DAG is not reachable from the successor Baseline.
+- Every retained predecessor Content fact that needs a continuing identity has one fresh Baseline
+  Cause ID, consistently reused within that Baseline.
+- The complete Continuity Proof remains portable and independently verifiable after Content history
+  is reclaimed.
+- The Vacuum Event is terminal in the predecessor; the Baseline roots the successor.
+- No unsupported or unavailable authoritative state is guessed or dropped.
+- No unsynchronized work is silently discarded or resurrected.
+- Vacuum and Garbage Collection are different operations.
+- Existing immutable Objects are never rewritten merely because Vacuum occurred.
 
-## References
+# References
 
 - `docs/specifications/vault/vault.md`
-- `docs/specifications/event/event.md`
-- `docs/specifications/storage/object-store.md`
-- `docs/specifications/runtime/jobs.md`
-- `docs/specifications/runtime/storage.md`
-- `docs/specifications/runtime/synchronization.md`
+- `docs/specifications/vault/authority.md`
 - `docs/specifications/vault/collection.md`

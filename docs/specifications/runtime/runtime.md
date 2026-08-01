@@ -1,238 +1,115 @@
-# Runtime Specification
+# Client Runtime Specification
 
-**Document:** `specifications/runtime/runtime.md`
+**Document:** `docs/specifications/runtime/runtime.md`
 
 **Version:** 1.0
 
 **Status:** Draft
 
----
+**Depends On:**
+
+- `docs/specifications/event/commands.md`
+- `docs/specifications/runtime/storage.md`
+- `docs/specifications/vault/authority.md`
+- `docs/specifications/vault/replica.md`
 
 # 1. Purpose
 
-The Runtime provides the execution environment for the Archive Platform.
+The Runtime is the trusted execution boundary inside a Client Installation. It owns plaintext,
+private keys, Event authoring, validation, replay, Commands, Jobs, projections, and adapters. A
+Replica Host that only stores opaque bytes is outside this trust boundary.
 
-It coordinates storage, synchronization, capture, search, AI processing, and extension services.
+# 2. Installation composition
 
-The Runtime is independent of any particular browser or operating system.
+One Client Installation may manage zero or more Vault Replicas and zero or more Client Credentials
+per Vault, including separate Vault contexts in one browser profile. Browser, desktop, mobile,
+headless, and API-driven clients use the same semantic contracts.
 
----
+An installation may additionally expose one or more Replicas as a Host. Client and Host are
+composable capabilities, not mutually exclusive product types. A thin Client may operate without
+hosting, and an opaque Host may operate without Vault keys.
 
-# 2. Design Goals
+# 3. Vault selection and opening
 
-The Runtime MUST provide:
+The Runtime has one explicit selected Vault context per user-facing session. Selecting another
+Vault makes its local Credential and key material available through the ordinary open flow and
+clears prior plaintext state. The interface may display an internal sealed state, but routine use
+speaks in terms of selecting or opening a Vault rather than repeatedly demanding an `unlock`
+ceremony.
 
-- offline operation
-- deterministic behavior
-- portability
-- service isolation
-- extensibility
-- fault tolerance
+Private keys remain protected at rest by platform facilities and installation wrapping. The
+Runtime keeps decrypted key material only while required and never persists a plaintext Key Epoch
+Key or Recovery Phrase.
 
----
+# 4. Event authoring and validation
 
-# 3. Runtime Architecture
+Only an active Client Credential authors Vault Events on behalf of a member. The Runtime derives
+authority from the exact Authority Frontier, prepares dependencies, signs canonical bytes, and
+commits against causal- and Authority-Frontier compare-and-swap. It fully validates imported or
+synchronized input in Quarantine before promotion.
 
-Conceptually:
+Unsupported Required Features stop semantic processing at the last fully understood Frontier.
+Exact outer bytes may be retained in Quarantine, but the Runtime does not author descendants,
+Vacuum, render, or collect unknown authoritative state.
 
-```
-Host
+## 4.1 Joining a locally known Vault
 
-↓
+Ordinary Invitation Acceptance always creates a fresh member, Client Credential, and Recovery
+Credential. It never revives ended authority. If the Installation already retains the invited
+Vault ID, the Runtime classifies a Vault Identity Collision before activation:
 
-Runtime
+- an ancestor in the same Generation may fast-forward after complete validation and key delivery;
+- a valid successor Generation follows ordinary Vacuum Adoption and preservation rules; and
+- divergent or unpublished work requires eligible Capture recovery, Fork, Complete Export, or
+  postponement.
 
-↓
+The Runtime retires a historical local context only after accounting for every retained Record and
+unpublished result. It never overwrites that work or creates two active entries for one Vault ID.
 
-Services
+# 5. Services
 
-↓
+The Runtime provides:
 
-Platform APIs
-```
+- Vault creation, selection, recovery, Fork, Closure, Vacuum, Export, and Import;
+- Capture acquisition and Bundle construction;
+- Authority, membership, invitation, Credential, and Key Epoch ceremonies;
+- Event replay and deterministic projections;
+- search and other replaceable Materializations;
+- pull synchronization, hydration, Storage Relief, and Garbage Collection;
+- durable Job execution, cancellation, retry, and crash recovery; and
+- capability-scoped adapters and extensions.
 
-The Host supplies platform integration.
+# 6. Transactions and Jobs
 
-The Runtime supplies application behavior.
+One logical operation declares its authoritative writes, Replica Safety State, Prepared Data,
+Execution State, and Materialization effects. A single physical transaction is preferred. When
+large-byte or remote systems cannot join it, a durable Job uses prepared immutable output,
+idempotent promotion, verified checkpoints, and resumable cleanup. No partial result becomes Vault
+authority.
 
----
+# 7. Security boundary
 
-# 4. Host Responsibilities
+Untrusted page content, imports, synchronized bytes, model output, Host responses, and extension
+messages enter through bounded parsers and capability checks. Rendering preserved content is inert
+by default. Network access, external navigation, clipboard, downloads, and host calls require an
+explicit owning action.
 
-Hosts provide:
+# 8. Observability
 
-- browser permissions
-- lifecycle events
-- UI integration
-- network access
-- filesystem access (where available)
+Logs and metrics exclude plaintext content, Recovery Phrases, private keys, key material, session
+secrets, opaque inventories, and identifiers unless a narrowly scoped diagnostic explicitly needs
+a pseudonymous value. Observability never becomes Vault authority.
 
-Examples:
+# 9. Invariants
 
-- Chrome Extension
-- Firefox Extension
-- Electron
-- Native Desktop
-
----
-
-# 5. Runtime Responsibilities
-
-The Runtime coordinates:
-
-- Vault management
-- synchronization
-- object storage
-- capture pipeline
-- search
-- AI processing
-- event processing
-- projection rebuilding
-
-Vault management includes Workspace bootstrap, Vault directory enumeration, active-Vault selection, Vault creation, locking, unlocking, and Event-backed naming. The Runtime SHALL hold at most one active Vault Root Key and SHALL discard it after a successful context switch.
-
-Every Vault-scoped request SHALL carry its expected Vault ID. The Runtime MUST validate that context before plaintext access and again inside an authoritative commit transaction. A stale Host MUST NOT cause work intended for one Vault to execute against another.
-
----
-
-# 6. Services
-
-The Runtime is composed of independent services.
-
-Standard services include:
-
-- Storage Service
-- Capture Service
-- Synchronization Service
-- Search Service
-- AI Service
-- Event Service
-- Projection Service
-- Trust Service
-
-Future services MAY be introduced.
-
----
-
-# 7. Service Communication
-
-Services communicate through well-defined interfaces.
-
-Services MUST NOT access each other's internal state directly.
-
-Communication SHOULD be asynchronous where practical.
-
----
-
-# 8. Lifecycle
-
-The Runtime SHALL support:
-
-- startup
-- shutdown
-- suspend
-- resume
-- recovery
-- an explicit Host-authorized local-device reset
-
-Unexpected termination MUST NOT corrupt persistent state.
-
-Local-device reset SHALL stop background work, release plaintext key material, close storage
-Drivers, and delete all Runtime-owned local authoritative, derived, operational, and temporary
-storage before restart. It SHALL NOT imply or request deletion of synchronized server-side state.
-
----
-
-# 9. Fault Isolation
-
-Service failures SHOULD remain isolated.
-
-One failing service MUST NOT terminate unrelated services.
-
----
-
-# 10. Configuration
-
-Runtime configuration SHALL be versioned.
-
-Configuration MAY include:
-
-- enabled services
-- storage backend
-- AI providers
-- synchronization policy
-
-Sensitive configuration MUST be encrypted.
-
----
-
-# 11. Background Work
-
-The Runtime MAY execute background tasks.
-
-Examples:
-
-- synchronization
-- projection rebuild
-- AI processing
-- garbage collection
-- user-triggered storage relief and remote Artifact restoration
-
-Tasks SHOULD be resumable after interruption.
-
-Every successful availability, progress, cancellation, completion, failure, sign-out, lock, or Vault
-context mutation SHALL publish one canonical invalidation wake-up. Long-lived surfaces subscribe
-before fetching, generation-guard reconciliation, refetch authoritative state, and discard decrypted
-context immediately on a possible lock or Vault change.
-
----
-
-# 12. Observability
-
-The Runtime SHOULD expose structured diagnostics.
-
-Examples:
-
-- service health
-- synchronization progress
-- storage statistics
-- queue depth
-
-Diagnostics MUST NOT expose decrypted user content.
-
-Diagnostics also MUST NOT expose semantic Artifact roles, filenames, URLs, Object identifiers,
-plaintext metadata, remote-only inventories, ciphertext, or keys.
-
----
-
-# 13. Extension Points
-
-Services MAY expose extension APIs.
-
-Extensions SHALL interact through Commands and Events.
-
-Extensions MUST NOT bypass Runtime services.
-
----
-
-# 14. Invariants
-
-The Runtime is platform-independent.
-
-Services are isolated.
-
-Persistent state survives Runtime restarts.
-
-The Host does not implement business logic.
-
----
+- A Runtime may manage many Vaults without combining their keys or authority.
+- A physical device is not a portable authority identity.
+- No Host response substitutes for cryptographic validation.
+- Derived state can be discarded and rebuilt.
+- Unsupported authority fails closed; ordinary availability failure remains recoverable.
 
 # References
 
-vault/vault.md
-
-protocol/protocol.md
-
-storage/object-store.md
-
-crypto/crypto.md
+- `docs/specifications/runtime/jobs.md`
+- `docs/specifications/runtime/synchronization.md`
+- `docs/specifications/runtime/capture.md`

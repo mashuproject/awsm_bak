@@ -1,293 +1,103 @@
-# Storage Service Specification
+# Runtime Storage Specification
 
-**Document:** `specifications/runtime/storage.md`
+**Document:** `docs/specifications/runtime/storage.md`
 
 **Version:** 1.0
 
 **Status:** Draft
 
----
+**Depends On:**
+
+- `docs/specifications/storage/object-store.md`
+- `docs/specifications/vault/replica.md`
 
 # 1. Purpose
 
-The Storage Service provides persistent local storage for Vault replicas.
-
-The Storage Service exposes object-oriented storage independent of any specific persistence backend.
-
----
-
-# 2. Design Goals
-
-The Storage Service MUST provide:
-
-- offline persistence
-- integrity verification
-- atomic operations
-- backend independence
-- efficient streaming
-- resumable writes
-
----
-
-# 3. Architecture
-
-```
-Runtime
-
-↓
-
-Storage Service
-
-↓
-
-Storage Driver
-
-↓
-
-Persistence Backend
-```
-
-The Storage Service owns storage semantics.
-
-Drivers adapt those semantics to platform-specific storage.
-
----
-
-# 4. Responsibilities
-
-The Storage Service coordinates:
-
-- object persistence
-- object retrieval
-- object verification
-- transaction management
-- cache management
-- garbage collection
-
----
-
-# 5. Storage Drivers
-
-Drivers MAY include:
-
-- OPFS
-- Local Filesystem
-- SQLite
-- IndexedDB
-- In-Memory (testing)
-
-Drivers SHALL expose identical semantics.
-
----
-
-# 6. Object Model
-
-The Storage Service stores immutable Objects.
-
-Objects include:
-
-- Bundle Descriptors
-- Artifacts
-- Blocks
-- Wrapped Keys
-- Event Log Segments
-- Projection Snapshots
-- AI Artifacts
-
-Objects are opaque to the Storage Driver.
-
----
-
-# 7. Core Operations
-
-The Storage Service SHALL provide:
-
-- StoreObject
-- LoadObject
-- HasObject
-- DeleteObject
-- VerifyObject
-- EnumerateObjects
-
-Operations are defined in terms of Object Identifiers rather than file paths.
-
----
-
-# 8. Transactions
-
-The Storage Service SHALL support atomic transactions.
-
-A transaction MUST either:
-
-- commit all changes, or
-- commit none.
-
-Partially committed state is prohibited.
-
----
-
-# 9. Integrity Verification
-
-Before returning an Object, the Storage Service SHALL verify:
-
-- object existence
-- checksum or hash
-- encryption envelope integrity (where applicable)
-
-Corrupted objects SHALL be reported to the caller.
-
----
-
-# 10. Streaming
-
-Large Objects SHALL support streaming reads and writes when their owning format requires it.
-
-Implementations SHOULD avoid buffering complete Objects in memory.
-
-The Runtime Artifact resolver SHALL be the sole read path for Artifact wrappers. It SHALL verify an
-available local wrapper first. For an intentionally remote-only wrapper it SHALL request an active-
-Generation or exact Recovery Snapshot ticket, compare server metadata with the immutable Object
-record, stream and verify ciphertext, and only then expose authenticated plaintext. Complete Export
-and relay use verified transient streams and MUST NOT change local availability.
-
----
-
-# 11. Caching
-
-The Storage Service MAY maintain transient caches.
-
-Caches MUST be rebuildable.
-
-Caches SHALL NOT become authoritative.
-
----
-
-# 12. Garbage Collection
-
-The Storage Service MAY reclaim:
-
-- orphaned temporary files
-- abandoned transactions
-- obsolete caches
-
-Authoritative Objects SHALL NOT be removed except through defined retention policies.
-
-Vault Vacuum is such a policy. A Storage Driver MUST make successor activation and local reclamation appear atomic, either in one transaction or through a durable resumable post-activation Job.
-
-Manual storage relief is a separate user-approved maintenance policy. It is limited to eligible heavy
-Artifact wrappers and requires exact active-server durability proof before removal. The Driver SHALL
-persist Job/checkpoint and remote-only transitions atomically, serialize against other Vault
-maintenance, and preserve completed removals when a later candidate is skipped or cancellation is
-requested.
-
----
-
-# 13. Recovery
-
-Following unexpected termination, the Storage Service SHALL:
-
-- detect incomplete transactions
-- remove temporary artifacts
-- verify persistent state
-- resume normal operation
-- reconcile an interrupted `Evicting` checkpoint from wrapper presence and integrity
-- remove partial restoration files while preserving remote-only state
-
----
-
-# 14. Driver Requirements
-
-Every Storage Driver SHALL provide:
-
-- durability
-- atomic rename or equivalent commit primitive
-- directory enumeration
-- binary streaming
-- random object lookup
-
-Where the underlying platform lacks a primitive, the driver SHALL emulate equivalent behavior.
-
----
-
-# 15. Browser Drivers
-
-The initial browser extension implementation SHALL use an IndexedDB Driver for compact records and
-an Artifact Store Driver for encrypted Artifact wrappers.
-
-It SHALL:
-
-- persist immutable encrypted Objects and Events
-- persist encrypted Projection rows separately from authoritative Objects
-- persist operational Jobs and command outcomes
-- use one versioned database
-- provide atomic transactions across Bundle Descriptor and Artifact records, Event, Projection,
-  Generation, and command-outcome writes
-- isolate storage by extension origin
-
-Its Artifact Store SHALL prepare encrypted wrappers in a Vault-scoped OPFS namespace, stream reads
-and writes, validate exact wrapper integrity, remove failed preparations, and reconcile orphan files
-against authoritative records at startup. Platform APIs remain behind the Driver.
-
-IndexedDB SHALL separately store strict Vault-scoped Artifact availability, storage-relief Jobs, and
-per-Artifact checkpoints. These rows are operational and excluded from Export, Backup, and
-synchronization. Vault deletion, stale server replacement, Import activation, and Vacuum reclamation
-SHALL delete only rows invalidated by their atomic authority change.
-
-When a normal restoration hits a quota-specific error, the Artifact Store SHALL abort the writer and
-remove the partial wrapper. The resolver SHALL obtain a fresh ticket and provide a bounded verified
-transient stream without clearing remote-only state. Integrity, authentication, offline, and
-not-found failures are distinct and MUST NOT be treated as quota fallback.
-
-The Runtime MUST NOT depend upon IndexedDB-specific or OPFS-specific APIs outside the selected Driver.
-
-Complete Vault Import SHALL stage its encrypted source through a Host-owned, Job-derived temporary
-file using bounded streaming. Validated Artifact wrappers are copied byte-for-byte to their
-destination Vault scope and checked against authoritative length and SHA-256 before activation.
-Compact Vault records, rebuilt Projections, encrypted name cache, directory entry, conditional
-active-Vault selection, and Import success SHALL commit in one Driver transaction. Failure before
-commit removes the source and exact prepared wrappers; restart cleanup SHALL first prove that no
-destination directory entry committed.
-
-Every Workspace or Vault mutation transaction SHALL include the Import lease store and reject a
-non-terminal Import before its first write. Runtime-only prechecks do not replace this transaction
-fence.
-
----
-
-# 16. Diagnostics
-
-The Storage Service SHOULD expose:
-
-- total object count
-- storage utilization
-- free capacity (when available)
-- verification failures
-- transaction failures
-- remote-only wrapper count and allowlisted storage-relief progress/outcomes
-
----
-
-# 17. Invariants
-
-Objects are immutable.
-
-Drivers are interchangeable.
-
-Transactions are atomic.
-
-Verification precedes object access.
-
-Every intentional wrapper absence has one valid remote-only row; every unmarked absence is
-corruption.
-
-Persistent state survives Runtime restarts.
-
----
+This specification fixes logical persistence semantics without requiring one database, table, or
+backend per family. Storage Drivers may combine or split physical stores only while preserving
+authority, encryption, scope, transactions, and deletion safety.
+
+# 2. Logical storage families
+
+Every durable namespace belongs to exactly one family:
+
+1. **Vault Records:** immutable Baselines and Events.
+2. **Vault Objects:** immutable compact Objects, Key Envelopes, Manifests, and heavy wrappers.
+3. **Replica Safety State:** accepted Generation, causal and Authority Frontiers, Continuity Proof
+   roots, adoption, local availability, preservation roots, and Garbage Collection fences.
+4. **Installation State:** Vault directory, selection, Remotes, preferences, and local
+   configuration.
+5. **Trusted Secrets:** Client Credential private keys, Recovery-derived secure handles, Key Epoch
+   keys, wrapping keys, and Channel Authenticators.
+6. **Execution State:** Commands, outcomes, Jobs, leases, checkpoints, retries, and idempotency.
+7. **Prepared Data:** trusted local output not yet committed as authority.
+8. **Quarantine:** untrusted imported or synchronized bytes awaiting complete validation.
+9. **Materializations:** projections, search indexes, secondary indexes, and rebuildable caches.
+10. **Managed Resources:** models, OCR packs, dictionaries, and other independently verified tools.
+11. **Host Policy State:** Accounts, Channel Principals, Replica Access Grants, sessions, quotas,
+    and Hosted Replica lifecycle.
+
+Ephemeral Coordination State, user-owned Transfer Artifacts, and Observability State are adjacent
+classes, not application persistence families. There is no `misc` family.
+
+# 3. Namespace registry
+
+Every typed namespace declares one globally scoped canonical key, family, exact local schema
+revision, scope key, identity and uniqueness, trust source, validation, encryption,
+synchronization, Export and Backup treatment, retention, deletion rule, transaction partners, and
+unknown-namespace behavior.
+
+New product features normally add a strict namespace inside an existing family. A Required Vault
+Feature owns every new authoritative namespace and its Baseline, reachability, and validation.
+Unknown authoritative or Replica Safety namespaces fail closed. Unknown Materializations are
+disposable.
+
+# 4. Storage Realms
+
+A Storage Realm cross-cuts every family. Normal, private/incognito, temporary, test, and future
+isolated realms cannot discover, unlock, synchronize, promote, or retain one another's state unless
+an explicit bridge contract permits it. Realm is scope, not a twelfth family.
+
+# 5. Object placement
+
+One logical Artifact Object may have a compact authoritative representation in a transactional
+store and a heavy encrypted wrapper in a streaming backend. The Storage Driver preserves one
+logical Artifact identity, verifies the exact wrapper contract, and uses Prepared Data plus
+Execution State where the physical systems cannot commit atomically.
+
+Randomized outer envelope bytes and Opaque Storage Item IDs are placement identities. Protected
+logical IDs remain stable across backends. Protected local resolution state maps logical IDs to
+available opaque representations per Remote.
+
+# 6. Sparse availability
+
+Replica Safety State distinguishes verified local, remotely resolvable, expected but unavailable,
+and corrupt. Storage Relief may remove a heavy wrapper after a clear, non-blocking warning that the
+Client cannot verify another usable copy. Compact authority and resolution state remain sufficient
+to retrieve known missing bytes when a configured Remote supplies them.
+
+# 7. Deletion and Garbage Collection
+
+No family is deleted by age or apparent duplication alone. Garbage Collection traces every active
+Generation, Continuity Proof, dependency, local preservation root, Prepared workflow, and safety
+fence. It deletes only an exact unreachable opaque representation, never a logical identity still
+required by a recognized state. A Continuity Event's unrelated causal Content parent ID does not
+retain that Content Record; its signed Authority Parents and authority-validation dependencies do.
+
+Materializations may be replaced when their generation, corpus revision, algorithm, tokenizer,
+model, vector, quantization, ranking, or schema identity changes. Vacuum invalidates predecessor-
+Generation Materializations rather than migrating them.
+
+# 8. Invariants
+
+- Persisted bytes do not become authority merely by existing.
+- Replica Safety State is not a disposable preference cache.
+- Prepared Data and Quarantine never share promotion assumptions.
+- Trusted Secrets never enter ordinary export, logs, or Host policy storage.
+- Physical optimization cannot change logical Vault semantics.
 
 # References
 
-storage/object-store.md
-
-runtime/runtime.md
-
-vault/vault.md
+- `docs/specifications/storage/opaque-envelope.md`
+- `docs/specifications/runtime/jobs.md`
+- `docs/specifications/runtime/search.md`

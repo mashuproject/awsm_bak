@@ -1,201 +1,150 @@
-# Import and Export Specification
+# Complete Export and Import Specification
 
-**Document:** `specifications/portability/import-export.md`
+**Document:** `docs/specifications/portability/import-export.md`
 
 **Version:** 1.0
 
 **Status:** Draft
 
-**Depends On:** `../storage/object-store.md`, `../crypto/crypto.md`, `../vault/vault.md`,
-`../runtime/jobs.md`, `../bundle/bundle.md`
+**Depends On:**
 
----
+- `docs/specifications/vault/vault.md`
+- `docs/specifications/storage/opaque-envelope.md`
+- `docs/specifications/crypto/crypto.md`
 
 # 1. Purpose
 
-This specification defines the canonical portable Vault Package. Export is manual interchange; it
-is not Backup, synchronization, or persistent Vault recovery configuration. A package is protected
-by a user-supplied export passphrase that is never saved and never changes local Vault unlock.
+A Complete Export is a standalone encrypted transfer artifact for one authenticated Vault
+Generation and exact accepted Frontier. It is not a Replica, Remote, synchronization participant,
+or Fork and receives no later Events.
 
-# 2. Container and Layout
+# 2. Coverage
 
-The sole canonical format is a streaming STORE-only ZIP64 `.awsm` package with media type
-`application/vnd.awsm.vault+zip`, export format version 1, canonical-CBOR records, lexical paths,
-fixed DOS epoch timestamps, and no comments, directory entries, platform permissions, duplicate
-paths, or compression. ZIP64 SHALL be used for every entry and central-directory record, including
-small packages, so entries and packages greater than 4 GiB are valid.
+Before completion, the exporter authenticates and includes:
 
-Only these paths are permitted:
+- the exact Baseline and complete descendant Record DAG through the selected Frontier;
+- the complete Continuity Proof from Genesis through the Baseline's authenticating Vacuum Event
+  and selected Authority Frontier;
+- every reachable compact Vault Object, Feature Manifest, and Key Envelope;
+- every reachable heavy Artifact wrapper, hydrating or streaming it from authorized Remotes;
+- every Key Epoch Key required to read the selected state; and
+- a canonical reachability manifest and package integrity inventory.
+
+Materializations, Commands, Jobs, Accounts, sessions, Replica Access Grants, Remotes, local
+availability, Channel Authenticators, Client Credential private keys, Recovery Phrase material,
+logs, and caches are excluded.
+
+# 3. Package protection
+
+The package begins with magic bytes `41 57 53 4d 45 58 01 00`, a four-byte big-endian header length,
+and canonical CBOR header:
 
 ```text
-key.cbor
-manifest.cbor
-generation.cbor
-head.cbor
-events/<event-id>.cbor
-objects/<object-id>.cbor
-artifacts/<artifact-object-id>.bin
+{
+  0: 1,      // completeExportFormat
+  1: salt,   // 16 random bytes
+  2: 65536,  // Argon2id memory in KiB
+  3: 3,      // iterations
+  4: 1,      // parallelism
+  5: nonce,  // 24 random bytes
+  6: 1048576 // encrypted stream plaintext frame limit
+}
 ```
 
-Writers SHALL stream through temporary Host storage and SHALL NOT buffer the Vault or any large
-Artifact in memory.
+The normalized user passphrase is UTF-8 NFC and derives a 32-byte package key with Argon2id v1.3
+using the exact header parameters. XChaCha20-Poly1305 encrypts independently authenticated frames.
+Frame nonce and AAD derivation use the Artifact frame construction with domain
+`awsm:complete-export-frame:v1` and authenticate the exact header plus frame index and final flag.
 
-# 3. Manifest and Coverage
+# 4. Plaintext stream
 
-`manifest.cbor` SHALL contain exactly export format version, package ID, creation time, originating
-Vault ID, Generation identity/number, coverage, ordered entry descriptors, ordered omissions, Event
-and Object counts, and content integrity.
+The decrypted stream is a sequence of entries:
 
-Coverage is exactly `Complete` or `Selective`. Complete packages have no omissions and inventory
-every Artifact wrapper referenced by the authenticated active Vault graph. Selective packages may
-omit only referenced `PRIMARY` or `SCREENSHOT_FULL` wrappers. Every omission SHALL authenticate the
-Artifact Object ID, expected wrapper byte length, wrapper checksum algorithm, and exact wrapper
-checksum. `THUMBNAIL`, `TEXT_EXTRACTED`, and `CONTENT_STRUCTURED` SHALL never be omitted.
+```text
+uint32be(headerLength) || canonicalEntryHeader || entryBytes
 
-Entry descriptors SHALL contain path, record type (`VaultGeneration`, `VaultHead`, `Event`,
-`BundleDescriptorObject`, or `ArtifactObject`), record ID, exact byte length, and SHA-256 checksum.
-Artifact wrapper entries are inventoried by their Artifact Object record and path. Descriptors and
-omissions SHALL be sorted and unique. Content integrity is SHA-256 over canonical CBOR of exactly
-`{ entries, omissions, coverage }`.
+entryHeader = {
+  0: entryKind, // 1 Manifest, 2 Opaque Storage Item, 3 Export Key Inventory
+  1: entryId,   // 32-byte domain-specific digest
+  2: byteLength,
+  3: byteDigest
+}
+```
 
-The Manifest SHALL NOT duplicate Bundle plaintext, Artifact Roles/checksums, Vault names, local
-device data, or discarded format fields.
+Manifest is first and Export Key Inventory is last. Opaque items are ordered by Opaque Storage Item
+ID. Duplicate IDs, unknown kinds, mismatched lengths, or trailing data are invalid.
 
-# 4. Export Key Envelope
+# 5. Manifest and key inventory
 
-`key.cbor` SHALL bind package ID, originating Vault ID, exact Manifest checksum, Argon2id parameters,
-fresh salt, fresh XChaCha20-Poly1305 nonce, and the encrypted 32-byte Vault Root Key. Argon2id uses 64
-MiB memory and three iterations. The passphrase SHALL contain at least 12 Unicode code points and at
-most 1,024 UTF-8 bytes.
+```text
+manifest = {
+  0: 1,
+  1: vaultId,
+  2: generationId,
+  3: frontier,
+  4: requiredFeatureSetId,
+  5: typedLogicalRoots,
+  6: opaqueItemInventory,
+  7: stateDigest,
+  8: continuityProofRoots
+}
 
-The package wrapper is independent of local device slots. Passphrase, derived wrapping key, and raw
-Root Key remain memory-only and SHALL be wiped after use.
+keyInventory = {
+  0: 1,
+  1: vaultId,
+  2: generationId,
+  3: keyEpochEntries
+}
 
-# 5. Authoritative Inventory
+keyEpochEntry = {0: keyEpochId, 1: keyEpochKey}
+```
 
-Export SHALL capture one authenticated active Vault Generation/head and include the exact reachable
-Event and Object records. Bundle Descriptor and Artifact records remain byte-for-byte unchanged.
-Complete Export includes every referenced Artifact wrapper unchanged. Selective Export includes
-authenticated omissions only as section 3 permits. Deleted Captures remain authoritative until
-Vault Vacuum and therefore remain in reachability.
+`continuityProofRoots` is the exact canonical Authority Frontier for key `3`. Every Continuity
+Proof Record and authority-semantic dependency reachable from those roots is present in the opaque
+inventory even when a retained proof Event's unrelated causal Content parents are absent.
 
-When a required wrapper is remote-only, Complete Export SHALL stream it through the Runtime Artifact
-resolver using the snapshot's active Generation or, for a stale Replica, its exact retained Recovery
-Snapshot. It SHALL verify the immutable Object metadata and bytes, fail safely on scope drift or
-unavailability, and MUST NOT restore the wrapper locally or clear device-local availability.
+These values are protected by the whole package encryption. The importer recomputes every Epoch,
+logical, outer, reachability, and state digest before exposing content.
 
-Export SHALL exclude Projections, Materializations, caches, Commands, outcomes, Jobs, temporary
-files, diagnostics, local key slots, device keys/metadata, synchronization cursors, and operational
-registries.
+# 6. Import
 
-# 6. Validation
+Import decrypts into Prepared Data, validates the entire package, and then atomically installs one
+Replica or changes nothing. It creates fresh local Installation State, resolution state, wrappers,
+and secure key storage. It never imports Account sessions, Host Grants, or authoring private keys.
 
-Before download, the same read-only validator intended for Import SHALL:
+If the installation already knows the Vault ID:
 
-1. validate ZIP64 structure and exact paths/order/metadata;
-2. strictly decode and bind `manifest.cbor` and `key.cbor`;
-3. unwrap the Root Key without revealing which authentication field differed;
-4. authenticate Generation/head identity and exact Event/Object reachability;
-5. replay supported Events and validate every `BundleRegistered` closure;
-6. authenticate each Bundle Descriptor and its Artifact references;
-7. stream-check every record and wrapper length/checksum;
-8. decrypt each included wrapper, validate frame authentication and plaintext reference
-   length/checksum, and validate compact structured/text relationships; and
-9. prove coverage and omissions are exact, permitted, disjoint, and exhaustive.
+- an ancestor package may be retained as a separate Transfer Artifact but does not rewind state;
+- a package that can fast-forward the same Generation may be merged through ordinary validated
+  immutable union;
+- a valid Vacuum successor follows ordinary adoption; and
+- divergent work produces an explicit collision flow with Fork, Export, recovery, or postponement.
 
-Large MHTML and screenshot payloads SHALL never be accumulated during validation. Fixed 16 MiB
-allocation limits apply to compact records and compact text/structured validation. Missing, extra,
-duplicate, corrupt, unsupported, or cross-Vault content fails closed.
+The Runtime never keeps two active entries claiming one Vault ID and never silently overwrites
+local work. To author after a fresh import, the user enrolls a Client Credential through ordinary
+Recovery or invitation authority.
 
-# 7. Snapshot, Cancellation, and Restart
+# 7. Vacuum and Fork
 
-Export runs as a Vault-scoped Job holding an exclusive lease. It captures the active head before
-enumeration and compares it again before download. Conflicting mutations return `VAULT_BUSY`.
-Export never changes source authoritative bytes.
+A pre-Vacuum Complete Export can preserve exact predecessor history. A post-Vacuum Export is
+complete for the successor and intentionally lacks omitted Content history, but always includes the
+Continuity Proof required for independent authority verification. `Prepare a smaller export`
+performs the ordinary informed Vacuum and Adoption first; it is not a compression flag.
 
-Cancellation propagates through enumeration, hashing, writing, validation, and download; it removes
-the temporary file. Because the passphrase is not persisted, interrupted Jobs fail with
-`EXPORT_INTERRUPTED` and never retry automatically.
+A Fork instead derives logical source state, creates fresh identities, keys, authority, Initial
+Baseline, and Genesis, and copies no source Event history. Selective cross-Vault import is deferred
+and is not an implicit variant of Complete Import.
 
-# 8. Complete Vault Import
+# 8. Invariants
 
-The local Runtime SHALL accept only a fully validated Complete package. It SHALL run the same
-container, key-envelope, authoritative replay, Bundle-closure, Artifact-stream, and coverage
-validator used before Export download. A valid Selective package returns
-`SELECTIVE_IMPORT_UNSUPPORTED` only after its omissions and coverage have been authenticated. An
-invalid package creates no destination authority or prepared Artifact wrapper.
+- Successful import is all-or-nothing.
+- Package passphrase possession grants access to that static exported state.
+- Export never changes the source Vault.
+- Complete means every required wrapper is present and verified.
+- The package format has no compatibility reader or legacy Root Key slot.
 
-Import is Workspace-scoped and does not require an active Vault. The Host streams the selected file
-to temporary Job-derived storage without transferring whole package bytes through application
-messages. The Export passphrase and recovered Root Key remain memory-only. Authentication failure
-is retryable against the same staged file without disclosing which authenticated field differed.
+# References
 
-After complete validation, Import SHALL reject any existing or partial destination scope for the
-originating Vault ID with `VAULT_ALREADY_EXISTS`. It SHALL preserve the exact Vault ID, active
-Generation, head, Events, Object records, and encrypted Artifact wrapper bytes. It SHALL create a
-fresh Device ID, non-exportable device key, device slot, verifier, encrypted name cache, and
-rebuildable Projections. Source device credentials and operational records SHALL NOT be imported.
-
-Every imported Artifact wrapper is local. Import SHALL NOT persist or infer remote-only availability,
-storage-relief Jobs, checkpoints, synchronization cursors, or other source-device operational state.
-
-Prepared wrappers become authoritative only with one atomic transaction that creates all compact
-Vault records and marks the Import Job Succeeded. The imported Vault is manually locked. An empty
-Workspace selects it without retaining the recovered Root Key; a populated Workspace leaves its
-active Vault unchanged. Import never appends an Event, creates a Generation, merges, replaces,
-repairs, or synchronizes an existing Vault.
-
-Stale-Replica resolution is not Import or Restore. It offers Complete Export as the exact
-preservation option, then explicitly discards stale local state and atomically installs verified
-server state in the same synchronized Vault. The exported package remains importable later when no
-local Vault with that identity exists.
-
-# 9. Import Job and Recovery
-
-One non-terminal Workspace Import Job owns an exclusive management lease. It fences Vault Create,
-Select, Rename, Lock, Unlock, Capture, Library and Collection mutations, Vacuum, Export, and another
-Import while allowing read-only access. Its stages are Acquire, Authenticate, Validate, Prepare,
-Rebuild, and Commit. Cancellation before activation is terminal and removes staging plus prepared
-wrappers; activation reports its actual atomic outcome once requests have been scheduled.
-
-Runtime restart marks every non-terminal Import Job `IMPORT_INTERRUPTED`. Cleanup removes only its
-Job-derived source and exact authenticated destination wrappers after proving no Vault directory
-entry committed. Successful Jobs retain their authoritative wrappers.
-
-# 10. Invariants
-
-- No plaintext authoritative content appears in a Vault Package.
-- Package bytes plus passphrase authenticate the exact captured Vault Generation.
-- A Complete package is standalone; a Selective package truthfully preserves its omissions.
-- The source Vault and all authoritative identifiers remain unchanged.
-- Device keys and local slots never leave local storage.
-- Export remains distinct from Backup and synchronization.
-- Import remains distinct from Restore and synchronization.
-- Import validates before destination writes and preserves every authoritative identity and byte.
-- Imported local credentials and Projections are newly created and device-local.
-- Complete Export includes remote-only wrappers without changing their source-device availability.
-
-# 11. Import Failure Contract
-
-The Runtime SHALL expose these stable Import failure identifiers without including package
-filenames, Vault names, decrypted metadata, passphrases, keys, or authentication detail:
-
-- `IMPORT_AUTHENTICATION_FAILED` means that the passphrase/key-envelope authentication boundary
-  could not be established. It is retryable while the staged source remains owned by the same Job.
-- `IMPORT_PACKAGE_INVALID` means that package structure, authenticated reachability, replay,
-  cryptographic content, or Complete coverage could not be proven. It is terminal.
-- `SELECTIVE_IMPORT_UNSUPPORTED` means that a fully authenticated valid Selective package cannot be
-  represented by the current local availability model. It is terminal and SHALL NOT be reported
-  as corruption.
-- `VAULT_ALREADY_EXISTS` means that the authenticated originating Vault ID already has any local
-  directory or authority scope. It is terminal and SHALL NOT replace, merge, update, or reidentify
-  that Vault.
-- `IMPORT_INTERRUPTED` means that Runtime execution ownership ended before atomic activation. It is
-  terminal; restart reconciliation SHALL clean only uncommitted Job-owned staging and wrappers.
-- `STORAGE_QUOTA_EXCEEDED` means that source staging or prepared-wrapper storage cannot reserve the
-  required capacity. It is terminal and SHALL leave no destination authority.
-
-The shared `UNSUPPORTED_FORMAT_VERSION`, `VAULT_BUSY`, and `STORAGE_TRANSACTION_FAILED`
-identifiers retain their owning Runtime meanings. Import SHALL map internal validator failures to
-the identifiers above at its Service boundary. Unsupported or malformed content SHALL fail closed;
-the Runtime SHALL NOT negotiate, migrate, or fall back to another package reader.
+- `docs/specifications/portability/backup.md`
+- `docs/specifications/portability/restore.md`
+- `docs/specifications/vault/vacuum.md`

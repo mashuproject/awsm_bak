@@ -1,349 +1,214 @@
-# Event Specification
+# Vault Event Specification
 
-**Document:** `specifications/event/event.md`
+**Document:** `docs/specifications/event/event.md`
 
 **Version:** 1.0
 
 **Status:** Draft
 
+**Depends On:**
+
+- `docs/specifications/event/event-format.md`
+- `docs/specifications/event/reducers.md`
+- `docs/specifications/vault/authority.md`
+- `docs/specifications/vault/vault.md`
+
 ---
 
 # 1. Purpose
 
-This specification defines the canonical Event format used throughout Archive Platform.
+This specification defines common Vault Event semantics, validation, authorship, causality,
+timestamp meaning, equivocation, and the boundary between Event types and user workflows. Exact
+authority bodies are owned by `docs/specifications/vault/authority.md`; content bodies are owned by
+`docs/specifications/vault/collection.md` and the Bundle specifications; lifecycle bodies are owned
+by `docs/specifications/vault/vacuum.md` and `docs/specifications/vault/vault.md`.
 
-Events are the immutable record of facts that have occurred within a Vault.
+# 2. Accepted fact
 
-The Event Log is the authoritative history of Vault state.
+A Vault Event is one immutable signed accepted fact. It is not a mutable record, arbitrary patch,
+Command, Job, transport message, Host audit entry, or synchronization acknowledgement.
 
-Current state is derived exclusively by replaying Events.
+Every Event type defines:
 
----
+- exact canonical body fields;
+- authorization at the declared parents;
+- parent-state preconditions;
+- exact typed dependencies;
+- the derived state transition;
+- sibling reduction and conflict behavior;
+- Baseline checkpoint representation; and
+- applicable Required Vault Features.
+
+An Event is either wholly valid or invalid. A body MUST NOT contain a generic list of independently
+effective mutations.
 
-# 2. Design Goals
+# 3. Authorship
+
+Every Vault Event is signed by exactly one Client Credential acting for exactly one Vault Member.
+Ordinarily the credential MUST be active and eligible in Authority State derived at the Event's
+exact Authority Parents.
 
-Events MUST provide:
+The two bootstrap rules are:
 
-- immutability
-- deterministic replay
-- canonical format validation
-- cryptographic integrity
-- transport independence
-- versioning
+- Genesis has no parents and is signed by the first Client Credential whose public material and
+  creation proof it binds; and
+- Recovery-authorized Client Credential Enrollment is signed by its proposed credential while one
+  effective Recovery Credential at the Authority Frontier separately authorizes the exact
+  Enrollment Proposal.
 
----
+Recovery-authorized Enrollment relies on pre-existing recovery authority and is not
+self-authorization. No other Event may be authored by an inactive credential.
 
-# 3. Non-Goals
+A Runtime, Service, API Client, Account, Recovery Credential, Replica Host, or Synchronization
+Session may initiate or service a workflow but cannot replace the Event signature.
 
-Events do not define:
+# 4. Authority-Frontier authorization
 
-- UI state
-- projections
-- Search Projection Materializations
-- caches
-- synchronization protocol
+Validation derives complete Vault Authority State from the Event's declared Authority Parent
+Frontier before applying the Event's own transition. The Event cannot authorize itself or rely on
+an Authority or Lifecycle sibling absent from that frontier.
 
-Those are specified elsewhere.
+An Event valid at its Authority Parents may remain valid as a concurrent sibling of another Event
+that ends its signer. After the authority branches converge, the ended signer cannot authorize a
+descendant. Eligible Capture work may be re-authored; stale authority transitions are never
+replayed.
 
----
+# 5. Causality
 
-# 4. Event Properties
+A parent relationship means the author had accepted that Record. A descendant is causally later
+than its ancestors. Siblings that share parents and do not descend from one another are concurrent.
 
-Every Event MUST be:
+Synchronization creates no Event. Compatible multi-head frontiers may persist after Replicas
+converge. A later substantive Event names every accepted maximal head and joins them. A
+content-neutral Sync Event is prohibited.
 
-- immutable
-- uniquely identifiable
-- versioned
-- timestamped
-- attributable to a trusted device
+Event parents always name reachable Vault Record IDs. When a body removes, reverts, supersedes, or
+resolves an existing fact, its exact schema instead names Cause IDs. A current Cause ID is either a
+fact-producing Content Event Record ID in this Generation or a fresh identity assigned to that fact
+by the Generation's Baseline. A Baseline Cause ID never becomes a causal parent.
 
----
+The Authority Parent subgraph is an authenticated projection of the same signed Record set, not a
+second Event log. It contains Genesis and every Authority or Lifecycle Event needed to prove
+current authority continuity while allowing discarded Content parents to remain unresolved after
+Vacuum. Authority-specific concurrency and precedence use this subgraph; Content reduction uses the
+complete causal DAG.
 
-# 5. Event Structure
+# 6. Timestamp
 
-Conceptually every Event contains:
+`assertedAt` is a signed author claim used for audit and approximate presentation. A Capture's
+separate `capturedAt` is intrinsic provenance. Neither value proves physical creation time, causal
+precedence, authority, or a conflict winner.
 
-```
-Event
+A client MAY warn about an implausible future or past assertion and preserve it as signed evidence.
+Clock policy MUST NOT invalidate otherwise valid offline work merely because no trusted time source
+is available.
 
-├── Header
-├── Payload
-└── Integrity Information
-```
+# 7. Authority equivocation
 
-The serialization format is specified separately.
+A conforming Client Credential serializes its Authority Events. Two distinct Authority Events
+signed by the same credential from an identical Authority Parent frontier prove Client Credential
+Equivocation. Exact retransmission of identical authenticated bytes and `recordId` is an idempotent
+retry.
 
----
+At a frontier containing proven equivocation:
 
-# 6. Header
+- every signed Event remains evidence;
+- compatible type-specific effects still apply;
+- incompatible effects use their ordinary type-specific Conflict rule;
+- the signing credential becomes ineligible for descendants; and
+- protected writes fence until an Administrator activates a Key Epoch excluding that credential.
 
-Every Event MUST contain:
-
-- Event ID
-- Event Type
-- Event Version
-- Vault ID
-- Device ID
-- Event Timestamp
-- Protocol Version
-
-Optional fields MAY include:
-
-- Correlation ID
-- Causation ID
-- Extension ID
-
----
-
-# 7. Payload
-
-The Payload contains the Event-specific data.
-
-The payload SHALL be interpreted according to Event Type.
-
-Canonical pre-release Event decoders SHALL reject unknown payload fields.
-
----
-
-# 8. Integrity
-
-Every Event MUST provide integrity verification.
-
-Integrity information includes:
-
-- checksum
-- signature (if applicable)
-- cryptographic version
-
-Algorithms are defined by the Cryptography Specification.
-
----
-
-# 9. Event Ordering
-
-Events are ordered within a Vault.
-
-The ordering mechanism is defined by the Synchronization Protocol.
-
-Readers MUST preserve Event ordering.
-
----
-
-# 10. Event Domains
-
-Standard domains include:
-
-- Bundle
-- Vault
-- Trust
-- Device
-- User
-- Extension
-
-Additional domains MAY be introduced.
-
----
-
-# 11. Standard Event Types
-
-Examples include:
-
-BundleRegistered
-
-BundleRemoved
-
-CapturesDeleted
-
-CapturesRestored
-
-CollectionsMerged
-
-CapturesMoved
-
-CollectionMergeReverted
-
-TagAdded
-
-TagRemoved
-
-NoteAdded
-
-NoteUpdated
-
-FolderCreated
-
-FolderRenamed
-
-DeviceEnrolled
-
-DeviceRevoked
-
-VaultKeyRotated
-
-VaultCreated
-
-VaultRenamed
-
-Future versions MAY introduce additional Event Types.
-
-## 11.1 VaultCreated
-
-`VaultCreated` version 1 records the accepted initial normalized name of one newly created Vault. Its payload contains the Vault ID, Device ID, canonical timestamp, protocol version, and name. It MUST be committed atomically with Vault creation and MUST be the first name Event in that Vault.
-
-## 11.2 VaultRenamed
-
-`VaultRenamed` version 1 records a new normalized name for an existing Vault. It contains the Vault ID, Device ID, canonical timestamp, protocol version, and name. Deterministic replay orders name Events by the Vault Event order; the last valid ordered Rename determines the current name.
-
-Vault names are private plaintext and MUST be encrypted before persistence outside trusted Runtime memory or synchronization.
-
-## 11.3 BundleRegistered
-
-`BundleRegistered` version 1 SHALL contain the Bundle ID, Collection ID, Bundle Descriptor Object
-ID, the sorted unique Artifact Object IDs, Capture timestamp, original URL, and typed Capture
-warnings. Its referenced Object IDs SHALL equal exactly the descriptor Object ID plus every Artifact
-Object ID in the descriptor. The descriptor's Bundle ID and metadata SHALL match the Event.
-
-Warnings SHALL exactly explain absent best-effort Roles or the successful screenshot truncation
-condition. Mandatory `PRIMARY` has no absence warning because its failure prevents registration.
-Replay SHALL reject closure, metadata, Role, or warning mismatches.
-
----
-
-# 12. Event Semantics
-
-Events record facts.
-
-Events MUST NOT express intent.
-
-Examples:
-
-Correct:
-
-BundleRegistered
-
-Incorrect:
-
-RegisterBundle
-
-Correct:
-
-TagAdded
-
-Incorrect:
-
-AddTag
-
----
-
-# 13. Unknown Events
-
-Readers MUST reject unknown Event Types.
-
-Unsupported Events MUST fail replay and prevent unsafe state changes.
-
----
-
-# 14. Replay
-
-Replay SHALL process Events sequentially.
-
-Given the same Event sequence, replay MUST produce equivalent projections.
-
-Replay MUST be deterministic.
-
----
-
-# 15. Versioning
-
-Every Event SHALL contain:
-
-- Event Schema Version
-- Payload Version
-
-Future versions MAY introduce additional version identifiers.
-
----
-
-# 16. Validation
-
-An Event is valid if:
-
-✓ Event ID exists
-
-✓ Event Type exists
-
-✓ Version present
-
-✓ Payload valid
-
-✓ Integrity verifies
-
-Invalid Events MUST NOT be applied.
-
----
-
-# 17. Relationships
-
-Events MAY reference:
-
-- Bundle IDs
-- Artifact IDs
-- Device IDs
-- User IDs
-- Previous Events
-
-References SHALL use stable identifiers.
-
----
-
-# 18. Event Size
-
-Events SHOULD remain small.
-
-Large binary content MUST reside in Artifact Objects.
-
-Events reference Bundles rather than embedding them.
-
----
-
-# 19. Idempotency
-
-Applying the same Event multiple times MUST produce the same logical state.
-
----
-
-# 20. Invariants
-
-Events never change.
-
-Events are append-only.
-
-History is authoritative.
-
-Replay is deterministic.
-
-Unknown Events are rejected.
-
----
-
-# 21. Unsupported Event Semantics
-
-Event semantics outside this specification are unsupported, including:
-
-- new Event Types
-- new Domains
-- new payload fields
-
-Readers MUST reject unsupported Event Types and fields.
-
----
+No synthetic Client Credential End Event, compromise flag, penalty Event, or universal winner is
+created. Same-parent Content Events do not invoke this rule and follow their Content reducer.
+
+# 8. Workflows versus facts
+
+The following are Commands, ceremonies, derived outcomes, or local operations rather than Event
+types:
+
+- resign membership;
+- remove a member and establish Future Protection;
+- recover or enroll a Client Credential;
+- recover captures;
+- delete a Collection;
+- extract Captures;
+- move to Unfiled;
+- keep Note versions as separate Notes;
+- Vacuum Adoption;
+- Fork and Fork Before Adoption;
+- Complete Export, Backup, Restore, and Import;
+- Replica Garbage Collection and Storage Relief;
+- Hosted Replica reaping; and
+- synchronize now.
+
+A workflow MAY commit causally ordered Events in one local transaction, but each remains
+independently valid. A Command MAY produce one homogeneous batch Event when one decision applies
+atomically to several exact targets and partial application would misrepresent it.
+
+# 9. Content Events
+
+Content Events record Captures, labels, organization, and reversible lifecycle facts. Ordinary
+member authority is sufficient unless a type explicitly requires Administrator authority, as Tag
+merge does.
+
+Independent facts combine. Causal scalar facts converge deterministically. Graph and authored-
+content conflicts fence only the affected identities. Same-parent Content Events signed by one
+credential are not authority equivocation.
+
+# 10. Authority Events
+
+Authority Events record Genesis, membership and Administrator changes, Invitations, Client and
+Recovery Credentials, Key Epoch state and delivery, and Required Feature activation.
+
+Their bodies store cryptographic causes, exact targets, and dependencies, not redundant statuses or
+reasons. Type-specific reduction over the Authority Parent subgraph may accumulate effects,
+dominate stale authority, derive Closure, or require explicit resolution.
+
+# 11. Lifecycle Events
+
+Closure Event irreversibly ends writable history. Vacuum Event terminates one predecessor
+Generation and authenticates a successor Baseline. Neither behaves as ordinary additive content or
+receives a scalar winner.
+
+# 12. Event Re-authoring
+
+The base re-authoring eligibility set is only Bundle Registered Event. A currently authorized
+Client Credential creates a new Event with current parents, authority, Key Epoch, and an
+authenticated source `recordId`. The new Event preserves intrinsic Capture provenance but receives
+a new signature and Record ID.
+
+Organization, Authority, conflict-resolution, Lifecycle, Feature Activation, and Key Epoch Events
+MUST NOT be re-authored. Future eligibility requires a Required Vault Feature with exact safety and
+idempotency semantics.
+
+# 13. Validation and rejection
+
+A verifier rejects an Event for any of these reasons:
+
+- non-canonical or unknown envelope, family, type, field, or Required Feature;
+- mismatched Record ID, Vault, Generation, parent, signer, signature, or dependency;
+- incomplete current causal or dependency closure or incomplete Continuity Proof;
+- inactive, ineligible, ambiguous, or unauthorized signer;
+- false body precondition or invalid target state;
+- Event whose parents are Closed;
+- unsupported or conflicting state whose type rule requires a fence; or
+- failure of the exact type-specific reducer or Baseline contract.
+
+Rejection is deterministic and local. A Host admission or another Replica's acceptance cannot make
+an invalid Event valid.
+
+# 14. Invariants
+
+- Accepted Events never mutate or disappear through convergence.
+- All authorization is Authority-Frontier authorization.
+- Causal ancestry, not timestamps, determines precedence.
+- Synchronization transports Events and never authors them.
+- Consequences are derived from typed facts.
+- Conflicts are type-scoped and preserve every source Event.
+- The Runtime never emits a knowingly invalid Event while an applicable capability is fenced.
 
 # References
 
-commands.md
-
-bundle/bundle.md
-
-protocol/protocol.md
-
-crypto/crypto.md
+- `docs/specifications/event/event-format.md`
+- `docs/specifications/event/reducers.md`
+- `docs/specifications/event/commands.md`

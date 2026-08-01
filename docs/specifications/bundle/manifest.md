@@ -1,6 +1,6 @@
 # Bundle Descriptor Specification
 
-**Document:** `specifications/bundle/manifest.md`
+**Document:** `docs/specifications/bundle/manifest.md`
 
 **Version:** 1.0
 
@@ -8,65 +8,105 @@
 
 **Depends On:**
 
-- `bundle.md`
-- `artifact.md`
-
----
+- `docs/specifications/core/serialization.md`
+- `docs/specifications/bundle/artifact.md`
 
 # 1. Purpose
 
-The Bundle Descriptor is the compact authoritative description of a Bundle. It contains Capture
-metadata and references every Artifact but never embeds Artifact payload bytes. Within general
-product language, Manifest remains the descriptive metadata concept; this persisted Bundle format
-uses the precise name Bundle Descriptor.
+The Bundle Descriptor is Vault Object type `1`. It commits to one Capture's identity, intrinsic
+provenance, Artifact references, and exact acquisition outcome. It contains no payload bytes or
+local availability.
 
-# 2. Canonical Record
-
-The descriptor SHALL be canonical CBOR and contain exactly:
+# 2. Body codec
 
 ```text
-descriptorVersion: 1
-bundleId: canonical UUID
-createdAt: canonical UTC timestamp
-clientVersion: non-empty string
-captureProfileId: WebPageSnapshot-v1
-captureAdapterVersion: 1
-metadata: CaptureMetadataV1
-artifacts: ArtifactReferenceV1[]
+{
+  0: 1,                  // bundleDescriptorFormat
+  1: bundleId,           // generated 32-byte ID
+  2: capturedAt,         // signed Unix milliseconds; provenance, not causality
+  3: originalUrl,        // normalized absolute URL
+  4: finalUrl,           // normalized absolute URL
+  5: captureProfileKey,  // canonical scoped key
+  6: adapterKey,         // canonical scoped key
+  7: adapterRevision,    // nonnegative integer
+  8: title,              // captured title or null
+  9: artifactRefs,       // canonical set by Artifact ID
+  10: warnings,          // canonical warning set
+  11: provenance         // canonical profile-owned map
+}
 ```
 
-Artifact references SHALL be sorted by Artifact Object ID and have unique Object IDs and Roles. The
-descriptor SHALL contain mandatory `PRIMARY`. It SHALL reject unknown fields and enforce all
-Role/Kind/MIME and metadata contracts.
+The base profile key is `awsm.capture.web-page-snapshot`. The base adapter and provenance schema
+are owned by `docs/specifications/bundle/page-snapshot.md`. URL normalization removes fragments but
+retains query parameters. The Descriptor's Required Feature Set determines all understood fields
+and profile behavior.
 
-Warnings SHALL NOT be duplicated in the descriptor. `BundleRegistered` owns accepted warning
-facts, and its warning set SHALL exactly match absent optional Roles and any successful screenshot
-truncation condition.
+# 3. Artifact reference codec
 
-# 3. Encryption and Storage
+```text
+{
+  0: artifactId, // Artifact Object ID; dependency type 5
+  1: role        // canonical scoped role key
+}
+```
 
-The descriptor is encrypted with the standard compact Object envelope using Object type
-`BundleDescriptor`, key domain `vault:bundle-descriptor:v1`, Bundle ID as context ID, and the
-descriptor Object UUID as envelope Object ID. Its maximum encrypted/decrypted allocation is 16 MiB.
+Roles are unique within one Descriptor. The referenced Artifact Object owns kind, media type,
+length, digest, representation, and wrapper contract; none are duplicated here.
 
-The descriptor SHALL NOT contain Artifact wrapper lengths/checksums, OPFS paths, filenames,
-availability, package coverage, or Export omission state. Those belong to their owning storage and
-portability contracts.
+# 4. Warning codec
 
-Device-local wrapper availability therefore never changes descriptor validity or Artifact reference
-coverage. A remote-only wrapper is still a required Bundle member and MUST be included by Complete
-Export, Backup, synchronization, and server switching according to their owning contracts.
+```text
+{
+  0: warningKey, // canonical scoped key
+  1: detail      // profile-owned canonical bytes; empty when none
+}
+```
 
-# 4. Validation
+Warnings record only accepted acquisition facts required to interpret missing optional output or a
+known truncation. They contain no error stack, local path, session, credential, or network secret.
 
-Readers SHALL authenticate and decode the descriptor before trusting metadata or Artifact
-references. They SHALL reject unknown versions/fields, non-canonical CBOR, invalid identifiers,
-unsorted or duplicate references, invalid required Role coverage, or any mismatch with the
-`BundleRegistered` dependency closure.
+# 5. Excluded state
+
+The Descriptor never includes storage paths, wrapper availability, opaque item IDs, Remote names,
+package coverage, Collection organization, lifecycle state, search state, or Account policy.
+
+# 6. Provenance codec
+
+Direct Capture provenance is:
+
+```text
+{
+  0: 1,                // provenanceKind = Direct Capture
+  1: profileProvenance // exact profile-owned canonical bytes
+}
+```
+
+Event Re-authoring provenance is:
+
+```text
+{
+  0: 2,                    // provenanceKind = Re-authored Capture
+  1: sourceVaultId,
+  2: sourceGenerationId,
+  3: sourceRecordId,
+  4: sourceBundleId,
+  5: sourceDescriptorId,
+  6: profileProvenance
+}
+```
+
+The trusted Client verifies the source Record, Descriptor, and complete Capture closure before
+authoring. The protected source IDs are provenance commitments, not typed dependencies in the
+target Generation and do not keep predecessor history reachable.
+
+# 7. Validation
+
+A validator authenticates the Vault Object, recomputes its Object ID, validates the exact profile,
+checks unique roles and warning consistency, resolves every typed Artifact dependency, and verifies
+the complete graph before Bundle registration.
 
 # References
 
-- `bundle.md`
-- `artifact.md`
-- `../event/event.md`
-- `../runtime/capture.md`
+- `docs/specifications/bundle/artifact.md`
+- `docs/specifications/bundle/page-snapshot.md`
+- `docs/specifications/runtime/capture.md`

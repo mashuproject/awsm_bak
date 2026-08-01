@@ -1,387 +1,96 @@
 # Runtime Job Framework Specification
 
-**Document:** `specifications/runtime/jobs.md`
+**Document:** `docs/specifications/runtime/jobs.md`
 
 **Version:** 1.0
 
 **Status:** Draft
 
----
+**Depends On:**
+
+- `docs/specifications/runtime/runtime.md`
+- `docs/specifications/runtime/storage.md`
 
 # 1. Purpose
 
-The Runtime Job Framework provides durable execution of long-running operations.
+Jobs provide durable execution for long-running local Client and Host workflows. Job state is
+Execution State, not a Vault Record, and never synchronizes merely because the workflow concerns a
+Vault.
 
-It is responsible for scheduling, persistence, retries, progress reporting, cancellation, and recovery.
+# 2. Job record
 
-Application services define Job Types.
+Every typed Job namespace defines a random local Job ID, schema revision, Storage Realm, scope,
+workflow idempotency key, creation time, state, stage, attempt, safe progress, cancellation state,
+lease, input references, prepared-output references, and stable outcome. Secrets, plaintext
+content, private keys, Recovery Phrases, passphrases, and diagnostic exception text are forbidden.
 
-The Job Framework executes them.
+# 3. State machine
 
----
-
-# 2. Design Goals
-
-The Job Framework MUST provide:
-
-- durable execution
-- resumable execution
-- retries
-- prioritization
-- cancellation
-- deterministic state transitions
-
----
-
-# 3. Architecture
-
-```
-Service
-
-↓
-
-Job Scheduler
-
-↓
-
-Job Repository
-
-↓
-
-Worker
-
-↓
-
-Completion
+```text
+Created -> Ready -> Running -> Succeeded
+                         |-> Failed
+                         |-> Cancelled
+                         |-> Waiting -> Ready
 ```
 
-Services submit Jobs.
+Each Job type enumerates its exact waiting conditions and cancellation boundary. State transitions
+use conditional writes and durable checkpoints. A renewable lease prevents duplicate workers but
+never supplies Vault authority.
 
-Workers execute Jobs.
+# 4. Job types
 
-The Scheduler coordinates execution.
+Initial types include Capture, pull synchronization, wrapper hydration, Projection rebuild, Search
+indexing, AI processing, Import, Complete Export, Backup, Restore, Fork, Vacuum preparation,
+Vacuum Adoption, Storage Relief, and Replica Garbage Collection. Host installations may separately
+run admission cleanup, quota, notification, and Hosted Replica reaping Jobs.
 
----
+# 5. Atomicity across storage systems
 
-# 4. Job Types
+A Job prepares immutable output before promotion. When database and wrapper storage cannot share
+one transaction, the Job records the exact prepared identities, verifies final bytes, commits the
+authoritative or safety pointer once, then performs idempotent cleanup. Restart exposes either the
+old valid state or the new valid state, never a half-authoritative graph.
 
-Standard Job Types include:
+# 6. Retry and cancellation
 
-- Capture Job
-- Synchronization Job
-- AI Job
-- Projection Job
-- Garbage Collection Job
-- Vault Vacuum Job
-- Import Job
-- Export Job
-- Backup Job
-- Restore Job
-- Storage Relief Job
+Retryable failures retain the same logical input and immutable prepared bytes. Backoff has jitter
+and a bounded attempt policy. A retry never weakens validation or invents new randomized identity
+after an ambiguous successful write.
 
-Future Job Types MAY be introduced.
+Cancellation is checked only at a Job-type safe boundary. Work committed before cancellation
+remains committed. Vacuum cannot be cancelled after its signed transition is accepted; Garbage
+Collection cleanup is separately resumable. Live browser acquisition is not resumed after a crash.
 
-A Storage Relief Job is Vault-scoped and persisted. Its immutable estimate records candidate count
-and exact safe-integer ciphertext bytes. Per-Artifact checkpoints progress through candidate,
-verified, evicting, and terminal outcomes; proof metadata is durable before file removal. The Job
-checks cancellation only between candidates, retains completed evictions, reports stable skip
-reasons, resumes non-terminal work after restart, and never resumes a cancelled Job automatically.
+# 7. Maintenance coordination
 
-Only one Capture, Import, Export, Vacuum, applying Server Switch, or Storage Relief operation may own
-the affected Vault maintenance lease. Waiting for unlock or authentication is persisted and resumes
-only after the same Vault context is revalidated.
+Local leases serialize only operations whose physical writes cannot safely overlap. They are
+narrow, Vault- and Realm-scoped, expire safely, and are revalidated in the final transaction.
+Ordinary additive Capture and synchronization are not globally stopped merely because a long Job
+exists. A Host uses independent local database transactions for Accounts, Grants, quotas, and
+opaque admission.
 
----
+# 8. Progress and diagnostics
 
-# 5. Job Structure
+Progress reports exact stage-local counts and bytes when safe, never semantic content. Monotonic
+percentage is optional and cannot determine correctness. Stable outcome keys are suitable for user
+messages; logs retain no secrets or cross-Vault data.
 
-Every Job SHALL contain:
+# 9. Recovery
 
-- Job ID
-- Job Type
-- Job Version
-- Creation Time
-- Current State
-- Priority
-- Payload
+Startup validates every nonterminal Job against its namespace, Realm, selected Vault or Hosted
+Replica, input identities, lease, and prepared bytes. It resumes only declared resumable stages.
+Otherwise it fails safely and retains enough evidence for cleanup or explicit user retry.
 
-Optional fields:
+# 10. Invariants
 
-- Parent Job
-- Correlation ID
-- Retry Count
-- Progress
-
----
-
-# 6. Job States
-
-Jobs transition through:
-
-```
-Created
-
-↓
-
-Queued
-
-↓
-
-Ready
-
-↓
-
-Running
-
-↓
-
-Succeeded
-```
-
-Alternative terminal states:
-
-```
-Running
-
-↓
-
-Failed
-```
-
-```
-Running
-
-↓
-
-Cancelled
-```
-
-Retryable failures:
-
-```
-Failed
-
-↓
-
-Retry Waiting
-
-↓
-
-Queued
-```
-
----
-
-# 7. Scheduler
-
-The Scheduler SHALL:
-
-- select runnable Jobs
-- respect priorities
-- respect dependencies
-- avoid duplicate execution
-
----
-
-# 8. Workers
-
-Workers execute Jobs.
-
-Workers SHALL:
-
-- report progress
-- report completion
-- report failure
-
-Workers SHALL NOT manage retries.
-
----
-
-# 9. Priorities
-
-Suggested priorities:
-
-- Critical
-- High
-- Normal
-- Low
-- Background
-
-Scheduling policy is implementation-defined.
-
----
-
-# 10. Dependencies
-
-Jobs MAY depend upon other Jobs.
-
-Dependent Jobs SHALL remain blocked until prerequisites complete successfully.
-
-Job dependencies form a directed acyclic graph. The MVP MAY execute the graph sequentially, but the dependency model SHALL remain explicit.
-
-Example:
-
-```
-Capture
-
-↓
-
-Encrypt Bundle Descriptor and Artifact wrappers
-
-↓
-
-Prepare Artifact wrappers and atomically store the Bundle graph records
-
-↓
-
-Synchronize Bundle
-```
-
----
-
-# 11. Progress
-
-Jobs MAY expose progress.
-
-Progress SHOULD be monotonic.
-
-Progress reporting SHALL NOT affect Job correctness.
-
----
-
-# 12. Retries
-
-Retry policy SHALL include:
-
-- retry limit
-- delay strategy
-- retry reason
-
-Permanent failures SHALL terminate the Job.
-
----
-
-# 13. Cancellation
-
-Jobs MAY be cancelled.
-
-Cancellation SHALL leave persistent state consistent.
-
-Completed Jobs cannot be cancelled.
-
----
-
-# 14. Persistence
-
-Job state SHALL survive Runtime restarts.
-
-Restarting the Runtime SHALL restore pending Jobs.
-
----
-
-# 15. Recovery
-
-The Scheduler SHALL detect interrupted Jobs.
-
-Interrupted Jobs SHALL return to an executable state unless explicitly marked unrecoverable.
-
-Live browser page acquisition is explicitly non-resumable because the external page may have changed. An interrupted Capture Job SHALL be marked Failed and require a new user-initiated Capture Command.
-
-Capture recovery SHALL first check the original Command outcome. If the authoritative transaction committed before interruption, recovery SHALL mark the Job Succeeded without emitting another Event. Otherwise no partial Bundle or Event may exist.
-
----
-
-# 16. Events
-
-Job lifecycle events MAY include:
-
-- JobQueued
-- JobStarted
-- JobProgress
-- JobSucceeded
-- JobFailed
-- JobCancelled
-
-These are Runtime Events.
-
-They are not synchronized between replicas.
-
----
-
-# 17. Diagnostics
-
-The Job Framework SHOULD expose:
-
-- queue depth
-- running jobs
-- retry counts
-- execution times
-- worker utilization
-
----
-
-# 18. Invariants
-
-## Complete Vault Import Job
-
-The browser Runtime persists only the current/latest Workspace-scoped Import Job. Its states are
-Created, Running, Succeeded, Failed, and Cancelled; its stages are Acquire, Authenticate, Validate,
-Prepare, Rebuild, and Commit. Created/Authenticate is the sole retryable authentication state.
-Running begins only after Root Key authentication and carries the authenticated destination Vault
-ID. Progress describes encrypted operational bytes and entries and is monotonic within a stage.
-
-A non-terminal Import Job owns the Workspace management lease. Passphrase, source filename,
-temporary path, Root Key, derived key, Vault name, and decrypted package data SHALL NOT enter the
-Job. Restart makes a non-terminal Import Job fail with `IMPORT_INTERRUPTED`; Import does not resume
-because its passphrase is not persisted. Success is written in the destination activation
-transaction. Cancellation before activation is terminal and idempotent.
-
-## Search Indexing Job
-
-The browser Runtime persists one current Search indexing Job per Vault and provider generation.
-Its stages are Discover, Keyword, Semantic, Validate, and Terminal. Its states are Created,
-Running, Paused, WaitingForUnlock, WaitingForLibrary, WaitingForPermission, WaitingForNetwork,
-Failed, and Succeeded.
-
-Discovery orders authoritative Captures by Bundle ID and writes one durable checkpoint per
-Capture. Each checkpoint binds the source revision, keyword state, semantic state, attempt count,
-and last stable error identifier. A renewable 30-second lease identifies the active Library
-owner; it SHALL be renewed no later than every ten seconds, and a different owner may claim only
-after expiry.
-
-Indexing runs only while the Library is connected and visible, the expected Vault is active and
-unlocked, the user has not paused, required provider permission exists, and a remote provider is
-online. Losing any gate aborts the current plaintext batch and releases the lease to the exact
-waiting state. Committed Capture rows remain available.
-
-A Capture materialization, its checkpoint, Job counters, and projection revision SHALL commit
-atomically. A failed Capture, its attempt count, safe error identifier, retry deadline, and Job
-failure SHALL also commit atomically. Resume resets failed checkpoints to Pending and retains the
-same generation unless a changed authoritative Vault generation, Search schema, tokenizer, or
-provider identity requires rebuild.
-
-Search Jobs, checkpoints, leases, errors, and retry deadlines are local operational records. They
-SHALL NOT synchronize or enter Export, Import, Backup, or diagnostics containing Vault
-identifiers.
-
-Jobs are durable.
-
-Workers are stateless.
-
-Schedulers are deterministic.
-
-Retries are centrally managed.
-
-Services define behavior.
-
-The Job Framework defines execution.
-
----
+- Workers are replaceable; durable checkpoints own progress.
+- A Job is never a portable member, Credential, Event author, or synchronization fact.
+- Interrupted work cannot expose partial authority.
+- Cleanup never races a recognized preservation root.
+- Every Job namespace belongs to Execution State and declares transaction partners.
 
 # References
 
-- `docs/specifications/runtime/runtime.md`
-- `docs/specifications/runtime/synchronization.md`
 - `docs/specifications/runtime/capture.md`
-- `docs/specifications/portability/backup.md`
-- `docs/specifications/portability/restore.md`
+- `docs/specifications/runtime/search.md`
+- `docs/specifications/vault/vacuum.md`

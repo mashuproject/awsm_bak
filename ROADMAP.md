@@ -1,373 +1,362 @@
 # AWSM Roadmap
 
-This roadmap records unresolved future product initiatives. It is not an implementation history,
-architecture specification, or authorization to build. Decision-complete work requires an approved
-numbered plan and reconciliation with the owning specifications.
+This roadmap records unresolved future implementation and product initiatives. It is not an
+architecture specification, implementation history, or authorization to build. The living
+glossary, design principles, architecture, formal specifications, and PRD own decision-complete
+direction. Historical numbered plans remain context and may be stale.
 
-## Initiative Statuses
+## Initiative statuses
 
-- **Discovery:** the problem, feasibility, or major architectural choices remain open.
-- **Candidate:** the direction is coherent, but scope, dependencies, or acceptance criteria remain
-  open.
-- **Approved:** explicitly approved for conversion into a numbered implementation plan.
+- **Discovery:** the problem, feasibility, or major product choices remain open.
+- **Candidate:** the direction is coherent, but scope, dependencies, or acceptance remain open.
+- **Approved:** the user has explicitly approved conversion into a numbered implementation plan.
 
----
-
-## Hosted Redis Coordination Rollout
+## Canonical Vault architecture convergence
 
 **Status:** Candidate
 
-Reinspect the mutable hosted topology, provision private Redis networking and protected
-credentials, select exact application and Redis revisions, and define deployment and rollback
-order. Prove degraded mode and recovery, add basic capacity and failure monitoring, and confirm no
-Redis port or credential becomes public.
+Replace the current pre-release Device, Vault Root Key, Recovery Kit, semantic coordination-server,
+one-synchronized-Vault Account, feature-specific persistence, retain-and-rewrite Vacuum, and old
+organization experiments with the single canonical contract in the living docs.
 
----
+The implementation scope includes:
 
-## Highly Available Ephemeral Coordination
+- deterministic serialization, protected logical identities, randomized opaque envelopes, exact
+  cryptographic vectors, and independent Key Epochs;
+- Initial Baseline and Genesis, one signed Record DAG, its retained Authority Parent Continuity
+  Proof, exhaustive Event codecs and reducers, Required Features, and scoped conflict handling;
+- per-member Recovery Phrases, Client Credentials, Invitations, multi-member authority, Future
+  Protection, resignation, removal, Closure, and former-member behavior;
+- Vault, Replica, Client, Host, Account, Channel Principal, and Replica Access Grant separation;
+- receiver-initiated opaque synchronization, Hosted Replica storage, On-demand availability,
+  Storage Relief, hydration, and local Garbage Collection;
+- eleven logical persistence families, Storage Realms, Prepared Data, Quarantine, safety state,
+  streaming wrappers, and crash-safe physical mappings;
+- Collections, causal tails, Folders, Tags, Notes, lifecycle, merge and N-way conflict UX;
+- Vacuum successor Baselines with Content-cause remapping and retained authority continuity,
+  Adoption, Fork Before Adoption, state-only Fork, Closure, historical view, Event Re-authoring,
+  Complete Export, Backup, and Restore; and
+- destructive replacement of development and explicitly authorized staging schemas and data,
+  regenerated executable API contracts, rebuilt fixtures, real Client/Host fault proof, and updated
+  public claims.
+
+There is no compatibility reader, migration of discarded data, dual schema, old-client
+negotiation, fallback, alias, or transition UI. Implementation begins with an approved cold plan
+derived from the reconciliation impact record and must keep current marketing claims separate
+until executable proof passes.
+
+## Direct Replica synchronization
+
+**Status:** Candidate
+
+Add direct pull between authorized Client-managed Replicas without a managed Host in the data path.
+Define pairing, endpoint authentication, capability preflight, bounded inventory and transfer,
+Wake Hints, locked-context Quarantine, targeted hydration, authorization loss, and multi-Remote
+status without peer inventory or global redundancy claims.
+
+Promotion requires real local-socket or LAN and remote-hosted transports, malicious and stale
+inventory tests, duplicate and interrupted delivery, offline multi-head convergence, and proof that
+`origin` or `upstream` remains local preference rather than Vault authority.
+
+## Optional former-member Recovery Snapshots
 
 **Status:** Discovery
 
-Choose standalone replicas plus Sentinel or a managed service and define failover, split-brain,
-connection discovery, TLS, and acceptable ticket loss. Prove Action Cable resubscription,
-multi-host capacity and fault injection, alerting and incident response, and whether persistence
-remains disabled in the selected provider topology.
+Explore an encrypted Host or user-managed snapshot that preserves a former member's exact readable
+state after removal when no retained Replica or Complete Export remains. Define who creates,
+authorizes, stores, discovers, pays for, expires, and proves availability of it without weakening
+the core rule that removal stops future access and cannot erase prior possession. The base
+architecture must continue to work without this service.
 
----
+## Selective cross-Vault transfer
 
-## Executable OpenAPI Contract Generation
+**Status:** Discovery
 
-**Status:** Candidate
+Define explicit selective transfer between independent Vaults or Forks beyond Complete Export and
+state-only Fork. Resolve new identity, provenance, dependency closure, duplicate detection,
+authorization, Key Epoch re-encryption, organization mapping, conflict behavior, streaming, and
+whether transfer is one-way copy or a continuing relationship. Never silently merge two Vault
+histories or reuse source authority.
 
-Replace separately maintained OpenAPI YAML with executable Rails API contract specifications as the
-authoritative source for exact HTTPS paths, methods, authentication scopes, request bodies,
-responses, headers, and stable outcomes. Generate
-`docs/specifications/protocol/http-api.openapi.yaml` deterministically from those specifications,
-commit the generated artifact, and prohibit manual edits to it. Prefer a permissively licensed,
-Rails 8.1-compatible RSpec generator such as RSwag after recording the exact version and license.
-Do not infer the contract merely by observing controller traffic: required fields, strict
-unknown-field rejection, UUID and byte-length formats, enums, Account versus VaultDevice
-authorization, security failures, and unexercised error responses must remain explicit executable
-declarations.
+## Traffic-metadata protection
 
-Extract reusable Ruby schema definitions for common identifiers, authenticated sessions, Recovery
-Kits, Device certificates, Device key envelopes, encrypted Object metadata, and outcomes so
-operation specifications do not duplicate their shapes. Continue using Committee to validate real
-requests and responses against the generated artifact. Generate extension wire types and, where
-practical, its HTTP client boundary from that same artifact without allowing generated code to
-bypass Runtime validation or introduce a second domain model.
+**Status:** Discovery
 
-The implementation plan must define a cold conversion that preserves the complete current
-contract while each endpoint moves to the executable source, then removes every hand-maintained
-schema fragment. Add deterministic generation, formatting, OpenAPI validation, Rails-route
-coverage, operation and response coverage, stale-artifact detection, and generated-client
-typechecking to local verification and CI. CI must fail when regeneration changes a tracked
-artifact, a Rails API route lacks a declared operation, a declared operation lacks contract
-evidence, or implementation behavior violates the generated contract. Keep prose specifications
-authoritative for transport-independent security and behavioral invariants, but remove duplicated
-JSON field inventories once the generated OpenAPI artifact owns those exact wire shapes.
+Evaluate padding profiles, batching, delayed pulls, cover traffic, private inventory techniques,
+and other measures beyond the mandatory opaque Host boundary. Quantify leakage, bandwidth,
+latency, battery, denial-of-service, and self-hosting costs before making a claim. The base system
+must continue to state honestly that timing, size, Account association, and access patterns remain
+visible.
 
----
-
-## Repository Implementation and Impact Map
+## Vault activity and member review
 
 **Status:** Candidate
 
-Create a maintained repository map that lets an agent starting from a cold checkout locate the
-authoritative implementation, tests, contracts, generated artifacts, documentation, and
-verification commands for each product area without repeating broad source searches. Cover at
-least Account identity and lifecycle, Vault persistence, Capture, Library, Search, synchronization,
-Device and recovery authority, server switching, storage, public Rails surfaces, browser Hosts,
-release automation, and reference deployment operations.
+Build trusted-client history views that help members, especially Administrators, inspect signed
+Events, attribution, causal parents, conflicts, timestamp assertions, and back-and-forth changes.
+Abuse detection and penalties remain user or Client interpretation, not Vault semantics. Define
+useful signals, retention after Vacuum, privacy, false-positive handling, and response workflows
+only after collaboration experience provides concrete cases.
 
-The numbered implementation plan must first inventory the current repository and define which
-mapping facts are hand-maintained, derived, or verified. Add:
+## Extended organization and Note features
 
-- one concise human-readable implementation map with exact source, test, specification,
-  architecture, and operational entry points for each area;
-- an affected-files section template for future numbered plans;
-- one canonical subsystem-to-command table covering formatting, lint, typecheck, unit,
-  integration, browser, Rails, synchronization-proof, packaging, and release checks;
-- generated-file ownership and regeneration commands;
-- a terminology-to-code map for foundational concepts such as Account, Vault, Device, Host,
-  Replica, Runtime, Object, and Artifact;
-- explicit dependency links beside foundational schemas and API contracts; and
-- a lightweight repository-owned impact command, such as `script/impact-map <area>`, that prints
-  the known implementation, test, contract, documentation, and generated consumers for an exact
-  area.
+**Status:** Discovery
 
-Keep the map navigational rather than independently normative: design principles, glossary, formal
-specifications, and approved plans retain their existing authority. Do not infer dependencies from
-filenames alone, copy host-local paths or deployment secrets into tracked files, or claim that a
-map proves completeness merely because a search returned no additional matches.
+Consider shared manual ordering, Note attachments, rich text, wiki links, collaborative text CRDTs,
+member-private synchronized Notes, installation-local annotations, and dedicated Note merge only as
+separate Required Features with proven need. Preserve stable IDs, safe rendering, no display-time
+network fetch, N-way conflict recovery, Baseline and Vacuum rules, and compatibility with ordinary
+whole-Note revisions.
 
-Acceptance requires a cold-agent exercise across at least Account, synchronization, and release
-work; deterministic output and actionable errors for unknown/stale areas; link and path validation;
-stale-map detection in CI; documentation for adding and renaming areas; and proof that the map
-reduces discovery to a bounded confirmation pass while still requiring current-state verification.
-Define an owner and review trigger so foundational moves, new contracts, generated artifacts, or
-test-command changes update the map in the same change.
-
----
-
-## Preserve-First Stale Replica Recovery
+## Automatic Replica storage profiles and pinning
 
 **Status:** Candidate
 
-Add an explicit alternative to destructive stale-Replica discard. Retrieve every stale payload from
-the retained Recovery Snapshot, decrypt and re-encrypt the complete stale state under fresh Vault,
-Generation, Event, Object, Bundle, Artifact, Collection, key, and device identities, and activate it
-as a local-only Vault only after complete validation. This future flow must preserve bounded
-streaming, remain distinct from Import/Restore, and never weaken the current export-first discard
+Add persistent Full and On-demand profiles beyond manual Storage Relief: age, quota, least-recently-
+used, storage-pressure and prefetch policy plus `Keep locally` controls. Policy remains Replica-
+local, does not infer another copy, and never blocks manual or automatic relief after the universal
+data-loss warning.
+
+Prove On-demand bootstrap without hydrating every heavy wrapper, immediate new Capture, truthful
+unavailable state, pinning, cancellation, restart, quota pressure, and interactions with Export,
+Vacuum, Fork, Remotes, and Garbage Collection.
+
+## URL-backed opaque Replica storage
+
+**Status:** Discovery
+
+Allow a Client's Storage Driver to place its encrypted Replica bytes behind an authenticated
+loopback or HTTPS endpoint while keeping plaintext, Client Credential keys, Replica Safety State,
+Materializations, and trusted processing local. Determine whether the ordinary opaque Hosted
+Replica protocol is sufficient or whether a narrower single-Client storage contract is justified.
+
+Cover immutable and conditional writes, restart-safe local safety advancement, multi-gigabyte
+streaming, uncertain completion, rollback and omission detection, quota, relocation, revocation,
+loopback impersonation, TLS, and unavailable-backend Prepared Data. Two independent Runtimes must
+not co-own one Replica namespace; that becomes ordinary Replica synchronization.
+
+## API-driven headless Client Installation
+
+**Status:** Discovery
+
+Define a full trusted headless Client with local Replicas, Client Credentials, and Runtime services
+exposed through a protected API. API Grants are Client-local capabilities, not Vault membership or
+Replica Access Grants. Web UIs, command-line tools, and automation act through the selected Client
+Credential.
+
+Resolve local versus network transport, bearer or stronger authentication, Vault selection,
+unattended key availability, capability discovery, plaintext operator trust, audit attribution,
+rate limits, browser security, and revocation. A third-party headless operator is trusted with any
+plaintext it processes and is not zero knowledge relative to that operator.
+
+## Zero-knowledge web Client
+
+**Status:** Discovery
+
+Evaluate whether a trusted browser web Client adds useful Library, Search, organization, Export,
+Import, and Vault-management access beyond the browser extension. This is a Client that stores keys
+and a local Replica in that browser, not the Account dashboard and not an opaque Host feature.
+Capture may remain extension-only.
+
+Before promotion, justify the product need and resolve browser storage clearing, local persistence,
+Recovery, supported browsers, selective transfer, lifecycle, accessibility, multi-tab concurrency,
+and the threat model. Reuse the canonical Runtime rather than duplicating Vault data in a server
+database or inventing another key model.
+
+## Static archived-page viewer
+
+**Status:** Discovery
+
+Define a sandboxed viewer for the canonical page snapshot inside AWSM. Resolve complete network
+prohibition, script and service-worker isolation, form behavior, missing resources, frames,
+accessibility, safe external navigation, and archive-first links. MHTML remains a derivative and
+captured scripts do not execute.
+
+## Recorded web-application Capture and replay
+
+**Status:** Discovery
+
+Evaluate an explicit high-fidelity mode that records permitted response traffic and replays an
+interactive application in a controlled environment. Resolve stronger permissions, authenticated
+and non-GET traffic, credential exclusion, browser storage, service workers, determinism, bounded
+storage, script isolation, and time-relative link resolution without weakening the ordinary static
+profile.
+
+## Incognito Capture contract
+
+**Status:** Discovery
+
+Decide whether Incognito Capture persists into a confirmed regular Vault or an isolated temporary
+Storage Realm. Evaluate Chrome spanning and split modes, separate workers and storage, key access,
+window closure, permanent-persistence consent, normal-window routing, Export or promotion, and
+failure cleanup. Until implemented and proven, Incognito remains explicitly unsupported.
+
+## Retrieval-grounded Vault answers with Gemma 4
+
+**Status:** Discovery
+
+Evaluate an optional trusted-client answer experience over bounded locally retrieved passages with
+citations to exact Captures. Select an exact permissively licensed Gemma 4 model and inference stack
+only after measuring download, memory, latency, battery, supported hardware, quantization,
+cancellation, prompt injection, and citation validation. Search remains useful without generation.
+
+Define user initiation, model integrity, prompt and model provenance, context bounds, and whether an
+answer may be explicitly preserved under a Required Feature. The model never scans the Vault
+independently or communicates with a Replica Host.
+
+## Chrome built-in Prompt API adapter
+
+**Status:** Discovery
+
+Evaluate Chrome's browser-managed prompt model as an adapter for the same retrieval-grounded
+capability. Keep retrieval, citations, validation, and failure semantics provider-neutral. Prove
+capability absence, model download, language and hardware limits, model updates, cancellation,
+memory clearing, accessibility, and no silent remote fallback. Firefox and unsupported Chrome must
+retain complete Library and Search behavior.
+
+## Canonical public glossary rendering
+
+**Status:** Discovery
+
+Make `docs/architecture/glossary.md` the single source for the public `/glossary` page. Replace the
+independently authored ERB definitions with deterministic safe rendering or generated output while
+preserving stable anchors, selected public sections, sanitization, anonymous cache safety,
+accessible navigation, and the current design system.
+
+Choose build-time or request-time rendering, package source availability, stale-output detection,
+link checks, and primary plus narrow visual proof. Do not create another editable glossary source.
+
+## Executable OpenAPI contract generation
+
+**Status:** Candidate
+
+After the target opaque Host routes are defined, make executable Rails contract specs the source
+for exact HTTP paths, authentication scopes, request and response bodies, headers, strict errors,
+and Host capabilities. Generate and commit `http-api.openapi.yaml`; prohibit manual edits; validate
+real traffic with the artifact; and generate Client wire types where useful without creating a
+second domain model.
+
+This is a cold replacement of the old semantic API, not preservation of it. CI must fail for stale
+generation, undeclared Rails routes, uncovered declared operations, missing error evidence,
+unknown-field acceptance, or implementation divergence.
+
+## Repository implementation and impact map
+
+**Status:** Candidate
+
+Maintain a navigational map from product areas to implementation, tests, formal contracts,
+generated artifacts, verification commands, and operational entry points. Include Account and Host
+policy, Vault Records and Objects, Capture, Library, Search, authority and Recovery,
+synchronization, storage, public surfaces, release automation, and reference deployment.
+
+Add an affected-files plan template, subsystem command table, generated-file ownership, terminology-
+to-code map, dependency links, and a lightweight `script/impact-map <area>` command. The map never
+overrides owning docs or proves completeness from filenames. Acceptance includes cold-agent
+exercises, stale-map CI, link checks, and an explicit update trigger.
+
+## Native download-boundary journey proof
+
+**Status:** Candidate
+
+Add a test-only download adapter for native save-file interactions that packaged headless browsers
+cannot automate. Use production package construction and validation to prove successful Complete
+Export and fresh Import without granting shipped builds broader permissions or bypassing Runtime
+cryptography.
+
+## Coordinated browser-store release
+
+**Status:** Candidate
+
+Prepare compatible public Firefox AMO and Chrome Web Store listings, then announce only after both
+are live. Complete macOS and Windows Firefox proof, privacy and permission disclosures, listing
+assets, review handling, signed update delivery, monitoring, and rollback. Retain verified GitHub
+artifacts until store delivery is proven.
+
+## Hosted Redis coordination rollout
+
+**Status:** Candidate
+
+Reinspect the mutable reference topology, provision private Redis networking and protected
+credentials, select exact application and Redis revisions, and define deployment and rollback.
+Prove degraded Wake Hint behavior and recovery, monitor capacity and failures, and expose no Redis
+port or credential publicly. Redis remains disposable Ephemeral Coordination State.
+
+## Highly available ephemeral coordination
+
+**Status:** Discovery
+
+Choose Sentinel, managed service, or another topology and define failover, split brain, connection
+discovery, TLS, acceptable hint/ticket loss, multi-host subscriptions, capacity, fault injection,
+alerting, and incident response. No choice may turn ephemeral state into Vault authority.
+
+## S3-backed opaque byte storage
+
+**Status:** Candidate
+
+Replace Rails-local opaque storage with one provider-independent S3 Driver. Bundle permissively
+licensed VersityGW for ordinary single-host self-hosting and use managed S3-compatible storage for
+hosted production. Rails and tests depend only on the shared immutable Compact/Streamable item
 contract.
 
----
+Preserve bounded resumable writes, exact outer-envelope and Opaque Storage Item ID verification,
+immutable promotion, full and ranged reads, scoped Grants, verified deletion, and opaque metadata.
+Define private bucket provisioning, least privilege, readiness, incomplete-part cleanup, key
+layout, conditional operations, quota, coordinated Host-policy and byte backup, corruption,
+omission, and restart evidence.
 
-## Native Download Boundary Journey Proof
+VersityGW is deliberately single-host and non-HA. Validate the exact AWSM operation subset against
+it and a managed S3 service without provider-specific notifications or lifecycle semantics.
+SeaweedFS remains an advanced candidate; RustFS needs maturity review. MinIO and Garage remain
+excluded from the default stack while their strong-copyleft or licensing terms conflict with
+commercial relicensing flexibility absent a new explicit decision.
+
+## Production Replica Host hardening
 
 **Status:** Candidate
 
-Add a test-only Download Host that replaces only the native save-file interaction which packaged
-headless browsers cannot reliably automate. Use it to complete the successful Export branch of
-stale-Replica discard and prove that the emitted encrypted Vault Package imports into a fresh
-local-only Vault. The test Host must exercise the production Runtime encryption, package creation,
-validation, and recovery sequencing without granting the shipped extension broader permissions or
-bypassing the real Host in release builds.
+Add production quotas, abuse controls, shared opaque storage and Job infrastructure, multi-host
+deployment, backup and restore exercises, alerting, incident response, and independent security
+review. Define signup and rate controls, Host-local reaping and grace, traffic-analysis disclosure,
+recovery objectives, corruption and omission evidence, and safe Account deletion without claiming
+knowledge of other Replicas.
 
----
+Hosted Redis, highly available coordination, S3 storage, billing, and browser-store delivery remain
+separate initiatives.
 
-## Static Archived Page Viewer
+## Alternative Account authentication and reset
 
 **Status:** Discovery
 
-Define a sandboxed viewer for the canonical AWSM page snapshot so a user can view an archived page
-inside AWSM instead of relying only on screenshots, extracted content, or a downloaded derivative.
-Resolve script isolation, network prohibition, form behavior, missing-resource presentation,
-frame composition, accessibility, and navigation before promotion. This initiative does not imply
-that MHTML becomes authoritative or that captured scripts execute.
+Consider passkeys, WebAuthn, OAuth, SSO, and privacy-preserving password reset without introducing
+email identity. Account reset remains Host-local and cannot recover a Vault, obtain a Recovery
+Phrase, or silently enroll a Client Credential.
 
----
-
-## Recorded Web Application Capture and Replay
+## Hosted plans, billing, and preview waitlist
 
 **Status:** Discovery
 
-Evaluate an optional high-fidelity Capture mode that records response traffic under stronger,
-explicit browser permissions and can replay an interactive application offline in a controlled
-environment. Resolve permission ceremonies, authenticated and non-GET traffic, credential
-exclusion, service workers, storage APIs, script isolation, determinism, bounded storage, and the
-zero-knowledge boundary. Also evaluate archive-first and time-relative link resolution without
-changing ordinary links in the initial static snapshot contract.
+Define plans, quota presentation, billing provider boundaries, subscriptions, abuse responsibility,
+support, legal copy, self-hosted differentiation, and whether a waitlist justifies collecting any
+visitor data. Until implemented, public pages show no pricing teaser or contact collection.
 
----
+Choose the Host-local resource-responsibility entity for quota, billing, storage defaults, and
+reaping. Compare Account, per-Replica, and transferable tenant models without deriving responsibility
+from Vault membership or Administrator role. Cover management Grants, transfer, final-manager loss,
+Account deletion, suspension, and grace before freezing the Host schema.
 
-## Coordinated Browser Store Release
-
-**Status:** Candidate
-
-Prepare compatible AWSM versions for a public Firefox AMO listing and Chrome Web Store, but
-announce the first public browser-store release only after both listings are live. Complete macOS
-and Windows Firefox proof, store privacy and permission disclosures, listing assets, review
-handling, signed update delivery, release monitoring, and rollback procedures. Preserve the
-unlisted Linux Firefox beta and verified GitHub artifacts until this initiative is approved and
-implemented.
-
----
-
-## Incognito Capture Contract
-
-**Status:** Discovery
-
-Define whether and how the Chrome Host may capture a page from an Incognito tab. The decision must
-not treat Incognito as an ordinary window: users need an explicit contract for whether a Capture is
-permanently encrypted into a regular Vault or retained in an isolated Incognito Workspace whose
-content may disappear when the Incognito session ends.
-
-Evaluate Chrome's spanning and split Incognito modes, including packaged Library routing, separate
-background and offscreen contexts, IndexedDB and origin-private Artifact storage, Vault key access,
-Account state, and lifecycle boundaries. A permanent regular-Vault design must detect the Incognito
-source, obtain clear confirmation before persistence, and open Vault surfaces in a normal Chrome
-window. An isolated design must define whether transfer, Export, or promotion into a permanent Vault
-is possible without silently weakening Incognito expectations. Until one design is approved and
-implemented, the extension should enforce its unsupported status rather than relying only on
-documentation.
-
-Required evidence includes packaged-Chrome journeys for page snapshots, MHTML download, full-page
-screenshot, extracted text, structured content, cancellation, failure, locking, worker termination,
-and Incognito-window closure. Tests must prove the chosen persistence boundary, prevent
-cross-profile Vault-context confusion, and verify that plaintext or temporary Capture data does not
-enter unintended storage or diagnostics.
-
----
-
-## Zero-Knowledge Web Host
+## Authentic product-screenshot marketing
 
 **Status:** Candidate
 
-**Potential product surface:** a configurable production web origin, currently referred to as
-`awsm.foo`.
+Use reproducible fixture-backed screenshots only after relevant interfaces are stable. Capture real
+primary and narrow states, exclude user data and secrets, define refresh triggers, and prevent
+images from promising unavailable features.
 
-Implement a trusted web Host for Library browsing, organization, local Search, Export, Import,
-Vault management, and Account management. It must reuse the canonical Runtime, Account, Vault,
-cryptographic, and synchronization contracts rather than create a parallel client or key model.
-Capture remains extension-only for the first web-Host scope.
-
-Before promotion, resolve supported browsers, storage-clear recovery, selective Import semantics,
-local persistence boundaries, lifecycle behavior, accessibility, and the web-Host threat model.
-Required evidence includes multi-client fault injection, bounded-memory transfers beyond 4 GiB,
-authenticated omission-versus-corruption tests, and proof that no plaintext or content-derived
-metadata crosses the Coordination Server boundary.
-
----
-
-## Retrieval-Grounded Archive Answers with Gemma 4
-
-**Status:** Discovery
-
-Evaluate an optional trusted-client AI experience that answers questions about an unlocked Vault
-from a bounded set of locally retrieved passages and links every material claim back to the
-matching Capture. Use an exact Apache-2.0-licensed Gemma 4 model and a pinned, permissively licensed
-local inference stack only after measuring download size, memory, latency, battery use, supported
-hardware, quantization quality, cancellation, and browser lifecycle behavior. The model must
-receive only the minimum retrieved plaintext needed for the requested answer; it must never scan
-the Vault independently, communicate with the Coordination Server, or become authoritative.
-
-Before promotion, define the user initiation and model-download ceremony, deterministic retrieval
-boundary, prompt and model provenance, citation validation, unsupported-device behavior, and
-whether a user may preserve an answer as a separately encrypted Derived Artifact. Search must
-remain useful without generation, model failure must not alter authoritative data, and this
-initiative must consume semantic Search results rather than use Gemma 4 as an embedding provider.
-
----
-
-## Chrome Built-In Prompt API Host
-
-**Status:** Discovery
-
-Evaluate Chrome's built-in Prompt API and browser-managed Gemini Nano as an optional Host adapter
-for the same retrieval-grounded answer capability. Keep the Runtime request, retrieved context,
-citations, validation, and failure semantics provider-neutral; capability detection, user-activated
-model download, session creation, top-level extension-document execution, and Chrome lifecycle
-behavior belong behind the Chrome Host boundary.
-
-Prove behavior when the API, required hardware, language, model download, or model session is
-unavailable, and never silently fall back to remote plaintext processing. Firefox and unsupported
-Chrome installations must retain complete Search and Library behavior without this adapter.
-Evaluate browser-managed model updates, non-deterministic output, prompt-injection resistance,
-structured-output validation, cancellation, memory clearing on lock or Vault change, accessibility,
-and store privacy disclosures before promotion.
-
----
-
-## Automatic Replica Retention and Pinning
+## Public repository repointing
 
 **Status:** Candidate
 
-Add persistent device-local Full and Selective retention profiles beyond the implemented manual
-storage-relief workflow. Define automatic age, quota, least-recently-used, and storage-pressure
-policies; per-Artifact or per-Capture controls; cache budgets; offline guarantees; and explicit
-pinning such as `Always keep on this device`.
-
-The policy must remain local to each Replica, preserve the server's zero-knowledge boundary, and
-never delete a final unverified copy. Resolve retention defaults, final-copy safeguards, background
-prefetch, eviction observability, and interactions with Export, Import, synchronization, Vault
-Vacuum, server switching, and stale-Replica recovery before promotion.
-
----
-
-## Alternative Account Authentication and Reset
-
-**Status:** Discovery
-
-Define optional Account identity methods such as passkeys, WebAuthn, OAuth, or SSO, plus whether a
-privacy-preserving server-side password-reset ceremony is possible without introducing email
-identity. Account reset must remain separate from Recovery Phrase-based Vault recovery: no
-administrator, identity provider, or Coordination Server reset may gain access to plaintext Vault
-keys or silently enroll a Device.
-
----
-
-## S3-Backed Opaque Byte Storage
-
-**Status:** Candidate
-
-Replace the Coordination Server's Rails-local `DiskStore` with one provider-independent S3 Driver.
-Bundle Apache-2.0-licensed VersityGW as the ordinary single-host self-hosted Compose service, backed
-by a private persistent volume. Hosted production should use managed S3-compatible object storage
-instead of VersityGW. Rails, synchronization semantics, and tests must depend only on the shared
-S3 contract so changing deployments does not create different storage behavior or a compatibility
-path.
-
-The implementation plan must preserve bounded streaming, resumable and idempotent upload parts,
-complete-object length and SHA-256 verification before `DurableUncommitted`, immutable publication,
-full and ranged downloads, scoped authorization, verified deletion, and the existing zero-knowledge
-boundary. PostgreSQL remains authoritative for upload state, publication, Generation membership,
-Delivery Cursors, and Purge Job checkpoints; the S3 service stores only opaque encrypted bytes and
-must not become a semantic database. Define private bucket provisioning, least-privilege
-credentials, health/readiness behavior, incomplete-part cleanup, key layout, conditional-operation
-requirements, backup and restore coordination, corruption and omission handling, and fault
-evidence across process and service restarts.
-
-The bundled VersityGW topology is deliberately single-host and non-HA: its durability depends on
-the host volume and coordinated PostgreSQL/object-volume backups. Multi-host self-hosting requires
-an explicitly selected shared S3-compatible backend. Validate the exact AWSM operation subset
-against both VersityGW and managed S3, without relying on provider-specific notifications,
-versioning, lifecycle rules, metadata semantics, or direct filesystem access. SeaweedFS remains a
-possible advanced distributed self-hosted backend; RustFS requires a separate maturity evaluation.
-MinIO and Garage are excluded from the default stack because their strong-copyleft or current
-licensing terms conflict with the project's commercial-licensing flexibility absent a new explicit
-owner decision.
-
----
-
-## Production Coordination Server Hardening
-
-**Status:** Candidate
-
-Promote the pre-release Coordination Server boundary with production quotas, abuse controls,
-billing, shared immutable-byte storage and Job infrastructure, multi-host deployment, operational
-backup and restore exercises, alerting, incident response, and independent security review. Hosted
-Redis rollout, highly available ephemeral coordination, and the S3-backed opaque-byte boundary
-remain the separate initiatives above.
-
-The work must preserve opaque encrypted storage and bounded transfers. Before promotion, define
-quota accounting, rate and signup controls, final-copy deletion policy, metadata and traffic
-analysis, provider-independent shared storage requirements, recovery objectives, and production
-evidence for failure, corruption, omission, and restore scenarios.
-
----
-
-## Hosted Plans, Billing, and Preview Waitlist
-
-**Status:** Discovery
-
-Define hosted service plans, quota presentation, billing provider boundaries, subscription
-lifecycle, abuse controls, and whether a waitlist is useful before collecting any visitor data.
-Resolve legal copy, consent, retention, support expectations, self-hosted differentiation, and
-failure behavior without weakening local-only use or granting billing systems access to Vault
-content. Until approved and implemented, the public website must not display pricing, plan teasers,
-or collect visitor contact details.
-
----
-
-## Authentic Product Screenshot Marketing
-
-**Status:** Candidate
-
-Replace public abstract product diagrams with, or supplement them using, deterministic screenshots
-only after the redesigned extension UI and fixture states are stable. Capture real rendered
-fixture-backed states at supported primary and narrow viewports, define a reproducible refresh
-workflow, exclude user data and secrets, and prevent screenshots from promising unavailable
-features. Website screenshot updates must remain coupled to material product-surface changes.
-
----
-
-## Public Repository Repointing
-
-**Status:** Candidate
-
-After hackathon judging is complete and the active fork is fast-forwarded back into the canonical
-repository, repoint public website, installation, Release, documentation, license, and source links
-from `mashuproject/awsm_bak` to `parasquid/awsm`. Verify every destination and downloadable artifact
-before changing the links; do not introduce redirects or dual-link compatibility into the product
-surface.
+After the repository freeze is explicitly lifted and the active fork is reconciled into the
+canonical upstream, repoint website, installation, release, documentation, license, and source
+links from `mashuproject/awsm_bak` to `parasquid/awsm`. Verify every target and artifact first; do
+not add dual-link compatibility.

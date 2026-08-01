@@ -8,263 +8,203 @@
 
 **Depends On:**
 
-- crypto.md
-- object-encryption.md
-- vault/vault.md
+- `docs/specifications/core/serialization.md`
+- `docs/specifications/crypto/crypto.md`
 
 ---
 
 # 1. Purpose
 
-This specification defines how Archive Platform derives cryptographic keys from Vault-level secrets.
+This specification defines the exact Recovery Credential and per-item key derivations. It does not
+derive one Key Epoch from another and does not define a portable Vault Root Key.
 
-Key derivation provides domain separation, algorithm agility, and deterministic reconstruction of subordinate keys on trusted devices.
+# 2. HKDF conventions
 
----
+All HKDF operations use SHA-256. `HKDF-Extract(salt, IKM)` produces the 32-byte pseudorandom key
+from RFC 5869. `HKDF-Expand(PRK, info, L)` uses the exact `info` bytes and output length.
 
-# 2. Design Goals
+An implementation MUST pass exact byte strings and MUST NOT substitute text encoding, hexadecimal,
+base64, platform objects, or an omitted salt where this specification supplies one.
 
-Key derivation MUST provide:
+# 3. Recovery Phrase decoding
 
-- domain separation
-- deterministic output for identical inputs
-- algorithm versioning
-- Vault isolation
-- support for key rotation
-- zero-knowledge server operation
+The canonical Recovery Phrase is the BIP39 English encoding of exactly 128 bits of fresh entropy
+and its 4-bit checksum, yielding exactly 12 words.
 
----
+A client MUST:
 
-# 3. Primitive
+1. normalize user input as Unicode NFKD for BIP39 word matching;
+2. require exactly 12 words from the canonical English word list;
+3. reconstruct the exact 16-byte entropy and verify the checksum;
+4. reject user-selected, malformed, ambiguous, or checksum-invalid input; and
+5. use the recovered entropy directly rather than the BIP39 PBKDF2 seed construction.
 
-The initial key derivation primitive SHALL be:
+AWSM does not support the optional BIP39 passphrase.
 
-```text
-HKDF-SHA256
-```
+A Client MUST generate independent fresh entropy for every member and Vault and warn against
+deliberate Recovery Phrase reuse. Reuse is not made into a remote oracle or a second accepted
+derivation; it would reproduce the same public key material before authenticated Vault binding.
 
-Future derivation algorithms MAY be introduced with new algorithm identifiers.
+# 4. Recovery root extraction
 
----
-
-# 4. Key Hierarchy
-
-Conceptually:
-
-```text
-Master Secret
-
-↓
-
-Vault Root Key
-
-├── Bundle Descriptor Key Domain
-├── Event Key Domain
-├── Artifact Key Domain
-├── Metadata Key Domain
-└── Wrapping Key Domain
-```
-
-The Vault Root Key is the root secret for one Vault only.
-
----
-
-# 5. Inputs
-
-Every derivation SHALL include:
-
-- parent key material
-- algorithm identifier
-- domain label
-- Vault ID
-- key version
-- context identifier where applicable
-
-Context identifiers MAY include Bundle ID, Event ID, Artifact ID, Device ID, or Object Identifier depending on the derived key's purpose.
-
----
-
-# 6. Domain Labels
-
-Initial domain labels include:
+Define:
 
 ```text
-vault:bundle-descriptor:v1
-vault:event:v1
-vault:artifact:v1
-vault:metadata:v1
-vault:projection:v1
-vault:device-wrap:v1
-vault:object:v1
+recoverySalt = SHA-256(ascii("awsm:recovery-root:v1"))
+recoveryPrk = HKDF-Extract(recoverySalt, entropy[16])
 ```
 
-Domain labels MUST NOT be reused for different semantics.
-
----
-
-# 7. Bundle Descriptor Keys
-
-Bundle Descriptor keys protect compact serialized Bundle Descriptors.
-
-The derivation context SHALL include:
-
-- Vault ID
-- Bundle ID
-- Bundle Descriptor key version
-
-The initial implementation SHALL derive Bundle Descriptor keys with HKDF-SHA256. It SHALL NOT
-generate or persist a separate random wrapped key.
-
----
-
-# 8. Event Keys
-
-Event keys protect Event payloads.
-
-The derivation context SHALL include:
-
-- Vault ID
-- Event domain or Event type
-- Event key version
-
-Event headers required for ordering and routing MAY remain outside the encrypted payload.
-
-The initial implementation SHALL derive one Event key per Event ID.
-
----
-
-# 9. Artifact Keys
-
-Artifact keys protect independently framed Artifact payloads.
-
-The derivation context SHALL include:
-
-- Vault ID
-- Artifact Object ID
-- Artifact key version
-
----
-
-# 10. Metadata Keys
-
-Metadata keys protect synchronized user-visible metadata.
-
-The derivation context SHALL include:
-
-- Vault ID
-- metadata domain
-- metadata key version
-
-Operational metadata required for coordination is not protected by this key unless explicitly specified.
-
----
-
-# 11. Projection Keys
-
-Projection keys protect local derived state such as encrypted Search Projection Materializations and projection snapshots.
-
-The derivation context SHALL include:
-
-- Vault ID
-- projection type
-- projection key version
-
-Projection keys protect rebuildable local state and SHALL NOT become authoritative Vault history.
-
-The initial implementation SHALL derive one Projection-row key using the projection type and referenced Bundle ID as context.
-
----
-
-# 12. Device Wrapping Keys
-
-Device wrapping keys protect Vault Root Keys or subordinate key material for trusted devices.
-
-The derivation or wrapping context SHALL include:
-
-- Vault ID
-- Device ID
-- wrapping key version
-
-The Coordination Server stores wrapped keys only.
-
-## 12.1 Recovery Phrase Derivation
-
-The Recovery Phrase is the BIP39 encoding of 16 random bytes. After canonical phrase validation, the
-trusted client decodes the same entropy and derives two independent 32-byte values with
-HKDF-SHA256, using the raw Vault UUID bytes as salt:
+Then derive:
 
 ```text
-awsm:recovery-kit-wrapping:v1
-awsm:recovery-administrator-ed25519-seed:v1
+recoverySigningSeed = HKDF-Expand(
+  recoveryPrk,
+  Transcript("awsm:recovery-signing-key:v1", []),
+  32
+)
+
+recoveryWrappingInput = HKDF-Expand(
+  recoveryPrk,
+  Transcript("awsm:recovery-wrapping-key:v1", []),
+  32
+)
 ```
 
-The first value encrypts and authenticates the Recovery Kit with XChaCha20-Poly1305. The second is
-the deterministic seed for the recovery administrator Ed25519 key. The encrypted Recovery Kit
-contains every readable key-epoch root key and its ordinal. Its associated data binds the Vault ID,
-Recovery Generation ID, active Key Epoch ID, algorithms, nonce, and ciphertext length.
+`recoverySigningSeed` is the 32-byte Ed25519 private seed. `recoveryWrappingInput` is interpreted as
+an X25519 private scalar and clamped by the standard X25519 operation. The corresponding public keys
+use the canonical 32-byte raw encodings.
 
-The phrase, entropy, derived wrapping key, administrator seed, and unwrapped epoch keys MUST remain
-inside trusted client memory and MUST be wiped after initial attach, Device enrollment, Future
-Protection, or failure. The Coordination Server receives only the encrypted Recovery Kit, public
-administrator key, signed Device certificates, and signed Device key envelopes.
+Vault ID, member ID, Account, Host, and Recovery revision are deliberately absent. Authenticated
+Authority State binds the resulting public keys to those contexts after private discovery.
 
-## 12.2 Device Key Envelopes
+# 5. Recovery public fingerprint
 
-Each Device owns independent Ed25519 signing and X25519 wrapping key pairs. The active recovery
-administrator signs the Device certificate and one XChaCha20-Poly1305 envelope for every key epoch
-the Device may read. Envelope derivation and associated data bind the Vault, Recovery Generation,
-Device certificate, Key Epoch, wrapping public key, algorithms, and nonce.
+A trusted client MAY calculate:
 
----
+```text
+SHA-256(Transcript(
+  "awsm:recovery-public-fingerprint:v1",
+  [recoveryWrappingPublicKey]
+))
+```
 
-# 13. Rotation
+only for local candidate matching. It MUST NOT send the fingerprint to a Replica Host, persist it
+in Host Policy State, use it as a remote lookup key, or expose it as a phrase oracle.
 
-Key rotation increments the relevant key version.
+# 6. Key Epoch item PRK
 
-Only the canonical current pre-release derivation format is implemented. Any post-release retention or format-evolution policy requires an explicit user decision.
+For one Vault and Key Epoch:
 
-Rotation of one domain SHOULD NOT require immediate re-encryption of unrelated domains.
+```text
+epochSalt = SHA-256(Transcript(
+  "awsm:key-epoch-extract:v1",
+  [vaultId, keyEpochId]
+))
 
----
+epochPrk = HKDF-Extract(epochSalt, keyEpochKey)
+```
 
-# 14. Algorithm Agility
+Before derivation, the client MUST recompute and verify `keyEpochId` from the Key Epoch Key and
+Vault ID.
 
-Derived keys SHALL record enough metadata to identify:
+# 7. Compact item key
 
-- derivation algorithm
-- domain label
-- key version
-- parent key version
+For a compact epoch-encrypted item:
 
-Unsupported derivation algorithms MUST cause decryption or derivation to fail safely.
+```text
+compactKey = HKDF-Expand(
+  epochPrk,
+  Transcript(
+    "awsm:compact-item-key:v1",
+    [
+      vaultId,
+      keyEpochId,
+      uint8(storageClass),
+      protectionParameters[64]
+    ]
+  ),
+  32
+)
+```
 
----
+`storageClass` MUST be `1`. Bytes 0 through 23 of `protectionParameters` are the XChaCha20 nonce;
+the remaining 40 bytes are fresh authenticated random padding. Reusing the same complete
+protection field under the same Epoch is prohibited.
 
-# 15. Server Constraints
+# 8. Artifact wrapper key
 
-The Coordination Server MUST NOT:
+For a streamable Artifact wrapper:
 
-- derive keys
-- receive parent key material
-- receive unwrapped Vault Root Keys
-- influence derivation output
+```text
+wrapperKey = HKDF-Expand(
+  epochPrk,
+  Transcript(
+    "awsm:artifact-wrapper-key:v1",
+    [
+      vaultId,
+      keyEpochId,
+      artifactId,
+      uint8(2),
+      protectionParameters[64]
+    ]
+  ),
+  32
+)
+```
 
-All derivation occurs inside trusted clients.
+Bytes 0 through 23 are the random base nonce. The Artifact ID is known from the compact Artifact
+Object before wrapper construction and binds the key to one logical payload contract.
 
----
+# 9. Frame nonces
 
-# 16. Invariants
+For frame index `i` in the unsigned 32-bit range:
 
-- Derived keys are domain-separated.
-- Key derivation is deterministic for identical inputs.
-- Key versions are explicit.
-- Vault Root Keys never cross the trust boundary unwrapped.
-- The server cannot derive or unwrap Vault contents.
+```text
+frameNonce = baseNonce[0..15] || uint64be(i)
+```
 
----
+The first 16 bytes supply a random per-wrapper prefix; the index supplies guaranteed uniqueness
+under one wrapper key. All 24 base-nonce bytes remain inputs to wrapper-key derivation, so changing
+any base-nonce byte changes the key.
+
+No wrapper may contain more than `2^32` frames. A resumed writer MUST retain the exact base nonce,
+wrapper key context, frame index, and already committed frame bytes; it MUST NOT restart frame
+numbering under the same key.
+
+# 10. No other portable derivations
+
+Bundle, Event, Artifact, metadata, Projection, member, or credential keys are not independently
+derived from a root. Compact authoritative items use the applicable Epoch-derived item key.
+Materializations MAY use local keys derived or generated inside the Installation Wrapping Key
+boundary, but those derivations are non-portable and MUST NOT affect Vault identity.
+
+# 11. Test vectors
+
+The implementation convergence MUST add immutable golden vectors covering:
+
+- BIP39 entropy-to-words and words-to-entropy;
+- checksum rejection and NFKD handling;
+- Recovery Ed25519 and X25519 public keys;
+- Key Epoch ID;
+- epoch PRK, compact key, wrapper key, and frame nonces;
+- wrong Vault, Epoch, Artifact, class, or protection-parameter divergence; and
+- maximum frame index and resume behavior.
+
+Vectors MUST publish only intentionally non-secret fixture material.
+
+# 12. Invariants
+
+- Recovery derivation works before Vault discovery.
+- Recovery signing and wrapping keys are independently domain-separated.
+- One Key Epoch cannot derive another.
+- Key Epoch Keys are never direct AEAD keys.
+- Per-item randomness contributes to key separation.
+- Frame nonces are unique under one wrapper key.
+- Search and Projection keys have no portable semantic role.
 
 # References
 
-- crypto.md
-- object-encryption.md
-- `docs/architecture/18-cryptography.md`
+- RFC 5869
+- RFC 7748
+- RFC 8032
+- BIP39

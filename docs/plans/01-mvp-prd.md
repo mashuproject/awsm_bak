@@ -1,682 +1,298 @@
-# Product Requirements Document
+# AWSM Product Requirements
 
 **Document:** `docs/plans/01-mvp-prd.md`
 
-**Status:** Draft
+**Status:** Living product contract
 
 **Owner:** Product
 
-**Last Updated:** 2026-06-27
+**Last Updated:** 2026-08-01
+
+# 1. Product summary
+
+AWSM is a privacy-first, local-first knowledge-preservation platform. It captures faithful web
+observations into immutable encrypted Bundles, keeps ordinary use available locally, supports
+private search and optional AI assistance, and synchronizes through optional opaque Replicas
+without making one service the Vault's owner.
+
+The browser extension is the current public Client. The canonical product architecture also
+supports future desktop, mobile, headless, API-driven, peer, and hosted deployments through the
+same Vault contracts.
+
+# 2. Evidence and scope
+
+This PRD describes the canonical product direction. `README.md` documents behavior represented by
+the current checkout and release artifacts; executable code and tests remain the evidence for what
+works now. Architecture and specification documents define the target contract but are not proof
+that the current extension, Rails service, staging, or production implements it.
+
+The current pre-release has no compatibility obligation. Implementation convergence replaces
+superseded experimental formats, schemas, data, API shapes, fixtures, and terminology with one
+canonical design. Historical numbered plans remain evidence of earlier work, not living authority.
+
+# 3. User problem
+
+People need to preserve information even when pages change, URLs fail, providers close, or cloud
+accounts become unavailable. Existing tools commonly preserve only links, reduce a page to partial
+text, expose private content to centralized services, or make export and offline use secondary.
+
+AWSM must preserve source evidence while making it useful to browse, organize, search, and
+interpret without surrendering plaintext or continued access to a provider.
+
+# 4. Product goals
+
+1. **Faithful preservation:** retain an inert browser-independent observation and independent typed
+   Artifacts.
+2. **Local-first use:** permit Capture, Library, keyword Search, organization, and permitted work
+   without a Remote.
+3. **Opaque synchronization:** let Replicas converge through authenticated Channels whose Hosts do
+   not need semantic Vault metadata or keys.
+4. **Member-controlled recovery:** give every member an independent Recovery Phrase and equal
+   cryptographic access class.
+5. **Honest history:** preserve signed causality and conflicts; make Vacuum, Closure, Fork, Export,
+   and destructive consequences explicit.
+6. **Portability:** support Complete Export, Backup, Restore, and provider-independent storage.
+7. **Replaceable intelligence:** keep search and generated indexes rebuildable; make remote
+   plaintext processing separately explicit.
+
+# 5. Non-goals
+
+- cloud-first document editing or a plaintext web Vault;
+- email identity, email recovery, marketing mail, or contact collection;
+- server-side content indexing, search, rendering, or AI by default;
+- a central peer inventory, last-copy detector, or durability guarantee;
+- hidden last-writer-wins conflict resolution;
+- real-time collaborative text editing in the base Note format; and
+- backward compatibility for discarded pre-release experiments.
+
+# 6. Current public-preview scope
+
+Repository documentation and tests currently represent a browser extension that provides local
+Vault creation, web Capture, Library views, multiple local Vaults, Collection grouping, delete and
+restore, Vacuum, encrypted local keyword Search, optional semantic Search, Complete Export and
+Import, and optional Account-based encrypted synchronization through the experimental Rails
+coordination service. Chrome and a Mozilla-signed Firefox desktop-Linux beta are packaged.
+
+The existing server and synchronization implementation still use earlier Device, Recovery Kit,
+one-Account/one-Vault, Generation-aware Host, and semantic protocol concepts. Those are current
+implementation details to be removed during convergence, not target requirements retained here.
+
+# 7. Canonical actors and boundaries
+
+- A **Vault** is a location-independent logical identity and authenticated state.
+- A **Replica** is one stored materialization of a Vault.
+- A **Client Installation** is trusted software that operates plaintext and keys.
+- A **Client Credential** signs Vault Events for one Vault Member.
+- A **Vault Administrator** governs portable shared state without receiving a different decryption
+  class.
+- A **Replica Host** exposes one or more Replicas under Host-local policy.
+- An **Account** is an optional username-based Host Channel Principal. It has no email and no
+  intrinsic Vault relationship.
+- A **Complete Export** or **Backup** is static and does not synchronize.
+
+# 8. Functional requirements
+
+## 8.1 Capture and preservation
+
+The trusted Client shall:
+
+- capture supported HTTP and HTTPS pages through a bounded adapter;
+- require one canonical inert AWSM page snapshot;
+- preserve optional full screenshot, thumbnail, structured content, and extracted text when each
+  succeeds;
+- exclude credentials, file-input bodies, executable replay, and inaccessible protected content;
+- stream large acquisition and encryption with bounded memory;
+- construct one immutable Bundle Descriptor and independently encrypted Artifact Objects;
+- admit a Bundle only after complete mandatory graph verification; and
+- record intrinsic source URL, final URL, Capture timestamp, profile, adapter, warnings, and typed
+  provenance.
+
+Ordinary network partition or organization conflict shall not block Capture. If a security fence
+prevents valid Event authoring, the result may remain explicit Prepared Data for later recovery,
+Fork, Export, or valid commit.
 
----
+## 8.2 Library and organization
 
-# 1. Executive Summary
+The Library shall derive:
 
-Archive Platform is a privacy-first, local-first knowledge preservation platform that enables users to permanently archive digital information while retaining complete ownership of their data.
+- Collections grouping Captures of one subject;
+- automatic Collection routing by exact normalized fragmentless URL with query significance;
+- automatic title and representative state from the causally selected Collection Tail;
+- optional explicit Collection titles;
+- a Folder tree containing Collections and a derived Unfiled view;
+- Tags assigned many-to-many to Collections or Captures; and
+- Notes targeting exactly one Collection or Capture.
 
-Unlike traditional bookmark managers or note-taking applications, Archive Platform captures complete snapshots of digital content, preserves them as immutable records, enriches them locally using artificial intelligence, and synchronizes encrypted objects across trusted devices.
+Names and titles are non-unique. Identity comes from stable IDs. Merges are explicit and
+reversible. Concurrent incompatible Collection, Folder, Tag, or Note work creates a scoped Conflict
+without blocking unrelated Capture or silently losing a version.
 
-The platform is built around a zero-knowledge architecture. User content is encrypted before leaving trusted devices, ensuring that the service provider cannot read, analyze, or monetize archived information.
+## 8.3 Search and processing
 
-The first release focuses on web page archival through browser extensions. The long-term vision expands to become a general-purpose personal knowledge archive supporting many digital content types.
+Keyword Search shall remain private, local, deterministic, and useful offline. Optional semantic
+Search may use an explicitly downloaded integrity-pinned local model. A remote provider requires
+separate disclosure and exact origin permission for bounded passages and queries.
 
----
+Every Search index binds exact Vault Generation, corpus revision, tokenizer, model, vector,
+quantization, and ranking identity. A better implementation rebuilds a new Materialization and
+discards the old. Search indexes never synchronize, enter Baselines, or survive Vacuum merely as
+legacy data.
 
-# 2. Problem Statement
+OCR, summaries, embeddings, and other processor results remain local Materializations unless the
+user explicitly preserves them through a Required Vault Feature.
 
-The modern web is transient.
+## 8.4 Vault history
 
-Users regularly encounter situations where:
+Authoritative history shall use one canonical signed hash-linked Vault Record DAG with Content,
+Authority, and Lifecycle Event families. Parent ancestry determines causality. Timestamps remain
+signed audit and provenance values but never determine authority, invitation expiry, or conflict
+winners.
 
-- articles disappear
-- documentation changes
-- discussions are edited or deleted
-- web applications evolve
-- URLs become invalid
-- images are removed
-- embedded media becomes unavailable
+Clients shall accept compatible multi-head work deterministically and surface semantic conflicts.
+A new Event names the author's complete accepted causal Frontier and Authority Parent Frontier.
+The latter is a signed subgraph of the same Record set, not a second log. Unknown Required Features
+stop semantic processing at the last understood Frontier while preserving exact bytes safely.
 
-Traditional bookmarking systems preserve only links.
+## 8.5 Membership, credentials, and recovery
 
-Traditional note-taking systems often preserve extracted text but not the original source.
+A Vault shall be multi-member-capable from creation. Its creator is the first member and first
+Administrator. Every active member may read, Capture, organize, enroll or retire own Client
+Credentials, replace own Recovery Phrase, Export, and Fork.
 
-Existing archival solutions either:
+Any one current Administrator may authorize Invitation creation, remove members, change
+Administrator roles, end another member's Client Credential, authorize Future Protection Key
+Epochs, resolve defined governance operations, Vacuum, and close the Vault. Cancelling an
+Invitation requires its separately retained or delegated Cancellation Capability. The interface
+discloses each authority before the user relies on it.
 
-- fail to preserve dynamic web content,
-- expose user data to centralized services,
-- require server-side processing,
-- or provide limited search and organization capabilities.
+Each member receives a 12-word Recovery Phrase. Recovery with a sufficiently complete Replica can
+discover that member's authority privately, verify the Continuity Proof after Vacuum, and enroll a
+fresh Client Credential without another online Client. Invitation redemption is one-use,
+cancellable rather than time-expiring, and requires a live transfer path between two Replicas.
 
-Users need a system that faithfully preserves information while respecting privacy.
+Revocation prevents valid future participation but cannot erase already held plaintext, keys,
+exports, Replicas, or Forks. A resigned or removed member retains readable historical state they
+possess and may Fork it, but cannot author later Vault state without a new Invitation and identity.
+After self-resignation, continued receipt and decryption of obtainable old-Epoch updates is
+best-effort only until an Administrator changes the Key Epoch or Host access ends; it never restores
+Active Membership or creates a delivery promise.
 
----
+## 8.6 Replicas and synchronization
 
-# 3. Product Vision
+A Vault may have zero or more local, peer, headless, or Hosted Replicas and zero or more locally
+configured Remotes. No Remote is an origin or privileged truth.
 
-Archive Platform enables users to build a permanent digital knowledge library.
+Synchronization shall be receiver-initiated pull. Clients retrieve opaque inventory into
+Quarantine, authenticate and decrypt locally, validate complete current causal and dependency
+closure plus the Continuity Proof, and then promote. Wake Hints may trigger a pull but carry no
+truth. Valid concurrent Events converge by DAG reduction rather than Host receipt order.
 
-Every archived Bundle becomes:
+An On-demand Replica may omit heavy wrappers and retrieve them from any authorized Remote. Storage
+Relief is always available after an unconditional non-blocking warning that no other usable copy
+may exist. The Client tracks only its own availability and cannot claim global redundancy.
 
-- permanently preserved
-- searchable
-- available offline
-- synchronized securely
-- AI-enhanced
-- exportable
-- user-owned
+## 8.7 Account and dashboard
 
-The platform should become the trusted repository for everything a user wishes to preserve.
+The reference Host Account shall use a private username and password, with no email field or email
+workflow. The signed-in dashboard may manage:
 
----
+- username and password actions supported by that Host;
+- active Account sessions and Channel Authenticators;
+- Hosted Replica access, quotas, and exact Grants;
+- safe storage and synchronization status visible to that Host; and
+- Account deletion and Host-local lifecycle consequences.
 
-# 4. Goals
+The dashboard must not duplicate local Vault content, present Account access as Vault membership,
+list portable Client Credentials as browser devices, or imply that the Host can recover plaintext.
+A client-only installation need not implement Accounts or this dashboard.
 
-## Primary Goals
+## 8.8 Vacuum, Closure, Fork, and historical view
 
-### G1 — Faithful Preservation
+Vacuum shall make complete current state at one exact Frontier the authenticated Baseline of a new
+Generation. One Administrator chooses after the Client discloses known conflict, divergence,
+unavailable dependencies, omissions, and irreversible consequences. Garbage Collection remains a
+separate local operation.
 
-Capture content with sufficient fidelity that it can be viewed years later even if the original source disappears.
+Vacuum may discard predecessor Content history but shall retain the compact Genesis-to-current
+Authority and Lifecycle Continuity Proof needed for independent Administrator and Recovery
+verification. A decrypted successor Baseline is not self-authenticating.
 
----
+A Replica may adopt, Fork Before Adoption, Complete Export, recover eligible work, decline, or
+postpone. No choice forces deletion on another Replica. Closure accepts no later Events but leaves
+retained state readable, exportable, and Forkable.
 
-### G2 — Privacy
+Historical View derives an old Frontier without moving the writable pointer. Fork from any fully
+available authenticated Frontier creates a new Vault with fresh identity, authority, keys, Objects,
+Initial Baseline, and Genesis while retaining selected logical state rather than source history.
 
-The service provider must not be capable of reading archived content.
+## 8.9 Portability
 
----
+Complete Export shall include the selected Generation's complete Record and Object closure, every
+required wrapper, and protected Key Epoch access. It is passphrase-protected, static, and fully
+verified before success. Import is all-or-nothing and follows explicit Vault-ID collision rules.
 
-### G3 — Offline Operation
+Backup shall preserve independently verified Snapshots outside synchronization. Restore never
+silently rewinds or overwrites a known Vault. Selective cross-Vault import is deferred.
 
-Users should continue using the product without network connectivity.
+# 9. Non-functional requirements
 
----
+## Privacy and security
 
-### G4 — AI Enhancement
-
-Artificial intelligence should improve archived information without compromising privacy.
-
----
-
-### G5 — Long-Term Durability
-
-Archives should remain accessible regardless of future implementation changes.
-
----
-
-# 5. Non-Goals
-
-The platform is not intended to replace:
-
-- collaborative documentation platforms
-- real-time editors
-- project management software
-- cloud office suites
-- enterprise content management systems
-
-The focus remains knowledge preservation.
-
----
-
-# 6. Target Users
-
-## Primary
-
-Researchers
-
-Software developers
-
-Students
-
-Journalists
-
-Writers
-
-Lawyers
-
-Consultants
-
-Knowledge workers
-
-Anyone maintaining long-term reference material.
-
----
-
-## Secondary
-
-Teams requiring encrypted knowledge archives.
-
-Organizations preserving internal documentation.
-
-Academic institutions.
-
-Digital historians.
-
----
-
-# 7. Personas
-
-## Researcher
-
-Needs permanent references.
-
-Requires citations.
-
-Frequently revisits archived material.
-
-Values search accuracy.
-
----
-
-## Developer
-
-Archives documentation.
-
-Stores blog posts.
-
-Captures GitHub issues.
-
-Archives Stack Overflow discussions.
-
-Uses AI summaries.
-
----
-
-## Student
-
-Archives learning material.
-
-Organizes subjects.
-
-Searches by concept.
-
-Uses AI-generated summaries.
-
----
-
-# 8. User Stories
-
-## Capture
-
-As a user,
-
-I want to archive a web page,
-
-so that I can access it in the future even if it disappears.
-
----
-
-As a user,
-
-I want the archived page to look like the original.
-
----
-
-As a user,
-
-I want dynamic content preserved whenever possible.
-
----
-
-## Search
-
-As a user,
-
-I want to search my archive instantly,
-
-without requiring an Internet connection.
-
----
-
-## AI
-
-As a user,
-
-I want summaries generated locally,
-
-without exposing private information.
-
----
-
-As a user,
-
-I want AI-generated tags and keywords.
-
----
-
-## Organization
-
-As a user,
-
-I want folders and tags.
-
----
-
-As a user,
-
-I want notes attached to archived content.
-
----
-
-## Synchronization
-
-As a user,
-
-I want multiple devices synchronized securely.
-
----
-
-## Privacy
-
-As a user,
-
-I want confidence that the service provider cannot read my archives.
-
----
-
-# 9. Functional Requirements
-
-## Capture
-
-The system shall:
-
-- capture complete web pages
-- capture page metadata
-- attempt full-page screenshots and report a warning when the Host cannot produce one
-- preserve a bounded thumbnail plus normalized text and structured semantic content when available
-- preserve dynamic DOM state
-- preserve page title
-- preserve URL
-- preserve timestamps
-- preserve favicons
-- preserve Open Graph metadata
-
-The first `WebPageSnapshot-v1` Capture Profile requires a valid canonical AWSM page snapshot.
-
-Every successful payload is an independently encrypted Artifact Object referenced by one compact
-Bundle Descriptor. Mandatory snapshot failure rejects Capture; optional Artifact failure remains
-visible through a typed warning.
-
-Browser Hosts produce the same self-contained snapshot representation. The Linux Firefox Host
-implements local Capture, portability, and optional synchronization parity. Its unlisted
-Mozilla-signed desktop-Linux beta is distributed through the joint browser-extension GitHub
-Release under Plan 19.
-
----
-
-## Local Storage
-
-The client shall maintain a local encrypted Vault replica.
-
-Large Artifact reads and writes shall stream with bounded memory. A Bundle is authoritative only
-after its descriptor and exact Artifact dependency closure commit atomically.
-
-The local archive shall support:
-
-- offline browsing
-- offline search
-- offline AI
-- offline annotations
-
----
-
-## Search
-
-The client shall provide:
-
-- deterministic title, URL, Host, Collection-title, and preserved-text keyword Search;
-- exact title, canonical URL, and balanced quoted-phrase tiers;
-- optional semantic Search through an explicitly configured local or remote embedding provider;
-- Host, captured-date, and Collection filters;
-- a Capture result with its best matching passage; and
-- offline keyword Search, plus offline semantic Search after the local model is cached.
-
-Search shall not require Coordination Server participation. Remote semantic Search is an advanced
-opt-in mode that may disclose bounded plaintext passages and submitted queries only to the exact
-user-configured endpoint after disclosure consent and Host permission.
-
----
-
-## AI
-
-The client shall support:
-
-- summarization
-
-- automatic tagging
-
-- keyword extraction
-
-- entity extraction
-
-- embeddings
-
-Future AI capabilities should integrate through a provider abstraction.
-
----
-
-## Synchronization
-
-The platform shall synchronize immutable Bundles, Vault Events, wrapped keys, and coordination metadata between trusted devices.
-
-Implementation status: the Chrome extension and untrusted Coordination Server implement private
-username/password Account authentication, client-only Account-key enrollment, one Complete
-synchronized Vault, background convergence, synchronized Vacuum, manual heavy-Artifact storage
-relief with on-demand retrieval, and export-first stale-Replica discard.
-The Linux Firefox Host provides the same optional synchronization after native data-collection and
-server-origin consent. Its signed unlisted desktop-Linux beta is distributed through the joint
-browser-extension GitHub Release. Public browser-store listings, Selective Replicas, and production
-deployment hardening remain future.
-
-Synchronization shall:
-
-- resume automatically
-
-- support interrupted uploads
-
-- converge by replaying ordered Events
-
-- synchronize incrementally
-
-- minimize bandwidth
-
----
-
-## Security
-
-The platform shall:
-
-encrypt before upload
-
-never transmit plaintext
-
-verify object integrity
-
-support device revocation
-
-support encrypted backups
-
----
-
-# 10. Non-Functional Requirements
-
-## Performance
-
-Archive creation:
-
-Target:
-
-<10 seconds for average pages.
-
-Search:
-
-<100 milliseconds for local queries.
-
-Archive opening:
-
-<500 milliseconds for cached captures.
-
-Synchronization:
-
-Background operation without blocking the UI.
-
----
-
-## Scalability
-
-The architecture should support:
-
-millions of users
-
-billions of archived objects
-
-petabyte-scale encrypted storage
-
-without architectural redesign.
-
----
+- Plaintext, private keys, Recovery Phrases, search data, and semantic identifiers do not reach an
+  opaque Host.
+- Cryptographic construction uses the exact canonical algorithms and transcripts in the specs.
+- Public and authenticated web surfaces have separate cache policy.
+- Remote AI is an explicit privacy exception.
+- Logs and diagnostics exclude secrets and protected content.
 
 ## Reliability
 
-Synchronization failures must never corrupt local archives.
-
-Uploads must be resumable.
-
-Stored Objects must be verifiable using integrity metadata.
-
----
-
-## Portability
-
-The client shall export the exact active Vault Generation as a passphrase-protected streaming ZIP64
-Vault Package. Complete packages include every Artifact; Selective packages authenticate each
-permitted heavyweight omission. Export shall remain distinct from Backup and shall not create a
-local passphrase credential.
-
-The client shall import a validated Complete Vault Package into a new local Vault. Import preserves
-the package Vault ID, Generation, head, Events, Objects, and encrypted Artifact wrappers; creates
-fresh device-local credentials and rebuildable Projections; and commits the imported Vault locked.
-It rejects an existing Vault identity and valid Selective packages. Import is distinct from Restore,
-does not merge or replace a Vault, and never uses the Export passphrase as a local unlock credential.
-
-The platform should support:
-
-Chrome
-
-Firefox
-
-Edge
-
-Brave
-
-Safari (future)
-
-Desktop operating systems.
-
----
-
-# 11. MVP Scope
-
-## Implementation Sequence
-
-The first executable slice is defined by `docs/plans/02-chrome-extension-capture-vertical-slice.md`.
-
-It includes Vault onboarding/unlock, a mandatory browser-independent page snapshot, best-effort
-full-page WebP, deterministic encrypted Bundle persistence, `BundleRegistered`, an offline
-library, and derived MHTML download. The remaining items below describe the broader public-release
-target and do not expand that first slice.
-
-The first public release includes:
-
-Browser Extension
-
-- Capture current page
-- Full-page screenshot
-- Derived MHTML download
-- Metadata extraction
-- Local encrypted storage
-- Local search
-- Manual tags
-- Manual folders
-- Notes
-- Synchronization
-- Multi-device support
-
-Backend
-
-- Authentication
-- Multi-tenancy
-- Object storage
-- Synchronization
-- Device registry
-- Billing foundation
-
-Excluded:
-
-- Sharing
-- OCR
-- Scheduled captures
-- Mobile applications
-- Public archives
-- Semantic search
-- Browser history import
-
----
-
-# 12. Success Metrics
-
-Technical
-
-- Successful capture rate >99%
-
-- Synchronization success >99.9%
-
-- Search latency <100 ms
-
-- Zero known plaintext leaks
-
-User
-
-- Daily active users
-
-- Monthly retained users
-
-- Average archive count
-
-- Search usage frequency
-
-- AI usage frequency
-
-Business
-
-- Storage growth
-
-- Paid conversion
-
-- Device count per account
-
----
-
-# 13. Risks
-
-## Browser API changes
-
-Mitigation:
-
-Introduce a browser abstraction layer.
-
----
-
-## Storage growth
-
-Mitigation:
-
-Content-addressed object storage.
-
-Compression.
-
-Incremental synchronization.
-
----
-
-## AI evolution
-
-Mitigation:
-
-Provider abstraction.
-
-Regenerable artifacts.
-
-Versioned AI outputs.
-
----
-
-## Cryptographic mistakes
-
-Mitigation:
-
-Keep cryptography simple.
-
-Use established libraries.
-
-Never invent new algorithms.
-
-Subject cryptographic design to external review before production.
-
----
-
-# 14. Open Questions
-
-How should encrypted sharing be implemented?
-
-Workspaces expose one device-local active Vault plus an accessible Vault picker in Capture and Library surfaces. Selection is global on the device, persists until changed, locks the previous Vault, and sets the destination for subsequent Captures. Vault names are encrypted Event-derived state with a rebuildable local encrypted cache for locked display.
-
-How should large media files be archived?
-
-Should browser tabs automatically synchronize?
-
-Should archive comparison become a first-class feature?
-
-How should long-term key recovery operate?
-
-These questions are intentionally deferred to later design and specification documents.
-
----
-
-# 15. Acceptance Criteria
-
-The MVP is considered complete when a user can:
-
-1. Install the browser extension.
-
-2. Create an account.
-
-3. Archive any supported web page.
-
-4. Browse archives offline.
-
-5. Search archives offline.
-
-6. Add notes.
-
-7. Add tags.
-
-8. Synchronize between two devices.
-
-9. Restore a second device from the encrypted cloud backup.
-
-10. Confirm that the backend never possesses plaintext archive contents.
-
----
-
-# Appendix A — Product Principles
-
-Every feature should improve at least one of the following:
-
-- Preservation
-- Privacy
-- Performance
-- Portability
-- Simplicity
-
-Features that compromise these principles require strong justification.
-
----
-
-# Appendix B — Future Vision
-
-The architecture should ultimately support a universal encrypted knowledge archive containing:
-
-- Web pages
-- PDFs
-- Books
-- Emails
-- Images
-- Videos
-- Audio
-- Source code
-- Personal notes
-- Research papers
-- Office documents
-- AI-generated knowledge artifacts
-
-without requiring changes to the platform's core architecture.
+- Interrupted multi-store operations expose one complete old or new state.
+- Immutable admission and workflow identities make ambiguous retries safe.
+- Synchronization failure never corrupts accepted local state.
+- Garbage Collection fails closed around unknown reachability or safety state.
+
+## Performance
+
+- Capture, transfer, export, import, and large Artifact handling use bounded streaming.
+- Keyword Search targets sub-100-millisecond local queries on the defined 10,000-Capture corpus.
+- Background Jobs yield to user interaction and survive declared restart boundaries.
+
+## Accessibility and surfaces
+
+Browser and web interfaces support keyboard use, clear focus, semantic controls, narrow viewports,
+honest progress, and non-color-only state. Conflict and destructive workflows explain consequences
+before confirmation.
+
+# 10. Acceptance gate for architecture convergence
+
+The canonical implementation is ready only when:
+
+1. superseded Device, Root Key, Recovery Kit, semantic Host, one-Vault Account, and old Generation
+   schemas are removed rather than migrated;
+2. canonical codec and crypto golden vectors pass across supported Clients;
+3. DAG reducers converge under randomized order and N-way conflict tests;
+4. per-member Recovery, Invitation, removal, resignation, and Key Epoch ceremonies pass real
+   multi-Client fault scenarios;
+5. opaque Hosts cannot observe portable semantic metadata and public OpenAPI matches code;
+6. local, peer or headless, and hosted Replica pull paths pass convergence and withholding tests;
+7. Vacuum, Adoption, Fork, Closure, Export, Restore, and Garbage Collection pass crash and
+   divergence tests;
+8. the Account dashboard remains Host-local, username-only, private, and non-duplicative; and
+9. README and public pages claim only behavior demonstrated by current code and real surface proof.
+
+# 11. Deferred product candidates
+
+The Roadmap owns timing and promotion for direct transport adapters, richer shared generated
+content, metadata-obscuring techniques, abuse-review tooling, selective cross-Fork transfer,
+automatic storage profiles, alternative Account authentication, billing, production Host
+hardening, and additional Clients. Foundations above must support them without speculative base
+fields.
+
+# References
+
+- `VISION.md`
+- `ROADMAP.md`
+- `docs/architecture/00-design-principles.md`
+- `docs/architecture/glossary.md`
+- `docs/architecture/consistency-review.md`

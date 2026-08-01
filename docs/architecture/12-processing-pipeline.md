@@ -1,403 +1,60 @@
-# Processing Pipeline
+# Processing Pipeline Architecture
 
-**Document:** `architecture/12-processing-pipeline.md`
-
-**Status:** Draft
-
-**Owner:** Engineering
+**Status:** Draft target architecture
 
 **Depends On:**
 
-- architecture/05-client-runtime.md
-- architecture/09-event-model.md
-- architecture/10-projection-engine.md
-- architecture/11-search.md
-
----
+- `docs/architecture/10-projection-engine.md`
+- `docs/specifications/runtime/jobs.md`
 
 # Purpose
 
-This document defines the asynchronous processing architecture used by Archive Platform.
+Processing derives local results from authenticated Vault content through bounded, durable Jobs.
+OCR, embeddings, summaries, previews, classification, and future processors share this execution
+shape without automatically becoming Vault authority.
 
-The processing pipeline submits background Jobs through the Runtime Job Framework to derive new information from immutable Bundles.
+# Flow
 
-Processing never modifies existing Bundles.
-
-Instead, processors produce immutable Derived Artifacts and emit Runtime Events that Projection Builders consume.
-
----
-
-# Design Goals
-
-The processing pipeline must provide:
-
-- asynchronous execution
-- resumable processing
-- deterministic outputs where practical
-- provider independence
-- offline operation
-- extensibility
-- zero-knowledge processing
-
----
-
-# Philosophy
-
-Bundles preserve history.
-
-Artifacts derive knowledge.
-
-Events record change.
-
-Processing transforms Bundles into Artifacts.
-
----
-
-# Processing Pipeline
-
-```
-BundleRegistered Runtime Event
-
-↓
-
-Runtime Job Scheduler
-
-↓
-
-Runtime Job Store
-
-↓
-
-Processor
-
-↓
-
-Derived Artifact
-
-↓
-
-ArtifactCreated Runtime Event
-
-↓
-
-Projection Engine
+```text
+authenticated source Object
+  -> capability and policy check
+  -> bounded plaintext processor
+  -> Prepared Data
+  -> local Materialization
+     or explicit typed Vault-content preservation
 ```
 
----
+Jobs bind exact source identity, processor key and revision, model or tool integrity, parameters,
+and output codec. Retry consumes the same immutable input. Superseded results remain independently
+verifiable until ordinary local cleanup.
 
-# Processing Stages
+# Authority boundary
 
-Every job follows the same lifecycle.
+A processor may write disposable Materializations directly through its owning Job transaction. It
+cannot append a portable Event or Derived Artifact on its own. Shared preservation requires an
+explicit Command, active Client Credential, Content Event, Required Feature, exact provenance, and
+Baseline/reachability rules.
 
-```
-Queued
+# Local and remote providers
 
-↓
+Local providers retain plaintext inside the Client. Remote providers are explicit privacy
+exceptions with exact origin permission, disclosure, credential protection, bounded inputs, and no
+silent fallback. Provider output is untrusted until validated against the requested codec and
+limits.
 
-Running
+# Scheduling
 
-↓
+Processing can pause for selected Vault, keys, battery, resource budget, model availability,
+permission, or network. Scheduling is installation policy and requires no central Host. A headless
+Client may expose processor Commands through its own API credentials.
 
-Completed
+# Evolution
 
-↓
-
-Artifact Created
-
-↓
-
-Event Recorded
-```
-
-Failed jobs remain retryable.
-
----
-
-# Runtime Job Scheduler
-
-Responsibilities:
-
-- discover new work
-- schedule processing
-- enforce dependencies
-- prioritize jobs
-- avoid duplicate execution
-
-The scheduler is deterministic.
-
----
-
-# Runtime Job Store
-
-The Runtime Job Store contains pending work.
-
-Each job records:
-
-- Job ID
-- Job Type
-- Priority
-- Dependencies
-- Status
-- Retry Count
-- Created Time
-- Started Time
-- Finished Time
-
-Jobs are local to the client.
-
-They are never synchronized.
-
----
-
-# Processors
-
-Processors execute jobs.
-
-Examples:
-
-AI Summary
-
-OCR
-
-Language Detection
-
-Entity Extraction
-
-Keyword Extraction
-
-Embedding Generation
-
-Thumbnail Generation
-
-Duplicate Detection
-
-Virus Scan (future)
-
-Broken Link Validation (future)
-
-Each processor is independent.
-
----
-
-# Artifact Model
-
-Processors never modify Bundles.
-
-Instead they create immutable Artifacts.
-
-Example:
-
-```
-Bundle
-
-↓
-
-OCR Processor
-
-↓
-
-OCR Artifact
-```
-
-or
-
-```
-Bundle
-
-↓
-
-Summary Processor
-
-↓
-
-Summary Artifact
-```
-
-Artifacts reference their source Bundle.
-
----
-
-# Artifact Metadata
-
-Every Artifact records:
-
-- Artifact ID
-- Source Bundle ID
-- Processor
-- Processor Version
-- Model (if applicable)
-- Schema Version
-- Creation Time
-- Checksum
-
-Artifacts are immutable.
-
----
-
-# AI Providers
-
-The architecture supports multiple AI providers.
-
-Examples:
-
-- Local LLM
-- Cloud LLM
-- Future plugin providers
-
-Providers implement a common processor interface.
-
-The scheduler remains provider-agnostic.
-
----
-
-# Processor Isolation
-
-Processors do not communicate directly.
-
-Instead:
-
-```
-ArtifactCreatedEvent
-
-↓
-
-Scheduler
-
-↓
-
-Dependent Jobs
-```
-
-Dependencies are expressed through Events.
-
----
-
-# Incremental Processing
-
-Only newly created Bundles require processing.
-
-Existing Artifacts remain valid unless explicitly regenerated.
-
----
-
-# Regeneration
-
-Regeneration creates new Artifacts.
-
-Older Artifacts remain available until explicitly superseded by policy.
-
-Example:
-
-```
-Summary v1
-
-↓
-
-Summary
-```
-
-Both remain immutable.
-
-The active version is determined by Projections.
-
----
-
-# Failure Handling
-
-Processor failure never blocks synchronization.
-
-Failed jobs:
-
-- remain local
-- may be retried
-- never corrupt authoritative data
-
----
-
-# Resource Management
-
-The scheduler should support:
-
-- background execution
-- CPU limits
-- memory limits
-- battery awareness
-- idle-time execution
-
-The host application provides platform-specific scheduling hints.
-
----
-
-# Privacy
-
-All processing occurs within the trusted runtime.
-
-Plaintext never leaves the client unless the user explicitly enables a cloud provider.
-
-Cloud AI providers must be treated as an explicit opt-in capability.
-
----
-
-# Event Integration
-
-Processors append Events.
-
-Examples:
-
-ArtifactCreatedEvent
-
-ArtifactSupersededEvent
-
-ArtifactDeletedEvent
-
-These Events synchronize between devices.
-
-The processing job itself does not.
-
----
-
-# Design Decisions
-
-## Why Artifacts?
-
-Derived information should remain separate from preserved historical content.
-
----
-
-## Why Jobs?
-
-Jobs allow long-running and retryable processing without affecting user interaction.
-
----
-
-## Why Local Scheduling?
-
-Scheduling depends on device capabilities and should not require server coordination.
-
----
-
-## Why Provider Independence?
-
-The runtime should support multiple implementations without changing higher-level architecture.
-
----
-
-# Future Extensions
-
-The processing framework may later support:
-
-- plugin-defined processors
-- chained workflows
-- user-defined automations
-- distributed processing
-- hardware acceleration
-- GPU scheduling
-
-These additions should require no changes to the Event Model.
-
----
+New local-only processors add Managed Resource, Job, and Materialization namespaces. A new shared
+authoritative output adds a Required Vault Feature; unknown clients do not guess its semantics.
 
 # References
 
-- `docs/architecture/13-capture-pipeline.md`
-- `docs/architecture/17-extension-framework.md`
+- `docs/specifications/runtime/ai.md`
+- `docs/specifications/runtime/search.md`
+- `docs/specifications/runtime/storage.md`
