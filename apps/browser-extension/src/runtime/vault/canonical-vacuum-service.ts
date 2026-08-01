@@ -16,7 +16,7 @@ import {
   prepareWrappedLocalStateItem,
 } from "./canonical-local-state";
 import type { CanonicalVaultService } from "./canonical-service";
-import { prepareInitialAuthorityVacuum } from "./canonical-vacuum-content-checkpoint";
+import { prepareVacuum } from "./canonical-vacuum-content-checkpoint";
 import {
   type CanonicalVacuumOutcome,
   decodeCanonicalVacuumOutcome,
@@ -47,7 +47,7 @@ export class CanonicalVacuumService {
       if (raced !== undefined) return this.assertVault(raced, input.vaultId);
       const replay = await this.replay.replay(input.vaultId);
       const { vault } = replay;
-      const prepared = await prepareInitialAuthorityVacuum({
+      const prepared = await prepareVacuum({
         replay,
         successorGenerationId: randomIdentifier("Generation"),
         assertedAt: input.assertedAt,

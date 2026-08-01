@@ -1033,15 +1033,22 @@ async function canonicalClientRuntimeScenario(): Promise<unknown> {
       primary: { blob: snapshot.blob },
     });
     const postVacuumLibrary = await runtime.listLibrary(first.vaultId);
+    const secondVacuum = await runtime.vacuumVault({
+      expectedVaultId: first.vaultId,
+      commandId: "facade-vacuum-second-generation",
+      assertedAt: 34,
+    });
+    const postSecondVacuumLibrary = await runtime.listLibrary(first.vaultId);
+    const postSecondVacuumNotes = await runtime.listNotes(first.vaultId);
     const closure = await runtime.closeVault({
       expectedVaultId: first.vaultId,
       commandId: "facade-close",
-      assertedAt: 34,
+      assertedAt: 35,
     });
     const repeatedClosure = await runtime.closeVault({
       expectedVaultId: first.vaultId,
       commandId: "facade-close",
-      assertedAt: 34,
+      assertedAt: 35,
     });
     let closedWriteRejected: string | undefined;
     try {
@@ -1154,6 +1161,11 @@ async function canonicalClientRuntimeScenario(): Promise<unknown> {
           postVacuumSearchCaches.length === 0 && postVacuumLibraryCaches.length === 0,
         postVacuumCaptureCount: postVacuumLibrary.length,
         postVacuumNoteBody: postVacuumNotes[0]?.versions[0]?.body,
+        secondVacuumAdvancedGeneration:
+          secondVacuum.predecessorGenerationId === vacuum.successorGenerationId &&
+          secondVacuum.successorGenerationId !== secondVacuum.predecessorGenerationId,
+        postSecondVacuumCaptureCount: postSecondVacuumLibrary.length,
+        postSecondVacuumNoteBody: postSecondVacuumNotes[0]?.versions[0]?.body,
         closureIdempotent: closure.eventRecordId === repeatedClosure.eventRecordId,
         closedWriteRejected,
         restartedClosedSearchNote:

@@ -26,6 +26,10 @@ function sameSet(left: readonly Uint8Array[], right: readonly Uint8Array[]): boo
   return right.every((value) => expected.has(key(value)));
 }
 
+function containsAll(values: readonly Uint8Array[], required: readonly Uint8Array[]): boolean {
+  return required.every((candidate) => values.some((value) => bytesEqual(value, candidate)));
+}
+
 export interface ReplayedCanonicalVault {
   readonly vault: PersistedOpenedCanonicalVault;
   readonly graph: CausalGraph;
@@ -128,7 +132,7 @@ export class CanonicalReplayService {
         if (
           closures.length !== 0 ||
           !sameSet(vault.replicaState.authorityFrontier, [adoption.vacuumEventRecordId]) ||
-          !sameSet(vault.replicaState.continuityRecordIds, [
+          !containsAll(vault.replicaState.continuityRecordIds, [
             vault.genesis.recordId,
             adoption.vacuumEventRecordId,
           ])
@@ -142,7 +146,7 @@ export class CanonicalReplayService {
           closures.length !== 1 ||
           !sameSet(vault.replicaState.causalFrontier, [closure.recordId]) ||
           !sameSet(vault.replicaState.authorityFrontier, [closure.recordId]) ||
-          !sameSet(vault.replicaState.continuityRecordIds, [
+          !containsAll(vault.replicaState.continuityRecordIds, [
             vault.genesis.recordId,
             adoption.vacuumEventRecordId,
             closure.recordId,

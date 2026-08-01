@@ -23,9 +23,9 @@ import {
   buildVacuumContentCheckpoint,
   type CanonicalVacuumContentState,
   decodeVacuumContentCheckpoint,
-  deriveInitialAuthorityVacuumContentState,
-  prepareInitialAuthorityVacuum,
-  prepareInitialAuthorityVacuumSuccessorBaseline,
+  deriveVacuumContentState,
+  prepareVacuum,
+  prepareVacuumSuccessorBaseline,
 } from "../../src/runtime/vault/canonical-vacuum-content-checkpoint";
 import { CanonicalVacuumService } from "../../src/runtime/vault/canonical-vacuum-service";
 
@@ -356,7 +356,7 @@ describe("canonical Vacuum Content checkpoint", () => {
     const registration = replay.events[1];
     if (registration === undefined) throw new TypeError("Registration Event is unavailable");
 
-    const state = deriveInitialAuthorityVacuumContentState(replay);
+    const state = deriveVacuumContentState(replay);
 
     expect(state.captures).toEqual([
       expect.objectContaining({
@@ -380,7 +380,7 @@ describe("canonical Vacuum Content checkpoint", () => {
     const { replay, descriptorObjectId } = await registrationReplay();
     const successorGenerationId = filled("Generation", 30);
 
-    const prepared = await prepareInitialAuthorityVacuumSuccessorBaseline({
+    const prepared = await prepareVacuumSuccessorBaseline({
       replay,
       successorGenerationId,
       createCause: (sourceCauseId) => {
@@ -439,7 +439,7 @@ describe("canonical Vacuum Content checkpoint", () => {
   it("authors the terminal predecessor Vacuum Event over the exact prepared successor", async () => {
     const { replay } = await registrationReplay();
     const successorGenerationId = filled("Generation", 40);
-    const prepared = await prepareInitialAuthorityVacuum({
+    const prepared = await prepareVacuum({
       replay,
       successorGenerationId,
       assertedAt: 3,
@@ -592,7 +592,7 @@ describe("canonical Vacuum Content checkpoint", () => {
       events,
     };
 
-    const state = deriveInitialAuthorityVacuumContentState(advanced);
+    const state = deriveVacuumContentState(advanced);
     const built = buildVacuumContentCheckpoint(state, {
       createCause: (sourceCauseId) => identifier("BaselineCause", sourceCauseId),
     });
@@ -643,7 +643,7 @@ describe("canonical Vacuum Content checkpoint", () => {
 
   it("replays an adopted successor Baseline as the empty Event Frontier", async () => {
     const { replay } = await registrationReplay();
-    const prepared = await prepareInitialAuthorityVacuum({
+    const prepared = await prepareVacuum({
       replay,
       successorGenerationId: filled("Generation", 60),
       assertedAt: 3,
@@ -677,7 +677,7 @@ describe("canonical Vacuum Content checkpoint", () => {
 
   it("authenticates an adopted successor through Genesis and its Vacuum Event", async () => {
     const { replay } = await registrationReplay();
-    const prepared = await prepareInitialAuthorityVacuum({
+    const prepared = await prepareVacuum({
       replay,
       successorGenerationId: filled("Generation", 70),
       assertedAt: 3,
@@ -688,12 +688,86 @@ describe("canonical Vacuum Content checkpoint", () => {
         baseline: prepared.successor.baseline,
         initialBaseline: replay.vault.baseline,
         genesis: replay.vault.genesis,
-        vacuumEvent: prepared.event,
+        vacuumEvents: [prepared.event],
         replicaState: prepared.adoptedReplicaState,
         clientSecret: replay.vault.clientSecret,
         epochSecret: replay.vault.epochSecret,
       }),
     ).resolves.toBeUndefined();
+  });
+
+  it("authenticates repeated Vacuum boundaries as one Generation chain", async () => {
+    const { replay } = await registrationReplay();
+    const first = await prepareVacuum({
+      replay,
+      successorGenerationId: filled("Generation", 70),
+      assertedAt: 3,
+    });
+    const firstVault: PersistedOpenedCanonicalVault = {
+      ...replay.vault,
+      directory: {
+        ...replay.vault.directory,
+        generationId: first.successor.baseline.generationId,
+      },
+      replicaState: first.adoptedReplicaState,
+      baseline: first.successor.baseline,
+    };
+    const firstReplay = await new CanonicalReplayService({
+      openVault: vi.fn(async () => firstVault),
+      openResolvedCompactItem: vi.fn(),
+    } as never).replayOpened(firstVault);
+    const second = await prepareVacuum({
+      replay: firstReplay,
+      successorGenerationId: filled("Generation", 71),
+      assertedAt: 4,
+    });
+
+    await expect(
+      validateCurrentVaultAuthority({
+        baseline: second.successor.baseline,
+        initialBaseline: replay.vault.baseline,
+        genesis: replay.vault.genesis,
+        vacuumEvents: [second.event, first.event],
+        replicaState: second.adoptedReplicaState,
+        clientSecret: replay.vault.clientSecret,
+        epochSecret: replay.vault.epochSecret,
+      }),
+    ).resolves.toBeUndefined();
+    await expect(
+      validateCurrentVaultAuthority({
+        baseline: second.successor.baseline,
+        initialBaseline: replay.vault.baseline,
+        genesis: replay.vault.genesis,
+        vacuumEvents: [second.event],
+        replicaState: second.adoptedReplicaState,
+        clientSecret: replay.vault.clientSecret,
+        epochSecret: replay.vault.epochSecret,
+      }),
+    ).rejects.toThrow("Vacuum Continuity Proof is not one deterministic Generation chain");
+    await expect(
+      validateCurrentVaultAuthority({
+        baseline: second.successor.baseline,
+        initialBaseline: replay.vault.baseline,
+        genesis: replay.vault.genesis,
+        vacuumEvents: [first.event, second.event],
+        replicaState: {
+          ...second.adoptedReplicaState,
+          continuityRecordIds: [
+            ...second.adoptedReplicaState.continuityRecordIds,
+            filled("VaultRecord", 72),
+          ],
+        },
+        clientSecret: replay.vault.clientSecret,
+        epochSecret: replay.vault.epochSecret,
+      }),
+    ).rejects.toThrow("Vacuum Continuity Proof Record set does not match");
+    expect(second.continuityRecordIds).toEqual(
+      expect.arrayContaining([
+        replay.vault.genesis.recordId,
+        first.event.recordId,
+        second.event.recordId,
+      ]),
+    );
   });
 
   it("adopts Vacuum atomically without deleting predecessor authoritative data", async () => {

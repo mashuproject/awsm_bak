@@ -59,6 +59,13 @@ subgraph. Ordinary Content parents named by those Events may remain unresolved. 
 portable proof that the Vacuum signer was authorized and that a fresh Recovery client is not
 trusting a Host-provided self-asserted Baseline.
 
+Vacuum is repeatable. When the predecessor is itself a successor Generation, its Baseline
+checkpoint supplies the initial facts for replay and its fresh Baseline Causes participate in the
+current causal graph. The new Vacuum remaps every retained current Cause again, including prior
+Baseline Causes, and retains every earlier Vacuum boundary in the Continuity Proof. Verification
+orders boundaries by their signed predecessor and successor Generation IDs; timestamps and storage
+order never choose the chain.
+
 Search indexes and all other Materializations are absent. Adoption invalidates predecessor-scoped
 Materializations and rebuilds them from successor state.
 
@@ -152,6 +159,13 @@ the idempotent local Command outcome. The same transaction invalidates predecess
 Library and Search Materializations. It does not delete predecessor Records, Objects, or Artifact
 representations.
 
+Only the latest adopted Vacuum Event appears in the marker. The permanent Continuity Proof retains
+Genesis and every Vacuum boundary from the initial Generation through that Event. Opening a Replica
+MUST authenticate the complete deterministic chain from the Events' signed Generation and Baseline
+commitments; a latest-boundary-only proof is insufficient. Only the active Generation's Baseline
+bytes are required. Earlier successor Baseline IDs remain authenticated commitments, not permanent
+state dependencies, so later Garbage Collection may reclaim those superseded Content checkpoints.
+
 A Replica with no incompatible predecessor work may switch Generations. A Replica with divergent
 or unpublished work MUST NOT silently discard or union it. The user may Fork Before Adoption,
 Complete Export, recover eligible Captures through Event Re-authoring, decline, or postpone.
@@ -180,6 +194,8 @@ Genesis to the current Vacuum Event.
   Cause ID, consistently reused within that Baseline.
 - The complete Continuity Proof remains portable and independently verifiable after Content history
   is reclaimed.
+- Repeated Vacuum produces one authenticated Generation chain; no boundary is selected by time or
+  by local storage order.
 - The Vacuum Event is terminal in the predecessor; the Baseline roots the successor.
 - No unsupported or unavailable authoritative state is guessed or dropped.
 - No unsynchronized work is silently discarded or resurrected.

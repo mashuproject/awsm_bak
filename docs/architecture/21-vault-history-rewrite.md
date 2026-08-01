@@ -33,6 +33,15 @@ cross-Generation authority anchor. The compact Continuity Proof retains Genesis 
 and Lifecycle subgraph needed to prove that transition. It does not retain unrelated causal Content
 parents merely because their IDs remain signed into those Event bytes.
 
+The same transition may repeat. Each successor Baseline becomes the replay root of its Generation;
+a later Vacuum checkpoints that Baseline plus its descendant Events, remaps retained Causes again,
+and appends another signed boundary to the permanent Continuity Proof. The local Adoption marker
+names only the latest boundary, while opening authenticates the complete Genesis-to-current chain,
+using each Vacuum Event's signed Generation transition and successor Baseline commitment. Only the
+active current Baseline remains a required state dependency; superseded intermediate Baseline bytes
+may be reclaimed. Signed Generation linkage—not timestamps or local Record order—determines the
+chain.
+
 # Inclusion rule
 
 The Baseline retains every fact needed to identify, authenticate, interpret, reference, or

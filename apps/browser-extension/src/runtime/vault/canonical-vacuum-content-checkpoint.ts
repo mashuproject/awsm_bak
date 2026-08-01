@@ -38,7 +38,10 @@ import {
   reduceCanonicalFolders,
 } from "../library/canonical-folder-projection";
 import { reduceCanonicalNotes } from "../library/canonical-note-projection";
-import { reduceCollectionRedirects } from "../library/canonical-projection";
+import {
+  reduceCollectionRedirects,
+  selectCanonicalCollectionTail,
+} from "../library/canonical-projection";
 import { reduceCanonicalTags } from "../library/canonical-tag-projection";
 import type { ReplayedCanonicalVault } from "../projection/canonical-replay";
 import type { CanonicalReplicaState } from "./canonical-local-state";
@@ -205,7 +208,7 @@ export interface BuiltVacuumContentCheckpoint {
   readonly omissions: readonly CanonicalVacuumOmission[];
 }
 
-export interface PreparedInitialAuthorityVacuumSuccessorBaseline {
+export interface PreparedCanonicalVacuumSuccessorBaseline {
   readonly contentState: CanonicalVacuumContentState;
   readonly content: BuiltVacuumContentCheckpoint;
   readonly baseline: VaultBaseline;
@@ -216,8 +219,8 @@ export interface PreparedInitialAuthorityVacuumSuccessorBaseline {
   readonly omissionCheckpoint: ReadonlyMap<number, CanonicalValue>;
 }
 
-export interface PreparedInitialAuthorityVacuum {
-  readonly successor: PreparedInitialAuthorityVacuumSuccessorBaseline;
+export interface PreparedCanonicalVacuum {
+  readonly successor: PreparedCanonicalVacuumSuccessorBaseline;
   readonly event: AuthenticatedVaultEvent;
   readonly eventEnvelope: OpaqueEnvelope;
   readonly continuityRecordIds: readonly Identifier<"VaultRecord">[];
@@ -261,91 +264,105 @@ function target(kind: 1 | 2, id: Identifier<"Collection"> | Identifier<"Bundle">
   return indexedMap(kind, id);
 }
 
-function baselineInitialContent(replay: ReplayedCanonicalVault): {
-  readonly vaultLabel: CanonicalVacuumContentState["vaultLabel"];
-  readonly credentialLabels: CanonicalVacuumContentState["credentialLabels"];
+function baselineContentState(replay: ReplayedCanonicalVault): {
+  readonly kind: 1 | 2;
+  readonly state: CanonicalVacuumContentState;
 } {
   const body = exactMap(replay.vault.baseline.body, [0, 1, 2, 3, 4, 5], "Vault Baseline body");
-  exactCode(mapValue(body, 1), 1, "Initial Vacuum source Baseline kind");
-  const content = exactMap(mapValue(body, 2), [...Array(10).keys()], "Content checkpoint");
-  for (const [field, name] of [
-    [3, "Captures"],
-    [4, "Collections"],
-    [5, "Folders"],
-    [6, "Tags"],
-    [7, "Tag assignments"],
-    [8, "Notes"],
-    [9, "Content Conflicts"],
-  ] as const) {
-    if (arrayValue(mapValue(content, field), `Initial Baseline ${name}`).length !== 0) {
-      throw new TypeError("This Vacuum slice requires an Initial Baseline without Content state");
-    }
-  }
-  const label = exactMap(mapValue(content, 1), [0, 1], "Checkpointed Vault label");
   return {
-    vaultLabel: {
-      value: nullable(mapValue(label, 0), (value) =>
-        textValue(value, "Checkpointed Vault label", { maxUtf8Bytes: 1_024 }),
-      ),
-      headCauseIds: idSetValue(mapValue(label, 1), "VaultRecord", "Vault label Cause IDs"),
-    },
-    credentialLabels: arrayValue(mapValue(content, 2), "Checkpointed Credential labels").map(
-      (entry, index) => {
-        const labelEntry = exactMap(entry, [0, 1, 2], `Credential label ${index}`);
-        return {
-          clientCredentialId: identifierValue(mapValue(labelEntry, 0), "ClientCredential"),
-          value: nullable(mapValue(labelEntry, 1), (value) =>
-            textValue(value, "Credential label", { maxUtf8Bytes: 1_024 }),
-          ),
-          headCauseIds: idSetValue(
-            mapValue(labelEntry, 2),
-            "VaultRecord",
-            "Credential label Cause IDs",
-          ),
-        };
-      },
-    ),
+    kind: oneOfCodes(mapValue(body, 1), [1, 2] as const, "Vacuum source Baseline kind"),
+    state: decodeVacuumContentCheckpoint(mapValue(body, 2)),
   };
 }
 
-export function deriveInitialAuthorityVacuumContentState(
+export function deriveVacuumContentState(
   replay: ReplayedCanonicalVault,
 ): CanonicalVacuumContentState {
   if (replay.vault.replicaState.lifecycle !== 1) {
     throw new TypeError("Closed Vaults cannot be Vacuumed");
   }
-  const initial = baselineInitialContent(replay);
+  const sourceBaseline = baselineContentState(replay);
+  const baseline = sourceBaseline.state;
+  const seedCheckpointFacts = sourceBaseline.kind === 2;
+  if (baseline.activeConflicts.length > 0) {
+    throw new TypeError("Vacuum preflight requires every checkpointed Conflict to be resolved");
+  }
   const labels: {
     readonly causeId: Identifier<"VaultRecord">;
     readonly value: string | null;
-  }[] = [];
+  }[] = seedCheckpointFacts
+    ? baseline.vaultLabel.headCauseIds.map((causeId) => ({
+        causeId,
+        value: baseline.vaultLabel.value,
+      }))
+    : [];
   const credentialLabels: {
     readonly clientCredentialId: Identifier<"ClientCredential">;
     readonly causeId: Identifier<"VaultRecord">;
     readonly value: string | null;
-  }[] = [];
+  }[] = seedCheckpointFacts
+    ? baseline.credentialLabels.flatMap((label) =>
+        label.headCauseIds.map((causeId) => ({
+          clientCredentialId: label.clientCredentialId,
+          causeId,
+          value: label.value,
+        })),
+      )
+    : [];
   const registrations: {
     readonly bundleId: Identifier<"Bundle">;
     readonly descriptorObjectId: Identifier<"VaultObject">;
     readonly assignedCollectionId: Identifier<"Collection">;
     readonly causeId: Identifier<"VaultRecord">;
     readonly attribution: CanonicalCheckpointAttribution;
-  }[] = [];
+  }[] = seedCheckpointFacts
+    ? baseline.captures.map((capture) => ({
+        bundleId: capture.bundleId,
+        descriptorObjectId: capture.descriptorObjectId,
+        assignedCollectionId: capture.assignedCollectionId,
+        causeId: capture.registrationCauseId,
+        attribution: capture.attribution,
+      }))
+    : [];
   const lifecycleFacts: {
     readonly bundleId: Identifier<"Bundle">;
     readonly causeId: Identifier<"VaultRecord">;
     readonly value: 1 | 2;
-  }[] = [];
+  }[] = seedCheckpointFacts
+    ? baseline.captures.flatMap((capture) =>
+        capture.lifecycleHeadCauseIds.map((causeId) => ({
+          bundleId: capture.bundleId,
+          causeId,
+          value: capture.lifecycle,
+        })),
+      )
+    : [];
   const placementFacts: {
     readonly bundleId: Identifier<"Bundle">;
     readonly causeId: Identifier<"VaultRecord">;
     readonly value: Identifier<"Collection">;
-  }[] = [];
+  }[] = seedCheckpointFacts
+    ? baseline.captures.flatMap((capture) =>
+        capture.assignmentHeadCauseIds.map((causeId) => ({
+          bundleId: capture.bundleId,
+          causeId,
+          value: capture.assignedCollectionId,
+        })),
+      )
+    : [];
   const titleFacts: {
     readonly collectionId: Identifier<"Collection">;
     readonly causeId: Identifier<"VaultRecord">;
     readonly value: string | null;
-  }[] = [];
+  }[] = seedCheckpointFacts
+    ? baseline.collections.flatMap((collection) =>
+        collection.titleHeadCauseIds.map((causeId) => ({
+          collectionId: collection.collectionId,
+          causeId,
+          value: collection.explicitTitle,
+        })),
+      )
+    : [];
 
   for (const event of replay.events) {
     if (event.family !== 2) continue;
@@ -496,6 +513,9 @@ export function deriveInitialAuthorityVacuumContentState(
       : redirectDestination(identifierValue(destination.destinationId, "Collection"));
   };
   const collectionIds = new Map<string, Identifier<"Collection">>();
+  for (const collection of baseline.collections) {
+    collectionIds.set(key(collection.collectionId), collection.collectionId);
+  }
   for (const registration of registrations) {
     collectionIds.set(key(registration.assignedCollectionId), registration.assignedCollectionId);
   }
@@ -512,23 +532,51 @@ export function deriveInitialAuthorityVacuumContentState(
     collectionIds.set(key(sourceId), sourceId);
     collectionIds.set(key(destinationId), destinationId);
   }
-  const selectTail = (eligible: readonly CaptureHeadState[]): CaptureHeadState | undefined =>
-    eligible.toSorted((left, right) => {
-      if (replay.graph.isAncestor(left.registrationCauseId, right.registrationCauseId)) return 1;
-      if (replay.graph.isAncestor(right.registrationCauseId, left.registrationCauseId)) return -1;
-      return compareBytes(left.registrationCauseId, right.registrationCauseId);
-    })[0];
+  const baselineRedirectDestination = (
+    sourceId: Identifier<"Collection">,
+  ): Identifier<"Collection"> => {
+    const destination = baseline.collections.find((collection) =>
+      bytesEqual(collection.collectionId, sourceId),
+    )?.activeRedirect;
+    return destination === null || destination === undefined
+      ? sourceId
+      : baselineRedirectDestination(destination.destinationCollectionId);
+  };
+  const selectTail = (
+    eligible: readonly CaptureHeadState[],
+    checkpointTail: CanonicalCheckpointTail | null,
+    checkpointEligibleBundleIds: readonly Identifier<"Bundle">[],
+  ): CaptureHeadState | undefined =>
+    selectCanonicalCollectionTail({
+      candidates: eligible.map((capture) => ({
+        ...capture,
+        registrationRecordId: capture.registrationCauseId,
+      })),
+      checkpointActiveBundleIds: checkpointEligibleBundleIds,
+      checkpointTailBundleId: checkpointTail?.bundleId ?? null,
+      graph: replay.graph,
+    });
   const collections = [...collectionIds.values()]
     .map((collectionId): CanonicalVacuumCollectionState => {
       const title = reduceCausalScalar(
         titleFacts.filter((fact) => bytesEqual(fact.collectionId, collectionId)),
         replay.graph,
       );
+      const checkpoint = baseline.collections.find((collection) =>
+        bytesEqual(collection.collectionId, collectionId),
+      );
       const intrinsic = selectTail(
         captures.filter(
           (capture) =>
             capture.lifecycle === 1 && bytesEqual(capture.assignedCollectionId, collectionId),
         ),
+        checkpoint?.intrinsicTail ?? null,
+        baseline.captures
+          .filter(
+            (capture) =>
+              capture.lifecycle === 1 && bytesEqual(capture.assignedCollectionId, collectionId),
+          )
+          .map(({ bundleId }) => bundleId),
       );
       const effective = selectTail(
         captures.filter(
@@ -536,6 +584,14 @@ export function deriveInitialAuthorityVacuumContentState(
             capture.lifecycle === 1 &&
             bytesEqual(redirectDestination(capture.currentCollectionId), collectionId),
         ),
+        checkpoint?.effectiveTail ?? null,
+        baseline.captures
+          .filter(
+            (capture) =>
+              capture.lifecycle === 1 &&
+              bytesEqual(baselineRedirectDestination(capture.assignedCollectionId), collectionId),
+          )
+          .map(({ bundleId }) => bundleId),
       );
       const folder = collectionFolders.find((placement) =>
         bytesEqual(placement.collectionId, collectionId),
@@ -568,7 +624,7 @@ export function deriveInitialAuthorityVacuumContentState(
 
   const currentLabel = reduceCausalScalar(labels, replay.graph);
   const credentialIds = new Map<string, Identifier<"ClientCredential">>();
-  for (const label of initial.credentialLabels) {
+  for (const label of baseline.credentialLabels) {
     credentialIds.set(key(label.clientCredentialId), label.clientCredentialId);
   }
   for (const label of credentialLabels) {
@@ -577,7 +633,7 @@ export function deriveInitialAuthorityVacuumContentState(
   return {
     vaultLabel:
       currentLabel === null
-        ? initial.vaultLabel
+        ? baseline.vaultLabel
         : { value: currentLabel.value, headCauseIds: [currentLabel.causeId] },
     credentialLabels: [...credentialIds.values()]
       .map((clientCredentialId) => {
@@ -587,7 +643,7 @@ export function deriveInitialAuthorityVacuumContentState(
           ),
           replay.graph,
         );
-        const baseline = initial.credentialLabels.find((label) =>
+        const checkpoint = baseline.credentialLabels.find((label) =>
           bytesEqual(label.clientCredentialId, clientCredentialId),
         );
         if (current !== null) {
@@ -597,10 +653,10 @@ export function deriveInitialAuthorityVacuumContentState(
             headCauseIds: [current.causeId],
           };
         }
-        if (baseline === undefined) {
+        if (checkpoint === undefined) {
           throw new TypeError("Credential label identity has no current state");
         }
-        return baseline;
+        return checkpoint;
       })
       .toSorted((left, right) => compareBytes(left.clientCredentialId, right.clientCredentialId)),
     captures,
@@ -990,17 +1046,17 @@ function omissionCheckpoint(
   );
 }
 
-export async function prepareInitialAuthorityVacuumSuccessorBaseline(input: {
+export async function prepareVacuumSuccessorBaseline(input: {
   readonly replay: ReplayedCanonicalVault;
   readonly successorGenerationId: Identifier<"Generation">;
   readonly createCause?: (sourceCauseId: Identifier<"VaultRecord">) => Identifier<"BaselineCause">;
   readonly protectionParameters?: Uint8Array;
-}): Promise<PreparedInitialAuthorityVacuumSuccessorBaseline> {
+}): Promise<PreparedCanonicalVacuumSuccessorBaseline> {
   const { replay } = input;
   if (bytesEqual(input.successorGenerationId, replay.vault.replicaState.generationId)) {
     throw new TypeError("Vacuum successor Generation ID must be fresh");
   }
-  const contentState = deriveInitialAuthorityVacuumContentState(replay);
+  const contentState = deriveVacuumContentState(replay);
   const predecessorContent = buildVacuumContentCheckpoint(contentState, {
     createCause: (sourceCauseId) => identifier("BaselineCause", sourceCauseId),
   });
@@ -1014,10 +1070,9 @@ export async function prepareInitialAuthorityVacuumSuccessorBaseline(input: {
   );
   const authority = mapValue(predecessorBody, 3);
   const lifecycle = mapValue(predecessorBody, 4);
-  const authorityDependencies = replay.vault.baseline.dependencies;
-  if (authorityDependencies.some(({ type }) => type !== DEPENDENCY_TYPES.KeyEnvelope)) {
-    throw new TypeError("Initial authority checkpoint has unsupported dependencies");
-  }
+  const authorityDependencies = replay.vault.baseline.dependencies.filter(
+    ({ type }) => type === DEPENDENCY_TYPES.KeyEnvelope,
+  );
   const predecessorStateDigest = stateDigest(
     "awsm:vacuum-predecessor-state:v1",
     predecessorContent.checkpoint,
@@ -1103,15 +1158,15 @@ export async function prepareInitialAuthorityVacuumSuccessorBaseline(input: {
   };
 }
 
-export async function prepareInitialAuthorityVacuum(input: {
+export async function prepareVacuum(input: {
   readonly replay: ReplayedCanonicalVault;
   readonly successorGenerationId: Identifier<"Generation">;
   readonly assertedAt: number | bigint;
   readonly createCause?: (sourceCauseId: Identifier<"VaultRecord">) => Identifier<"BaselineCause">;
   readonly baselineProtectionParameters?: Uint8Array;
   readonly eventProtectionParameters?: Uint8Array;
-}): Promise<PreparedInitialAuthorityVacuum> {
-  const successor = await prepareInitialAuthorityVacuumSuccessorBaseline({
+}): Promise<PreparedCanonicalVacuum> {
+  const successor = await prepareVacuumSuccessorBaseline({
     replay: input.replay,
     successorGenerationId: input.successorGenerationId,
     ...(input.createCause === undefined ? {} : { createCause: input.createCause }),

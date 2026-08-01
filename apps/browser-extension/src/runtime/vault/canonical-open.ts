@@ -59,7 +59,7 @@ export async function validateCurrentVaultAuthority(input: {
   readonly baseline: VaultBaseline;
   readonly initialBaseline: VaultBaseline;
   readonly genesis: AuthenticatedVaultEvent;
-  readonly vacuumEvent: AuthenticatedVaultEvent | null;
+  readonly vacuumEvents: readonly AuthenticatedVaultEvent[];
   readonly replicaState: CanonicalReplicaState;
   readonly clientSecret: ClientSecretState;
   readonly epochSecret: EpochSecretState;
@@ -67,7 +67,10 @@ export async function validateCurrentVaultAuthority(input: {
   const { baseline, initialBaseline, genesis, replicaState, clientSecret, epochSecret } = input;
   const adoption = replicaState.adoption;
   if (adoption === null) {
-    if (input.vacuumEvent !== null || !bytesEqual(baseline.recordId, initialBaseline.recordId)) {
+    if (
+      input.vacuumEvents.length !== 0 ||
+      !bytesEqual(baseline.recordId, initialBaseline.recordId)
+    ) {
       throw new TypeError("Initial Vault authority has an unexpected Vacuum boundary");
     }
     await validateInitialVaultAuthority({
@@ -80,9 +83,8 @@ export async function validateCurrentVaultAuthority(input: {
     });
     return;
   }
-  const vacuumEvent = input.vacuumEvent;
-  if (vacuumEvent === null || !bytesEqual(vacuumEvent.recordId, adoption.vacuumEventRecordId)) {
-    throw new TypeError("Vacuum Adoption does not name its authenticated Vacuum Event");
+  if (input.vacuumEvents.length === 0) {
+    throw new TypeError("Vacuum Adoption has no authenticated boundary chain");
   }
 
   await validateInitialVaultAuthority({
@@ -99,74 +101,120 @@ export async function validateCurrentVaultAuthority(input: {
     requireInitialReplicaState: false,
   });
 
-  for (const [field, left, right] of [
-    ["Successor Baseline Vault ID", baseline.vaultId, replicaState.vaultId],
-    ["Successor Baseline Generation ID", baseline.generationId, replicaState.generationId],
-    ["Active successor Baseline ID", baseline.recordId, replicaState.baselineId],
-    ["Vacuum Vault ID", vacuumEvent.vaultId, replicaState.vaultId],
-    [
-      "Vacuum Required Feature Set",
-      vacuumEvent.requiredFeatureSetId,
-      replicaState.requiredFeatureSetId,
-    ],
-    [
-      "Successor Required Feature Set",
-      baseline.requiredFeatureSetId,
-      replicaState.requiredFeatureSetId,
-    ],
-    ["Vacuum signer Credential", vacuumEvent.signerCredentialId, clientSecret.clientCredentialId],
-  ] as const) {
-    same(left, right, field);
-  }
-  if (
-    vacuumEvent.family !== 3 ||
-    vacuumEvent.type !== 1 ||
-    !(await verifyVaultEventSignature(vacuumEvent, clientSecret.signingPublicKey))
-  ) {
-    throw new TypeError("Vacuum Event type or signature is invalid");
-  }
-  sameSet(vacuumEvent.authorityParentRecordIds, [genesis.recordId], "Vacuum Authority Parents");
-  sameCanonical(
-    dependencySet(vacuumEvent.dependencies),
-    dependencySet([{ type: DEPENDENCY_TYPES.VaultBaseline, id: baseline.recordId }]),
-    "Vacuum dependency",
-  );
+  let predecessorGenerationId = initialBaseline.generationId;
+  let authorityParent = genesis.recordId;
+  const remaining = [...input.vacuumEvents];
+  const acceptedBoundaryIds: Uint8Array[] = [];
+  let latestBoundary:
+    | {
+        readonly event: AuthenticatedVaultEvent;
+        readonly predecessorFrontier: readonly Uint8Array[];
+        readonly predecessorStateDigest: Uint8Array;
+        readonly successorStateDigest: Uint8Array;
+        readonly successorBaselineId: Uint8Array;
+      }
+    | undefined;
+  while (remaining.length > 0) {
+    const candidates = remaining.filter((event) =>
+      bytesEqual(event.generationId, predecessorGenerationId),
+    );
+    if (candidates.length !== 1) {
+      throw new TypeError("Vacuum Continuity Proof is not one deterministic Generation chain");
+    }
+    const vacuumEvent = candidates[0] as (typeof candidates)[number];
+    remaining.splice(remaining.indexOf(vacuumEvent), 1);
+    for (const [field, left, right] of [
+      ["Vacuum Vault ID", vacuumEvent.vaultId, replicaState.vaultId],
+      ["Vacuum predecessor Generation", vacuumEvent.generationId, predecessorGenerationId],
+      [
+        "Vacuum Required Feature Set",
+        vacuumEvent.requiredFeatureSetId,
+        replicaState.requiredFeatureSetId,
+      ],
+      ["Vacuum signer Credential", vacuumEvent.signerCredentialId, clientSecret.clientCredentialId],
+    ] as const) {
+      same(left, right, field);
+    }
+    if (
+      vacuumEvent.family !== 3 ||
+      vacuumEvent.type !== 1 ||
+      !(await verifyVaultEventSignature(vacuumEvent, clientSecret.signingPublicKey))
+    ) {
+      throw new TypeError("Vacuum Event type or signature is invalid");
+    }
+    sameSet(vacuumEvent.authorityParentRecordIds, [authorityParent], "Vacuum Authority Parents");
+    const eventBody = exactMap(vacuumEvent.body, [...Array(7).keys()], "Vacuum Event body");
+    const signedPredecessorGenerationId = identifierValue(
+      mapValue(eventBody, 0),
+      "Generation",
+      "Vacuum predecessor Generation ID",
+    );
+    const predecessorFrontier = idSetValue(
+      mapValue(eventBody, 1),
+      "VaultRecord",
+      "Vacuum predecessor Frontier",
+      { nonempty: true },
+    );
+    same(
+      signedPredecessorGenerationId,
+      predecessorGenerationId,
+      "Vacuum predecessor Generation ID",
+    );
+    sameSet(vacuumEvent.parentRecordIds, predecessorFrontier, "Vacuum causal parents");
+    const successorGenerationId = identifierValue(
+      mapValue(eventBody, 2),
+      "Generation",
+      "Vacuum successor Generation ID",
+    );
+    if (bytesEqual(predecessorGenerationId, successorGenerationId)) {
+      throw new TypeError("Vacuum successor Generation ID is not fresh");
+    }
+    const successorBaselineId = identifierValue(
+      mapValue(eventBody, 3),
+      "VaultRecord",
+      "Vacuum successor Baseline ID",
+    );
+    sameCanonical(
+      dependencySet(vacuumEvent.dependencies),
+      dependencySet([{ type: DEPENDENCY_TYPES.VaultBaseline, id: successorBaselineId }]),
+      "Vacuum dependency",
+    );
+    const predecessorStateDigest = byteString(
+      mapValue(eventBody, 4),
+      32,
+      "Vacuum predecessor state digest",
+    );
+    const successorStateDigest = byteString(
+      mapValue(eventBody, 5),
+      32,
+      "Vacuum successor state digest",
+    );
+    byteString(mapValue(eventBody, 6), 32, "Vacuum omission digest");
 
-  const eventBody = exactMap(vacuumEvent.body, [...Array(7).keys()], "Vacuum Event body");
-  const predecessorGenerationId = identifierValue(
-    mapValue(eventBody, 0),
-    "Generation",
-    "Vacuum predecessor Generation ID",
-  );
-  const predecessorFrontier = idSetValue(
-    mapValue(eventBody, 1),
-    "VaultRecord",
-    "Vacuum predecessor Frontier",
-    { nonempty: true },
-  );
-  same(predecessorGenerationId, initialBaseline.generationId, "Vacuum predecessor Generation ID");
-  sameSet(vacuumEvent.parentRecordIds, predecessorFrontier, "Vacuum causal parents");
+    acceptedBoundaryIds.push(vacuumEvent.recordId);
+    latestBoundary = {
+      event: vacuumEvent,
+      predecessorFrontier,
+      predecessorStateDigest,
+      successorStateDigest,
+      successorBaselineId,
+    };
+    predecessorGenerationId = successorGenerationId;
+    authorityParent = vacuumEvent.recordId;
+  }
+  if (latestBoundary === undefined) {
+    throw new TypeError("Vacuum Adoption has no latest authenticated boundary");
+  }
+  same(predecessorGenerationId, baseline.generationId, "Current successor Generation");
+  same(baseline.recordId, replicaState.baselineId, "Active successor Baseline ID");
+  same(authorityParent, adoption.vacuumEventRecordId, "Latest adopted Vacuum Event");
+  same(latestBoundary.successorBaselineId, baseline.recordId, "Current successor Baseline");
+  same(baseline.vaultId, replicaState.vaultId, "Successor Baseline Vault ID");
   same(
-    identifierValue(mapValue(eventBody, 2), "Generation", "Vacuum successor Generation ID"),
-    baseline.generationId,
-    "Vacuum successor Generation ID",
+    baseline.requiredFeatureSetId,
+    replicaState.requiredFeatureSetId,
+    "Successor Required Feature Set",
   );
-  same(
-    identifierValue(mapValue(eventBody, 3), "VaultRecord", "Vacuum successor Baseline ID"),
-    baseline.recordId,
-    "Vacuum successor Baseline ID",
-  );
-  const predecessorStateDigest = byteString(
-    mapValue(eventBody, 4),
-    32,
-    "Vacuum predecessor state digest",
-  );
-  const successorStateDigest = byteString(
-    mapValue(eventBody, 5),
-    32,
-    "Vacuum successor state digest",
-  );
-  byteString(mapValue(eventBody, 6), 32, "Vacuum omission digest");
 
   const initialBody = exactMap(initialBaseline.body, [0, 1, 2, 3, 4, 5], "Initial Baseline body");
   const successorBody = exactMap(baseline.body, [0, 1, 2, 3, 4, 5], "Successor Baseline body");
@@ -180,19 +228,19 @@ export async function validateCurrentVaultAuthority(input: {
   );
   same(
     identifierValue(mapValue(predecessor, 0), "Generation"),
-    predecessorGenerationId,
+    latestBoundary.event.generationId,
     "Committed predecessor Generation",
   );
   sameSet(
     idSetValue(mapValue(predecessor, 1), "VaultRecord", "Committed predecessor Frontier", {
       nonempty: true,
     }),
-    predecessorFrontier,
+    latestBoundary.predecessorFrontier,
     "Committed predecessor Frontier",
   );
   same(
     byteString(mapValue(predecessor, 2), 32, "Committed predecessor state digest"),
-    predecessorStateDigest,
+    latestBoundary.predecessorStateDigest,
     "Committed predecessor state digest",
   );
   const selectedSuccessorState = canonicalMap([
@@ -204,15 +252,18 @@ export async function validateCurrentVaultAuthority(input: {
     await sha256(
       transcript("awsm:vacuum-successor-state:v1", [encodeCanonicalValue(selectedSuccessorState)]),
     ),
-    successorStateDigest,
+    latestBoundary.successorStateDigest,
     "Vacuum successor state digest",
   );
-  if (
-    !replicaState.continuityRecordIds.some((id) => bytesEqual(id, genesis.recordId)) ||
-    !replicaState.continuityRecordIds.some((id) => bytesEqual(id, vacuumEvent.recordId))
-  ) {
-    throw new TypeError("Continuity Proof omits the accepted Vacuum boundary");
-  }
+  sameSet(
+    replicaState.continuityRecordIds,
+    [
+      genesis.recordId,
+      ...acceptedBoundaryIds,
+      ...(replicaState.lifecycle === 2 ? replicaState.authorityFrontier : []),
+    ],
+    "Vacuum Continuity Proof Record set",
+  );
 }
 
 export async function validateInitialVaultAuthority(input: {
