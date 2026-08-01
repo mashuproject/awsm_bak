@@ -168,8 +168,10 @@ test("runs the canonical multi-Vault Client facade across restart", async ({ pag
     },
     searchCacheCount: 1,
     searchCacheExcludesPlaintext: true,
-    restartedSearchNote: { kind: "Note", title: "Context", snippet: "Revised body." },
-    recordCount: 25,
+    closureIdempotent: true,
+    closedWriteRejected: "Closed Vaults cannot author Content Events",
+    restartedClosedSearchNote: { kind: "Note", title: "Context", snippet: "Revised body." },
+    recordCount: 26,
     restartSelected: "First",
     restartVaultCount: 2,
   });

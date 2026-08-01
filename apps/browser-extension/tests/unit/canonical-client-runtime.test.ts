@@ -9,6 +9,7 @@ import { CanonicalClientRuntime } from "../../src/runtime/client/canonical-runti
 import type { CanonicalContentService } from "../../src/runtime/content/canonical-service";
 import type { CanonicalLibraryProjectionService } from "../../src/runtime/library/canonical-projection";
 import type { CanonicalSearchService } from "../../src/runtime/search/canonical-service";
+import type { CanonicalLifecycleService } from "../../src/runtime/vault/canonical-lifecycle-service";
 import type { CanonicalVaultService } from "../../src/runtime/vault/canonical-service";
 
 function fixture() {
@@ -58,6 +59,7 @@ function fixture() {
   const library = { load: vi.fn() } as unknown as CanonicalLibraryProjectionService;
   const content = { execute: vi.fn() } as unknown as CanonicalContentService;
   const search = { load: vi.fn(), query: vi.fn() } as unknown as CanonicalSearchService;
+  const lifecycle = { close: vi.fn() } as unknown as CanonicalLifecycleService;
   let setup = 0;
   const runtime = new CanonicalClientRuntime(
     vaults,
@@ -70,6 +72,7 @@ function fixture() {
     () => createdTagAssignmentId,
     () => createdNoteId,
     search,
+    lifecycle,
   );
   return {
     runtime,
@@ -78,6 +81,7 @@ function fixture() {
     library,
     content,
     search,
+    lifecycle,
     ceremony,
     firstVaultId,
     secondVaultId,
@@ -287,6 +291,27 @@ describe("canonical Client Runtime", () => {
       hosts: ["example.com"],
       collectionIds: [],
       tagIds: [],
+    });
+  });
+
+  it("closes only the exact selected Vault through one idempotent Lifecycle command", async () => {
+    const { runtime, lifecycle, firstVaultId } = fixture();
+    const eventRecordId = randomIdentifier("VaultRecord");
+    vi.mocked(lifecycle.close).mockResolvedValue({
+      commandId: "close-1",
+      vaultId: firstVaultId,
+      generationId: randomIdentifier("Generation"),
+      eventRecordId,
+    });
+    const expectedVaultId = identifierStorageKey(firstVaultId);
+
+    await expect(
+      runtime.closeVault({ expectedVaultId, commandId: "close-1", assertedAt: 50 }),
+    ).resolves.toEqual({ eventRecordId: identifierStorageKey(eventRecordId) });
+    expect(lifecycle.close).toHaveBeenCalledWith({
+      commandId: "close-1",
+      vaultId: firstVaultId,
+      assertedAt: 50,
     });
   });
 

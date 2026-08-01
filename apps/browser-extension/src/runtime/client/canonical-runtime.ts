@@ -20,6 +20,7 @@ import type {
   CanonicalLibraryProjectionService,
 } from "../library/canonical-projection";
 import { type CanonicalSearchCoverage, CanonicalSearchService } from "../search/canonical-service";
+import { CanonicalLifecycleService } from "../vault/canonical-lifecycle-service";
 import type {
   CanonicalVaultCreationCeremony,
   CanonicalVaultService,
@@ -206,6 +207,9 @@ export class CanonicalClientRuntime {
       CanonicalSearchService,
       "load" | "query"
     > = new CanonicalSearchService(vaults, library),
+    readonly lifecycle: Pick<CanonicalLifecycleService, "close"> = new CanonicalLifecycleService(
+      vaults,
+    ),
   ) {}
 
   async state(): Promise<CanonicalClientState> {
@@ -340,6 +344,20 @@ export class CanonicalClientRuntime {
     await this.assertExpectedVault(expectedVaultId);
     return (await this.searchService.load(identifierFromStorageKey("Vault", expectedVaultId)))
       .coverage;
+  }
+
+  async closeVault(input: {
+    readonly expectedVaultId: string;
+    readonly commandId: string;
+    readonly assertedAt: number | bigint;
+  }): Promise<{ readonly eventRecordId: string }> {
+    await this.assertExpectedVault(input.expectedVaultId);
+    const outcome = await this.lifecycle.close({
+      commandId: input.commandId,
+      vaultId: identifierFromStorageKey("Vault", input.expectedVaultId),
+      assertedAt: input.assertedAt,
+    });
+    return { eventRecordId: identifierStorageKey(outcome.eventRecordId) };
   }
 
   async listCollections(expectedVaultId: string): Promise<readonly CanonicalClientCollection[]> {

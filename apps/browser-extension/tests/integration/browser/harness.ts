@@ -1002,6 +1002,28 @@ async function canonicalClientRuntimeScenario(): Promise<unknown> {
       NAMESPACES.searchMaterialization.key,
       first.vaultId,
     );
+    const closure = await runtime.closeVault({
+      expectedVaultId: first.vaultId,
+      commandId: "facade-close",
+      assertedAt: 33,
+    });
+    const repeatedClosure = await runtime.closeVault({
+      expectedVaultId: first.vaultId,
+      commandId: "facade-close",
+      assertedAt: 33,
+    });
+    let closedWriteRejected: string | undefined;
+    try {
+      await runtime.setCollectionTitle({
+        expectedVaultId: first.vaultId,
+        commandId: "facade-after-close",
+        collectionId: destinationCollectionId,
+        title: "Too late",
+        assertedAt: 34,
+      });
+    } catch (error) {
+      closedWriteRejected = error instanceof Error ? error.message : String(error);
+    }
     const records = await storage.listBytes(
       NORMAL_STORAGE_REALM,
       NAMESPACES.vaultRecord.key,
@@ -1026,7 +1048,7 @@ async function canonicalClientRuntimeScenario(): Promise<unknown> {
       const restartedNotes = (
         await restartedLibrary.load(identifierFromStorageKey("Vault", first.vaultId))
       ).notes;
-      const restartedSearchNote = (
+      const restartedClosedSearchNote = (
         await restarted.search({
           expectedVaultId: first.vaultId,
           query: "revised",
@@ -1094,13 +1116,15 @@ async function canonicalClientRuntimeScenario(): Promise<unknown> {
           const ciphertext = new TextDecoder().decode(bytes);
           return !ciphertext.includes("Facade capture") && !ciphertext.includes("Revised body.");
         }),
-        restartedSearchNote:
-          restartedSearchNote === undefined
+        closureIdempotent: closure.eventRecordId === repeatedClosure.eventRecordId,
+        closedWriteRejected,
+        restartedClosedSearchNote:
+          restartedClosedSearchNote === undefined
             ? undefined
             : {
-                kind: restartedSearchNote.kind,
-                title: restartedSearchNote.title,
-                snippet: restartedSearchNote.snippet,
+                kind: restartedClosedSearchNote.kind,
+                title: restartedClosedSearchNote.title,
+                snippet: restartedClosedSearchNote.snippet,
               },
         recordCount: records.length,
         restartSelected: restartedState.vaults.find(({ selected }) => selected)?.label,

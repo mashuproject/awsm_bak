@@ -271,33 +271,53 @@ export class CanonicalVaultService {
       scopeKey: vaultKey,
       itemKey: identifierStorageKey(replicaState.baselineId),
     });
-    const genesisId = replicaState.continuityRecordIds[0];
-    if (genesisId === undefined || replicaState.continuityRecordIds.length !== 1) {
-      throw new TypeError("The initial Continuity Proof does not contain exactly Genesis");
+    if (replicaState.continuityRecordIds.length === 0) {
+      throw new TypeError("The Continuity Proof does not contain Genesis");
     }
-    const genesisEnvelopeBytes = await this.requireBytes({
-      namespace: NAMESPACES.vaultRecord.key,
-      scopeKey: vaultKey,
-      itemKey: identifierStorageKey(genesisId),
+    const continuityEvents = await Promise.all(
+      replicaState.continuityRecordIds.map(async (recordId) => {
+        const envelopeBytes = await this.requireBytes({
+          namespace: NAMESPACES.vaultRecord.key,
+          scopeKey: vaultKey,
+          itemKey: identifierStorageKey(recordId),
+        });
+        await this.validateResolution({
+          wrappingKey,
+          vaultId,
+          kind: 1,
+          logicalId: recordId,
+          expectedKeyEpochId: epochSecret.keyEpochId,
+          envelopeBytes,
+        });
+        const event = decodeVaultEvent(
+          (
+            await openCompactItem({
+              vaultId,
+              keyEpochId: epochSecret.keyEpochId,
+              keyEpochKey: epochSecret.key,
+              envelopeBytes,
+            })
+          ).payloadBytes,
+        );
+        sameBytes(event.recordId, recordId, "Continuity Record ID");
+        return event;
+      }),
+    );
+    const genesisCandidates = continuityEvents.filter(
+      (event) => event.family === 1 && event.type === 1,
+    );
+    const genesis = genesisCandidates[0];
+    if (genesis === undefined || genesisCandidates.length !== 1) {
+      throw new TypeError("The Continuity Proof must contain exactly one Genesis Event");
+    }
+    await this.validateResolution({
+      wrappingKey,
+      vaultId,
+      kind: 1,
+      logicalId: replicaState.baselineId,
+      expectedKeyEpochId: epochSecret.keyEpochId,
+      envelopeBytes: baselineEnvelopeBytes,
     });
-    await Promise.all([
-      this.validateResolution({
-        wrappingKey,
-        vaultId,
-        kind: 1,
-        logicalId: replicaState.baselineId,
-        expectedKeyEpochId: epochSecret.keyEpochId,
-        envelopeBytes: baselineEnvelopeBytes,
-      }),
-      this.validateResolution({
-        wrappingKey,
-        vaultId,
-        kind: 1,
-        logicalId: genesisId,
-        expectedKeyEpochId: epochSecret.keyEpochId,
-        envelopeBytes: genesisEnvelopeBytes,
-      }),
-    ]);
     const baseline = decodeVaultBaseline(
       (
         await openCompactItem({
@@ -308,18 +328,7 @@ export class CanonicalVaultService {
         })
       ).payloadBytes,
     );
-    const genesis = decodeVaultEvent(
-      (
-        await openCompactItem({
-          vaultId,
-          keyEpochId: epochSecret.keyEpochId,
-          keyEpochKey: epochSecret.key,
-          envelopeBytes: genesisEnvelopeBytes,
-        })
-      ).payloadBytes,
-    );
     sameBytes(baseline.recordId, replicaState.baselineId, "Opened Baseline ID");
-    sameBytes(genesis.recordId, genesisId, "Opened Genesis ID");
     if (initialBaselineVaultLabel(baseline) !== directory.label) {
       throw new TypeError("Vault Directory label does not match initial authoritative state");
     }

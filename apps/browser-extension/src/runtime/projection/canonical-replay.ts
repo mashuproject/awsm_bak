@@ -81,16 +81,18 @@ export class CanonicalReplayService {
       if (event.family === 1 && event.type === 1) {
         if (recordKey !== genesisKey) throw new TypeError("Vault replay contains another Genesis");
       } else {
-        if (event.family !== 2) {
+        const isContent = event.family === 2;
+        const isExplicitClosure = event.family === 3 && event.type === 2;
+        if (!isContent && !isExplicitClosure) {
           throw new TypeError(
             "This replay slice cannot yet reduce post-Genesis authority or lifecycle Events",
           );
         }
-        if (!sameSet(event.authorityParentRecordIds, vault.replicaState.authorityFrontier)) {
-          throw new TypeError("Content Event does not name the accepted Authority Frontier");
+        if (!sameSet(event.authorityParentRecordIds, [vault.genesis.recordId])) {
+          throw new TypeError("Event does not name the initial accepted Authority Frontier");
         }
         if (!bytesEqual(event.signerCredentialId, vault.clientSecret.clientCredentialId)) {
-          throw new TypeError("Content Event is not signed by the active local Credential");
+          throw new TypeError("Event is not signed by the active local Credential");
         }
       }
       if (!(await verifyVaultEventSignature(event, vault.clientSecret.signingPublicKey))) {
@@ -107,6 +109,27 @@ export class CanonicalReplayService {
     );
     for (const frontier of frontiers) await visit(frontier);
     if (!events.has(genesisKey)) throw new TypeError("The causal DAG does not reach Genesis");
+    const closures = ordered.filter((event) => event.family === 3 && event.type === 2);
+    if (vault.replicaState.lifecycle === 1) {
+      if (
+        closures.length !== 0 ||
+        !sameSet(vault.replicaState.authorityFrontier, [vault.genesis.recordId]) ||
+        !sameSet(vault.replicaState.continuityRecordIds, [vault.genesis.recordId])
+      ) {
+        throw new TypeError("Open initial authority state is inconsistent");
+      }
+    } else {
+      const closure = closures[0];
+      if (
+        closure === undefined ||
+        closures.length !== 1 ||
+        !sameSet(vault.replicaState.causalFrontier, [closure.recordId]) ||
+        !sameSet(vault.replicaState.authorityFrontier, [closure.recordId]) ||
+        !sameSet(vault.replicaState.continuityRecordIds, [vault.genesis.recordId, closure.recordId])
+      ) {
+        throw new TypeError("Closed initial authority state is inconsistent");
+      }
+    }
     return { vault, graph, events: ordered };
   }
 }
