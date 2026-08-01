@@ -123,6 +123,25 @@ test("replays the canonical DAG into an encrypted Frontier-bound live Library", 
   });
 });
 
+test("runs the canonical multi-Vault Client facade across restart", async ({ page }) => {
+  await expect(scenario(page, "canonical-client-runtime")).resolves.toEqual({
+    recoveryWordCount: 12,
+    selectedAfterCreate: "Second",
+    selectedAfterSwitch: "First",
+    captureCount: 1,
+    captureTitle: "Facade capture",
+    captureMatches: true,
+    deleteIdempotent: true,
+    deletedLifecycle: "Deleted",
+    restoredLifecycle: "Active",
+    moved: true,
+    collectionTitle: "Reading list",
+    recordCount: 7,
+    restartSelected: "First",
+    restartVaultCount: 2,
+  });
+});
+
 test("streams canonical multi-frame Artifact wrappers through content-addressed OPFS", async ({
   page,
 }) => {

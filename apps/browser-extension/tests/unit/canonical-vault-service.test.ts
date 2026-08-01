@@ -1,9 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
+import { randomIdentifier } from "../../src/domain/canonical/identifiers";
 import type { CanonicalIndexedDb } from "../../src/drivers/indexeddb/canonical-database";
-import { NORMAL_STORAGE_REALM } from "../../src/drivers/indexeddb/canonical-schema";
+import { NAMESPACES, NORMAL_STORAGE_REALM } from "../../src/drivers/indexeddb/canonical-schema";
 import { prepareCanonicalVaultCreation } from "../../src/runtime/vault/canonical-create";
-import { CanonicalVaultCreationCeremony } from "../../src/runtime/vault/canonical-service";
+import { decodeInstallationSelection } from "../../src/runtime/vault/canonical-local-state";
+import {
+  CanonicalVaultCreationCeremony,
+  CanonicalVaultService,
+} from "../../src/runtime/vault/canonical-service";
 
 function isWiped(bytes: Uint8Array): boolean {
   return bytes.every((byte) => byte === 0);
@@ -57,5 +62,36 @@ describe("canonical Vault creation ceremony", () => {
       ].every(isWiped),
     ).toBe(true);
     await expect(ceremony.confirm(ceremony.recoveryPhrase)).rejects.toThrow(/no longer active/u);
+  });
+});
+
+describe("canonical Vault selection", () => {
+  it("opens the destination before replacing the Installation selection", async () => {
+    const vaultId = randomIdentifier("Vault");
+    const writes: unknown[] = [];
+    const storage = {
+      putMutable: vi.fn(async (_realm, item) => {
+        writes.push(item);
+      }),
+    } as unknown as CanonicalIndexedDb;
+    const service = new CanonicalVaultService(storage, NORMAL_STORAGE_REALM);
+    const open = vi.spyOn(service, "openVault").mockResolvedValue({} as never);
+
+    await service.selectVault(vaultId);
+
+    expect(open).toHaveBeenCalledWith(vaultId);
+    expect(writes).toHaveLength(1);
+    const selection = writes[0] as {
+      readonly namespace: string;
+      readonly scopeKey: string;
+      readonly itemKey: string;
+      readonly bytes: Uint8Array;
+    };
+    expect(selection).toMatchObject({
+      namespace: NAMESPACES.installationSelection.key,
+      scopeKey: "installation",
+      itemKey: "current",
+    });
+    expect(decodeInstallationSelection(selection.bytes).vaultId).toEqual(vaultId);
   });
 });

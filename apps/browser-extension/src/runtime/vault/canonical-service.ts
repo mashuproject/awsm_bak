@@ -36,6 +36,7 @@ import {
   decodeLogicalResolution,
   decodeVaultDirectoryEntry,
   type EpochSecretState,
+  encodeInstallationSelection,
   type LogicalResolution,
   openWrappedLocalState,
   prepareCanonicalVaultStorage,
@@ -188,6 +189,16 @@ export class CanonicalVaultService {
         };
       }),
     );
+  }
+
+  async selectVault(vaultId: Identifier<"Vault">): Promise<void> {
+    await this.openVault(vaultId);
+    await this.storage.putMutable(this.realm, {
+      namespace: NAMESPACES.installationSelection.key,
+      scopeKey: "installation",
+      itemKey: "current",
+      bytes: encodeInstallationSelection({ vaultId }),
+    });
   }
 
   async openVault(vaultId: Identifier<"Vault">): Promise<PersistedOpenedCanonicalVault> {
