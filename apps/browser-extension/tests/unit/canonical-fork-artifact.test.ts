@@ -14,6 +14,7 @@ import type {
   CanonicalArtifactStore,
   PreparedArtifactRepresentation,
 } from "../../src/runtime/artifact/canonical-store";
+import { verifyCanonicalArtifactRepresentation } from "../../src/runtime/artifact/canonical-verify";
 import {
   prepareForkArtifactRepresentation,
   rebuildForkVaultObject,
@@ -163,6 +164,17 @@ describe("canonical Fork Artifact preparation", () => {
     const sourceEnvelope = concatBytes([sourceStream.envelopePrefix.prefixBytes, ...sourceFrames]);
     const sourceStore = new SourceArtifactStore(sourceEnvelope);
     const destinationStore = new DestinationArtifactStore();
+
+    const verified = await verifyCanonicalArtifactRepresentation({
+      store: sourceStore,
+      storageItemId: decodeOpaqueEnvelope(sourceEnvelope).storageItemId,
+      object: sourceObject,
+      keyEpochId: sourceEpochId,
+      keyEpochKey: sourceEpochKey,
+      writePlaintext: async () => undefined,
+    });
+    expect(verified.byteLength).toBe(sourceEnvelope.byteLength);
+    expect(verified.byteDigest).toHaveLength(32);
 
     const prepared = await prepareForkArtifactRepresentation({
       sourceStore,

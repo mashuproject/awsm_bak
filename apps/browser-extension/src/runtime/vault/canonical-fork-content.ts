@@ -1,4 +1,3 @@
-import { type EncryptedArtifactFrame, openArtifactFrames } from "../../crypto/artifact-stream";
 import type { Identifier } from "../../domain/canonical/identifiers";
 import {
   ARTIFACT_OBJECT,
@@ -13,18 +12,13 @@ import {
   mapValue,
   nonnegativeInteger,
 } from "../../domain/canonical/schema";
-import { concatBytes } from "../../domain/canonical/transcript";
 import { type CanonicalValue, canonicalMap, canonicalSet } from "../../domain/canonical/value";
 import { bytesEqual } from "../../domain/hash";
-import {
-  createStorageItemIdHasher,
-  decodeOpaqueEnvelopePrefix,
-  STREAMABLE_STORAGE_CLASS,
-} from "../../storage/opaque-envelope";
 import type {
   CanonicalArtifactStore,
   PreparedArtifactRepresentation,
 } from "../artifact/canonical-store";
+import { verifyCanonicalArtifactRepresentation } from "../artifact/canonical-verify";
 import {
   type BuiltVacuumContentCheckpoint,
   buildVacuumContentCheckpoint,
@@ -50,79 +44,6 @@ export interface BuiltForkContentCheckpoint {
 
 function indexedMap(...values: readonly CanonicalValue[]) {
   return canonicalMap(values.map((value, key) => [key, value] as const));
-}
-
-class StreamBytes {
-  private readonly queued: Uint8Array[] = [];
-  private queuedLength = 0;
-  private done = false;
-
-  constructor(readonly reader: ReadableStreamDefaultReader<Uint8Array>) {}
-
-  async exact(length: number): Promise<Uint8Array> {
-    if (!Number.isSafeInteger(length) || length < 0) {
-      throw new TypeError("Stream read length must be a nonnegative safe integer");
-    }
-    while (this.queuedLength < length && !this.done) {
-      const next = await this.reader.read();
-      if (next.done) {
-        this.done = true;
-        break;
-      }
-      if (!(next.value instanceof Uint8Array) || next.value.byteLength === 0) {
-        throw new TypeError("Artifact wrapper stream chunks must be nonempty bytes");
-      }
-      this.queued.push(next.value);
-      this.queuedLength += next.value.byteLength;
-    }
-    if (this.queuedLength < length) throw new TypeError("Artifact wrapper stream is truncated");
-    const result = new Uint8Array(length);
-    let written = 0;
-    while (written < length) {
-      const first = this.queued[0] as Uint8Array;
-      const take = Math.min(first.byteLength, length - written);
-      result.set(first.subarray(0, take), written);
-      written += take;
-      this.queuedLength -= take;
-      if (take === first.byteLength) this.queued.shift();
-      else this.queued[0] = first.subarray(take);
-    }
-    return result;
-  }
-
-  async requireEnd(): Promise<void> {
-    if (this.queuedLength !== 0) throw new TypeError("Artifact wrapper has trailing bytes");
-    if (!this.done) {
-      const next = await this.reader.read();
-      if (!next.done) throw new TypeError("Artifact wrapper has trailing bytes");
-      this.done = true;
-    }
-  }
-}
-
-async function readStreamableArtifactEnvelope(stream: ReadableStream<Uint8Array>) {
-  const reader = stream.getReader();
-  const bytes = new StreamBytes(reader);
-  try {
-    const fixedPrefix = await bytes.exact(12);
-    const headerLength = new DataView(fixedPrefix.buffer, fixedPrefix.byteOffset + 8, 4).getUint32(
-      0,
-      false,
-    );
-    if (headerLength < 1 || headerLength > 4096) {
-      throw new TypeError("Artifact wrapper header length is invalid");
-    }
-    const prefix = decodeOpaqueEnvelopePrefix(
-      concatBytes([fixedPrefix, await bytes.exact(headerLength)]),
-    );
-    if (prefix.storageClass !== STREAMABLE_STORAGE_CLASS) {
-      throw new TypeError("Artifact wrapper must use the Streamable storage class");
-    }
-    return { reader, bytes, prefix };
-  } catch (error) {
-    reader.releaseLock();
-    throw error;
-  }
 }
 
 function artifactContract(object: VaultObject) {
@@ -173,52 +94,14 @@ export async function prepareForkArtifactRepresentation(input: {
   ) {
     throw new TypeError("Fork destination Artifact changed its logical payload contract");
   }
-  const sourceEnvelope = await readStreamableArtifactEnvelope(
-    await input.sourceStore.open(input.sourceStorageItemId),
-  );
-  const itemHasher = createStorageItemIdHasher(
-    sourceEnvelope.prefix.prefixBytes.byteLength + sourceEnvelope.prefix.ciphertextLength,
-  );
-  itemHasher.update(sourceEnvelope.prefix.prefixBytes);
-  const frames = (async function* (): AsyncIterable<EncryptedArtifactFrame> {
-    let remaining = sourceEnvelope.prefix.ciphertextLength;
-    try {
-      while (remaining > 0) {
-        if (remaining < 9) throw new TypeError("Artifact wrapper frame prefix is truncated");
-        const framePrefix = await sourceEnvelope.bytes.exact(9);
-        const view = new DataView(framePrefix.buffer, framePrefix.byteOffset, 9);
-        const index = view.getUint32(0, false);
-        const flags = view.getUint8(4);
-        const ciphertextLength = view.getUint32(5, false);
-        if ((flags & 0xfe) !== 0 || ciphertextLength > remaining - 9) {
-          throw new TypeError("Artifact wrapper frame metadata is invalid");
-        }
-        const ciphertext = await sourceEnvelope.bytes.exact(ciphertextLength);
-        itemHasher.update(framePrefix);
-        itemHasher.update(ciphertext);
-        remaining -= 9 + ciphertextLength;
-        yield { index, final: (flags & 1) === 1, ciphertext };
-      }
-      await sourceEnvelope.bytes.requireEnd();
-      if (!bytesEqual(itemHasher.digest(), input.sourceStorageItemId)) {
-        throw new TypeError("Fork source Artifact Storage Item identity is invalid");
-      }
-    } finally {
-      sourceEnvelope.reader.releaseLock();
-    }
-  })();
   const plaintext = new TransformStream<Uint8Array, Uint8Array>();
   const writer = plaintext.writable.getWriter();
-  const decryption = openArtifactFrames({
-    vaultId: input.sourceObject.vaultId,
+  const verification = verifyCanonicalArtifactRepresentation({
+    store: input.sourceStore,
+    storageItemId: input.sourceStorageItemId,
+    object: input.sourceObject,
     keyEpochId: input.sourceKeyEpochId,
     keyEpochKey: input.sourceKeyEpochKey,
-    artifactId: artifactId(input.sourceObject),
-    contract: sourceContract,
-    protectionParameters: sourceEnvelope.prefix.protectionParameters,
-    ciphertextLength: sourceEnvelope.prefix.ciphertextLength,
-    ciphertextDigest: sourceEnvelope.prefix.ciphertextDigest,
-    frames,
     writePlaintext: async (chunk) => writer.write(chunk),
   }).then(
     async () => writer.close(),
@@ -239,12 +122,11 @@ export async function prepareForkArtifactRepresentation(input: {
       : { protectionParameters: input.protectionParameters }),
   });
   try {
-    const [prepared] = await Promise.all([preparation, decryption]);
+    const [prepared] = await Promise.all([preparation, verification]);
     return prepared;
   } catch (error) {
     await writer.abort(error).catch(() => undefined);
-    await sourceEnvelope.reader.cancel(error).catch(() => undefined);
-    await decryption.catch(() => undefined);
+    await verification.catch(() => undefined);
     throw error;
   }
 }
