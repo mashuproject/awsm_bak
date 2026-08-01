@@ -78,9 +78,21 @@ export interface CanonicalLibraryCollection {
 }
 
 export interface CanonicalCaptureIdentityConflict {
+  readonly kind: "CaptureIdentity";
   readonly bundleId: Identifier<"Bundle">;
   readonly registrationRecordIds: readonly Identifier<"VaultRecord">[];
 }
+
+export interface CanonicalCollectionMergeConflict {
+  readonly kind: "CollectionMerge";
+  readonly reason: "MultipleDestinations" | "Cycle";
+  readonly subjectCollectionIds: readonly Identifier<"Collection">[];
+  readonly candidateRecordIds: readonly Identifier<"VaultRecord">[];
+}
+
+export type CanonicalLibraryConflict =
+  | CanonicalCaptureIdentityConflict
+  | CanonicalCollectionMergeConflict;
 
 export interface CanonicalLibraryProjection {
   readonly vaultId: Identifier<"Vault">;
@@ -88,7 +100,7 @@ export interface CanonicalLibraryProjection {
   readonly frontier: readonly Identifier<"VaultRecord">[];
   readonly captures: readonly CanonicalLibraryCapture[];
   readonly collections: readonly CanonicalLibraryCollection[];
-  readonly conflicts: readonly CanonicalCaptureIdentityConflict[];
+  readonly conflicts: readonly CanonicalLibraryConflict[];
 }
 
 interface RegistrationFact {
@@ -252,7 +264,7 @@ function eventCollectionTitles(replay: ReplayedCanonicalVault): readonly Collect
   });
 }
 
-function collectionRedirects(replay: ReplayedCanonicalVault): readonly DirectedEdge[] {
+function collectionRedirects(replay: ReplayedCanonicalVault) {
   const facts = new Map<string, CollectionRedirectFact>();
   const inactive = new Set<string>();
   for (const event of replay.events) {
@@ -300,7 +312,7 @@ function collectionRedirects(replay: ReplayedCanonicalVault): readonly DirectedE
       .filter((fact) => !inactive.has(key(fact.causeId)))
       .flatMap(({ edges }) => edges),
     replay.graph,
-  ).edges;
+  );
 }
 
 function resolveCollectionRedirect(
@@ -344,6 +356,7 @@ function selectRegistrations(facts: readonly RegistrationFact[]): {
       );
     } else {
       conflicts.push({
+        kind: "CaptureIdentity",
         bundleId: first.bundleId,
         registrationRecordIds: canonicalSet(
           candidates.map(({ registrationRecordId }) => registrationRecordId),
@@ -418,7 +431,8 @@ export class CanonicalLibraryProjectionService {
     const lifecycleFacts = eventCaptureLifecycles(replay);
     const placementFacts = eventCapturePlacements(replay);
     const titleFacts = eventCollectionTitles(replay);
-    const redirectEdges = collectionRedirects(replay);
+    const redirectReduction = collectionRedirects(replay);
+    const redirectEdges = redirectReduction.edges;
     const objectCache = new Map<string, VaultObject>();
     const loadObject = async (objectId: Identifier<"VaultObject">): Promise<VaultObject> => {
       const objectKey = key(objectId);
@@ -550,7 +564,19 @@ export class CanonicalLibraryProjectionService {
       frontier: vault.replicaState.causalFrontier,
       captures,
       collections,
-      conflicts: selected.conflicts,
+      conflicts: [
+        ...selected.conflicts,
+        ...redirectReduction.conflicts.map(
+          (conflict): CanonicalCollectionMergeConflict => ({
+            kind: "CollectionMerge",
+            reason: conflict.kind === "cycle" ? "Cycle" : "MultipleDestinations",
+            subjectCollectionIds: canonicalSet(
+              conflict.subjectIds.map((id) => identifierValue(id, "Collection")),
+            ),
+            candidateRecordIds: canonicalSet(conflict.candidates.map(({ causeId }) => causeId)),
+          }),
+        ),
+      ],
     };
   }
 
@@ -645,7 +671,14 @@ export function encodeCanonicalLibraryProjection(value: CanonicalLibraryProjecti
         ),
       ),
       value.conflicts.map((conflict) =>
-        indexedMap(conflict.bundleId, canonicalSet(conflict.registrationRecordIds)),
+        conflict.kind === "CaptureIdentity"
+          ? indexedMap(1, conflict.bundleId, canonicalSet(conflict.registrationRecordIds))
+          : indexedMap(
+              2,
+              conflict.reason === "Cycle" ? 2 : 1,
+              canonicalSet(conflict.subjectCollectionIds),
+              canonicalSet(conflict.candidateRecordIds),
+            ),
       ),
       value.collections.map((collection) =>
         indexedMap(
@@ -721,13 +754,40 @@ export function decodeCanonicalLibraryProjection(bytes: Uint8Array): CanonicalLi
         ),
       };
     }),
-    conflicts: conflictsValue.map((entry, index) => {
-      const conflict = exactMap(entry, [0, 1], `Capture identity conflict ${index}`);
+    conflicts: conflictsValue.map((entry, index): CanonicalLibraryConflict => {
+      if (!(entry instanceof Map)) throw new TypeError(`Library conflict ${index} must be a map`);
+      const kind = oneOfCodes(mapValue(entry, 0), [1, 2] as const, "Library conflict kind");
+      if (kind === 1) {
+        const conflict = exactMap(entry, [0, 1, 2], `Capture identity conflict ${index}`);
+        return {
+          kind: "CaptureIdentity",
+          bundleId: identifierValue(mapValue(conflict, 1), "Bundle"),
+          registrationRecordIds: canonicalSetValue(
+            mapValue(conflict, 2),
+            "Conflicting registration IDs",
+            (id) => identifierValue(id, "VaultRecord"),
+            { nonempty: true },
+          ),
+        };
+      }
+      const conflict = exactMap(entry, [0, 1, 2, 3], `Collection merge conflict ${index}`);
+      const reason = oneOfCodes(
+        mapValue(conflict, 1),
+        [1, 2] as const,
+        "Collection conflict reason",
+      );
       return {
-        bundleId: identifierValue(mapValue(conflict, 0), "Bundle"),
-        registrationRecordIds: canonicalSetValue(
-          mapValue(conflict, 1),
-          "Conflicting registration IDs",
+        kind: "CollectionMerge",
+        reason: reason === 2 ? "Cycle" : "MultipleDestinations",
+        subjectCollectionIds: canonicalSetValue(
+          mapValue(conflict, 2),
+          "Conflicting Collection IDs",
+          (id) => identifierValue(id, "Collection"),
+          { nonempty: true },
+        ),
+        candidateRecordIds: canonicalSetValue(
+          mapValue(conflict, 3),
+          "Conflicting Collection Cause IDs",
           (id) => identifierValue(id, "VaultRecord"),
           { nonempty: true },
         ),
