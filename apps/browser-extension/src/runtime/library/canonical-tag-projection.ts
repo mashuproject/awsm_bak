@@ -39,7 +39,9 @@ interface TagAssignmentFact extends ObservedAssignment<Identifier<"Tag">>, Addit
 export interface CanonicalProjectedTag {
   readonly tagId: Identifier<"Tag">;
   readonly name: string;
+  readonly nameHeadCauseIds: readonly Identifier<"VaultRecord">[];
   readonly lifecycle: 1 | 2;
+  readonly lifecycleHeadCauseIds: readonly Identifier<"VaultRecord">[];
   readonly redirectedTo: Identifier<"Tag"> | null;
 }
 
@@ -199,24 +201,34 @@ export function reduceCanonicalTags(replay: ReplayedCanonicalVault): CanonicalTa
     removals,
     replay.graph,
   ) as readonly TagAssignmentFact[];
-  const lifecycleByTag = new Map(
+  const lifecycleFactByTag = new Map(
     [...knownTags.values()].map((tagId) => [
       key(tagId),
       reduceCausalScalar(
         lifecycles.filter((fact) => bytesEqual(fact.tagId, tagId)),
         replay.graph,
-      )?.value ?? 1,
+      ) as TagLifecycleFact | null,
     ]),
   );
   const tags = identityReduction.facts
     .map(({ entityId }): CanonicalProjectedTag => {
       const tagId = identifierValue(entityId, "Tag");
-      const name = reduceCausalScalar(
+      const nameFact = reduceCausalScalar(
         names.filter((fact) => bytesEqual(fact.tagId, tagId)),
         replay.graph,
-      )?.value;
-      if (name === undefined) throw new TypeError("Tag identity has no name fact");
-      return { tagId, name, lifecycle: lifecycleByTag.get(key(tagId)) ?? 1, redirectedTo: null };
+      ) as TagNameFact | null;
+      const lifecycleFact = lifecycleFactByTag.get(key(tagId)) ?? null;
+      if (nameFact === null || lifecycleFact === null) {
+        throw new TypeError("Tag identity has incomplete scalar state");
+      }
+      return {
+        tagId,
+        name: nameFact.value,
+        nameHeadCauseIds: [nameFact.causeId],
+        lifecycle: lifecycleFact.value,
+        lifecycleHeadCauseIds: [lifecycleFact.causeId],
+        redirectedTo: null,
+      };
     })
     .toSorted((left, right) => compareIds(left.tagId, right.tagId));
   return {
@@ -230,7 +242,7 @@ export function reduceCanonicalTags(replay: ReplayedCanonicalVault): CanonicalTa
           effectiveTagId: assignment.tagId,
           targetKind: assignment.targetKind,
           targetId: assignment.targetId,
-          active: lifecycleByTag.get(key(assignment.tagId)) === 1,
+          active: lifecycleFactByTag.get(key(assignment.tagId))?.value === 1,
         }),
       )
       .toSorted((left, right) => compareIds(left.assignmentId, right.assignmentId)),

@@ -89,7 +89,16 @@ function projection(): CanonicalLibraryProjection {
       },
     ],
     folders: [],
-    tags: [{ tagId, name: "Reviewed", lifecycle: 1, redirectedTo: null }],
+    tags: [
+      {
+        tagId,
+        name: "Reviewed",
+        nameHeadCauseIds: [randomIdentifier("VaultRecord")],
+        lifecycle: 1,
+        lifecycleHeadCauseIds: [randomIdentifier("VaultRecord")],
+        redirectedTo: null,
+      },
+    ],
     tagAssignments: [
       {
         assignmentId: tagAssignmentId,

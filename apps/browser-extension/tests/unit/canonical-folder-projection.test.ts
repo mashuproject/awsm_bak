@@ -313,6 +313,7 @@ describe("canonical Folder projection", () => {
       {
         collectionId,
         assignedFolderId: parentId,
+        headCauseIds: [collectionPlaced],
         effectiveFolderId: grandparentId,
       },
     ]);

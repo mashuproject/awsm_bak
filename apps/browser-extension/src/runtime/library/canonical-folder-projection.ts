@@ -36,9 +36,12 @@ interface FolderLifecycleFact extends CausalCandidate<1 | 2> {
 export interface CanonicalProjectedFolder {
   readonly folderId: Identifier<"Folder">;
   readonly name: string;
+  readonly nameHeadCauseIds: readonly Identifier<"VaultRecord">[];
   readonly parentFolderId: Identifier<"Folder"> | null;
+  readonly parentHeadCauseIds: readonly Identifier<"VaultRecord">[];
   readonly effectiveParentFolderId: Identifier<"Folder"> | null;
   readonly lifecycle: 1 | 2;
+  readonly lifecycleHeadCauseIds: readonly Identifier<"VaultRecord">[];
 }
 
 export interface CanonicalFolderConflict {
@@ -55,6 +58,7 @@ export interface CanonicalFolderProjection {
 export interface CanonicalCollectionFolderPlacement {
   readonly collectionId: Identifier<"Collection">;
   readonly assignedFolderId: Identifier<"Folder"> | null;
+  readonly headCauseIds: readonly Identifier<"VaultRecord">[];
   readonly effectiveFolderId: Identifier<"Folder"> | null;
 }
 
@@ -331,19 +335,19 @@ export function reduceCanonicalFolders(replay: ReplayedCanonicalVault): Canonica
       identifierValue(edge.destinationId, "Folder"),
     ]),
   );
-  const lifecycleByFolder = new Map(
+  const lifecycleFactByFolder = new Map(
     [...knownFolders.values()].map((folderId) => [
       key(folderId),
       reduceCausalScalar(
         lifecycleFacts.filter((fact) => bytesEqual(fact.folderId, folderId)),
         replay.graph,
-      )?.value ?? 1,
+      ) as FolderLifecycleFact | null,
     ]),
   );
   const nearestActiveParent = (folderId: Identifier<"Folder">): Identifier<"Folder"> | null => {
     let current = parentByFolder.get(key(folderId));
     while (current !== undefined) {
-      if (lifecycleByFolder.get(key(current)) === 1) return current;
+      if (lifecycleFactByFolder.get(key(current))?.value === 1) return current;
       current = parentByFolder.get(key(current));
     }
     return null;
@@ -351,21 +355,30 @@ export function reduceCanonicalFolders(replay: ReplayedCanonicalVault): Canonica
   const folders = identityReduction.facts
     .map(({ entityId }): CanonicalProjectedFolder => {
       const folderId = identifierValue(entityId, "Folder");
-      const name = reduceCausalScalar(
+      const nameFact = reduceCausalScalar(
         nameFacts.filter((fact) => bytesEqual(fact.folderId, folderId)),
         replay.graph,
-      )?.value;
-      if (name === undefined) throw new TypeError("Folder identity has no name fact");
+      ) as FolderNameFact | null;
+      const parentFact = finalHierarchy.selected.find((fact) =>
+        bytesEqual(fact.folderId, folderId),
+      );
+      const lifecycleFact = lifecycleFactByFolder.get(key(folderId)) ?? null;
+      if (nameFact === null || lifecycleFact === null) {
+        throw new TypeError("Folder identity has incomplete scalar state");
+      }
       return {
         folderId,
-        name,
+        name: nameFact.value,
+        nameHeadCauseIds: [nameFact.causeId],
         parentFolderId: conflictedFolders.has(key(folderId))
           ? null
           : (parentByFolder.get(key(folderId)) ?? null),
+        parentHeadCauseIds: parentFact === undefined ? [] : [parentFact.causeId],
         effectiveParentFolderId: conflictedFolders.has(key(folderId))
           ? null
           : nearestActiveParent(folderId),
-        lifecycle: lifecycleByFolder.get(key(folderId)) ?? 1,
+        lifecycle: lifecycleFact.value,
+        lifecycleHeadCauseIds: [lifecycleFact.causeId],
       };
     })
     .toSorted((left, right) => compareIds(left.folderId, right.folderId));
@@ -410,7 +423,12 @@ export function reduceCanonicalCollectionFolders(
       ) as CollectionFolderFact | null;
       const assignedFolderId = selected?.value ?? null;
       if (assignedFolderId === null) {
-        return { collectionId, assignedFolderId: null, effectiveFolderId: null };
+        return {
+          collectionId,
+          assignedFolderId: null,
+          headCauseIds: selected === null ? [] : [selected.causeId],
+          effectiveFolderId: null,
+        };
       }
       const folder = foldersById.get(key(assignedFolderId));
       if (folder === undefined) {
@@ -419,6 +437,7 @@ export function reduceCanonicalCollectionFolders(
       return {
         collectionId,
         assignedFolderId,
+        headCauseIds: selected === null ? [] : [selected.causeId],
         effectiveFolderId:
           folder.lifecycle === 1 ? folder.folderId : folder.effectiveParentFolderId,
       };

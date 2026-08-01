@@ -17,6 +17,7 @@ import {
   exactCode,
   exactMap,
   identifierValue,
+  idSetValue,
   mapValue,
   nullable,
   oneOfCodes,
@@ -901,12 +902,24 @@ export function encodeCanonicalLibraryProjection(value: CanonicalLibraryProjecti
         indexedMap(
           folder.folderId,
           folder.name,
+          canonicalSet(folder.nameHeadCauseIds),
           folder.parentFolderId,
+          canonicalSet(folder.parentHeadCauseIds),
           folder.effectiveParentFolderId,
           folder.lifecycle,
+          canonicalSet(folder.lifecycleHeadCauseIds),
         ),
       ),
-      value.tags.map((tag) => indexedMap(tag.tagId, tag.name, tag.lifecycle, tag.redirectedTo)),
+      value.tags.map((tag) =>
+        indexedMap(
+          tag.tagId,
+          tag.name,
+          canonicalSet(tag.nameHeadCauseIds),
+          tag.lifecycle,
+          canonicalSet(tag.lifecycleHeadCauseIds),
+          tag.redirectedTo,
+        ),
+      ),
       value.tagAssignments.map((assignment) =>
         indexedMap(
           assignment.assignmentId,
@@ -1005,24 +1018,40 @@ export function decodeCanonicalLibraryProjection(bytes: Uint8Array): CanonicalLi
       };
     }),
     folders: arrayValue(mapValue(map, 7), "Library folders").map((entry, index) => {
-      const folder = exactMap(entry, [0, 1, 2, 3, 4], `Library Folder ${index}`);
+      const folder = exactMap(entry, [...Array(8).keys()], `Library Folder ${index}`);
       return {
         folderId: identifierValue(mapValue(folder, 0), "Folder"),
         name: textValue(mapValue(folder, 1), "Folder name", { maxUtf8Bytes: 1_024 }),
-        parentFolderId: nullable(mapValue(folder, 2), (value) => identifierValue(value, "Folder")),
-        effectiveParentFolderId: nullable(mapValue(folder, 3), (value) =>
+        nameHeadCauseIds: idSetValue(mapValue(folder, 2), "VaultRecord", "Folder name heads", {
+          nonempty: true,
+        }),
+        parentFolderId: nullable(mapValue(folder, 3), (value) => identifierValue(value, "Folder")),
+        parentHeadCauseIds: idSetValue(mapValue(folder, 4), "VaultRecord", "Folder parent heads"),
+        effectiveParentFolderId: nullable(mapValue(folder, 5), (value) =>
           identifierValue(value, "Folder"),
         ),
-        lifecycle: oneOfCodes(mapValue(folder, 4), [1, 2] as const, "Folder lifecycle"),
+        lifecycle: oneOfCodes(mapValue(folder, 6), [1, 2] as const, "Folder lifecycle"),
+        lifecycleHeadCauseIds: idSetValue(
+          mapValue(folder, 7),
+          "VaultRecord",
+          "Folder lifecycle heads",
+          { nonempty: true },
+        ),
       };
     }),
     tags: arrayValue(mapValue(map, 8), "Library Tags").map((entry, index) => {
-      const tag = exactMap(entry, [0, 1, 2, 3], `Library Tag ${index}`);
+      const tag = exactMap(entry, [0, 1, 2, 3, 4, 5], `Library Tag ${index}`);
       return {
         tagId: identifierValue(mapValue(tag, 0), "Tag"),
         name: textValue(mapValue(tag, 1), "Tag name", { maxUtf8Bytes: 1_024 }),
-        lifecycle: oneOfCodes(mapValue(tag, 2), [1, 2] as const, "Tag lifecycle"),
-        redirectedTo: nullable(mapValue(tag, 3), (value) => identifierValue(value, "Tag")),
+        nameHeadCauseIds: idSetValue(mapValue(tag, 2), "VaultRecord", "Tag name heads", {
+          nonempty: true,
+        }),
+        lifecycle: oneOfCodes(mapValue(tag, 3), [1, 2] as const, "Tag lifecycle"),
+        lifecycleHeadCauseIds: idSetValue(mapValue(tag, 4), "VaultRecord", "Tag lifecycle heads", {
+          nonempty: true,
+        }),
+        redirectedTo: nullable(mapValue(tag, 5), (value) => identifierValue(value, "Tag")),
       };
     }),
     tagAssignments: arrayValue(mapValue(map, 9), "Library Tag Assignments").map((entry, index) => {

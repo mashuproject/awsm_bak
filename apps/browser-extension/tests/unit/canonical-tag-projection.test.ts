@@ -74,7 +74,14 @@ describe("canonical Tag projection", () => {
     const projection = reduceCanonicalTags(replay);
 
     expect(projection.tags).toEqual([
-      { tagId, name: "Research", lifecycle: 1, redirectedTo: null },
+      {
+        tagId,
+        name: "Research",
+        nameHeadCauseIds: [tagCreated],
+        lifecycle: 1,
+        lifecycleHeadCauseIds: [tagCreated],
+        redirectedTo: null,
+      },
     ]);
     expect(projection.assignments).toEqual([
       {

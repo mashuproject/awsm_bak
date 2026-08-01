@@ -61,16 +61,22 @@ describe("canonical Library Projection codec", () => {
         {
           folderId,
           name: "Child",
+          nameHeadCauseIds: [randomIdentifier("VaultRecord")],
           parentFolderId,
+          parentHeadCauseIds: [randomIdentifier("VaultRecord")],
           effectiveParentFolderId: parentFolderId,
           lifecycle: 1,
+          lifecycleHeadCauseIds: [randomIdentifier("VaultRecord")],
         },
         {
           folderId: parentFolderId,
           name: "Parent",
+          nameHeadCauseIds: [randomIdentifier("VaultRecord")],
           parentFolderId: null,
+          parentHeadCauseIds: [randomIdentifier("VaultRecord")],
           effectiveParentFolderId: null,
           lifecycle: 1,
+          lifecycleHeadCauseIds: [randomIdentifier("VaultRecord")],
         },
       ],
       tags: [],
@@ -105,8 +111,22 @@ describe("canonical Library Projection codec", () => {
       collections: [],
       folders: [],
       tags: [
-        { tagId: firstTagId, name: "same", lifecycle: 2, redirectedTo: null },
-        { tagId: secondTagId, name: "same", lifecycle: 1, redirectedTo: null },
+        {
+          tagId: firstTagId,
+          name: "same",
+          nameHeadCauseIds: [randomIdentifier("VaultRecord")],
+          lifecycle: 2,
+          lifecycleHeadCauseIds: [randomIdentifier("VaultRecord")],
+          redirectedTo: null,
+        },
+        {
+          tagId: secondTagId,
+          name: "same",
+          nameHeadCauseIds: [randomIdentifier("VaultRecord")],
+          lifecycle: 1,
+          lifecycleHeadCauseIds: [randomIdentifier("VaultRecord")],
+          redirectedTo: null,
+        },
       ],
       tagAssignments: [
         {

@@ -97,9 +97,39 @@ SHA-256(Transcript(domain, [canonicalCheckpointBytes]))
 ```
 
 The domains are `awsm:vacuum-predecessor-state:v1`, `awsm:vacuum-successor-state:v1`, and
-`awsm:vacuum-omission:v1`. The omission checkpoint canonically lists omitted logical identities by
-typed ID and reason class; it contains no plaintext labels or content. It is decision evidence,
-not successor reachability.
+`awsm:vacuum-omission:v1`. A state checkpoint is the canonical map:
+
+```text
+{
+  0: contentCheckpoint,
+  1: authorityCheckpoint,
+  2: lifecycleCheckpoint
+}
+```
+
+The predecessor digest uses the exact selected current state with predecessor Cause IDs. The
+successor digest uses the retained successor state after the complete fresh Baseline Cause mapping.
+The two digests therefore need not match even when Vacuum omits no logical entity.
+
+The omission checkpoint is:
+
+```text
+{
+  0: 1,       // omission checkpoint format
+  1: entries  // canonical set
+}
+
+entry = {
+  0: logicalKind, // 1 Bundle, 2 Tag Assignment, 3 Note
+  1: logicalId,
+  2: reason       // 1 Deleted Capture, 2 Capture-scoped state of a Deleted Capture
+}
+```
+
+Kind `1` uses reason `1`; kinds `2` and `3` use reason `2`. The checkpoint contains no plaintext
+labels or content. It is decision evidence, not successor reachability. A future Required Feature
+may add another typed omission class; the base format never encodes an untyped or free-form
+omission bucket.
 
 # 6. Adoption and divergence
 
