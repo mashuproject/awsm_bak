@@ -502,6 +502,13 @@ Note candidate state is
 candidate identities in the checkpoint, not reachable Record dependencies. A successor resolution
 names the exact candidate IDs stored in its Baseline.
 
+Checkpoint conflict candidates seed the ordinary Collection, Folder, Tag, and Note reducers. A
+descendant exact Resolution consumes those Baseline Cause IDs exactly as it would consume current
+Event candidates. The ordinary state arrays MUST NOT duplicate a fact retained inside an active
+conflict candidate. In particular, a Folder in an active Folder Conflict has a null ordinary
+`parentFolderId` and an empty ordinary parent Cause set; its complete candidate placements exist
+only in `activeConflicts` until Resolution.
+
 Intrinsic Capture provenance remains in the Descriptor rather than being duplicated by the
 checkpoint.
 

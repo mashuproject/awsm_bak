@@ -52,9 +52,22 @@ export interface CanonicalFolderConflict {
   readonly candidateRecordIds: readonly Identifier<"VaultRecord">[];
 }
 
+export interface CanonicalFolderCheckpointConflict {
+  readonly kind: 2;
+  readonly subjectIds: readonly Identifier<"Folder">[];
+  readonly candidates: readonly {
+    readonly headCauseId: Identifier<"VaultRecord">;
+    readonly placements: readonly {
+      readonly folderId: Identifier<"Folder">;
+      readonly parentFolderId: Identifier<"Folder"> | null;
+    }[];
+  }[];
+}
+
 export interface CanonicalFolderProjection {
   readonly folders: readonly CanonicalProjectedFolder[];
   readonly conflicts: readonly CanonicalFolderConflict[];
+  readonly checkpointConflicts: readonly CanonicalFolderCheckpointConflict[];
 }
 
 export interface CanonicalCollectionFolderPlacement {
@@ -207,6 +220,76 @@ export function reduceCanonicalFolders(replay: ReplayedCanonicalVault): Canonica
     }
     for (const causeId of lifecycleCauses) {
       lifecycleFacts.push({ folderId, causeId, value: lifecycle });
+    }
+  }
+  const checkpointCandidateFacts = new Map<
+    string,
+    {
+      readonly causeId: Identifier<"VaultRecord">;
+      readonly placements: readonly FolderParentFact[];
+    }
+  >();
+  for (const [index, entry] of arrayValue(
+    mapValue(baselineContent, 9),
+    "Checkpointed Content Conflicts",
+  ).entries()) {
+    const conflict = exactMap(entry, [0, 1, 2], `Checkpointed Content Conflict ${index}`);
+    const kind = oneOfCodes(
+      mapValue(conflict, 0),
+      [1, 2, 3, 4] as const,
+      "Checkpointed Content Conflict kind",
+    );
+    if (kind !== 2) continue;
+    for (const [candidateIndex, candidateValue] of arrayValue(
+      mapValue(conflict, 2),
+      "Checkpointed Folder Conflict candidates",
+    ).entries()) {
+      const candidate = exactMap(
+        candidateValue,
+        [0, 1],
+        `Checkpointed Folder Conflict candidate ${candidateIndex}`,
+      );
+      const causeId = identifierValue(mapValue(candidate, 0), "VaultRecord");
+      const state = exactMap(mapValue(candidate, 1), [0], "Folder Conflict candidate state");
+      const placements = arrayValue(mapValue(state, 0), "Folder Conflict candidate placements").map(
+        (placementValue): FolderParentFact => {
+          const placement = exactMap(placementValue, [0, 1], "Folder Conflict placement");
+          const folderId = identifierValue(mapValue(placement, 0), "Folder");
+          const parentFolderId = nullable(mapValue(placement, 1), (value) =>
+            identifierValue(value, "Folder"),
+          );
+          if (!knownFolders.has(key(folderId))) {
+            throw new TypeError("Folder Conflict candidate names an unknown Folder");
+          }
+          if (parentFolderId !== null && !knownFolders.has(key(parentFolderId))) {
+            throw new TypeError("Folder Conflict candidate names an unknown parent Folder");
+          }
+          return { folderId, causeId, value: parentFolderId };
+        },
+      );
+      const existing = checkpointCandidateFacts.get(key(causeId));
+      if (existing !== undefined) {
+        const expected = new Set(
+          existing.placements.map(
+            (placement) =>
+              `${key(placement.folderId)}:${placement.value === null ? "root" : key(placement.value)}`,
+          ),
+        );
+        if (
+          expected.size !== placements.length ||
+          placements.some(
+            (placement) =>
+              !expected.has(
+                `${key(placement.folderId)}:${placement.value === null ? "root" : key(placement.value)}`,
+              ),
+          )
+        ) {
+          throw new TypeError("One Folder Conflict Cause has inconsistent candidate state");
+        }
+        continue;
+      }
+      checkpointCandidateFacts.set(key(causeId), { causeId, placements });
+      parentFacts.push(...placements);
     }
   }
 
@@ -449,6 +532,24 @@ export function reduceCanonicalFolders(replay: ReplayedCanonicalVault): Canonica
         uniqueRecordIds(conflict.candidates.map(({ causeId }) => causeId)),
       ),
     })),
+    checkpointConflicts: finalHierarchy.reduction.conflicts.map((conflict) => {
+      const causeIds = uniqueRecordIds(conflict.candidates.map(({ causeId }) => causeId));
+      return {
+        kind: 2,
+        subjectIds: canonicalSet(
+          conflict.subjectIds.map((folderId) => identifierValue(folderId, "Folder")),
+        ),
+        candidates: causeIds
+          .map((headCauseId) => ({
+            headCauseId,
+            placements: activeParentFacts()
+              .filter((fact) => bytesEqual(fact.causeId, headCauseId))
+              .map((fact) => ({ folderId: fact.folderId, parentFolderId: fact.value }))
+              .toSorted((left, right) => compareIds(left.folderId, right.folderId)),
+          }))
+          .toSorted((left, right) => compareIds(left.headCauseId, right.headCauseId)),
+      };
+    }),
   };
 }
 

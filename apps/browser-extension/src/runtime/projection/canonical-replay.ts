@@ -111,7 +111,10 @@ export class CanonicalReplayService {
       if (!(await verifyVaultEventSignature(event, vault.clientSecret.signingPublicKey))) {
         throw new TypeError("Vault Event signature is invalid");
       }
-      graph.add(event.recordId, event.parentRecordIds);
+      graph.add(
+        event.recordId,
+        recordKey === genesisKey ? [vault.baseline.recordId] : event.parentRecordIds,
+      );
       events.set(recordKey, event);
       ordered.push(event);
       visiting.delete(recordKey);

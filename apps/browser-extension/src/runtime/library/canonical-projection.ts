@@ -513,6 +513,54 @@ export function reduceCollectionRedirects(replay: ReplayedCanonicalVault) {
       });
     }
   }
+  for (const [index, entry] of arrayValue(
+    mapValue(baselineContentCheckpoint(replay.vault), 9),
+    "Checkpointed Content Conflicts",
+  ).entries()) {
+    const conflict = exactMap(entry, [0, 1, 2], `Checkpointed Content Conflict ${index}`);
+    const kind = oneOfCodes(
+      mapValue(conflict, 0),
+      [1, 2, 3, 4] as const,
+      "Checkpointed Content Conflict kind",
+    );
+    if (kind !== 1) continue;
+    for (const [candidateIndex, candidateValue] of arrayValue(
+      mapValue(conflict, 2),
+      "Checkpointed Collection Conflict candidates",
+    ).entries()) {
+      const candidate = exactMap(
+        candidateValue,
+        [0, 1],
+        `Checkpointed Collection Conflict candidate ${candidateIndex}`,
+      );
+      const causeId = identifierValue(mapValue(candidate, 0), "VaultRecord");
+      const state = exactMap(mapValue(candidate, 1), [0], "Collection Conflict candidate state");
+      const edges = arrayValue(mapValue(state, 0), "Collection Conflict candidate redirects").map(
+        (redirectValue) => {
+          const redirect = exactMap(redirectValue, [0, 1], "Collection Conflict redirect");
+          return {
+            sourceId: identifierValue(mapValue(redirect, 0), "Collection"),
+            destinationId: identifierValue(mapValue(redirect, 1), "Collection"),
+            causeId,
+          };
+        },
+      );
+      const existing = facts.get(key(causeId));
+      if (existing !== undefined) {
+        const expected = new Set(
+          existing.edges.map((edge) => `${key(edge.sourceId)}:${key(edge.destinationId)}`),
+        );
+        if (
+          expected.size !== edges.length ||
+          edges.some((edge) => !expected.has(`${key(edge.sourceId)}:${key(edge.destinationId)}`))
+        ) {
+          throw new TypeError("One Collection Conflict Cause has inconsistent candidate state");
+        }
+        continue;
+      }
+      facts.set(key(causeId), { causeId, edges });
+    }
+  }
   for (const event of replay.events) {
     if (event.family !== 2) continue;
     if (event.type === 8) {
@@ -605,7 +653,40 @@ export function reduceCollectionRedirects(replay: ReplayedCanonicalVault) {
       }
     }
   }
-  return reduceDirectedGraph(activeEdges(), replay.graph);
+  const reduction = reduceDirectedGraph(activeEdges(), replay.graph);
+  return {
+    ...reduction,
+    checkpointConflicts: reduction.conflicts.map((conflict) => {
+      const causeIds = uniqueRecordIds(conflict.candidates.map(({ causeId }) => causeId));
+      return {
+        kind: 1 as const,
+        subjectIds: canonicalSet(
+          conflict.subjectIds.map((subjectId) => identifierValue(subjectId, "Collection")),
+        ),
+        candidates: causeIds
+          .map((headCauseId) => {
+            const fact = facts.get(key(headCauseId));
+            if (fact === undefined) {
+              throw new TypeError("Collection Conflict candidate state is unavailable");
+            }
+            return {
+              headCauseId,
+              redirects: fact.edges
+                .map((edge) => ({
+                  sourceId: identifierValue(edge.sourceId, "Collection"),
+                  destinationId: identifierValue(edge.destinationId, "Collection"),
+                }))
+                .toSorted(
+                  (left, right) =>
+                    compareBytes(left.sourceId, right.sourceId) ||
+                    compareBytes(left.destinationId, right.destinationId),
+                ),
+            };
+          })
+          .toSorted((left, right) => compareBytes(left.headCauseId, right.headCauseId)),
+      };
+    }),
+  };
 }
 
 function resolveCollectionRedirect(

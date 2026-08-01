@@ -112,6 +112,12 @@ not its parent, avoiding a content-addressing cycle. A successor Baseline is its
 of its Generation; no second Genesis is created. Its authenticating predecessor Vacuum Event is
 the Authority Parent anchor rather than a Baseline dependency, avoiding a content-addressing cycle.
 
+For reducer causality, Genesis semantically follows the complete Initial Baseline that it
+authenticates. The Runtime therefore treats the Initial Baseline and each of its Baseline Causes as
+predecessors of Genesis without adding them to Genesis's signed Event-parent set. This semantic
+edge lets a later post-Genesis Event supersede or exactly resolve Fork checkpoint state while
+preserving Genesis's parentless wire format and avoiding a content-addressing cycle.
+
 # 6. Authoritative and local state
 
 Current portable state consists of authenticated Vault Records and Vault Objects reachable from the

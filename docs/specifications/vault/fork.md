@@ -37,6 +37,11 @@ The interface identifies the exact source state and explains that the destinatio
 will not receive later source Events, and does not preserve source history or authority. Source
 state remains unchanged on every outcome.
 
+A stable-ID collision is quarantined integrity input, not an unresolved Content Conflict. A
+state-only Fork MUST NOT choose, merge, or silently omit colliding creation candidates. It fails
+preflight until eligible Capture content is re-authored under a fresh identity or the collision is
+otherwise absent from the selected source state.
+
 # 4. Identity map
 
 Fork creates fresh random IDs for the destination Vault, Generation, first member, first Client and
@@ -60,7 +65,8 @@ The destination Initial Baseline contains:
 - all active and Deleted Captures selected by the source Frontier;
 - intrinsic Capture provenance and timestamps;
 - effective Collection title, redirect, Folder, Tag, assignment, Note, and lifecycle state;
-- every unresolved content Conflict represented by its complete mapped candidate state; and
+- every unresolved Collection, Folder, Tag, and Note Content Conflict represented by its complete
+  mapped candidate state; and
 - the destination's new single member, Administrator, Credentials, Epoch, Envelopes, and Required
   Feature Set.
 

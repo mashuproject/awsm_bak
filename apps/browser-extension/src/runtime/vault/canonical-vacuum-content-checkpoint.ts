@@ -285,7 +285,7 @@ function deriveContentState(
   const sourceBaseline = baselineContentState(replay);
   const baseline = sourceBaseline.state;
   const seedCheckpointFacts = true;
-  if (baseline.activeConflicts.length > 0) {
+  if (operation === "Vacuum" && baseline.activeConflicts.length > 0) {
     throw new TypeError(
       `${operation} preflight requires every checkpointed Conflict to be resolved`,
     );
@@ -503,9 +503,9 @@ function deriveContentState(
   const tagProjection = reduceCanonicalTags(replay);
   const noteProjection = reduceCanonicalNotes(replay);
   if (
-    redirects.conflicts.length > 0 ||
-    folderProjection.conflicts.length > 0 ||
-    noteProjection.conflicts.length > 0
+    (operation === "Vacuum" && redirects.conflicts.length > 0) ||
+    (operation === "Vacuum" && folderProjection.conflicts.length > 0) ||
+    (operation === "Vacuum" && noteProjection.conflicts.length > 0)
   ) {
     throw new TypeError(
       `${operation} preflight requires every active Content Conflict to be resolved`,
@@ -635,6 +635,36 @@ function deriveContentState(
   for (const label of credentialLabels) {
     credentialIds.set(key(label.clientCredentialId), label.clientCredentialId);
   }
+  const noteConflicts: CanonicalVacuumConflictState[] = noteProjection.conflicts.map((conflict) => {
+    const note = noteProjection.notes.find((candidate) =>
+      bytesEqual(candidate.noteId, conflict.noteId),
+    );
+    if (note === undefined) throw new TypeError("Note Conflict state is unavailable");
+    const candidateIds = new Set(conflict.candidateRecordIds.map(key));
+    return {
+      kind: 4,
+      subjectIds: [conflict.noteId],
+      candidates: note.versions
+        .filter((version) => candidateIds.has(key(version.headCauseId)))
+        .map((version) => ({
+          headCauseId: version.headCauseId,
+          noteId: note.noteId,
+          contentObjectId: version.contentObjectId,
+        })),
+    };
+  });
+  const activeConflicts: CanonicalVacuumConflictState[] =
+    operation === "Fork"
+      ? [
+          ...redirects.checkpointConflicts,
+          ...folderProjection.checkpointConflicts,
+          ...baseline.activeConflicts.filter((conflict) => conflict.kind === 3),
+          ...noteConflicts,
+        ]
+      : [];
+  const conflictedFolderIds = new Set(
+    folderProjection.checkpointConflicts.flatMap((conflict) => conflict.subjectIds.map(key)),
+  );
   return {
     vaultLabel:
       currentLabel === null
@@ -671,7 +701,9 @@ function deriveContentState(
       name: folder.name,
       nameHeadCauseIds: folder.nameHeadCauseIds,
       parentFolderId: folder.parentFolderId,
-      parentHeadCauseIds: folder.parentHeadCauseIds,
+      parentHeadCauseIds: conflictedFolderIds.has(key(folder.folderId))
+        ? []
+        : folder.parentHeadCauseIds,
       lifecycle: folder.lifecycle,
       lifecycleHeadCauseIds: folder.lifecycleHeadCauseIds,
     })),
@@ -708,7 +740,7 @@ function deriveContentState(
         },
       })),
     })),
-    activeConflicts: [],
+    activeConflicts,
   };
 }
 
