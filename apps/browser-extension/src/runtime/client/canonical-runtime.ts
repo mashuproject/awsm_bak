@@ -19,6 +19,7 @@ import type {
   CanonicalLibraryProjection,
   CanonicalLibraryProjectionService,
 } from "../library/canonical-projection";
+import { type CanonicalSearchCoverage, CanonicalSearchService } from "../search/canonical-service";
 import type {
   CanonicalVaultCreationCeremony,
   CanonicalVaultService,
@@ -45,6 +46,15 @@ export interface CanonicalClientLibraryItem {
   readonly title: string | null;
   readonly availableLocally: boolean;
   readonly lifecycle: "Active" | "Deleted";
+}
+
+export interface CanonicalClientSearchResult {
+  readonly kind: "Capture" | "Collection" | "Note";
+  readonly id: string;
+  readonly title: string;
+  readonly passageId: string;
+  readonly snippet: string;
+  readonly score: number;
 }
 
 export interface CanonicalClientCollection {
@@ -142,6 +152,11 @@ function sameStringSet(left: readonly string[], right: readonly string[]): boole
   return left.length === right.length && left.every((value) => right.includes(value));
 }
 
+function fixedBytesStorageKey(value: Uint8Array): string {
+  if (value.byteLength !== 32) throw new TypeError("Client-safe digest must contain 32 bytes.");
+  return [...value].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 function assertAcyclicRedirects(redirects: ReadonlyMap<string, string>): void {
   for (const source of redirects.keys()) {
     let current: string | undefined = source;
@@ -187,6 +202,10 @@ export class CanonicalClientRuntime {
     private readonly createTagAssignmentId: () => Identifier<"TagAssignment"> = () =>
       randomIdentifier("TagAssignment"),
     private readonly createNoteId: () => Identifier<"Note"> = () => randomIdentifier("Note"),
+    readonly searchService: Pick<
+      CanonicalSearchService,
+      "load" | "query"
+    > = new CanonicalSearchService(vaults, library),
   ) {}
 
   async state(): Promise<CanonicalClientState> {
@@ -284,6 +303,43 @@ export class CanonicalClientRuntime {
       availableLocally: capture.artifactAvailableLocally,
       lifecycle: capture.lifecycle === 1 ? "Active" : "Deleted",
     }));
+  }
+
+  async search(input: {
+    readonly expectedVaultId: string;
+    readonly query: string;
+    readonly scope: "Active" | "Deleted";
+    readonly hosts: readonly string[];
+    readonly collectionIds: readonly string[];
+    readonly tagIds: readonly string[];
+    readonly capturedFrom?: number | bigint;
+    readonly capturedBefore?: number | bigint;
+  }): Promise<readonly CanonicalClientSearchResult[]> {
+    await this.assertExpectedVault(input.expectedVaultId);
+    const vaultId = identifierFromStorageKey("Vault", input.expectedVaultId);
+    const results = await this.searchService.query(vaultId, {
+      query: input.query,
+      scope: input.scope,
+      hosts: input.hosts,
+      collectionIds: input.collectionIds.map((id) => identifierFromStorageKey("Collection", id)),
+      tagIds: input.tagIds.map((id) => identifierFromStorageKey("Tag", id)),
+      ...(input.capturedFrom === undefined ? {} : { capturedFrom: input.capturedFrom }),
+      ...(input.capturedBefore === undefined ? {} : { capturedBefore: input.capturedBefore }),
+    });
+    return results.map((result) => ({
+      kind: result.kind,
+      id: identifierStorageKey(result.id),
+      title: result.title,
+      passageId: fixedBytesStorageKey(result.passageId),
+      snippet: result.snippet,
+      score: result.score,
+    }));
+  }
+
+  async searchCoverage(expectedVaultId: string): Promise<CanonicalSearchCoverage> {
+    await this.assertExpectedVault(expectedVaultId);
+    return (await this.searchService.load(identifierFromStorageKey("Vault", expectedVaultId)))
+      .coverage;
   }
 
   async listCollections(expectedVaultId: string): Promise<readonly CanonicalClientCollection[]> {

@@ -976,6 +976,32 @@ async function canonicalClientRuntimeScenario(): Promise<unknown> {
       assertedAt: 32,
     });
     const restoredNotes = await runtime.listNotes(first.vaultId);
+    const searchCapture = (
+      await runtime.search({
+        expectedVaultId: first.vaultId,
+        query: "facade",
+        scope: "Active",
+        hosts: [],
+        collectionIds: [],
+        tagIds: [],
+      })
+    ).find(({ kind }) => kind === "Capture");
+    const searchNote = (
+      await runtime.search({
+        expectedVaultId: first.vaultId,
+        query: "revised",
+        scope: "Active",
+        hosts: [],
+        collectionIds: [],
+        tagIds: [],
+      })
+    ).find(({ kind }) => kind === "Note");
+    const searchCoverage = await runtime.searchCoverage(first.vaultId);
+    const searchCaches = await storage.listBytes(
+      NORMAL_STORAGE_REALM,
+      NAMESPACES.searchMaterialization.key,
+      first.vaultId,
+    );
     const records = await storage.listBytes(
       NORMAL_STORAGE_REALM,
       NAMESPACES.vaultRecord.key,
@@ -1000,6 +1026,16 @@ async function canonicalClientRuntimeScenario(): Promise<unknown> {
       const restartedNotes = (
         await restartedLibrary.load(identifierFromStorageKey("Vault", first.vaultId))
       ).notes;
+      const restartedSearchNote = (
+        await restarted.search({
+          expectedVaultId: first.vaultId,
+          query: "revised",
+          scope: "Active",
+          hosts: [],
+          collectionIds: [],
+          tagIds: [],
+        })
+      ).find(({ kind }) => kind === "Note");
       return {
         recoveryWordCount: secondSetup.recoveryPhrase.split(" ").length,
         selectedAfterCreate,
@@ -1040,6 +1076,32 @@ async function canonicalClientRuntimeScenario(): Promise<unknown> {
         restoredNoteBody: restoredNotes[0]?.versions[0]?.body,
         restartedNoteTitle: restartedNotes[0]?.versions[0]?.title,
         restartedNoteBody: restartedNotes[0]?.versions[0]?.body,
+        searchCapture:
+          searchCapture === undefined
+            ? undefined
+            : { kind: searchCapture.kind, title: searchCapture.title },
+        searchNote:
+          searchNote === undefined
+            ? undefined
+            : {
+                kind: searchNote.kind,
+                title: searchNote.title,
+                snippet: searchNote.snippet,
+              },
+        searchCoverage,
+        searchCacheCount: searchCaches.length,
+        searchCacheExcludesPlaintext: searchCaches.every(({ bytes }) => {
+          const ciphertext = new TextDecoder().decode(bytes);
+          return !ciphertext.includes("Facade capture") && !ciphertext.includes("Revised body.");
+        }),
+        restartedSearchNote:
+          restartedSearchNote === undefined
+            ? undefined
+            : {
+                kind: restartedSearchNote.kind,
+                title: restartedSearchNote.title,
+                snippet: restartedSearchNote.snippet,
+              },
         recordCount: records.length,
         restartSelected: restartedState.vaults.find(({ selected }) => selected)?.label,
         restartVaultCount: restartedState.vaults.length,

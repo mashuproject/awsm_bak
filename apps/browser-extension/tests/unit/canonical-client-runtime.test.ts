@@ -8,6 +8,7 @@ import type { CanonicalCaptureService } from "../../src/runtime/capture/canonica
 import { CanonicalClientRuntime } from "../../src/runtime/client/canonical-runtime";
 import type { CanonicalContentService } from "../../src/runtime/content/canonical-service";
 import type { CanonicalLibraryProjectionService } from "../../src/runtime/library/canonical-projection";
+import type { CanonicalSearchService } from "../../src/runtime/search/canonical-service";
 import type { CanonicalVaultService } from "../../src/runtime/vault/canonical-service";
 
 function fixture() {
@@ -56,6 +57,7 @@ function fixture() {
   const captures = { execute: vi.fn() } as unknown as CanonicalCaptureService;
   const library = { load: vi.fn() } as unknown as CanonicalLibraryProjectionService;
   const content = { execute: vi.fn() } as unknown as CanonicalContentService;
+  const search = { load: vi.fn(), query: vi.fn() } as unknown as CanonicalSearchService;
   let setup = 0;
   const runtime = new CanonicalClientRuntime(
     vaults,
@@ -67,6 +69,7 @@ function fixture() {
     () => createdTagId,
     () => createdTagAssignmentId,
     () => createdNoteId,
+    search,
   );
   return {
     runtime,
@@ -74,6 +77,7 @@ function fixture() {
     captures,
     library,
     content,
+    search,
     ceremony,
     firstVaultId,
     secondVaultId,
@@ -226,6 +230,64 @@ describe("canonical Client Runtime", () => {
         lifecycle: "Active",
       },
     ]);
+  });
+
+  it("queries the exact selected Vault and exposes safe Search results and honest coverage", async () => {
+    const { runtime, search, firstVaultId } = fixture();
+    const bundleId = randomIdentifier("Bundle");
+    const passageId = randomIdentifier("Artifact");
+    vi.mocked(search.query).mockResolvedValue([
+      {
+        kind: "Capture",
+        id: bundleId,
+        title: "Result",
+        passageId,
+        snippet: "safe &lt;mark&gt;",
+        score: 4.5,
+      },
+    ]);
+    vi.mocked(search.load).mockResolvedValue({
+      coverage: {
+        eligibleCaptures: 2,
+        indexedCaptures: 2,
+        unavailableHeavyContent: 2,
+        failedCaptures: 0,
+      },
+    } as Awaited<ReturnType<CanonicalSearchService["load"]>>);
+    const expectedVaultId = identifierStorageKey(firstVaultId);
+
+    await expect(
+      runtime.search({
+        expectedVaultId,
+        query: "result",
+        scope: "Active",
+        hosts: ["example.com"],
+        collectionIds: [],
+        tagIds: [],
+      }),
+    ).resolves.toEqual([
+      {
+        kind: "Capture",
+        id: identifierStorageKey(bundleId),
+        title: "Result",
+        passageId: identifierStorageKey(passageId),
+        snippet: "safe &lt;mark&gt;",
+        score: 4.5,
+      },
+    ]);
+    await expect(runtime.searchCoverage(expectedVaultId)).resolves.toEqual({
+      eligibleCaptures: 2,
+      indexedCaptures: 2,
+      unavailableHeavyContent: 2,
+      failedCaptures: 0,
+    });
+    expect(search.query).toHaveBeenCalledWith(firstVaultId, {
+      query: "result",
+      scope: "Active",
+      hosts: ["example.com"],
+      collectionIds: [],
+      tagIds: [],
+    });
   });
 
   it("resolves exactly the current Collection merge conflict with one acyclic redirect graph", async () => {
