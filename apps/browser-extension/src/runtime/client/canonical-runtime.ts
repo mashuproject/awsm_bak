@@ -1,4 +1,7 @@
+import { DEPENDENCY_TYPES } from "../../domain/canonical/dependencies";
+import { advisoryExtensions } from "../../domain/canonical/features";
 import { type Identifier, randomIdentifier } from "../../domain/canonical/identifiers";
+import { encodeVaultObject, NOTE_CONTENT_OBJECT } from "../../domain/canonical/object";
 import { exactMap, identifierValue, mapValue } from "../../domain/canonical/schema";
 import { type CanonicalValue, canonicalMap, canonicalSet } from "../../domain/canonical/value";
 import { bytesEqual } from "../../domain/hash";
@@ -159,6 +162,7 @@ export class CanonicalClientRuntime {
     private readonly createTagId: () => Identifier<"Tag"> = () => randomIdentifier("Tag"),
     private readonly createTagAssignmentId: () => Identifier<"TagAssignment"> = () =>
       randomIdentifier("TagAssignment"),
+    private readonly createNoteId: () => Identifier<"Note"> = () => randomIdentifier("Note"),
   ) {}
 
   async state(): Promise<CanonicalClientState> {
@@ -753,6 +757,67 @@ export class CanonicalClientRuntime {
       23,
       canonicalMap([[0, identifierFromStorageKey("Tag", input.tagId)]]),
     );
+  }
+
+  async createNote(input: {
+    readonly expectedVaultId: string;
+    readonly commandId: string;
+    readonly targetKind: "Collection" | "Capture";
+    readonly targetId: string;
+    readonly title: string | null;
+    readonly body: string;
+    readonly assertedAt: number | bigint;
+  }): Promise<{ readonly noteId: string; readonly eventRecordId: string }> {
+    await this.requireTagTarget(input.expectedVaultId, input.targetKind, input.targetId);
+    const vaultId = identifierFromStorageKey("Vault", input.expectedVaultId);
+    const projection = await this.library.load(vaultId);
+    const noteId = this.createNoteId();
+    if (projection.notes.some((note) => bytesEqual(note.noteId, noteId))) {
+      throw runtimeError("NOTE_ID_CONFLICT", "The generated Note ID already exists.");
+    }
+    const vault = await this.vaults.openVault(vaultId);
+    const object = encodeVaultObject({
+      vaultId,
+      objectType: NOTE_CONTENT_OBJECT,
+      requiredFeatureSetId: vault.replicaState.requiredFeatureSetId,
+      body: canonicalMap([
+        [0, 1],
+        [1, input.title],
+        [2, input.body],
+        [3, "awsm.note.commonmark"],
+      ]),
+      extensions: advisoryExtensions([]),
+    });
+    const targetKind = input.targetKind === "Collection" ? 1 : 2;
+    const outcome = await this.content.execute({
+      commandId: input.commandId,
+      vaultId,
+      type: 27,
+      assertedAt: input.assertedAt,
+      body: canonicalMap([
+        [0, noteId],
+        [
+          1,
+          canonicalMap([
+            [0, targetKind],
+            [
+              1,
+              identifierFromStorageKey(
+                input.targetKind === "Collection" ? "Collection" : "Bundle",
+                input.targetId,
+              ),
+            ],
+          ]),
+        ],
+        [2, object.objectId],
+      ]),
+      dependencies: [{ type: DEPENDENCY_TYPES.NoteContentObject, id: object.objectId }],
+      objects: [object],
+    });
+    return {
+      noteId: identifierStorageKey(noteId),
+      eventRecordId: identifierStorageKey(outcome.eventRecordId),
+    };
   }
 
   async listLibraryConflicts(

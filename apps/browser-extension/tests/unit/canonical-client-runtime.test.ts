@@ -17,6 +17,7 @@ function fixture() {
   const createdFolderId = randomIdentifier("Folder");
   const createdTagId = randomIdentifier("Tag");
   const createdTagAssignmentId = randomIdentifier("TagAssignment");
+  const createdNoteId = randomIdentifier("Note");
   const ceremony = {
     recoveryPhrase:
       "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
@@ -47,6 +48,9 @@ function fixture() {
     ]),
     beginCreate: vi.fn(async () => ceremony),
     selectVault: vi.fn(async () => undefined),
+    openVault: vi.fn(async () => ({
+      replicaState: { requiredFeatureSetId: randomIdentifier("RequiredFeatureSet") },
+    })),
   } as unknown as CanonicalVaultService;
   const captures = { execute: vi.fn() } as unknown as CanonicalCaptureService;
   const library = { load: vi.fn() } as unknown as CanonicalLibraryProjectionService;
@@ -61,6 +65,7 @@ function fixture() {
     () => createdFolderId,
     () => createdTagId,
     () => createdTagAssignmentId,
+    () => createdNoteId,
   );
   return {
     runtime,
@@ -74,6 +79,7 @@ function fixture() {
     createdFolderId,
     createdTagId,
     createdTagAssignmentId,
+    createdNoteId,
   };
 }
 
@@ -903,5 +909,65 @@ describe("canonical Client Runtime", () => {
         body: canonicalMap([[0, tagId]]),
       },
     ]);
+  });
+
+  it("authors one Note Content Object atomically with its exact creation Event", async () => {
+    const { runtime, library, content, firstVaultId, createdNoteId } = fixture();
+    const collectionId = randomIdentifier("Collection");
+    const eventRecordId = randomIdentifier("VaultRecord");
+    vi.mocked(library.load).mockResolvedValue({
+      vaultId: firstVaultId,
+      generationId: randomIdentifier("Generation"),
+      frontier: [randomIdentifier("VaultRecord")],
+      captures: [],
+      collections: [
+        {
+          collectionId,
+          explicitTitle: null,
+          title: "Research",
+          tailBundleId: null,
+          activeCaptureCount: 0,
+          redirectedTo: null,
+          folderId: null,
+        },
+      ],
+      folders: [],
+      tags: [],
+      tagAssignments: [],
+      notes: [],
+      conflicts: [],
+    });
+    vi.mocked(content.execute).mockResolvedValue({
+      commandId: "note-create",
+      vaultId: firstVaultId,
+      generationId: randomIdentifier("Generation"),
+      eventRecordId,
+    });
+
+    await expect(
+      runtime.createNote({
+        expectedVaultId: identifierStorageKey(firstVaultId),
+        commandId: "note-create",
+        targetKind: "Collection",
+        targetId: identifierStorageKey(collectionId),
+        title: "Context",
+        body: "A complete **Note**.",
+        assertedAt: 60,
+      }),
+    ).resolves.toEqual({
+      noteId: identifierStorageKey(createdNoteId),
+      eventRecordId: identifierStorageKey(eventRecordId),
+    });
+    expect(content.execute).toHaveBeenCalledOnce();
+    const command = vi.mocked(content.execute).mock.calls[0]?.[0];
+    expect(command).toMatchObject({
+      commandId: "note-create",
+      vaultId: firstVaultId,
+      type: 27,
+      assertedAt: 60,
+      dependencies: [{ type: 6 }],
+    });
+    expect(command?.objects).toHaveLength(1);
+    expect(command?.dependencies?.[0]?.id).toEqual(command?.objects?.[0]?.objectId);
   });
 });

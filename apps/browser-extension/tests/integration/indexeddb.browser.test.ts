@@ -151,7 +151,9 @@ test("runs the canonical multi-Vault Client facade across restart", async ({ pag
     tagAssignmentsAfterRemove: 0,
     restartedTagName: "Important",
     restartedTagAssignments: 0,
-    recordCount: 21,
+    noteTitle: "Context",
+    restartedNoteTitle: "Context",
+    recordCount: 22,
     restartSelected: "First",
     restartVaultCount: 2,
   });

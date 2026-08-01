@@ -1,5 +1,12 @@
+import { sealCompactItem } from "../../crypto/compact";
 import type { TypedDependency } from "../../domain/canonical/dependencies";
+import { DEPENDENCY_TYPES } from "../../domain/canonical/dependencies";
 import type { Identifier } from "../../domain/canonical/identifiers";
+import {
+  decodeVaultObject,
+  NOTE_CONTENT_OBJECT,
+  type VaultObject,
+} from "../../domain/canonical/object";
 import type { CanonicalValue } from "../../domain/canonical/value";
 import { bytesEqual } from "../../domain/hash";
 import {
@@ -34,6 +41,7 @@ export interface CanonicalContentCommand {
   readonly body: CanonicalValue;
   readonly expectedCausalFrontier?: readonly Identifier<"VaultRecord">[];
   readonly dependencies?: readonly TypedDependency[];
+  readonly objects?: readonly VaultObject[];
   readonly protectionParameters?: Uint8Array;
 }
 
@@ -74,21 +82,111 @@ export class CanonicalContentService {
           ? {}
           : { protectionParameters: command.protectionParameters }),
       });
+      const suppliedObjects = new Map<string, VaultObject>();
+      for (const object of command.objects ?? []) {
+        const objectKey = identifierStorageKey(object.objectId);
+        if (suppliedObjects.has(objectKey))
+          throw new TypeError("Content command repeats an Object");
+        if (
+          object.objectType !== NOTE_CONTENT_OBJECT ||
+          !bytesEqual(object.vaultId, command.vaultId) ||
+          !bytesEqual(object.requiredFeatureSetId, vault.replicaState.requiredFeatureSetId)
+        ) {
+          throw new TypeError("Content command Object belongs to another canonical context");
+        }
+        if (
+          !(command.dependencies ?? []).some(
+            (dependency) =>
+              dependency.type === DEPENDENCY_TYPES.NoteContentObject &&
+              bytesEqual(dependency.id, object.objectId),
+          )
+        ) {
+          throw new TypeError("Content command Object is not an exact Event dependency");
+        }
+        suppliedObjects.set(objectKey, object);
+      }
+      const preparedObjects: {
+        readonly object: VaultObject;
+        readonly envelope: Awaited<ReturnType<typeof sealCompactItem>>;
+      }[] = [];
+      for (const dependency of command.dependencies ?? []) {
+        if (dependency.type !== DEPENDENCY_TYPES.NoteContentObject) continue;
+        const objectId = dependency.id as Identifier<"VaultObject">;
+        const supplied = suppliedObjects.get(identifierStorageKey(objectId));
+        const existingBytes = await this.vaults.storage.getBytes(this.vaults.realm, {
+          namespace: NAMESPACES.vaultObject.key,
+          scopeKey: vaultKey,
+          itemKey: identifierStorageKey(objectId),
+        });
+        if (existingBytes !== undefined) {
+          const existing = decodeVaultObject(
+            (
+              await this.vaults.openResolvedCompactItem({
+                vault,
+                kind: 3,
+                logicalId: objectId,
+                namespace: NAMESPACES.vaultObject.key,
+                payloadType: 2,
+              })
+            ).payloadBytes,
+          );
+          if (!bytesEqual(existing.objectId, objectId)) {
+            throw new TypeError("Existing Note Content Object does not match its dependency");
+          }
+          if (supplied !== undefined && !bytesEqual(existing.bytes, supplied.bytes)) {
+            throw new TypeError("Supplied Note Content Object conflicts with stored content");
+          }
+          suppliedObjects.delete(identifierStorageKey(objectId));
+          continue;
+        }
+        if (supplied === undefined) {
+          throw new TypeError("Note Content dependency is not available locally");
+        }
+        preparedObjects.push({
+          object: supplied,
+          envelope: await sealCompactItem({
+            vaultId: command.vaultId,
+            keyEpochId: vault.epochSecret.keyEpochId,
+            keyEpochKey: vault.epochSecret.key,
+            payloadType: 2,
+            payloadBytes: supplied.bytes,
+            ...(command.protectionParameters === undefined
+              ? {}
+              : { protectionParameters: command.protectionParameters }),
+          }),
+        });
+        suppliedObjects.delete(identifierStorageKey(objectId));
+      }
+      if (suppliedObjects.size > 0) {
+        throw new TypeError("Content command contains an unused Object");
+      }
       const outcome: CanonicalContentOutcome = {
         commandId: command.commandId,
         vaultId: command.vaultId,
         generationId: vault.replicaState.generationId,
         eventRecordId: prepared.event.recordId,
       };
-      const resolution: LogicalResolution = {
-        vaultId: command.vaultId,
-        kind: 1,
-        logicalId: prepared.event.recordId,
-        storageItemId: prepared.eventEnvelope.storageItemId,
-        keyEpochId: vault.epochSecret.keyEpochId,
-        availability: 1,
-      };
-      const [nextReplicaState, resolutionItem] = await Promise.all([
+      const resolutions: readonly LogicalResolution[] = [
+        {
+          vaultId: command.vaultId,
+          kind: 1,
+          logicalId: prepared.event.recordId,
+          storageItemId: prepared.eventEnvelope.storageItemId,
+          keyEpochId: vault.epochSecret.keyEpochId,
+          availability: 1,
+        },
+        ...preparedObjects.map(
+          ({ object, envelope }): LogicalResolution => ({
+            vaultId: command.vaultId,
+            kind: 3,
+            logicalId: object.objectId,
+            storageItemId: envelope.storageItemId,
+            keyEpochId: vault.epochSecret.keyEpochId,
+            availability: 1,
+          }),
+        ),
+      ];
+      const [nextReplicaState, ...resolutionItems] = await Promise.all([
         prepareWrappedLocalStateItem({
           namespace: NAMESPACES.replicaState.key,
           scopeKey: vaultKey,
@@ -98,15 +196,19 @@ export class CanonicalContentService {
           context: canonicalLocalStorageContext(command.vaultId, vault.replicaState.generationId),
           bytes: encodeCanonicalReplicaState(prepared.nextReplicaState),
         }),
-        prepareWrappedLocalStateItem({
-          namespace: NAMESPACES.logicalResolution.key,
-          scopeKey: vaultKey,
-          itemKey: `1:${identifierStorageKey(prepared.event.recordId)}`,
-          wrappingKey: vault.installationWrappingKey,
-          domain: "awsm.local.logical-resolution",
-          context: canonicalLocalStorageContext(command.vaultId, prepared.event.recordId),
-          bytes: encodeLogicalResolution(resolution),
-        }),
+        ...resolutions.map((resolution) =>
+          prepareWrappedLocalStateItem({
+            namespace: NAMESPACES.logicalResolution.key,
+            scopeKey: vaultKey,
+            itemKey: `${resolution.kind}:${identifierStorageKey(
+              resolution.logicalId as Identifier<"VaultRecord">,
+            )}`,
+            wrappingKey: vault.installationWrappingKey,
+            domain: "awsm.local.logical-resolution",
+            context: canonicalLocalStorageContext(command.vaultId, resolution.logicalId),
+            bytes: encodeLogicalResolution(resolution),
+          }),
+        ),
       ]);
       const immutableItems: readonly NamespaceBytes[] = [
         {
@@ -121,6 +223,12 @@ export class CanonicalContentService {
           itemKey: command.commandId,
           bytes: encodeCanonicalContentOutcome(outcome),
         },
+        ...preparedObjects.map(({ object, envelope }) => ({
+          namespace: NAMESPACES.vaultObject.key,
+          scopeKey: vaultKey,
+          itemKey: identifierStorageKey(object.objectId),
+          bytes: envelope.bytes,
+        })),
       ];
       try {
         await this.vaults.storage.commitReplicaMutation({
@@ -128,7 +236,7 @@ export class CanonicalContentService {
           expectedReplicaState: vault.replicaStateStorageBytes,
           nextReplicaState,
           immutableItems,
-          mutableItems: [resolutionItem],
+          mutableItems: resolutionItems,
         });
         return outcome;
       } catch (error) {

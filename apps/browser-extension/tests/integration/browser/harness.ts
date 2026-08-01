@@ -37,6 +37,7 @@ import {
 import {
   CanonicalIndexedDb,
   CanonicalStorageError,
+  identifierFromStorageKey,
   openCanonicalDatabase,
 } from "../../../src/drivers/indexeddb/canonical-database";
 import { NAMESPACES, NORMAL_STORAGE_REALM } from "../../../src/drivers/indexeddb/canonical-schema";
@@ -739,10 +740,11 @@ async function canonicalClientRuntimeScenario(): Promise<unknown> {
   const artifacts = new BrowserMemoryCanonicalArtifactStore();
   try {
     const vaults = new CanonicalVaultService(storage, NORMAL_STORAGE_REALM);
+    const library = new CanonicalLibraryProjectionService(vaults, artifacts);
     const runtime = new CanonicalClientRuntime(
       vaults,
       new CanonicalCaptureService(vaults, artifacts),
-      new CanonicalLibraryProjectionService(vaults, artifacts),
+      library,
     );
     const firstSetup = await runtime.beginVaultCreation({
       expectedVaultId: null,
@@ -941,6 +943,16 @@ async function canonicalClientRuntimeScenario(): Promise<unknown> {
     });
     const tagAssignmentsAfterRemove = await runtime.listTagAssignments(first.vaultId);
     const tags = await runtime.listTags(first.vaultId);
+    await runtime.createNote({
+      expectedVaultId: first.vaultId,
+      commandId: "facade-note-create",
+      targetKind: "Collection",
+      targetId: destinationCollectionId,
+      title: "Context",
+      body: "A complete **Note**.",
+      assertedAt: 29,
+    });
+    const notes = (await library.load(identifierFromStorageKey("Vault", first.vaultId))).notes;
     const records = await storage.listBytes(
       NORMAL_STORAGE_REALM,
       NAMESPACES.vaultRecord.key,
@@ -951,16 +963,20 @@ async function canonicalClientRuntimeScenario(): Promise<unknown> {
     const restartedStorage = new CanonicalIndexedDb(databaseName);
     try {
       const restartedVaults = new CanonicalVaultService(restartedStorage, NORMAL_STORAGE_REALM);
+      const restartedLibrary = new CanonicalLibraryProjectionService(restartedVaults, artifacts);
       const restarted = new CanonicalClientRuntime(
         restartedVaults,
         new CanonicalCaptureService(restartedVaults, artifacts),
-        new CanonicalLibraryProjectionService(restartedVaults, artifacts),
+        restartedLibrary,
       );
       const restartedState = await restarted.state();
       const restartedFolders = await restarted.listFolders(first.vaultId);
       const restartedCollections = await restarted.listCollections(first.vaultId);
       const restartedTags = await restarted.listTags(first.vaultId);
       const restartedTagAssignments = await restarted.listTagAssignments(first.vaultId);
+      const restartedNotes = (
+        await restartedLibrary.load(identifierFromStorageKey("Vault", first.vaultId))
+      ).notes;
       return {
         recoveryWordCount: secondSetup.recoveryPhrase.split(" ").length,
         selectedAfterCreate,
@@ -994,6 +1010,8 @@ async function canonicalClientRuntimeScenario(): Promise<unknown> {
         tagAssignmentsAfterRemove: tagAssignmentsAfterRemove.length,
         restartedTagName: restartedTags.find(({ tagId }) => tagId === tag.tagId)?.name,
         restartedTagAssignments: restartedTagAssignments.length,
+        noteTitle: notes[0]?.versions[0]?.title,
+        restartedNoteTitle: restartedNotes[0]?.versions[0]?.title,
         recordCount: records.length,
         restartSelected: restartedState.vaults.find(({ selected }) => selected)?.label,
         restartVaultCount: restartedState.vaults.length,
