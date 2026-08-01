@@ -1,5 +1,6 @@
+import { type Identifier, randomIdentifier } from "../../domain/canonical/identifiers";
 import { exactMap, identifierValue, mapValue } from "../../domain/canonical/schema";
-import { canonicalMap, canonicalSet } from "../../domain/canonical/value";
+import { type CanonicalValue, canonicalMap, canonicalSet } from "../../domain/canonical/value";
 import { bytesEqual } from "../../domain/hash";
 import {
   identifierFromStorageKey,
@@ -46,6 +47,15 @@ export interface CanonicalClientCollection {
   readonly tailBundleId: string | null;
   readonly activeCaptureCount: number;
   readonly redirectedTo: string | null;
+  readonly folderId: string | null;
+}
+
+export interface CanonicalClientFolder {
+  readonly folderId: string;
+  readonly name: string;
+  readonly parentFolderId: string | null;
+  readonly effectiveParentFolderId: string | null;
+  readonly lifecycle: "Active" | "Deleted";
 }
 
 export type CanonicalClientLibraryConflict =
@@ -58,6 +68,11 @@ export type CanonicalClientLibraryConflict =
       readonly kind: "CollectionMerge";
       readonly reason: "MultipleDestinations" | "Cycle";
       readonly subjectCollectionIds: readonly string[];
+      readonly candidateRecordIds: readonly string[];
+    }
+  | {
+      readonly kind: "Folder";
+      readonly subjectFolderIds: readonly string[];
       readonly candidateRecordIds: readonly string[];
     };
 
@@ -95,6 +110,20 @@ function assertAcyclicRedirects(redirects: ReadonlyMap<string, string>): void {
   }
 }
 
+function assertAcyclicFolderParents(parents: ReadonlyMap<string, string>): void {
+  for (const folderId of parents.keys()) {
+    let current: string | undefined = folderId;
+    const seen = new Set<string>();
+    while (current !== undefined) {
+      if (seen.has(current)) {
+        throw runtimeError("FOLDER_CONFLICT", "The Folder placement would create a cycle.");
+      }
+      seen.add(current);
+      current = parents.get(current);
+    }
+  }
+}
+
 export class CanonicalClientRuntime {
   private readonly pendingVaultCreations = new Map<string, PendingVaultCreation>();
 
@@ -104,6 +133,7 @@ export class CanonicalClientRuntime {
     readonly library: CanonicalLibraryProjectionService,
     private readonly createSetupId: () => string = () => crypto.randomUUID(),
     readonly content: CanonicalContentService = new CanonicalContentService(vaults),
+    private readonly createFolderId: () => Identifier<"Folder"> = () => randomIdentifier("Folder"),
   ) {}
 
   async state(): Promise<CanonicalClientState> {
@@ -215,7 +245,303 @@ export class CanonicalClientRuntime {
       activeCaptureCount: collection.activeCaptureCount,
       redirectedTo:
         collection.redirectedTo === null ? null : identifierStorageKey(collection.redirectedTo),
+      folderId: collection.folderId === null ? null : identifierStorageKey(collection.folderId),
     }));
+  }
+
+  async listFolders(expectedVaultId: string): Promise<readonly CanonicalClientFolder[]> {
+    await this.assertExpectedVault(expectedVaultId);
+    const projection = await this.library.load(identifierFromStorageKey("Vault", expectedVaultId));
+    return projection.folders.map((folder) => ({
+      folderId: identifierStorageKey(folder.folderId),
+      name: folder.name,
+      parentFolderId:
+        folder.parentFolderId === null ? null : identifierStorageKey(folder.parentFolderId),
+      effectiveParentFolderId:
+        folder.effectiveParentFolderId === null
+          ? null
+          : identifierStorageKey(folder.effectiveParentFolderId),
+      lifecycle: folder.lifecycle === 1 ? "Active" : "Deleted",
+    }));
+  }
+
+  async createFolder(input: {
+    readonly expectedVaultId: string;
+    readonly commandId: string;
+    readonly name: string;
+    readonly parentFolderId: string | null;
+    readonly assertedAt: number | bigint;
+  }): Promise<{ readonly folderId: string; readonly eventRecordId: string }> {
+    const folders = await this.listFolders(input.expectedVaultId);
+    if (
+      input.parentFolderId !== null &&
+      !folders.some(({ folderId }) => folderId === input.parentFolderId)
+    ) {
+      throw runtimeError("FOLDER_NOT_FOUND", "The parent Folder is not in the Vault.");
+    }
+    if (input.parentFolderId !== null) {
+      await this.assertFolderHierarchyAvailable(input.expectedVaultId, [input.parentFolderId]);
+    }
+    const folderId = this.createFolderId();
+    if (folders.some((folder) => folder.folderId === identifierStorageKey(folderId))) {
+      throw runtimeError("FOLDER_ID_CONFLICT", "The generated Folder ID already exists.");
+    }
+    const vaultId = identifierFromStorageKey("Vault", input.expectedVaultId);
+    const outcome = await this.content.execute({
+      commandId: input.commandId,
+      vaultId,
+      type: 12,
+      assertedAt: input.assertedAt,
+      body: canonicalMap([
+        [0, folderId],
+        [1, input.name],
+        [
+          2,
+          input.parentFolderId === null
+            ? null
+            : identifierFromStorageKey("Folder", input.parentFolderId),
+        ],
+      ]),
+    });
+    return {
+      folderId: identifierStorageKey(folderId),
+      eventRecordId: identifierStorageKey(outcome.eventRecordId),
+    };
+  }
+
+  async renameFolder(input: {
+    readonly expectedVaultId: string;
+    readonly commandId: string;
+    readonly folderId: string;
+    readonly name: string;
+    readonly assertedAt: number | bigint;
+  }): Promise<{ readonly eventRecordId: string }> {
+    await this.requireFolder(input.expectedVaultId, input.folderId);
+    return this.executeFolderEvent(
+      input,
+      13,
+      canonicalMap([
+        [0, identifierFromStorageKey("Folder", input.folderId)],
+        [1, input.name],
+      ]),
+    );
+  }
+
+  async placeFolder(input: {
+    readonly expectedVaultId: string;
+    readonly commandId: string;
+    readonly folderId: string;
+    readonly parentFolderId: string | null;
+    readonly assertedAt: number | bigint;
+  }): Promise<{ readonly eventRecordId: string }> {
+    const folders = await this.listFolders(input.expectedVaultId);
+    if (!folders.some(({ folderId }) => folderId === input.folderId)) {
+      throw runtimeError("FOLDER_NOT_FOUND", "The Folder is not in the Vault.");
+    }
+    if (
+      input.parentFolderId !== null &&
+      !folders.some(({ folderId }) => folderId === input.parentFolderId)
+    ) {
+      throw runtimeError("FOLDER_NOT_FOUND", "The parent Folder is not in the Vault.");
+    }
+    await this.assertFolderHierarchyAvailable(input.expectedVaultId, [
+      input.folderId,
+      ...(input.parentFolderId === null ? [] : [input.parentFolderId]),
+    ]);
+    const parents = new Map(
+      folders.flatMap(({ folderId, parentFolderId }) =>
+        parentFolderId === null ? [] : [[folderId, parentFolderId] as const],
+      ),
+    );
+    if (input.parentFolderId === null) parents.delete(input.folderId);
+    else parents.set(input.folderId, input.parentFolderId);
+    assertAcyclicFolderParents(parents);
+    return this.executeFolderEvent(
+      input,
+      14,
+      canonicalMap([
+        [0, identifierFromStorageKey("Folder", input.folderId)],
+        [
+          1,
+          input.parentFolderId === null
+            ? null
+            : identifierFromStorageKey("Folder", input.parentFolderId),
+        ],
+      ]),
+    );
+  }
+
+  async deleteFolder(input: {
+    readonly expectedVaultId: string;
+    readonly commandId: string;
+    readonly folderId: string;
+    readonly assertedAt: number | bigint;
+  }): Promise<{ readonly eventRecordId: string }> {
+    await this.requireFolder(input.expectedVaultId, input.folderId);
+    return this.executeFolderEvent(
+      input,
+      15,
+      canonicalMap([[0, identifierFromStorageKey("Folder", input.folderId)]]),
+    );
+  }
+
+  async restoreFolder(input: {
+    readonly expectedVaultId: string;
+    readonly commandId: string;
+    readonly folderId: string;
+    readonly assertedAt: number | bigint;
+  }): Promise<{ readonly eventRecordId: string }> {
+    await this.requireFolder(input.expectedVaultId, input.folderId);
+    return this.executeFolderEvent(
+      input,
+      16,
+      canonicalMap([[0, identifierFromStorageKey("Folder", input.folderId)]]),
+    );
+  }
+
+  async placeCollectionInFolder(input: {
+    readonly expectedVaultId: string;
+    readonly commandId: string;
+    readonly collectionId: string;
+    readonly folderId: string | null;
+    readonly assertedAt: number | bigint;
+  }): Promise<{ readonly eventRecordId: string }> {
+    const [collections, folders] = await Promise.all([
+      this.listCollections(input.expectedVaultId),
+      this.listFolders(input.expectedVaultId),
+    ]);
+    if (!collections.some(({ collectionId }) => collectionId === input.collectionId)) {
+      throw runtimeError("COLLECTION_NOT_FOUND", "The Collection is not in the Vault.");
+    }
+    if (input.folderId !== null && !folders.some(({ folderId }) => folderId === input.folderId)) {
+      throw runtimeError("FOLDER_NOT_FOUND", "The Folder is not in the Vault.");
+    }
+    if (input.folderId !== null) {
+      await this.assertFolderHierarchyAvailable(input.expectedVaultId, [input.folderId]);
+    }
+    const outcome = await this.content.execute({
+      commandId: input.commandId,
+      vaultId: identifierFromStorageKey("Vault", input.expectedVaultId),
+      type: 11,
+      assertedAt: input.assertedAt,
+      body: canonicalMap([
+        [0, identifierFromStorageKey("Collection", input.collectionId)],
+        [1, input.folderId === null ? null : identifierFromStorageKey("Folder", input.folderId)],
+      ]),
+    });
+    return { eventRecordId: identifierStorageKey(outcome.eventRecordId) };
+  }
+
+  async resolveFolderConflict(input: {
+    readonly expectedVaultId: string;
+    readonly commandId: string;
+    readonly subjectFolderIds: readonly string[];
+    readonly conflictingCauseIds: readonly string[];
+    readonly placements: readonly {
+      readonly folderId: string;
+      readonly parentFolderId: string | null;
+    }[];
+    readonly assertedAt: number | bigint;
+  }): Promise<{ readonly eventRecordId: string }> {
+    await this.assertExpectedVault(input.expectedVaultId);
+    if (
+      input.subjectFolderIds.length === 0 ||
+      new Set(input.subjectFolderIds).size !== input.subjectFolderIds.length ||
+      input.conflictingCauseIds.length === 0 ||
+      new Set(input.conflictingCauseIds).size !== input.conflictingCauseIds.length
+    ) {
+      throw runtimeError(
+        "CONTENT_COMMAND_INVALID",
+        "Folder conflict identities must be unique and nonempty.",
+      );
+    }
+    const vaultId = identifierFromStorageKey("Vault", input.expectedVaultId);
+    for (const folderId of input.subjectFolderIds) {
+      identifierFromStorageKey("Folder", folderId);
+    }
+    const conflictingCauseIds = input.conflictingCauseIds.map((causeId) =>
+      identifierFromStorageKey("VaultRecord", causeId),
+    );
+    const projection = await this.library.load(vaultId);
+    const matching = projection.conflicts.filter(
+      (conflict) =>
+        conflict.kind === "Folder" &&
+        sameStringSet(
+          conflict.subjectFolderIds.map(identifierStorageKey),
+          input.subjectFolderIds,
+        ) &&
+        sameStringSet(
+          conflict.candidateRecordIds.map(identifierStorageKey),
+          input.conflictingCauseIds,
+        ),
+    );
+    if (matching.length !== 1) {
+      throw runtimeError(
+        "FOLDER_CONFLICT_CHANGED",
+        "The Folder Conflict is no longer the exact current Conflict.",
+      );
+    }
+    const affected = new Set(input.subjectFolderIds);
+    const known = new Set(projection.folders.map(({ folderId }) => identifierStorageKey(folderId)));
+    if (
+      input.placements.length !== affected.size ||
+      new Set(input.placements.map(({ folderId }) => folderId)).size !== input.placements.length ||
+      input.placements.some(({ folderId }) => !affected.has(folderId))
+    ) {
+      throw runtimeError(
+        "CONTENT_COMMAND_INVALID",
+        "Folder Resolution must replace every affected Folder exactly once.",
+      );
+    }
+    for (const placement of input.placements) {
+      if (
+        placement.parentFolderId !== null &&
+        (!known.has(placement.parentFolderId) || placement.parentFolderId === placement.folderId)
+      ) {
+        throw runtimeError(
+          "CONTENT_COMMAND_INVALID",
+          "Folder Resolution names an invalid parent Folder.",
+        );
+      }
+    }
+    const parents = new Map(
+      projection.folders.flatMap(({ folderId, parentFolderId }) => {
+        const source = identifierStorageKey(folderId);
+        return parentFolderId === null || affected.has(source)
+          ? []
+          : [[source, identifierStorageKey(parentFolderId)] as const];
+      }),
+    );
+    for (const placement of input.placements) {
+      if (placement.parentFolderId === null) parents.delete(placement.folderId);
+      else parents.set(placement.folderId, placement.parentFolderId);
+    }
+    assertAcyclicFolderParents(parents);
+    const placements = input.placements
+      .toSorted((left, right) => left.folderId.localeCompare(right.folderId))
+      .map((placement) =>
+        canonicalMap([
+          [0, identifierFromStorageKey("Folder", placement.folderId)],
+          [
+            1,
+            placement.parentFolderId === null
+              ? null
+              : identifierFromStorageKey("Folder", placement.parentFolderId),
+          ],
+        ]),
+      );
+    const outcome = await this.content.execute({
+      commandId: input.commandId,
+      vaultId,
+      type: 17,
+      assertedAt: input.assertedAt,
+      expectedCausalFrontier: projection.frontier,
+      body: canonicalMap([
+        [0, canonicalSet(conflictingCauseIds)],
+        [1, placements],
+      ]),
+    });
+    return { eventRecordId: identifierStorageKey(outcome.eventRecordId) };
   }
 
   async listLibraryConflicts(
@@ -231,12 +557,18 @@ export class CanonicalClientRuntime {
               bundleId: identifierStorageKey(conflict.bundleId),
               registrationRecordIds: conflict.registrationRecordIds.map(identifierStorageKey),
             }
-          : {
-              kind: "CollectionMerge",
-              reason: conflict.reason,
-              subjectCollectionIds: conflict.subjectCollectionIds.map(identifierStorageKey),
-              candidateRecordIds: conflict.candidateRecordIds.map(identifierStorageKey),
-            },
+          : conflict.kind === "CollectionMerge"
+            ? {
+                kind: "CollectionMerge",
+                reason: conflict.reason,
+                subjectCollectionIds: conflict.subjectCollectionIds.map(identifierStorageKey),
+                candidateRecordIds: conflict.candidateRecordIds.map(identifierStorageKey),
+              }
+            : {
+                kind: "Folder",
+                subjectFolderIds: conflict.subjectFolderIds.map(identifierStorageKey),
+                candidateRecordIds: conflict.candidateRecordIds.map(identifierStorageKey),
+              },
     );
   }
 
@@ -531,6 +863,54 @@ export class CanonicalClientRuntime {
     readonly assertedAt: number | bigint;
   }): Promise<{ readonly eventRecordId: string }> {
     return this.changeCaptureLifecycle({ ...input, type: 5 });
+  }
+
+  private async requireFolder(
+    expectedVaultId: string,
+    folderId: string,
+  ): Promise<CanonicalClientFolder> {
+    const folder = (await this.listFolders(expectedVaultId)).find(
+      (candidate) => candidate.folderId === folderId,
+    );
+    if (folder === undefined)
+      throw runtimeError("FOLDER_NOT_FOUND", "The Folder is not in the Vault.");
+    return folder;
+  }
+
+  private async assertFolderHierarchyAvailable(
+    expectedVaultId: string,
+    folderIds: readonly string[],
+  ): Promise<void> {
+    const blocked = new Set(
+      (await this.listLibraryConflicts(expectedVaultId)).flatMap((conflict) =>
+        conflict.kind === "Folder" ? conflict.subjectFolderIds : [],
+      ),
+    );
+    if (folderIds.some((folderId) => blocked.has(folderId))) {
+      throw runtimeError(
+        "FOLDER_CONFLICT",
+        "The Folder hierarchy is in Conflict and requires explicit Resolution.",
+      );
+    }
+  }
+
+  private async executeFolderEvent(
+    input: {
+      readonly expectedVaultId: string;
+      readonly commandId: string;
+      readonly assertedAt: number | bigint;
+    },
+    type: 13 | 14 | 15 | 16,
+    body: CanonicalValue,
+  ): Promise<{ readonly eventRecordId: string }> {
+    const outcome = await this.content.execute({
+      commandId: input.commandId,
+      vaultId: identifierFromStorageKey("Vault", input.expectedVaultId),
+      type,
+      assertedAt: input.assertedAt,
+      body,
+    });
+    return { eventRecordId: identifierStorageKey(outcome.eventRecordId) };
   }
 
   private requirePendingCreation(setupId: string): PendingVaultCreation {

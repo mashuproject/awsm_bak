@@ -42,6 +42,12 @@ import type {
   CanonicalVaultService,
   PersistedOpenedCanonicalVault,
 } from "../vault/canonical-service";
+import {
+  type CanonicalFolderConflict,
+  type CanonicalProjectedFolder,
+  reduceCanonicalCollectionFolders,
+  reduceCanonicalFolders,
+} from "./canonical-folder-projection";
 
 const LIBRARY_PROJECTION_FORMAT = 1 as const;
 
@@ -75,6 +81,7 @@ export interface CanonicalLibraryCollection {
   readonly tailBundleId: Identifier<"Bundle"> | null;
   readonly activeCaptureCount: number;
   readonly redirectedTo: Identifier<"Collection"> | null;
+  readonly folderId: Identifier<"Folder"> | null;
 }
 
 export interface CanonicalCaptureIdentityConflict {
@@ -92,7 +99,8 @@ export interface CanonicalCollectionMergeConflict {
 
 export type CanonicalLibraryConflict =
   | CanonicalCaptureIdentityConflict
-  | CanonicalCollectionMergeConflict;
+  | CanonicalCollectionMergeConflict
+  | CanonicalFolderConflict;
 
 export interface CanonicalLibraryProjection {
   readonly vaultId: Identifier<"Vault">;
@@ -100,6 +108,7 @@ export interface CanonicalLibraryProjection {
   readonly frontier: readonly Identifier<"VaultRecord">[];
   readonly captures: readonly CanonicalLibraryCapture[];
   readonly collections: readonly CanonicalLibraryCollection[];
+  readonly folders: readonly CanonicalProjectedFolder[];
   readonly conflicts: readonly CanonicalLibraryConflict[];
 }
 
@@ -497,6 +506,8 @@ export class CanonicalLibraryProjectionService {
     const placementFacts = eventCapturePlacements(replay);
     const titleFacts = eventCollectionTitles(replay);
     const redirectReduction = reduceCollectionRedirects(replay);
+    const folderProjection = reduceCanonicalFolders(replay);
+    const collectionFolderPlacements = reduceCanonicalCollectionFolders(replay, folderProjection);
     const redirectEdges = redirectReduction.edges;
     const objectCache = new Map<string, VaultObject>();
     const loadObject = async (objectId: Identifier<"VaultObject">): Promise<VaultObject> => {
@@ -585,6 +596,9 @@ export class CanonicalLibraryProjectionService {
       collectionIds.set(key(capture.effectiveCollectionId), capture.effectiveCollectionId);
     }
     for (const title of titleFacts) collectionIds.set(key(title.collectionId), title.collectionId);
+    for (const placement of collectionFolderPlacements) {
+      collectionIds.set(key(placement.collectionId), placement.collectionId);
+    }
     for (const edge of redirectEdges) {
       collectionIds.set(key(edge.sourceId), edge.sourceId as Identifier<"Collection">);
       collectionIds.set(key(edge.destinationId), edge.destinationId as Identifier<"Collection">);
@@ -608,6 +622,10 @@ export class CanonicalLibraryProjectionService {
           titleFacts.filter((fact) => bytesEqual(fact.collectionId, collectionId)),
           replay.graph,
         )?.value;
+        const folderId =
+          collectionFolderPlacements.find((placement) =>
+            bytesEqual(placement.collectionId, collectionId),
+          )?.effectiveFolderId ?? null;
         return {
           collectionId,
           explicitTitle: explicitTitle ?? null,
@@ -620,6 +638,7 @@ export class CanonicalLibraryProjectionService {
           )
             ? null
             : resolveCollectionRedirect(collectionId, redirectEdges),
+          folderId,
         };
       })
       .toSorted((left, right) => compareBytes(left.collectionId, right.collectionId));
@@ -629,6 +648,7 @@ export class CanonicalLibraryProjectionService {
       frontier: vault.replicaState.causalFrontier,
       captures,
       collections,
+      folders: folderProjection.folders,
       conflicts: [
         ...selected.conflicts,
         ...redirectReduction.conflicts.map(
@@ -643,6 +663,7 @@ export class CanonicalLibraryProjectionService {
             ),
           }),
         ),
+        ...folderProjection.conflicts,
       ],
     };
   }
@@ -740,12 +761,18 @@ export function encodeCanonicalLibraryProjection(value: CanonicalLibraryProjecti
       value.conflicts.map((conflict) =>
         conflict.kind === "CaptureIdentity"
           ? indexedMap(1, conflict.bundleId, canonicalSet(conflict.registrationRecordIds))
-          : indexedMap(
-              2,
-              conflict.reason === "Cycle" ? 2 : 1,
-              canonicalSet(conflict.subjectCollectionIds),
-              canonicalSet(conflict.candidateRecordIds),
-            ),
+          : conflict.kind === "CollectionMerge"
+            ? indexedMap(
+                2,
+                conflict.reason === "Cycle" ? 2 : 1,
+                canonicalSet(conflict.subjectCollectionIds),
+                canonicalSet(conflict.candidateRecordIds),
+              )
+            : indexedMap(
+                3,
+                canonicalSet(conflict.subjectFolderIds),
+                canonicalSet(conflict.candidateRecordIds),
+              ),
       ),
       value.collections.map((collection) =>
         indexedMap(
@@ -755,6 +782,16 @@ export function encodeCanonicalLibraryProjection(value: CanonicalLibraryProjecti
           collection.tailBundleId,
           collection.activeCaptureCount,
           collection.redirectedTo,
+          collection.folderId,
+        ),
+      ),
+      value.folders.map((folder) =>
+        indexedMap(
+          folder.folderId,
+          folder.name,
+          folder.parentFolderId,
+          folder.effectiveParentFolderId,
+          folder.lifecycle,
         ),
       ),
     ),
@@ -762,7 +799,7 @@ export function encodeCanonicalLibraryProjection(value: CanonicalLibraryProjecti
 }
 
 export function decodeCanonicalLibraryProjection(bytes: Uint8Array): CanonicalLibraryProjection {
-  const map = exactMap(decodeCanonicalValue(bytes), [0, 1, 2, 3, 4, 5, 6], "Library Projection");
+  const map = exactMap(decodeCanonicalValue(bytes), [0, 1, 2, 3, 4, 5, 6, 7], "Library Projection");
   exactCode(mapValue(map, 0), LIBRARY_PROJECTION_FORMAT, "Library Projection format");
   const capturesValue = mapValue(map, 4);
   if (!Array.isArray(capturesValue)) throw new TypeError("Library captures must be an array");
@@ -801,7 +838,7 @@ export function decodeCanonicalLibraryProjection(bytes: Uint8Array): CanonicalLi
     ),
     captures,
     collections: arrayValue(mapValue(map, 6), "Library collections").map((entry, index) => {
-      const collection = exactMap(entry, [0, 1, 2, 3, 4, 5], `Library Collection ${index}`);
+      const collection = exactMap(entry, [0, 1, 2, 3, 4, 5, 6], `Library Collection ${index}`);
       const activeCaptureCount = signedInteger(mapValue(collection, 4), "Active Capture count");
       if (typeof activeCaptureCount !== "number" || activeCaptureCount < 0) {
         throw new TypeError("Active Capture count must be a nonnegative safe integer");
@@ -819,11 +856,24 @@ export function decodeCanonicalLibraryProjection(bytes: Uint8Array): CanonicalLi
         redirectedTo: nullable(mapValue(collection, 5), (value) =>
           identifierValue(value, "Collection"),
         ),
+        folderId: nullable(mapValue(collection, 6), (value) => identifierValue(value, "Folder")),
+      };
+    }),
+    folders: arrayValue(mapValue(map, 7), "Library folders").map((entry, index) => {
+      const folder = exactMap(entry, [0, 1, 2, 3, 4], `Library Folder ${index}`);
+      return {
+        folderId: identifierValue(mapValue(folder, 0), "Folder"),
+        name: textValue(mapValue(folder, 1), "Folder name", { maxUtf8Bytes: 1_024 }),
+        parentFolderId: nullable(mapValue(folder, 2), (value) => identifierValue(value, "Folder")),
+        effectiveParentFolderId: nullable(mapValue(folder, 3), (value) =>
+          identifierValue(value, "Folder"),
+        ),
+        lifecycle: oneOfCodes(mapValue(folder, 4), [1, 2] as const, "Folder lifecycle"),
       };
     }),
     conflicts: conflictsValue.map((entry, index): CanonicalLibraryConflict => {
       if (!(entry instanceof Map)) throw new TypeError(`Library conflict ${index} must be a map`);
-      const kind = oneOfCodes(mapValue(entry, 0), [1, 2] as const, "Library conflict kind");
+      const kind = oneOfCodes(mapValue(entry, 0), [1, 2, 3] as const, "Library conflict kind");
       if (kind === 1) {
         const conflict = exactMap(entry, [0, 1, 2], `Capture identity conflict ${index}`);
         return {
@@ -832,6 +882,24 @@ export function decodeCanonicalLibraryProjection(bytes: Uint8Array): CanonicalLi
           registrationRecordIds: canonicalSetValue(
             mapValue(conflict, 2),
             "Conflicting registration IDs",
+            (id) => identifierValue(id, "VaultRecord"),
+            { nonempty: true },
+          ),
+        };
+      }
+      if (kind === 3) {
+        const conflict = exactMap(entry, [0, 1, 2], `Folder conflict ${index}`);
+        return {
+          kind: "Folder",
+          subjectFolderIds: canonicalSetValue(
+            mapValue(conflict, 1),
+            "Conflicting Folder IDs",
+            (id) => identifierValue(id, "Folder"),
+            { nonempty: true },
+          ),
+          candidateRecordIds: canonicalSetValue(
+            mapValue(conflict, 2),
+            "Conflicting Folder Cause IDs",
             (id) => identifierValue(id, "VaultRecord"),
             { nonempty: true },
           ),

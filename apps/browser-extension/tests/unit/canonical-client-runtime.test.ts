@@ -14,6 +14,7 @@ function fixture() {
   const secondVaultId = randomIdentifier("Vault");
   const generationId = randomIdentifier("Generation");
   const clientCredentialId = randomIdentifier("ClientCredential");
+  const createdFolderId = randomIdentifier("Folder");
   const ceremony = {
     recoveryPhrase:
       "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
@@ -55,8 +56,19 @@ function fixture() {
     library,
     () => `setup-${++setup}`,
     content,
+    () => createdFolderId,
   );
-  return { runtime, vaults, captures, library, content, ceremony, firstVaultId, secondVaultId };
+  return {
+    runtime,
+    vaults,
+    captures,
+    library,
+    content,
+    ceremony,
+    firstVaultId,
+    secondVaultId,
+    createdFolderId,
+  };
 }
 
 describe("canonical Client Runtime", () => {
@@ -157,6 +169,7 @@ describe("canonical Client Runtime", () => {
       generationId: randomIdentifier("Generation"),
       frontier: [randomIdentifier("VaultRecord")],
       conflicts: [],
+      folders: [],
       captures: [
         {
           bundleId,
@@ -219,7 +232,9 @@ describe("canonical Client Runtime", () => {
         tailBundleId: null,
         activeCaptureCount: 0,
         redirectedTo: null,
+        folderId: null,
       })),
+      folders: [],
       conflicts: [
         {
           kind: "CollectionMerge",
@@ -293,7 +308,9 @@ describe("canonical Client Runtime", () => {
         tailBundleId: null,
         activeCaptureCount: 0,
         redirectedTo: null,
+        folderId: null,
       })),
+      folders: [],
       conflicts: [
         {
           kind: "CollectionMerge",
@@ -328,6 +345,7 @@ describe("canonical Client Runtime", () => {
       frontier: [randomIdentifier("VaultRecord")],
       captures: [],
       collections: [],
+      folders: [],
       conflicts: [
         {
           kind: "CollectionMerge",
@@ -351,5 +369,327 @@ describe("canonical Client Runtime", () => {
         },
       ],
     );
+  });
+
+  it("authors the canonical Folder and Collection-placement workflow without repetitive wrappers", async () => {
+    const { runtime, library, content, firstVaultId, createdFolderId } = fixture();
+    const parentFolderId = randomIdentifier("Folder");
+    const collectionId = randomIdentifier("Collection");
+    const eventRecordId = randomIdentifier("VaultRecord");
+    vi.mocked(library.load).mockResolvedValue({
+      vaultId: firstVaultId,
+      generationId: randomIdentifier("Generation"),
+      frontier: [randomIdentifier("VaultRecord")],
+      captures: [],
+      collections: [
+        {
+          collectionId,
+          explicitTitle: null,
+          title: "Collection",
+          tailBundleId: null,
+          activeCaptureCount: 0,
+          redirectedTo: null,
+          folderId: null,
+        },
+      ],
+      folders: [
+        {
+          folderId: parentFolderId,
+          name: "Parent",
+          parentFolderId: null,
+          effectiveParentFolderId: null,
+          lifecycle: 1,
+        },
+      ],
+      conflicts: [],
+    });
+    vi.mocked(content.execute).mockResolvedValue({
+      commandId: "folder-command",
+      vaultId: firstVaultId,
+      generationId: randomIdentifier("Generation"),
+      eventRecordId,
+    });
+    const vaultId = identifierStorageKey(firstVaultId);
+    const parentId = identifierStorageKey(parentFolderId);
+    const createdId = identifierStorageKey(createdFolderId);
+
+    await expect(runtime.listFolders(vaultId)).resolves.toEqual([
+      {
+        folderId: parentId,
+        name: "Parent",
+        parentFolderId: null,
+        effectiveParentFolderId: null,
+        lifecycle: "Active",
+      },
+    ]);
+    await expect(
+      runtime.createFolder({
+        expectedVaultId: vaultId,
+        commandId: "folder-create",
+        name: "Child",
+        parentFolderId: parentId,
+        assertedAt: 30,
+      }),
+    ).resolves.toEqual({ folderId: createdId, eventRecordId: identifierStorageKey(eventRecordId) });
+    await runtime.renameFolder({
+      expectedVaultId: vaultId,
+      commandId: "folder-rename",
+      folderId: parentId,
+      name: "Renamed",
+      assertedAt: 31,
+    });
+    await runtime.placeFolder({
+      expectedVaultId: vaultId,
+      commandId: "folder-place",
+      folderId: parentId,
+      parentFolderId: null,
+      assertedAt: 32,
+    });
+    await runtime.deleteFolder({
+      expectedVaultId: vaultId,
+      commandId: "folder-delete",
+      folderId: parentId,
+      assertedAt: 33,
+    });
+    await runtime.restoreFolder({
+      expectedVaultId: vaultId,
+      commandId: "folder-restore",
+      folderId: parentId,
+      assertedAt: 34,
+    });
+    await runtime.placeCollectionInFolder({
+      expectedVaultId: vaultId,
+      commandId: "collection-folder",
+      collectionId: identifierStorageKey(collectionId),
+      folderId: parentId,
+      assertedAt: 35,
+    });
+
+    expect(vi.mocked(content.execute).mock.calls.map(([command]) => command)).toEqual([
+      {
+        commandId: "folder-create",
+        vaultId: firstVaultId,
+        type: 12,
+        assertedAt: 30,
+        body: canonicalMap([
+          [0, createdFolderId],
+          [1, "Child"],
+          [2, parentFolderId],
+        ]),
+      },
+      {
+        commandId: "folder-rename",
+        vaultId: firstVaultId,
+        type: 13,
+        assertedAt: 31,
+        body: canonicalMap([
+          [0, parentFolderId],
+          [1, "Renamed"],
+        ]),
+      },
+      {
+        commandId: "folder-place",
+        vaultId: firstVaultId,
+        type: 14,
+        assertedAt: 32,
+        body: canonicalMap([
+          [0, parentFolderId],
+          [1, null],
+        ]),
+      },
+      {
+        commandId: "folder-delete",
+        vaultId: firstVaultId,
+        type: 15,
+        assertedAt: 33,
+        body: canonicalMap([[0, parentFolderId]]),
+      },
+      {
+        commandId: "folder-restore",
+        vaultId: firstVaultId,
+        type: 16,
+        assertedAt: 34,
+        body: canonicalMap([[0, parentFolderId]]),
+      },
+      {
+        commandId: "collection-folder",
+        vaultId: firstVaultId,
+        type: 11,
+        assertedAt: 35,
+        body: canonicalMap([
+          [0, collectionId],
+          [1, parentFolderId],
+        ]),
+      },
+    ]);
+  });
+
+  it("resolves only the exact current Folder conflict with one complete acyclic forest", async () => {
+    const { runtime, library, content, firstVaultId } = fixture();
+    const firstFolderId = randomIdentifier("Folder");
+    const secondFolderId = randomIdentifier("Folder");
+    const firstCauseId = randomIdentifier("VaultRecord");
+    const secondCauseId = randomIdentifier("VaultRecord");
+    const frontierId = randomIdentifier("VaultRecord");
+    const eventRecordId = randomIdentifier("VaultRecord");
+    vi.mocked(library.load).mockResolvedValue({
+      vaultId: firstVaultId,
+      generationId: randomIdentifier("Generation"),
+      frontier: [frontierId],
+      captures: [],
+      collections: [],
+      folders: [firstFolderId, secondFolderId].map((folderId) => ({
+        folderId,
+        name: "Folder",
+        parentFolderId: null,
+        effectiveParentFolderId: null,
+        lifecycle: 1,
+      })),
+      conflicts: [
+        {
+          kind: "Folder",
+          subjectFolderIds: canonicalSet([firstFolderId, secondFolderId]),
+          candidateRecordIds: canonicalSet([firstCauseId, secondCauseId]),
+        },
+      ],
+    });
+    vi.mocked(content.execute).mockResolvedValue({
+      commandId: "folder-resolve",
+      vaultId: firstVaultId,
+      generationId: randomIdentifier("Generation"),
+      eventRecordId,
+    });
+    const firstId = identifierStorageKey(firstFolderId);
+    const secondId = identifierStorageKey(secondFolderId);
+    const orderedPlacements = [
+      { folderId: firstFolderId, parentFolderId: null },
+      { folderId: secondFolderId, parentFolderId: firstFolderId },
+    ].toSorted((left, right) =>
+      identifierStorageKey(left.folderId).localeCompare(identifierStorageKey(right.folderId)),
+    );
+
+    await expect(
+      runtime.resolveFolderConflict({
+        expectedVaultId: identifierStorageKey(firstVaultId),
+        commandId: "folder-resolve",
+        subjectFolderIds: [secondId, firstId],
+        conflictingCauseIds: [
+          identifierStorageKey(secondCauseId),
+          identifierStorageKey(firstCauseId),
+        ],
+        placements: [
+          { folderId: secondId, parentFolderId: firstId },
+          { folderId: firstId, parentFolderId: null },
+        ],
+        assertedAt: 40,
+      }),
+    ).resolves.toEqual({ eventRecordId: identifierStorageKey(eventRecordId) });
+    expect(content.execute).toHaveBeenCalledWith({
+      commandId: "folder-resolve",
+      vaultId: firstVaultId,
+      type: 17,
+      assertedAt: 40,
+      expectedCausalFrontier: [frontierId],
+      body: canonicalMap([
+        [0, canonicalSet([firstCauseId, secondCauseId])],
+        [
+          1,
+          orderedPlacements.map((placement) =>
+            canonicalMap([
+              [0, placement.folderId],
+              [1, placement.parentFolderId],
+            ]),
+          ),
+        ],
+      ]),
+    });
+  });
+
+  it("rejects a partial stale Folder conflict without authoring a Resolution Event", async () => {
+    const { runtime, library, content, firstVaultId } = fixture();
+    const firstFolderId = randomIdentifier("Folder");
+    const secondFolderId = randomIdentifier("Folder");
+    const firstCauseId = randomIdentifier("VaultRecord");
+    const secondCauseId = randomIdentifier("VaultRecord");
+    vi.mocked(library.load).mockResolvedValue({
+      vaultId: firstVaultId,
+      generationId: randomIdentifier("Generation"),
+      frontier: [randomIdentifier("VaultRecord")],
+      captures: [],
+      collections: [],
+      folders: [firstFolderId, secondFolderId].map((folderId) => ({
+        folderId,
+        name: "Folder",
+        parentFolderId: null,
+        effectiveParentFolderId: null,
+        lifecycle: 1,
+      })),
+      conflicts: [
+        {
+          kind: "Folder",
+          subjectFolderIds: canonicalSet([firstFolderId, secondFolderId]),
+          candidateRecordIds: canonicalSet([firstCauseId, secondCauseId]),
+        },
+      ],
+    });
+
+    await expect(
+      runtime.resolveFolderConflict({
+        expectedVaultId: identifierStorageKey(firstVaultId),
+        commandId: "folder-stale",
+        subjectFolderIds: [
+          identifierStorageKey(firstFolderId),
+          identifierStorageKey(secondFolderId),
+        ],
+        conflictingCauseIds: [identifierStorageKey(firstCauseId)],
+        placements: [
+          { folderId: identifierStorageKey(firstFolderId), parentFolderId: null },
+          { folderId: identifierStorageKey(secondFolderId), parentFolderId: null },
+        ],
+        assertedAt: 41,
+      }),
+    ).rejects.toMatchObject({ id: "FOLDER_CONFLICT_CHANGED" });
+    expect(content.execute).not.toHaveBeenCalled();
+  });
+
+  it("blocks ordinary hierarchy mutation only for Folders in an active scoped conflict", async () => {
+    const { runtime, library, content, firstVaultId } = fixture();
+    const firstFolderId = randomIdentifier("Folder");
+    const secondFolderId = randomIdentifier("Folder");
+    vi.mocked(library.load).mockResolvedValue({
+      vaultId: firstVaultId,
+      generationId: randomIdentifier("Generation"),
+      frontier: [randomIdentifier("VaultRecord")],
+      captures: [],
+      collections: [],
+      folders: [firstFolderId, secondFolderId].map((folderId) => ({
+        folderId,
+        name: "Folder",
+        parentFolderId: null,
+        effectiveParentFolderId: null,
+        lifecycle: 1,
+      })),
+      conflicts: [
+        {
+          kind: "Folder",
+          subjectFolderIds: canonicalSet([firstFolderId, secondFolderId]),
+          candidateRecordIds: canonicalSet([
+            randomIdentifier("VaultRecord"),
+            randomIdentifier("VaultRecord"),
+          ]),
+        },
+      ],
+    });
+
+    await expect(
+      runtime.placeFolder({
+        expectedVaultId: identifierStorageKey(firstVaultId),
+        commandId: "folder-bypass",
+        folderId: identifierStorageKey(firstFolderId),
+        parentFolderId: null,
+        assertedAt: 42,
+      }),
+    ).rejects.toMatchObject({ id: "FOLDER_CONFLICT" });
+    expect(content.execute).not.toHaveBeenCalled();
   });
 });

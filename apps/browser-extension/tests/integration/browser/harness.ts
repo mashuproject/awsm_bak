@@ -852,6 +852,49 @@ async function canonicalClientRuntimeScenario(): Promise<unknown> {
       assertedAt: 16,
     });
     const revertedMergeLibrary = await runtime.listLibrary(first.vaultId);
+    const folder = await runtime.createFolder({
+      expectedVaultId: first.vaultId,
+      commandId: "facade-folder-create",
+      name: "Inbox",
+      parentFolderId: null,
+      assertedAt: 17,
+    });
+    await runtime.renameFolder({
+      expectedVaultId: first.vaultId,
+      commandId: "facade-folder-rename",
+      folderId: folder.folderId,
+      name: "Research",
+      assertedAt: 18,
+    });
+    await runtime.placeFolder({
+      expectedVaultId: first.vaultId,
+      commandId: "facade-folder-place",
+      folderId: folder.folderId,
+      parentFolderId: null,
+      assertedAt: 19,
+    });
+    await runtime.deleteFolder({
+      expectedVaultId: first.vaultId,
+      commandId: "facade-folder-delete",
+      folderId: folder.folderId,
+      assertedAt: 20,
+    });
+    const foldersAfterDelete = await runtime.listFolders(first.vaultId);
+    await runtime.restoreFolder({
+      expectedVaultId: first.vaultId,
+      commandId: "facade-folder-restore",
+      folderId: folder.folderId,
+      assertedAt: 21,
+    });
+    const foldersAfterRestore = await runtime.listFolders(first.vaultId);
+    await runtime.placeCollectionInFolder({
+      expectedVaultId: first.vaultId,
+      commandId: "facade-collection-folder",
+      collectionId: destinationCollectionId,
+      folderId: folder.folderId,
+      assertedAt: 22,
+    });
+    const folderCollections = await runtime.listCollections(first.vaultId);
     const records = await storage.listBytes(
       NORMAL_STORAGE_REALM,
       NAMESPACES.vaultRecord.key,
@@ -868,6 +911,8 @@ async function canonicalClientRuntimeScenario(): Promise<unknown> {
         new CanonicalLibraryProjectionService(restartedVaults, artifacts),
       );
       const restartedState = await restarted.state();
+      const restartedFolders = await restarted.listFolders(first.vaultId);
+      const restartedCollections = await restarted.listCollections(first.vaultId);
       return {
         recoveryWordCount: secondSetup.recoveryPhrase.split(" ").length,
         selectedAfterCreate,
@@ -884,6 +929,16 @@ async function canonicalClientRuntimeScenario(): Promise<unknown> {
         )?.title,
         merged: mergedLibrary[0]?.collectionId === originalCollectionId,
         mergeReverted: revertedMergeLibrary[0]?.collectionId === destinationCollectionId,
+        folderName: foldersAfterRestore[0]?.name,
+        folderLifecycleAfterDelete: foldersAfterDelete[0]?.lifecycle,
+        folderLifecycleAfterRestore: foldersAfterRestore[0]?.lifecycle,
+        collectionFolderPlaced:
+          folderCollections.find(({ collectionId }) => collectionId === destinationCollectionId)
+            ?.folderId === folder.folderId,
+        restartedFolderName: restartedFolders[0]?.name,
+        restartedCollectionFolderPlaced:
+          restartedCollections.find(({ collectionId }) => collectionId === destinationCollectionId)
+            ?.folderId === folder.folderId,
         recordCount: records.length,
         restartSelected: restartedState.vaults.find(({ selected }) => selected)?.label,
         restartVaultCount: restartedState.vaults.length,
