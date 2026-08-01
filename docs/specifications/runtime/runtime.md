@@ -41,12 +41,23 @@ Private keys remain protected at rest by platform facilities and installation wr
 Runtime keeps decrypted key material only while required and never persists a plaintext Key Epoch
 Key or Recovery Phrase.
 
+A Replica may be readable without any local Client Credential, including immediately after
+Complete Import. Its directory selection and Replica Safety State carry no invented Credential or
+member identity. Opening still authenticates the Vault and makes package-carried Key Epoch keys
+available for reading, but the Runtime exposes no authoring capability until ordinary Recovery or
+Invitation enrollment installs an accepted Client Credential.
+
 # 4. Event authoring and validation
 
 Only an active Client Credential authors Vault Events on behalf of a member. The Runtime derives
 authority from the exact Authority Frontier, prepares dependencies, signs canonical bytes, and
 commits against causal- and Authority-Frontier compare-and-swap. It fully validates imported or
 synchronized input in Quarantine before promotion.
+
+Absence of a local authoring Credential is an ordinary readable state, not a synthetic member or
+Credential. Authoring Commands fail before preparing authoritative bytes while historical views,
+authenticated content, and synchronization remain available within the accepted authority and
+feature boundary.
 
 Unsupported Required Features stop semantic processing at the last fully understood Frontier.
 Exact outer bytes may be retained in Quarantine, but the Runtime does not author descendants,

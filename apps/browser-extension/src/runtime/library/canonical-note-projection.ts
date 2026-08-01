@@ -16,7 +16,7 @@ import {
 } from "../../domain/canonical/schema";
 import { canonicalMap, canonicalSet } from "../../domain/canonical/value";
 import { bytesEqual } from "../../domain/hash";
-import type { ReplayedCanonicalVault } from "../projection/canonical-replay";
+import { type ReplayedCanonicalVault, replayEventMemberId } from "../projection/canonical-replay";
 
 interface NoteIdentityFact extends AdditiveFact {
   readonly noteId: Identifier<"Note">;
@@ -96,7 +96,7 @@ export function reduceCanonicalNotes(replay: ReplayedCanonicalVault): CanonicalN
   const versions: NoteVersionFact[] = [];
   const eventAttribution = (event: ReplayedCanonicalVault["events"][number]) => ({
     originVaultId: replay.vault.replicaState.vaultId,
-    memberId: replay.vault.replicaState.memberId,
+    memberId: replayEventMemberId(replay, event),
     clientCredentialId: event.signerCredentialId,
     assertedAt: event.assertedAt,
   });

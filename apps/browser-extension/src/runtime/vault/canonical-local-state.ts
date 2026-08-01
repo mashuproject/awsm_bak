@@ -47,8 +47,8 @@ export interface CanonicalReplicaState {
   readonly baselineId: Identifier<"VaultRecord">;
   readonly currentKeyEpochId: Identifier<"KeyEpoch">;
   readonly requiredFeatureSetId: Identifier<"RequiredFeatureSet">;
-  readonly authoringClientCredentialId: Identifier<"ClientCredential">;
-  readonly memberId: Identifier<"Member">;
+  readonly authoringClientCredentialId: Identifier<"ClientCredential"> | null;
+  readonly memberId: Identifier<"Member"> | null;
   readonly lifecycle: 1 | 2;
   readonly preservationRoots: readonly Identifier<"VaultRecord">[];
   readonly garbageCollectionFences: readonly Uint8Array[];
@@ -68,7 +68,7 @@ export interface VaultDirectoryEntry {
   readonly vaultId: Identifier<"Vault">;
   readonly generationId: Identifier<"Generation">;
   readonly label: string | null;
-  readonly selectedClientCredentialId: Identifier<"ClientCredential">;
+  readonly selectedClientCredentialId: Identifier<"ClientCredential"> | null;
 }
 
 export interface InstallationSelection {
@@ -157,12 +157,12 @@ export function decodeCanonicalReplicaState(bytes: Uint8Array): CanonicalReplica
       "RequiredFeatureSet",
       "Required Feature Set ID",
     ),
-    authoringClientCredentialId: identifierValue(
-      mapValue(map, 9),
-      "ClientCredential",
-      "Authoring Client Credential ID",
+    authoringClientCredentialId: nullable(mapValue(map, 9), (value) =>
+      identifierValue(value, "ClientCredential", "Authoring Client Credential ID"),
     ),
-    memberId: identifierValue(mapValue(map, 10), "Member", "Replica Member ID"),
+    memberId: nullable(mapValue(map, 10), (value) =>
+      identifierValue(value, "Member", "Replica Member ID"),
+    ),
     lifecycle: oneOfCodes(mapValue(map, 11), [1, 2] as const, "Replica lifecycle"),
     preservationRoots: idSetValue(mapValue(map, 12), "VaultRecord", "Local preservation roots"),
     garbageCollectionFences: canonicalSet(exactByteArray(mapValue(map, 13), "GC fences")),
@@ -250,10 +250,8 @@ export function decodeVaultDirectoryEntry(bytes: Uint8Array): VaultDirectoryEntr
     label: nullable(mapValue(map, 3), (label) =>
       textValue(label, "Vault label", { maxUtf8Bytes: 1024 }),
     ),
-    selectedClientCredentialId: identifierValue(
-      mapValue(map, 4),
-      "ClientCredential",
-      "Selected Client Credential ID",
+    selectedClientCredentialId: nullable(mapValue(map, 4), (value) =>
+      identifierValue(value, "ClientCredential", "Selected Client Credential ID"),
     ),
   };
   if (!bytesEqual(encodeVaultDirectoryEntry(value), bytes)) {

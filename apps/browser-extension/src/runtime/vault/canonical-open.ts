@@ -1,6 +1,7 @@
 import { readySodium } from "../../crypto/sodium";
 import { vaultBaselineDependencyRequirements } from "../../domain/canonical/baseline-body";
 import { DEPENDENCY_TYPES, dependencySet } from "../../domain/canonical/dependencies";
+import type { Identifier } from "../../domain/canonical/identifiers";
 import type { AuthenticatedVaultEvent, VaultBaseline } from "../../domain/canonical/record";
 import { verifyVaultEventSignature } from "../../domain/canonical/record";
 import {
@@ -47,6 +48,41 @@ export function baselineVaultLabel(baseline: VaultBaseline): string | null {
   );
 }
 
+export interface InitialVaultClientAuthority {
+  readonly memberId: Identifier<"Member">;
+  readonly clientCredentialId: Identifier<"ClientCredential">;
+  readonly signingPublicKey: Uint8Array;
+  readonly wrappingPublicKey: Uint8Array;
+}
+
+export function initialVaultClientAuthority(
+  genesis: AuthenticatedVaultEvent,
+): InitialVaultClientAuthority {
+  const genesisBody = exactMap(genesis.body, [0, 1, 2, 3, 4, 5, 6], "Genesis body");
+  const memberId = identifierValue(mapValue(genesisBody, 1), "Member", "Genesis first Member ID");
+  const certificate = exactMap(
+    mapValue(genesisBody, 2),
+    [0, 1, 2, 3],
+    "Genesis Client Certificate",
+  );
+  const certificateMemberId = identifierValue(
+    mapValue(certificate, 1),
+    "Member",
+    "Certificate Member ID",
+  );
+  same(certificateMemberId, memberId, "Certificate Member ID");
+  return {
+    memberId,
+    clientCredentialId: identifierValue(
+      mapValue(certificate, 0),
+      "ClientCredential",
+      "Genesis Client Credential ID",
+    ),
+    signingPublicKey: byteString(mapValue(certificate, 2), 32, "Client signing public key"),
+    wrappingPublicKey: byteString(mapValue(certificate, 3), 32, "Client wrapping public key"),
+  };
+}
+
 function sameSet(left: readonly Uint8Array[], right: readonly Uint8Array[], field: string): void {
   if (
     left.length !== right.length ||
@@ -62,10 +98,11 @@ export async function validateCurrentVaultAuthority(input: {
   readonly genesis: AuthenticatedVaultEvent;
   readonly vacuumEvents: readonly AuthenticatedVaultEvent[];
   readonly replicaState: CanonicalReplicaState;
-  readonly clientSecret: ClientSecretState;
+  readonly clientSecret: ClientSecretState | null;
   readonly epochSecret: EpochSecretState;
 }): Promise<void> {
   const { baseline, initialBaseline, genesis, replicaState, clientSecret, epochSecret } = input;
+  const initialClient = initialVaultClientAuthority(genesis);
   const adoption = replicaState.adoption;
   if (adoption === null) {
     if (
@@ -132,14 +169,18 @@ export async function validateCurrentVaultAuthority(input: {
         vacuumEvent.requiredFeatureSetId,
         replicaState.requiredFeatureSetId,
       ],
-      ["Vacuum signer Credential", vacuumEvent.signerCredentialId, clientSecret.clientCredentialId],
+      [
+        "Vacuum signer Credential",
+        vacuumEvent.signerCredentialId,
+        initialClient.clientCredentialId,
+      ],
     ] as const) {
       same(left, right, field);
     }
     if (
       vacuumEvent.family !== 3 ||
       vacuumEvent.type !== 1 ||
-      !(await verifyVaultEventSignature(vacuumEvent, clientSecret.signingPublicKey))
+      !(await verifyVaultEventSignature(vacuumEvent, initialClient.signingPublicKey))
     ) {
       throw new TypeError("Vacuum Event type or signature is invalid");
     }
@@ -271,7 +312,7 @@ export async function validateInitialVaultAuthority(input: {
   readonly baseline: VaultBaseline;
   readonly genesis: AuthenticatedVaultEvent;
   readonly replicaState: CanonicalReplicaState;
-  readonly clientSecret: ClientSecretState;
+  readonly clientSecret: ClientSecretState | null;
   readonly epochSecret: EpochSecretState;
   readonly requireInitialReplicaState?: boolean;
 }): Promise<void> {
@@ -288,7 +329,6 @@ export async function validateInitialVaultAuthority(input: {
     ["Baseline Generation ID", baseline.generationId, replicaState.generationId],
     ["Genesis Generation ID", genesis.generationId, replicaState.generationId],
     ["Active Baseline ID", baseline.recordId, replicaState.baselineId],
-    ["Client Secret Vault ID", clientSecret.vaultId, replicaState.vaultId],
     ["Epoch Secret Vault ID", epochSecret.vaultId, replicaState.vaultId],
     ["Current Key Epoch ID", epochSecret.keyEpochId, replicaState.currentKeyEpochId],
   ] as const) {
@@ -347,11 +387,25 @@ export async function validateInitialVaultAuthority(input: {
     "ClientCredential",
     "Genesis Client Credential ID",
   );
+  const initialClient = initialVaultClientAuthority(genesis);
   same(clientCredentialId, genesis.signerCredentialId, "Genesis signer Credential");
-  same(clientCredentialId, clientSecret.clientCredentialId, "Stored Client Credential");
-  same(clientCredentialId, replicaState.authoringClientCredentialId, "Authoring Credential");
-  same(firstMemberId, clientSecret.memberId, "Stored Client member");
-  same(firstMemberId, replicaState.memberId, "Replica member");
+  same(clientCredentialId, initialClient.clientCredentialId, "Genesis Client Credential");
+  same(firstMemberId, initialClient.memberId, "Genesis first Member");
+  if (clientSecret === null) {
+    if (replicaState.authoringClientCredentialId !== null || replicaState.memberId !== null) {
+      throw new TypeError("A Replica without a local Client Secret cannot claim local authority");
+    }
+  } else {
+    same(clientSecret.vaultId, replicaState.vaultId, "Client Secret Vault ID");
+    same(clientCredentialId, clientSecret.clientCredentialId, "Stored Client Credential");
+    same(firstMemberId, clientSecret.memberId, "Stored Client member");
+    if (replicaState.authoringClientCredentialId !== null) {
+      same(clientCredentialId, replicaState.authoringClientCredentialId, "Authoring Credential");
+    }
+    if (replicaState.memberId !== null) {
+      same(firstMemberId, replicaState.memberId, "Replica member");
+    }
+  }
   same(
     identifierValue(mapValue(clientCertificate, 1), "Member", "Certificate Member ID"),
     firstMemberId,
@@ -365,12 +419,12 @@ export async function validateInitialVaultAuthority(input: {
   exactCode(mapValue(recoveryCredential, 2), 0, "Initial Recovery Credential revision");
   same(
     byteString(mapValue(clientCertificate, 2), 32, "Client signing public key"),
-    clientSecret.signingPublicKey,
+    initialClient.signingPublicKey,
     "Client signing public key",
   );
   same(
     byteString(mapValue(clientCertificate, 3), 32, "Client wrapping public key"),
-    clientSecret.wrappingPublicKey,
+    initialClient.wrappingPublicKey,
     "Client wrapping public key",
   );
   const recoverySigningPublicKey = byteString(
@@ -411,14 +465,14 @@ export async function validateInitialVaultAuthority(input: {
     !sodium.crypto_sign_verify_detached(
       byteString(mapValue(proof, 0), 64, "Genesis Client proof"),
       proofTranscript,
-      clientSecret.signingPublicKey,
+      initialClient.signingPublicKey,
     ) ||
     !sodium.crypto_sign_verify_detached(
       byteString(mapValue(proof, 1), 64, "Genesis Recovery proof"),
       proofTranscript,
       recoverySigningPublicKey,
     ) ||
-    !(await verifyVaultEventSignature(genesis, clientSecret.signingPublicKey))
+    !(await verifyVaultEventSignature(genesis, initialClient.signingPublicKey))
   ) {
     throw new TypeError("Genesis signatures are invalid");
   }

@@ -4,7 +4,7 @@ import { type AuthenticatedVaultEvent, signVaultEvent } from "../../domain/canon
 import { canonicalMap, canonicalSet } from "../../domain/canonical/value";
 import type { OpaqueEnvelope } from "../../storage/opaque-envelope";
 import type { CanonicalReplicaState } from "./canonical-local-state";
-import type { OpenedCanonicalVault } from "./canonical-service";
+import { type OpenedCanonicalVault, requireCanonicalClientSecret } from "./canonical-service";
 
 export interface PreparedCanonicalClosureEvent {
   readonly event: AuthenticatedVaultEvent;
@@ -18,6 +18,7 @@ export async function prepareCanonicalClosureEvent(input: {
   readonly protectionParameters?: Uint8Array;
 }): Promise<PreparedCanonicalClosureEvent> {
   const { vault } = input;
+  const clientSecret = requireCanonicalClientSecret(vault);
   if (vault.replicaState.lifecycle !== 1) {
     throw new TypeError("Closed Vaults cannot author Lifecycle Events");
   }
@@ -32,11 +33,11 @@ export async function prepareCanonicalClosureEvent(input: {
       extensions: advisoryExtensions([]),
       family: 3,
       type: 2,
-      signerCredentialId: vault.clientSecret.clientCredentialId,
+      signerCredentialId: clientSecret.clientCredentialId,
       assertedAt: input.assertedAt,
       body: canonicalMap([]),
     },
-    vault.clientSecret.signingSecretKey,
+    clientSecret.signingSecretKey,
   );
   const eventEnvelope = await sealCompactItem({
     vaultId: vault.replicaState.vaultId,

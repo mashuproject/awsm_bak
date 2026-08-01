@@ -59,10 +59,37 @@ export interface CanonicalVaultDirectoryItem extends VaultDirectoryEntry {
 export interface OpenedCanonicalVault {
   readonly directory: VaultDirectoryEntry;
   readonly replicaState: CanonicalReplicaState;
-  readonly clientSecret: ClientSecretState;
+  readonly clientSecret: ClientSecretState | null;
   readonly epochSecret: EpochSecretState;
   readonly baseline: VaultBaseline;
   readonly genesis: AuthenticatedVaultEvent;
+}
+
+export function requireCanonicalClientSecret(vault: OpenedCanonicalVault): ClientSecretState {
+  if (
+    vault.clientSecret === null ||
+    vault.replicaState.authoringClientCredentialId === null ||
+    vault.replicaState.memberId === null ||
+    vault.directory.selectedClientCredentialId === null
+  ) {
+    throw Object.assign(new Error("This Vault has no local authoring Client Credential."), {
+      id: "VAULT_READ_ONLY",
+    });
+  }
+  if (
+    !bytesEqual(
+      vault.clientSecret.clientCredentialId,
+      vault.replicaState.authoringClientCredentialId,
+    ) ||
+    !bytesEqual(
+      vault.clientSecret.clientCredentialId,
+      vault.directory.selectedClientCredentialId,
+    ) ||
+    !bytesEqual(vault.clientSecret.memberId, vault.replicaState.memberId)
+  ) {
+    throw new TypeError("Local authoring Client Credential state is inconsistent");
+  }
+  return vault.clientSecret;
 }
 
 export interface PersistedOpenedCanonicalVault extends OpenedCanonicalVault {
@@ -225,20 +252,22 @@ export class CanonicalVaultService {
     sameBytes(replicaState.vaultId, vaultId, "Replica Vault ID");
     sameBytes(replicaState.generationId, directory.generationId, "Directory Generation ID");
 
-    const clientWrapped = await this.requireBytes({
-      namespace: NAMESPACES.clientSecret.key,
-      scopeKey: vaultKey,
-      itemKey: identifierStorageKey(directory.selectedClientCredentialId),
-    });
-    const clientSecret = await decodeClientSecretState(
-      await openWrappedLocalState({
-        wrappingKey,
-        domain: "awsm.local.client-secret",
-        vaultId,
-        identity: directory.selectedClientCredentialId,
-        wrappedBytes: clientWrapped,
-      }),
-    );
+    const clientSecret =
+      directory.selectedClientCredentialId === null
+        ? null
+        : await decodeClientSecretState(
+            await openWrappedLocalState({
+              wrappingKey,
+              domain: "awsm.local.client-secret",
+              vaultId,
+              identity: directory.selectedClientCredentialId,
+              wrappedBytes: await this.requireBytes({
+                namespace: NAMESPACES.clientSecret.key,
+                scopeKey: vaultKey,
+                itemKey: identifierStorageKey(directory.selectedClientCredentialId),
+              }),
+            }),
+          );
     const epochWrapped = await this.requireBytes({
       namespace: NAMESPACES.epochSecret.key,
       scopeKey: vaultKey,
@@ -383,6 +412,7 @@ export class CanonicalVaultService {
         expectedKeyEpochId: epochSecret.keyEpochId,
         envelopeBytes,
       });
+      if (clientSecret === null) continue;
       try {
         const opened = await openKeyEnvelope({
           targetKind: 2,
@@ -402,7 +432,7 @@ export class CanonicalVaultService {
         // The Recovery-targeted Key Envelope is intentionally not openable by the Client key.
       }
     }
-    if (openedClientEnvelope !== 1) {
+    if (clientSecret !== null && openedClientEnvelope !== 1) {
       throw new TypeError("Exactly one initial Key Envelope must open for the selected Client");
     }
     return {

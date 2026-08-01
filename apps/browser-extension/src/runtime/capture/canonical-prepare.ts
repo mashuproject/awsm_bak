@@ -24,7 +24,10 @@ import type {
 } from "../artifact/canonical-store";
 import { validatePageSnapshot } from "../page-snapshot";
 import type { CanonicalReplicaState } from "../vault/canonical-local-state";
-import type { OpenedCanonicalVault } from "../vault/canonical-service";
+import {
+  type OpenedCanonicalVault,
+  requireCanonicalClientSecret,
+} from "../vault/canonical-service";
 
 const FRAME_TAG_LENGTH = 16;
 
@@ -100,6 +103,7 @@ export async function prepareCanonicalCapture(input: {
   readonly eventProtectionParameters?: Uint8Array;
 }): Promise<PreparedCanonicalCapture> {
   const { vault } = input;
+  const clientSecret = requireCanonicalClientSecret(vault);
   if (vault.replicaState.lifecycle !== 1) throw new TypeError("Closed Vaults cannot Capture");
   const bundleId = input.bundleId ?? randomIdentifier("Bundle");
   const assignedCollectionId = input.assignedCollectionId ?? randomIdentifier("Collection");
@@ -207,11 +211,11 @@ export async function prepareCanonicalCapture(input: {
         extensions: advisoryExtensions([]),
         family: 2,
         type: 3,
-        signerCredentialId: vault.clientSecret.clientCredentialId,
+        signerCredentialId: clientSecret.clientCredentialId,
         assertedAt: input.capturedAt,
         body: indexedMap(bundleId, descriptorObject.objectId, assignedCollectionId),
       },
-      vault.clientSecret.signingSecretKey,
+      clientSecret.signingSecretKey,
     );
     const eventEnvelope = await sealCompactItem({
       vaultId: vault.replicaState.vaultId,

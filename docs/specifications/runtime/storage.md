@@ -79,6 +79,12 @@ initial canonical local database is created only from an empty database at schem
 another local schema is discarded and recreated by the owning Client rather than upgraded or
 interpreted through compatibility readers.
 
+The Vault directory's selected Client Credential and Replica Safety State's local authoring
+Credential and local member binding are optional. Complete Import installs all three as absent and
+stores no Client Secret. Key Epoch Secrets required to read the validated Replica remain Trusted
+Secrets protected by the Installation Wrapping Key. The absence of local authoring identity never
+changes portable membership facts inside Vault Records.
+
 # 4. Storage Realms
 
 A Storage Realm cross-cuts every family. Normal, private/incognito, temporary, test, and future

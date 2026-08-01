@@ -10,6 +10,7 @@ import {
   decodeLogicalResolution,
   decodeVaultDirectoryEntry,
   encodeCanonicalReplicaState,
+  encodeVaultDirectoryEntry,
   openWrappedLocalState,
   prepareCanonicalVaultStorage,
 } from "../../src/runtime/vault/canonical-local-state";
@@ -200,5 +201,39 @@ describe("canonical local Vault state", () => {
         encodeCanonicalReplicaState(adopted as unknown as typeof prepared.replicaState),
       ),
     ).toEqual(adopted);
+  });
+
+  it("round-trips a readable Replica with no local authoring Credential", async () => {
+    const creation = await prepareCanonicalVaultCreation({ label: "Imported", assertedAt: 1 });
+    const prepared = await prepareCanonicalVaultStorage({
+      creation,
+      label: "Imported",
+      realm: NORMAL_STORAGE_REALM,
+      wrappingKey: await wrappingKey(),
+    });
+    const replicaState = {
+      ...prepared.replicaState,
+      authoringClientCredentialId: null,
+      memberId: null,
+    };
+    const directory = {
+      vaultId: creation.ids.vaultId,
+      generationId: creation.ids.generationId,
+      label: "Imported",
+      selectedClientCredentialId: null,
+    };
+
+    expect(
+      decodeCanonicalReplicaState(
+        encodeCanonicalReplicaState(replicaState as unknown as typeof prepared.replicaState),
+      ),
+    ).toEqual(replicaState);
+    expect(
+      decodeVaultDirectoryEntry(
+        encodeVaultDirectoryEntry(
+          directory as unknown as Parameters<typeof encodeVaultDirectoryEntry>[0],
+        ),
+      ),
+    ).toEqual(directory);
   });
 });

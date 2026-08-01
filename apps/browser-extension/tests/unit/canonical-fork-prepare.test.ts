@@ -99,6 +99,9 @@ async function prepareEmptyFork(
       },
       graph,
       events: [source.genesis],
+      credentialMembers: new Map([
+        [Buffer.from(source.ids.clientCredentialId).toString("hex"), source.ids.firstMemberId],
+      ]),
     },
     artifactStore: {} as CanonicalArtifactStore,
     assertedAt: 2,
@@ -284,6 +287,9 @@ describe("canonical Fork preparation", () => {
           },
           graph,
           events: [source.genesis, registration],
+          credentialMembers: new Map([
+            [Buffer.from(source.ids.clientCredentialId).toString("hex"), source.ids.firstMemberId],
+          ]),
         },
         artifactStore: {} as CanonicalArtifactStore,
         assertedAt: 3,

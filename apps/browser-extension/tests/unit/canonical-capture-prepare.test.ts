@@ -14,7 +14,10 @@ import { prepareCanonicalCapture } from "../../src/runtime/capture/canonical-pre
 import { createPageSnapshotBlob } from "../../src/runtime/page-snapshot";
 import { prepareCanonicalVaultCreation } from "../../src/runtime/vault/canonical-create";
 import type { CanonicalReplicaState } from "../../src/runtime/vault/canonical-local-state";
-import type { OpenedCanonicalVault } from "../../src/runtime/vault/canonical-service";
+import {
+  type OpenedCanonicalVault,
+  requireCanonicalClientSecret,
+} from "../../src/runtime/vault/canonical-service";
 import { decodeOpaqueEnvelope } from "../../src/storage/opaque-envelope";
 
 async function pageSnapshot(input: {
@@ -216,7 +219,10 @@ describe("canonical Capture preparation", () => {
     expect(prepared.event.authorityParentRecordIds).toEqual(vault.replicaState.authorityFrontier);
     expect(prepared.nextReplicaState.causalFrontier).toEqual([prepared.event.recordId]);
     expect(
-      await verifyVaultEventSignature(prepared.event, vault.clientSecret.signingPublicKey),
+      await verifyVaultEventSignature(
+        prepared.event,
+        requireCanonicalClientSecret(vault).signingPublicKey,
+      ),
     ).toBe(true);
     const openedObject = await openCompactItem({
       vaultId: vault.replicaState.vaultId,

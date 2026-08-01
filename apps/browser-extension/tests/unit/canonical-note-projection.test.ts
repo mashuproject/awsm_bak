@@ -5,9 +5,9 @@ import { CausalGraph } from "../../src/domain/canonical/reducers";
 import { canonicalMap, canonicalSet } from "../../src/domain/canonical/value";
 import { reduceCanonicalNotes } from "../../src/runtime/library/canonical-note-projection";
 import type { ReplayedCanonicalVault } from "../../src/runtime/projection/canonical-replay";
-import { emptyCanonicalReplayVault } from "../helpers/canonical-replay";
+import { emptyCanonicalReplayVault, emptyReplayCredentialId } from "../helpers/canonical-replay";
 
-const testCredentialId = randomIdentifier("ClientCredential");
+const testCredentialId = emptyReplayCredentialId;
 const testAssertedAt = 1;
 
 function event(

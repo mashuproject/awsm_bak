@@ -6,7 +6,10 @@ import { canonicalMap, canonicalSet } from "../../src/domain/canonical/value";
 import { prepareCanonicalContentEvent } from "../../src/runtime/content/canonical-prepare";
 import { prepareCanonicalVaultCreation } from "../../src/runtime/vault/canonical-create";
 import type { CanonicalReplicaState } from "../../src/runtime/vault/canonical-local-state";
-import type { OpenedCanonicalVault } from "../../src/runtime/vault/canonical-service";
+import {
+  type OpenedCanonicalVault,
+  requireCanonicalClientSecret,
+} from "../../src/runtime/vault/canonical-service";
 
 async function openedInitialVault(): Promise<OpenedCanonicalVault> {
   const creation = await prepareCanonicalVaultCreation({ label: "Vault", assertedAt: 1 });
@@ -73,7 +76,10 @@ describe("canonical Content Event preparation", () => {
       vault.replicaState.authorityFrontier,
     );
     expect(
-      await verifyVaultEventSignature(prepared.event, vault.clientSecret.signingPublicKey),
+      await verifyVaultEventSignature(
+        prepared.event,
+        requireCanonicalClientSecret(vault).signingPublicKey,
+      ),
     ).toBe(true);
     const opened = await openCompactItem({
       vaultId: vault.replicaState.vaultId,
@@ -82,5 +88,43 @@ describe("canonical Content Event preparation", () => {
       envelopeBytes: prepared.eventEnvelope.bytes,
     });
     expect(opened.payloadBytes).toEqual(prepared.event.bytes);
+  });
+
+  it("rejects authoring before preparing bytes when the Replica has no local Credential", async () => {
+    const vault = await openedInitialVault();
+
+    await expect(
+      prepareCanonicalContentEvent({
+        vault: {
+          ...vault,
+          directory: { ...vault.directory, selectedClientCredentialId: null },
+          replicaState: {
+            ...vault.replicaState,
+            authoringClientCredentialId: null,
+            memberId: null,
+          },
+          clientSecret: null,
+        },
+        type: 4,
+        assertedAt: 10,
+        body: canonicalMap([[0, canonicalSet([new Uint8Array(32)])]]),
+      }),
+    ).rejects.toMatchObject({ id: "VAULT_READ_ONLY" });
+  });
+
+  it("rejects a retained Client Secret after local authoring authority ends", async () => {
+    const vault = await openedInitialVault();
+
+    await expect(
+      prepareCanonicalContentEvent({
+        vault: {
+          ...vault,
+          replicaState: { ...vault.replicaState, authoringClientCredentialId: null },
+        },
+        type: 4,
+        assertedAt: 10,
+        body: canonicalMap([[0, canonicalSet([new Uint8Array(32)])]]),
+      }),
+    ).rejects.toMatchObject({ id: "VAULT_READ_ONLY" });
   });
 });

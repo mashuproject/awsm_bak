@@ -43,8 +43,9 @@ import {
   selectCanonicalCollectionTail,
 } from "../library/canonical-projection";
 import { reduceCanonicalTags } from "../library/canonical-tag-projection";
-import type { ReplayedCanonicalVault } from "../projection/canonical-replay";
+import { type ReplayedCanonicalVault, replayEventMemberId } from "../projection/canonical-replay";
 import type { CanonicalReplicaState } from "./canonical-local-state";
+import { requireCanonicalClientSecret } from "./canonical-service";
 
 export interface CanonicalCheckpointAttribution {
   readonly originVaultId: Identifier<"Vault">;
@@ -402,7 +403,7 @@ function deriveContentState(
         causeId: event.recordId,
         attribution: {
           originVaultId: replay.vault.replicaState.vaultId,
-          memberId: replay.vault.replicaState.memberId,
+          memberId: replayEventMemberId(replay, event),
           clientCredentialId: event.signerCredentialId,
           assertedAt: event.assertedAt,
         },
@@ -1224,6 +1225,7 @@ export async function prepareVacuum(input: {
       : { protectionParameters: input.baselineProtectionParameters }),
   });
   const { vault } = input.replay;
+  const clientSecret = requireCanonicalClientSecret(vault);
   const event = await signVaultEvent(
     {
       vaultId: vault.replicaState.vaultId,
@@ -1235,7 +1237,7 @@ export async function prepareVacuum(input: {
       extensions: advisoryExtensions([]),
       family: 3,
       type: 1,
-      signerCredentialId: vault.clientSecret.clientCredentialId,
+      signerCredentialId: clientSecret.clientCredentialId,
       assertedAt: input.assertedAt,
       body: indexedMap(
         vault.replicaState.generationId,
@@ -1247,7 +1249,7 @@ export async function prepareVacuum(input: {
         successor.omissionDigest,
       ),
     },
-    vault.clientSecret.signingSecretKey,
+    clientSecret.signingSecretKey,
   );
   const eventEnvelope = await sealCompactItem({
     vaultId: vault.replicaState.vaultId,

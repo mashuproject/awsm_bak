@@ -19,7 +19,10 @@ import {
 import { prepareCanonicalVaultCreation } from "../../src/runtime/vault/canonical-create";
 import type { CanonicalReplicaState } from "../../src/runtime/vault/canonical-local-state";
 import { validateCurrentVaultAuthority } from "../../src/runtime/vault/canonical-open";
-import type { PersistedOpenedCanonicalVault } from "../../src/runtime/vault/canonical-service";
+import {
+  type PersistedOpenedCanonicalVault,
+  requireCanonicalClientSecret,
+} from "../../src/runtime/vault/canonical-service";
 import {
   buildVacuumContentCheckpoint,
   type CanonicalVacuumContentState,
@@ -122,7 +125,14 @@ async function registrationReplay(): Promise<{
   graph.add(creation.genesis.recordId, []);
   graph.add(registration.recordId, registration.parentRecordIds);
   return {
-    replay: { vault, graph, events: [creation.genesis, registration] },
+    replay: {
+      vault,
+      graph,
+      events: [creation.genesis, registration],
+      credentialMembers: new Map([
+        [Buffer.from(creation.ids.clientCredentialId).toString("hex"), creation.ids.firstMemberId],
+      ]),
+    },
     bundleId,
     descriptorObjectId,
     collectionId,
@@ -489,7 +499,10 @@ describe("canonical Vacuum Content checkpoint", () => {
       adoption: { vacuumEventRecordId: prepared.event.recordId },
     });
     expect(
-      await verifyVaultEventSignature(prepared.event, replay.vault.clientSecret.signingPublicKey),
+      await verifyVaultEventSignature(
+        prepared.event,
+        requireCanonicalClientSecret(replay.vault).signingPublicKey,
+      ),
     ).toBe(true);
     await expect(
       openCompactItem({
@@ -531,11 +544,11 @@ describe("canonical Vacuum Content checkpoint", () => {
           extensions: advisoryExtensions([]),
           family: 2,
           type: input.type,
-          signerCredentialId: replay.vault.clientSecret.clientCredentialId,
+          signerCredentialId: requireCanonicalClientSecret(replay.vault).clientCredentialId,
           assertedAt: events.length + 1,
           body: input.body,
         },
-        replay.vault.clientSecret.signingSecretKey,
+        requireCanonicalClientSecret(replay.vault).signingSecretKey,
       );
       replay.graph.add(event.recordId, event.parentRecordIds);
       events.push(event);
@@ -704,6 +717,38 @@ describe("canonical Vacuum Content checkpoint", () => {
         epochSecret: replay.vault.epochSecret,
       }),
     ).resolves.toBeUndefined();
+  });
+
+  it("authenticates readable imported authority without a local Client Credential", async () => {
+    const { replay } = await registrationReplay();
+    const readOnlyReplay: ReplayedCanonicalVault = {
+      ...replay,
+      vault: {
+        ...replay.vault,
+        directory: { ...replay.vault.directory, selectedClientCredentialId: null },
+        replicaState: {
+          ...replay.vault.replicaState,
+          authoringClientCredentialId: null,
+          memberId: null,
+        },
+        clientSecret: null,
+      },
+    };
+
+    await expect(
+      validateCurrentVaultAuthority({
+        baseline: readOnlyReplay.vault.baseline,
+        initialBaseline: readOnlyReplay.vault.baseline,
+        genesis: readOnlyReplay.vault.genesis,
+        vacuumEvents: [],
+        replicaState: readOnlyReplay.vault.replicaState,
+        clientSecret: null,
+        epochSecret: readOnlyReplay.vault.epochSecret,
+      }),
+    ).resolves.toBeUndefined();
+    expect(deriveVacuumContentState(readOnlyReplay).captures[0]?.attribution.memberId).toEqual(
+      requireCanonicalClientSecret(replay.vault).memberId,
+    );
   });
 
   it("authenticates repeated Vacuum boundaries as one Generation chain", async () => {

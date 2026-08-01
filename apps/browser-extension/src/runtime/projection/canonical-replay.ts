@@ -9,6 +9,7 @@ import { CausalGraph } from "../../domain/canonical/reducers";
 import { exactMap, mapValue } from "../../domain/canonical/schema";
 import { bytesEqual } from "../../domain/hash";
 import { NAMESPACES } from "../../drivers/indexeddb/canonical-schema";
+import { initialVaultClientAuthority } from "../vault/canonical-open";
 import type {
   CanonicalVaultService,
   PersistedOpenedCanonicalVault,
@@ -34,6 +35,16 @@ export interface ReplayedCanonicalVault {
   readonly vault: PersistedOpenedCanonicalVault;
   readonly graph: CausalGraph;
   readonly events: readonly AuthenticatedVaultEvent[];
+  readonly credentialMembers: ReadonlyMap<string, Identifier<"Member">>;
+}
+
+export function replayEventMemberId(
+  replay: ReplayedCanonicalVault,
+  event: AuthenticatedVaultEvent,
+): Identifier<"Member"> {
+  const memberId = replay.credentialMembers.get(key(event.signerCredentialId));
+  if (memberId === undefined) throw new TypeError("Vault Event signer has no accepted Member");
+  return memberId;
 }
 
 export class CanonicalReplayService {
@@ -51,6 +62,7 @@ export class CanonicalReplayService {
     const genesisKey = key(vault.genesis.recordId);
     const baselineKey = key(vault.baseline.recordId);
     const adoption = vault.replicaState.adoption;
+    const initialClient = initialVaultClientAuthority(vault.genesis);
     const body = exactMap(vault.baseline.body, [0, 1, 2, 3, 4, 5], "Accepted Baseline body");
     graph.addBaseline(vault.baseline.recordId, contentCheckpointCauseIds(mapValue(body, 2)));
 
@@ -104,11 +116,11 @@ export class CanonicalReplayService {
         if (!sameSet(event.authorityParentRecordIds, [expectedAuthorityParent])) {
           throw new TypeError("Event does not name the accepted Authority Frontier");
         }
-        if (!bytesEqual(event.signerCredentialId, vault.clientSecret.clientCredentialId)) {
-          throw new TypeError("Event is not signed by the active local Credential");
+        if (!bytesEqual(event.signerCredentialId, initialClient.clientCredentialId)) {
+          throw new TypeError("Event is not signed by the authenticated initial Credential");
         }
       }
-      if (!(await verifyVaultEventSignature(event, vault.clientSecret.signingPublicKey))) {
+      if (!(await verifyVaultEventSignature(event, initialClient.signingPublicKey))) {
         throw new TypeError("Vault Event signature is invalid");
       }
       graph.add(
@@ -176,6 +188,11 @@ export class CanonicalReplayService {
         throw new TypeError("Closed initial authority state is inconsistent");
       }
     }
-    return { vault, graph, events: ordered };
+    return {
+      vault,
+      graph,
+      events: ordered,
+      credentialMembers: new Map([[key(initialClient.clientCredentialId), initialClient.memberId]]),
+    };
   }
 }

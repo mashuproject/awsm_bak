@@ -39,6 +39,7 @@ import type { CanonicalArtifactStore } from "../artifact/canonical-store";
 import {
   CanonicalReplayService,
   type ReplayedCanonicalVault,
+  replayEventMemberId,
 } from "../projection/canonical-replay";
 import {
   canonicalLocalStorageContext,
@@ -394,7 +395,7 @@ function eventRegistrations(replay: ReplayedCanonicalVault): readonly Registrati
         descriptorObjectId: identifierValue(mapValue(body, 1), "VaultObject"),
         assignedCollectionId: identifierValue(mapValue(body, 2), "Collection"),
         registrationRecordId: event.recordId,
-        memberId: replay.vault.clientSecret.memberId,
+        memberId: replayEventMemberId(replay, event),
         clientCredentialId: event.signerCredentialId,
         assertedAt: event.assertedAt,
         lifecycle: 1 as const,

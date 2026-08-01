@@ -6,7 +6,10 @@ import { canonicalMap, canonicalSet } from "../../src/domain/canonical/value";
 import { prepareCanonicalVaultCreation } from "../../src/runtime/vault/canonical-create";
 import { prepareCanonicalClosureEvent } from "../../src/runtime/vault/canonical-lifecycle-prepare";
 import type { CanonicalReplicaState } from "../../src/runtime/vault/canonical-local-state";
-import type { OpenedCanonicalVault } from "../../src/runtime/vault/canonical-service";
+import {
+  type OpenedCanonicalVault,
+  requireCanonicalClientSecret,
+} from "../../src/runtime/vault/canonical-service";
 
 async function openedInitialVault(): Promise<OpenedCanonicalVault> {
   const creation = await prepareCanonicalVaultCreation({ label: "Vault", assertedAt: 1 });
@@ -80,7 +83,10 @@ describe("canonical Vault lifecycle preparation", () => {
       canonicalSet([vault.genesis.recordId, prepared.event.recordId]),
     );
     expect(
-      await verifyVaultEventSignature(prepared.event, vault.clientSecret.signingPublicKey),
+      await verifyVaultEventSignature(
+        prepared.event,
+        requireCanonicalClientSecret(vault).signingPublicKey,
+      ),
     ).toBe(true);
     await expect(
       openCompactItem({

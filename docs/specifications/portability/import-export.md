@@ -183,6 +183,9 @@ Compact Prepared Data is reopened under the package-carried Key Epoch Keys and c
 namespace and logical identity. Streamable Artifact wrappers are authenticated frame by frame
 against their reachable Artifact Objects without retaining plaintext. Prepared Data remains
 unavailable to ordinary Runtime reads until all semantic and authority validation succeeds.
+The resulting local Replica has no selected Client Credential, authoring Credential, or local
+member binding. It is readable with the imported Epoch keys; authoring becomes available only
+after ordinary Recovery or Invitation enrollment establishes current authority.
 
 If the installation already knows the Vault ID:
 

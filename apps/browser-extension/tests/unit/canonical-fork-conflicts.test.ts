@@ -12,7 +12,10 @@ import {
 import { prepareCanonicalVaultCreation } from "../../src/runtime/vault/canonical-create";
 import { buildForkContentCheckpoint } from "../../src/runtime/vault/canonical-fork-content";
 import type { CanonicalReplicaState } from "../../src/runtime/vault/canonical-local-state";
-import type { PersistedOpenedCanonicalVault } from "../../src/runtime/vault/canonical-service";
+import {
+  type PersistedOpenedCanonicalVault,
+  requireCanonicalClientSecret,
+} from "../../src/runtime/vault/canonical-service";
 import {
   buildVacuumContentCheckpoint,
   type CanonicalVacuumContentState,
@@ -329,14 +332,14 @@ describe("canonical conflict-preserving Fork", () => {
         extensions: advisoryExtensions([]),
         family: 2,
         type: 10,
-        signerCredentialId: replay.vault.clientSecret.clientCredentialId,
+        signerCredentialId: requireCanonicalClientSecret(replay.vault).clientCredentialId,
         assertedAt: 46,
         body: canonicalMap([
           [0, canonicalSet([causeA, causeB])],
           [1, canonicalSet([])],
         ]),
       },
-      replay.vault.clientSecret.signingSecretKey,
+      requireCanonicalClientSecret(replay.vault).signingSecretKey,
     );
     replay.graph.add(resolution.recordId, resolution.parentRecordIds);
     const resolvedReplay: ReplayedCanonicalVault = {
@@ -408,7 +411,7 @@ describe("canonical conflict-preserving Fork", () => {
         extensions: advisoryExtensions([]),
         family: 2,
         type: 17,
-        signerCredentialId: replay.vault.clientSecret.clientCredentialId,
+        signerCredentialId: requireCanonicalClientSecret(replay.vault).clientCredentialId,
         assertedAt: 55,
         body: canonicalMap([
           [0, canonicalSet([causeA, causeB])],
@@ -427,7 +430,7 @@ describe("canonical conflict-preserving Fork", () => {
           ],
         ]),
       },
-      replay.vault.clientSecret.signingSecretKey,
+      requireCanonicalClientSecret(replay.vault).signingSecretKey,
     );
     replay.graph.add(resolution.recordId, resolution.parentRecordIds);
 
@@ -491,7 +494,7 @@ describe("canonical conflict-preserving Fork", () => {
             extensions: advisoryExtensions([]),
             family: 2,
             type: 3,
-            signerCredentialId: replay.vault.clientSecret.clientCredentialId,
+            signerCredentialId: requireCanonicalClientSecret(replay.vault).clientCredentialId,
             assertedAt: 66 + index,
             body: canonicalMap([
               [0, bundleId],
@@ -499,7 +502,7 @@ describe("canonical conflict-preserving Fork", () => {
               [2, candidate.collectionId],
             ]),
           },
-          replay.vault.clientSecret.signingSecretKey,
+          requireCanonicalClientSecret(replay.vault).signingSecretKey,
         ),
       ),
     );
