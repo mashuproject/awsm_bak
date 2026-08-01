@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-
+import { randomIdentifier } from "../../src/domain/canonical/identifiers";
+import { canonicalSet } from "../../src/domain/canonical/value";
 import { NAMESPACES, NORMAL_STORAGE_REALM } from "../../src/drivers/indexeddb/canonical-schema";
 import { prepareCanonicalVaultCreation } from "../../src/runtime/vault/canonical-create";
 import {
@@ -8,6 +9,7 @@ import {
   decodeEpochSecretState,
   decodeLogicalResolution,
   decodeVaultDirectoryEntry,
+  encodeCanonicalReplicaState,
   openWrappedLocalState,
   prepareCanonicalVaultStorage,
 } from "../../src/runtime/vault/canonical-local-state";
@@ -133,5 +135,33 @@ describe("canonical local Vault state", () => {
     );
     expect(resolutions).toEqual(prepared.logicalResolutions);
     expect(resolutions.every(({ availability }) => availability === 1)).toBe(true);
+  });
+
+  it("round-trips the exact latest Vacuum Adoption boundary", async () => {
+    const key = await wrappingKey();
+    const creation = await prepareCanonicalVaultCreation({ label: "Vault A", assertedAt: 1 });
+    const prepared = await prepareCanonicalVaultStorage({
+      creation,
+      label: "Vault A",
+      realm: NORMAL_STORAGE_REALM,
+      wrappingKey: key,
+    });
+    const vacuumEventRecordId = randomIdentifier("VaultRecord");
+    const successorBaselineId = randomIdentifier("VaultRecord");
+    const adopted = {
+      ...prepared.replicaState,
+      generationId: randomIdentifier("Generation"),
+      causalFrontier: [successorBaselineId],
+      authorityFrontier: [vacuumEventRecordId],
+      continuityRecordIds: canonicalSet([creation.genesis.recordId, vacuumEventRecordId]),
+      baselineId: successorBaselineId,
+      adoption: { vacuumEventRecordId },
+    };
+
+    expect(
+      decodeCanonicalReplicaState(
+        encodeCanonicalReplicaState(adopted as unknown as typeof prepared.replicaState),
+      ),
+    ).toEqual(adopted);
   });
 });

@@ -12,6 +12,7 @@ import {
   mapValue,
   nullable,
   oneOfCodes,
+  signedInteger,
 } from "../../domain/canonical/schema";
 import { canonicalMap, canonicalSet } from "../../domain/canonical/value";
 import { bytesEqual } from "../../domain/hash";
@@ -27,11 +28,20 @@ interface NoteVersionFact extends NoteHead {
   readonly noteId: Identifier<"Note">;
   readonly value: Identifier<"VaultObject"> | null;
   readonly restoreContentObjectId: Identifier<"VaultObject"> | null;
+  readonly originVaultId: Identifier<"Vault">;
+  readonly memberId: Identifier<"Member">;
+  readonly clientCredentialId: Identifier<"ClientCredential">;
+  readonly assertedAt: number | bigint;
 }
 
 export interface CanonicalProjectedNoteVersion {
   readonly headCauseId: Identifier<"VaultRecord">;
   readonly contentObjectId: Identifier<"VaultObject"> | null;
+  readonly restoreContentObjectId: Identifier<"VaultObject"> | null;
+  readonly originVaultId: Identifier<"Vault">;
+  readonly memberId: Identifier<"Member">;
+  readonly clientCredentialId: Identifier<"ClientCredential">;
+  readonly assertedAt: number | bigint;
 }
 
 export interface CanonicalProjectedNote {
@@ -84,6 +94,83 @@ function typedTarget(value: Parameters<typeof exactMap>[0]): {
 export function reduceCanonicalNotes(replay: ReplayedCanonicalVault): CanonicalNoteProjection {
   const identities: NoteIdentityFact[] = [];
   const versions: NoteVersionFact[] = [];
+  const eventAttribution = (event: ReplayedCanonicalVault["events"][number]) => ({
+    originVaultId: replay.vault.replicaState.vaultId,
+    memberId: replay.vault.replicaState.memberId,
+    clientCredentialId: event.signerCredentialId,
+    assertedAt: event.assertedAt,
+  });
+
+  const baselineBody = exactMap(
+    replay.vault.baseline.body,
+    [0, 1, 2, 3, 4, 5],
+    "Vault Baseline body",
+  );
+  const baselineContent = exactMap(
+    mapValue(baselineBody, 2),
+    [...Array(10).keys()],
+    "Content checkpoint",
+  );
+  for (const [index, entry] of arrayValue(
+    mapValue(baselineContent, 8),
+    "Checkpointed Notes",
+  ).entries()) {
+    const note = exactMap(entry, [0, 1, 2, 3], `Checkpointed Note ${index}`);
+    const noteId = identifierValue(mapValue(note, 0), "Note");
+    const target = typedTarget(mapValue(note, 1));
+    const checkpointedVersions = arrayValue(mapValue(note, 3), "Checkpointed Note versions").map(
+      (versionValue, versionIndex) => {
+        const version = exactMap(
+          versionValue,
+          [0, 1, 2, 3],
+          `Checkpointed Note ${index} version ${versionIndex}`,
+        );
+        return {
+          causeId: identifierValue(mapValue(version, 0), "VaultRecord"),
+          contentObjectId: nullable(mapValue(version, 1), (objectId) =>
+            identifierValue(objectId, "VaultObject"),
+          ),
+          restoreContentObjectId: nullable(mapValue(version, 2), (objectId) =>
+            identifierValue(objectId, "VaultObject"),
+          ),
+          attribution: (() => {
+            const value = exactMap(mapValue(version, 3), [0, 1, 2, 3], "Note attribution");
+            return {
+              originVaultId: identifierValue(mapValue(value, 0), "Vault"),
+              memberId: identifierValue(mapValue(value, 1), "Member"),
+              clientCredentialId: identifierValue(mapValue(value, 2), "ClientCredential"),
+              assertedAt: signedInteger(mapValue(value, 3), "Note assertedAt"),
+            };
+          })(),
+        };
+      },
+    );
+    const identityCause = checkpointedVersions[0]?.causeId;
+    if (identityCause === undefined) throw new TypeError("Checkpointed Note has no identity Cause");
+    identities.push({
+      entityId: noteId,
+      causeId: identityCause,
+      authenticatedValue: canonicalMap([
+        [0, target.targetKind],
+        [1, target.targetId],
+      ]),
+      noteId,
+      ...target,
+    });
+    for (const version of checkpointedVersions) {
+      versions.push({
+        noteId,
+        causeId: version.causeId,
+        kind: version.contentObjectId === null ? "deletion" : "revision",
+        value: version.contentObjectId,
+        restoreContentObjectId:
+          version.contentObjectId === null
+            ? version.restoreContentObjectId
+            : version.contentObjectId,
+        ...version.attribution,
+      });
+    }
+  }
 
   const identityBefore = (
     noteId: Identifier<"Note">,
@@ -161,6 +248,7 @@ export function reduceCanonicalNotes(replay: ReplayedCanonicalVault): CanonicalN
         kind: "revision",
         value: contentObjectId,
         restoreContentObjectId: contentObjectId,
+        ...eventAttribution(event),
       });
       continue;
     }
@@ -183,6 +271,7 @@ export function reduceCanonicalNotes(replay: ReplayedCanonicalVault): CanonicalN
         kind: "revision",
         value: contentObjectId,
         restoreContentObjectId: contentObjectId,
+        ...eventAttribution(event),
       });
       continue;
     }
@@ -208,6 +297,7 @@ export function reduceCanonicalNotes(replay: ReplayedCanonicalVault): CanonicalN
         kind: "deletion",
         value: null,
         restoreContentObjectId: identifierValue(displaced, "VaultObject"),
+        ...eventAttribution(event),
       });
       continue;
     }
@@ -246,6 +336,7 @@ export function reduceCanonicalNotes(replay: ReplayedCanonicalVault): CanonicalN
         kind: "revision",
         value: restoredContentId,
         restoreContentObjectId: restoredContentId,
+        ...eventAttribution(event),
       });
       continue;
     }
@@ -277,6 +368,7 @@ export function reduceCanonicalNotes(replay: ReplayedCanonicalVault): CanonicalN
       kind: retainedOriginalContentId === null ? "deletion" : "revision",
       value: retainedOriginalContentId,
       restoreContentObjectId: retainedOriginalContentId,
+      ...eventAttribution(event),
     });
     const splitNoteIds = new Set<string>();
     for (const [index, value] of arrayValue(mapValue(body, 3), "Split Notes").entries()) {
@@ -304,6 +396,7 @@ export function reduceCanonicalNotes(replay: ReplayedCanonicalVault): CanonicalN
         kind: "revision",
         value: contentObjectId,
         restoreContentObjectId: contentObjectId,
+        ...eventAttribution(event),
       });
     }
   }
@@ -331,6 +424,20 @@ export function reduceCanonicalNotes(replay: ReplayedCanonicalVault): CanonicalN
         versions: reduced.heads.map(({ causeId, value }) => ({
           headCauseId: causeId,
           contentObjectId: value === null ? null : identifierValue(value, "VaultObject"),
+          ...(() => {
+            const fact = versions.find(
+              (candidate) =>
+                bytesEqual(candidate.noteId, noteId) && bytesEqual(candidate.causeId, causeId),
+            );
+            if (fact === undefined) throw new TypeError("Note head attribution is unavailable");
+            return {
+              restoreContentObjectId: fact.restoreContentObjectId,
+              originVaultId: fact.originVaultId,
+              memberId: fact.memberId,
+              clientCredentialId: fact.clientCredentialId,
+              assertedAt: fact.assertedAt,
+            };
+          })(),
         })),
       };
     })

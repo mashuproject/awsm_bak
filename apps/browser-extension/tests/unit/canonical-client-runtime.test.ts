@@ -11,6 +11,7 @@ import type { CanonicalLibraryProjectionService } from "../../src/runtime/librar
 import type { CanonicalSearchService } from "../../src/runtime/search/canonical-service";
 import type { CanonicalLifecycleService } from "../../src/runtime/vault/canonical-lifecycle-service";
 import type { CanonicalVaultService } from "../../src/runtime/vault/canonical-service";
+import type { CanonicalVacuumService } from "../../src/runtime/vault/canonical-vacuum-service";
 
 function fixture() {
   const firstVaultId = randomIdentifier("Vault");
@@ -60,6 +61,7 @@ function fixture() {
   const content = { execute: vi.fn() } as unknown as CanonicalContentService;
   const search = { load: vi.fn(), query: vi.fn() } as unknown as CanonicalSearchService;
   const lifecycle = { close: vi.fn() } as unknown as CanonicalLifecycleService;
+  const vacuumService = { vacuum: vi.fn() } as unknown as CanonicalVacuumService;
   let setup = 0;
   const runtime = new CanonicalClientRuntime(
     vaults,
@@ -73,6 +75,7 @@ function fixture() {
     () => createdNoteId,
     search,
     lifecycle,
+    vacuumService,
   );
   return {
     runtime,
@@ -82,6 +85,7 @@ function fixture() {
     content,
     search,
     lifecycle,
+    vacuumService,
     ceremony,
     firstVaultId,
     secondVaultId,
@@ -312,6 +316,37 @@ describe("canonical Client Runtime", () => {
       commandId: "close-1",
       vaultId: firstVaultId,
       assertedAt: 50,
+    });
+  });
+
+  it("vacuums only the exact selected Vault through one idempotent command", async () => {
+    const { runtime, vacuumService, firstVaultId } = fixture();
+    const predecessorGenerationId = randomIdentifier("Generation");
+    const successorGenerationId = randomIdentifier("Generation");
+    const vacuumEventRecordId = randomIdentifier("VaultRecord");
+    const successorBaselineId = randomIdentifier("VaultRecord");
+    vi.mocked(vacuumService.vacuum).mockResolvedValue({
+      commandId: "vacuum-1",
+      vaultId: firstVaultId,
+      predecessorGenerationId,
+      successorGenerationId,
+      vacuumEventRecordId,
+      successorBaselineId,
+    });
+    const expectedVaultId = identifierStorageKey(firstVaultId);
+
+    await expect(
+      runtime.vacuumVault({ expectedVaultId, commandId: "vacuum-1", assertedAt: 51 }),
+    ).resolves.toEqual({
+      predecessorGenerationId: identifierStorageKey(predecessorGenerationId),
+      successorGenerationId: identifierStorageKey(successorGenerationId),
+      vacuumEventRecordId: identifierStorageKey(vacuumEventRecordId),
+      successorBaselineId: identifierStorageKey(successorBaselineId),
+    });
+    expect(vacuumService.vacuum).toHaveBeenCalledWith({
+      commandId: "vacuum-1",
+      vaultId: firstVaultId,
+      assertedAt: 51,
     });
   });
 

@@ -14,6 +14,7 @@ import {
   decodeVaultEvent,
   type VaultBaseline,
 } from "../../domain/canonical/record";
+import { exactMap, identifierValue, mapValue } from "../../domain/canonical/schema";
 import { bytesEqual } from "../../domain/hash";
 import {
   type CanonicalIndexedDb,
@@ -42,7 +43,7 @@ import {
   prepareCanonicalVaultStorage,
   type VaultDirectoryEntry,
 } from "./canonical-local-state";
-import { initialBaselineVaultLabel, validateInitialVaultAuthority } from "./canonical-open";
+import { baselineVaultLabel, validateCurrentVaultAuthority } from "./canonical-open";
 
 export interface CreatedCanonicalVault {
   readonly vaultId: Identifier<"Vault">;
@@ -329,16 +330,59 @@ export class CanonicalVaultService {
       ).payloadBytes,
     );
     sameBytes(baseline.recordId, replicaState.baselineId, "Opened Baseline ID");
-    if (initialBaselineVaultLabel(baseline) !== directory.label) {
-      throw new TypeError("Vault Directory label does not match initial authoritative state");
+    const genesisBody = exactMap(genesis.body, [0, 1, 2, 3, 4, 5, 6], "Genesis body");
+    const initialBaselineId = identifierValue(
+      mapValue(genesisBody, 0),
+      "VaultRecord",
+      "Genesis Baseline ID",
+    );
+    let initialBaseline = baseline;
+    if (!bytesEqual(initialBaselineId, baseline.recordId)) {
+      const initialBaselineEnvelopeBytes = await this.requireBytes({
+        namespace: NAMESPACES.vaultRecord.key,
+        scopeKey: vaultKey,
+        itemKey: identifierStorageKey(initialBaselineId),
+      });
+      await this.validateResolution({
+        wrappingKey,
+        vaultId,
+        kind: 1,
+        logicalId: initialBaselineId,
+        expectedKeyEpochId: epochSecret.keyEpochId,
+        envelopeBytes: initialBaselineEnvelopeBytes,
+      });
+      initialBaseline = decodeVaultBaseline(
+        (
+          await openCompactItem({
+            vaultId,
+            keyEpochId: epochSecret.keyEpochId,
+            keyEpochKey: epochSecret.key,
+            envelopeBytes: initialBaselineEnvelopeBytes,
+          })
+        ).payloadBytes,
+      );
+      sameBytes(initialBaseline.recordId, initialBaselineId, "Initial Baseline ID");
     }
-    await validateInitialVaultAuthority({
+    if (baselineVaultLabel(baseline) !== directory.label) {
+      throw new TypeError("Vault Directory label does not match authoritative state");
+    }
+    const vacuumEvent =
+      replicaState.adoption === null
+        ? null
+        : (continuityEvents.find((event) =>
+            bytesEqual(
+              event.recordId,
+              replicaState.adoption?.vacuumEventRecordId ?? new Uint8Array(),
+            ),
+          ) ?? null);
+    await validateCurrentVaultAuthority({
       baseline,
+      initialBaseline,
       genesis,
+      vacuumEvent,
       replicaState,
       clientSecret,
       epochSecret,
-      requireInitialReplicaState: false,
     });
 
     const keyEnvelopeDependencies = baseline.dependencies.filter(

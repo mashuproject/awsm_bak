@@ -98,12 +98,39 @@ function compareIds(left: Uint8Array, right: Uint8Array): number {
 
 export class CausalGraph {
   readonly #parents = new Map<string, readonly Identifier<"VaultRecord">[]>();
+  readonly #baselineRootByCause = new Map<string, string>();
+
+  public addBaseline(
+    baselineId: Identifier<"VaultRecord">,
+    causeIds: readonly Identifier<"VaultRecord">[],
+  ): void {
+    const baselineKey = key(baselineId);
+    if (causeIds.length !== new Set(causeIds.map(key)).size) {
+      throw new TypeError("A Baseline cannot repeat a Baseline Cause ID");
+    }
+    for (const causeId of causeIds) {
+      const causeKey = key(causeId);
+      if (
+        causeKey === baselineKey ||
+        this.#parents.has(causeKey) ||
+        (this.#baselineRootByCause.has(causeKey) &&
+          this.#baselineRootByCause.get(causeKey) !== baselineKey)
+      ) {
+        throw new TypeError("A Baseline Cause ID collides with another causal identity");
+      }
+    }
+    this.add(baselineId, []);
+    for (const causeId of causeIds) this.#baselineRootByCause.set(key(causeId), baselineKey);
+  }
 
   public add(
     recordId: Identifier<"VaultRecord">,
     parentRecordIds: readonly Identifier<"VaultRecord">[],
   ): void {
     const recordKey = key(recordId);
+    if (this.#baselineRootByCause.has(recordKey)) {
+      throw new TypeError("A Record ID collides with a Baseline Cause ID");
+    }
     const existing = this.#parents.get(recordKey);
     if (existing !== undefined) {
       if (!sameIdSet(existing, parentRecordIds)) {
@@ -122,12 +149,14 @@ export class CausalGraph {
   }
 
   public has(recordId: Uint8Array): boolean {
-    return this.#parents.has(key(recordId));
+    const recordKey = key(recordId);
+    return this.#parents.has(recordKey) || this.#baselineRootByCause.has(recordKey);
   }
 
   public isAncestor(ancestorId: Uint8Array, descendantId: Uint8Array): boolean {
     if (bytesEqual(ancestorId, descendantId)) return false;
-    const target = key(ancestorId);
+    const target = this.#baselineRootByCause.get(key(ancestorId)) ?? key(ancestorId);
+    if (target === key(descendantId) && this.#baselineRootByCause.has(key(ancestorId))) return true;
     const pending = [...(this.#parents.get(key(descendantId)) ?? [])];
     const visited = new Set<string>();
     while (pending.length > 0) {

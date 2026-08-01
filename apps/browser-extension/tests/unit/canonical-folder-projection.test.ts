@@ -9,6 +9,7 @@ import {
   reduceCanonicalFolders,
 } from "../../src/runtime/library/canonical-folder-projection";
 import type { ReplayedCanonicalVault } from "../../src/runtime/projection/canonical-replay";
+import { emptyCanonicalReplayVault } from "../helpers/canonical-replay";
 
 function event(
   type: number,
@@ -34,6 +35,7 @@ describe("canonical Folder projection", () => {
     graph.add(childRenamed, [childCreated]);
     graph.add(parentDeleted, [childCreated]);
     const replay = {
+      ...emptyCanonicalReplayVault,
       graph,
       events: [
         event(
@@ -137,6 +139,7 @@ describe("canonical Folder projection", () => {
       ),
     ];
     const conflict = reduceCanonicalFolders({
+      ...emptyCanonicalReplayVault,
       graph,
       events: conflictingEvents,
     } as unknown as ReplayedCanonicalVault);
@@ -169,6 +172,7 @@ describe("canonical Folder projection", () => {
       ]),
     );
     const converged = reduceCanonicalFolders({
+      ...emptyCanonicalReplayVault,
       graph,
       events: [...conflictingEvents, resolution],
     } as unknown as ReplayedCanonicalVault);
@@ -202,6 +206,7 @@ describe("canonical Folder projection", () => {
     graph.add(secondMoved, [secondCreated]);
     graph.add(resolved, [firstMoved, secondMoved]);
     const replay = {
+      ...emptyCanonicalReplayVault,
       graph,
       events: [
         event(
@@ -276,6 +281,7 @@ describe("canonical Folder projection", () => {
     graph.add(parentDeleted, [parentCreated]);
     graph.add(collectionPlaced, [parentDeleted]);
     const replay = {
+      ...emptyCanonicalReplayVault,
       graph,
       events: [
         event(
@@ -339,6 +345,7 @@ describe("canonical Folder projection", () => {
     graph.add(secondMoved, [dependentCreated]);
     graph.add(dependentMoved, [dependentCreated]);
     const replay = {
+      ...emptyCanonicalReplayVault,
       graph,
       events: [
         event(
@@ -428,6 +435,7 @@ describe("canonical Folder projection", () => {
     graph.add(firstResolution, [firstMoved, secondMoved, thirdMoved]);
     graph.add(laterMove, [firstResolution]);
     const replay = {
+      ...emptyCanonicalReplayVault,
       graph,
       events: [
         event(

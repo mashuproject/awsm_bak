@@ -88,6 +88,30 @@ describe("deterministic causal primitives", () => {
     graph.add(second, [first]);
     expect(() => graph.add(first, [second])).toThrow(/cycle/u);
   });
+
+  it("lets descendant Events supersede sibling Baseline Causes without Record-parent fiction", () => {
+    const graph = new CausalGraph();
+    const baselineId = record(10);
+    const firstBaselineCause = record(11);
+    const secondBaselineCause = record(12);
+    const descendant = record(13);
+
+    graph.addBaseline(baselineId, [firstBaselineCause, secondBaselineCause]);
+    graph.add(descendant, [baselineId]);
+
+    expect(graph.isAncestor(firstBaselineCause, secondBaselineCause)).toBe(false);
+    expect(graph.isAncestor(secondBaselineCause, firstBaselineCause)).toBe(false);
+    expect(graph.isAncestor(firstBaselineCause, descendant)).toBe(true);
+    expect(
+      reduceCausalScalar(
+        [
+          { causeId: firstBaselineCause, value: "checkpoint" },
+          { causeId: descendant, value: "event" },
+        ],
+        graph,
+      )?.value,
+    ).toBe("event");
+  });
 });
 
 describe("additive, observed-remove, graph, and Note reducers", () => {

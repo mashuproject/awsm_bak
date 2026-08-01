@@ -12,6 +12,7 @@ import {
   arrayValue,
   exactMap,
   identifierValue,
+  idSetValue,
   mapValue,
   oneOfCodes,
   textValue,
@@ -84,6 +85,74 @@ export function reduceCanonicalTags(replay: ReplayedCanonicalVault): CanonicalTa
   const lifecycles: TagLifecycleFact[] = [];
   const assignments: TagAssignmentFact[] = [];
   const removals: ObservedRemoval[] = [];
+
+  const baselineBody = exactMap(
+    replay.vault.baseline.body,
+    [0, 1, 2, 3, 4, 5],
+    "Vault Baseline body",
+  );
+  const baselineContent = exactMap(
+    mapValue(baselineBody, 2),
+    [...Array(10).keys()],
+    "Content checkpoint",
+  );
+  for (const [index, entry] of arrayValue(
+    mapValue(baselineContent, 6),
+    "Checkpointed Tags",
+  ).entries()) {
+    const tag = exactMap(entry, [...Array(6).keys()], `Checkpointed Tag ${index}`);
+    const tagId = identifierValue(mapValue(tag, 0), "Tag");
+    const name = textValue(mapValue(tag, 1), "Tag name", { maxUtf8Bytes: 1_024 });
+    const lifecycle = oneOfCodes(mapValue(tag, 4), [1, 2] as const, "Tag lifecycle");
+    const nameCauses = idSetValue(mapValue(tag, 2), "VaultRecord", "Tag name Cause IDs", {
+      nonempty: true,
+    });
+    const lifecycleCauses = idSetValue(mapValue(tag, 5), "VaultRecord", "Tag lifecycle Cause IDs", {
+      nonempty: true,
+    });
+    const identityCause = nameCauses[0];
+    if (identityCause === undefined) throw new TypeError("Checkpointed Tag has no identity Cause");
+    knownTags.set(key(tagId), tagId);
+    identities.push({
+      entityId: tagId,
+      causeId: identityCause,
+      authenticatedValue: canonicalMap([[0, name]]),
+    });
+    for (const causeId of nameCauses) names.push({ tagId, causeId, value: name });
+    for (const causeId of lifecycleCauses) {
+      lifecycles.push({ tagId, causeId, value: lifecycle });
+    }
+  }
+  for (const [index, entry] of arrayValue(
+    mapValue(baselineContent, 7),
+    "Checkpointed Tag assignments",
+  ).entries()) {
+    const assignment = exactMap(entry, [0, 1, 2, 3], `Tag assignment ${index}`);
+    const assignmentId = identifierValue(mapValue(assignment, 0), "TagAssignment");
+    const causeId = identifierValue(mapValue(assignment, 1), "VaultRecord");
+    const tagId = identifierValue(mapValue(assignment, 2), "Tag");
+    const target = exactMap(mapValue(assignment, 3), [0, 1], "Tag assignment target");
+    const targetKind = oneOfCodes(mapValue(target, 0), [1, 2] as const, "Tag target kind");
+    const targetId =
+      targetKind === 1
+        ? identifierValue(mapValue(target, 1), "Collection")
+        : identifierValue(mapValue(target, 1), "Bundle");
+    assignments.push({
+      assignmentId,
+      entityId: assignmentId,
+      causeId,
+      value: tagId,
+      tagId,
+      targetKind,
+      targetId,
+      relationKey: relationKey(tagId, targetKind, targetId),
+      authenticatedValue: canonicalMap([
+        [0, tagId],
+        [1, targetKind],
+        [2, targetId],
+      ]),
+    });
+  }
 
   const requireTag = (tagId: Identifier<"Tag">, field: string): void => {
     if (!knownTags.has(key(tagId))) throw new TypeError(`${field} is not a known Tag`);

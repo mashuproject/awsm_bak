@@ -5,6 +5,7 @@ import { CausalGraph } from "../../src/domain/canonical/reducers";
 import { canonicalMap, canonicalSet } from "../../src/domain/canonical/value";
 import { reduceCollectionRedirects } from "../../src/runtime/library/canonical-projection";
 import type { ReplayedCanonicalVault } from "../../src/runtime/projection/canonical-replay";
+import { emptyCanonicalReplayVault } from "../helpers/canonical-replay";
 
 function merge(
   recordId: ReturnType<typeof randomIdentifier<"VaultRecord">>,
@@ -37,6 +38,7 @@ describe("canonical Collection redirect reduction", () => {
     graph.add(secondCause, [genesis]);
     graph.add(resolutionCause, [firstCause, secondCause]);
     const replay = {
+      ...emptyCanonicalReplayVault,
       graph,
       events: [
         merge(firstCause, sourceId, firstDestinationId),
@@ -81,6 +83,7 @@ describe("canonical Collection redirect reduction", () => {
     graph.add(secondCause, [genesis]);
     graph.add(resolutionCause, [firstCause, secondCause]);
     const replay = {
+      ...emptyCanonicalReplayVault,
       graph,
       events: [
         merge(firstCause, sourceId, randomIdentifier("Collection")),
@@ -115,6 +118,7 @@ describe("canonical Collection redirect reduction", () => {
     graph.add(unaffectedCause, [genesis]);
     graph.add(resolutionCause, [firstCause, secondCause, unaffectedCause]);
     const replay = {
+      ...emptyCanonicalReplayVault,
       graph,
       events: [
         merge(firstCause, sourceId, randomIdentifier("Collection")),

@@ -136,6 +136,22 @@ omission bucket.
 Vacuum Adoption is local Replica Safety State, not an Event. A Replica adopts only after verifying
 the Vacuum Event, successor Baseline, complete available closure, and replay equivalence.
 
+The local Adoption marker is the canonical map:
+
+```text
+{
+  0: 1,                   // marker format
+  1: vacuumEventRecordId  // latest adopted Generation boundary
+}
+```
+
+The marker identifies the authenticated boundary; it does not duplicate the Event's signed
+linkage or digests. Adoption atomically commits the successor Baseline and Vacuum Event, their
+verified local resolutions, the successor Vault Directory Generation, Replica Safety State, and
+the idempotent local Command outcome. The same transaction invalidates predecessor-Generation
+Library and Search Materializations. It does not delete predecessor Records, Objects, or Artifact
+representations.
+
 A Replica with no incompatible predecessor work may switch Generations. A Replica with divergent
 or unpublished work MUST NOT silently discard or union it. The user may Fork Before Adoption,
 Complete Export, recover eligible Captures through Event Re-authoring, decline, or postpone.

@@ -1,17 +1,23 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { openCompactItem } from "../../src/crypto/compact";
 import { DEPENDENCY_TYPES } from "../../src/domain/canonical/dependencies";
 import { advisoryExtensions } from "../../src/domain/canonical/features";
-import { identifier } from "../../src/domain/canonical/identifiers";
+import { type Identifier, identifier } from "../../src/domain/canonical/identifiers";
 import { signVaultEvent, verifyVaultEventSignature } from "../../src/domain/canonical/record";
 import { CausalGraph } from "../../src/domain/canonical/reducers";
 import { exactMap, mapValue } from "../../src/domain/canonical/schema";
 import { type CanonicalValue, canonicalMap, canonicalSet } from "../../src/domain/canonical/value";
 import { bytesEqual } from "../../src/domain/hash";
-import type { ReplayedCanonicalVault } from "../../src/runtime/projection/canonical-replay";
+import type { ReplicaMutationCommit } from "../../src/drivers/indexeddb/canonical-database";
+import { NAMESPACES, NORMAL_STORAGE_REALM } from "../../src/drivers/indexeddb/canonical-schema";
+import {
+  CanonicalReplayService,
+  type ReplayedCanonicalVault,
+} from "../../src/runtime/projection/canonical-replay";
 import { prepareCanonicalVaultCreation } from "../../src/runtime/vault/canonical-create";
 import type { CanonicalReplicaState } from "../../src/runtime/vault/canonical-local-state";
+import { validateCurrentVaultAuthority } from "../../src/runtime/vault/canonical-open";
 import type { PersistedOpenedCanonicalVault } from "../../src/runtime/vault/canonical-service";
 import {
   buildVacuumContentCheckpoint,
@@ -21,6 +27,7 @@ import {
   prepareInitialAuthorityVacuum,
   prepareInitialAuthorityVacuumSuccessorBaseline,
 } from "../../src/runtime/vault/canonical-vacuum-content-checkpoint";
+import { CanonicalVacuumService } from "../../src/runtime/vault/canonical-vacuum-service";
 
 function filled<Kind extends Parameters<typeof identifier>[0]>(kind: Kind, byte: number) {
   return identifier(kind, new Uint8Array(32).fill(byte));
@@ -113,6 +120,54 @@ async function registrationReplay(): Promise<{
 }
 
 describe("canonical Vacuum Content checkpoint", () => {
+  it("retains a Deleted Note restore target and its exact Object dependency", () => {
+    const restoreContentObjectId = filled("VaultObject", 91);
+    const deletedVersion = {
+      headCauseId: filled("VaultRecord", 92),
+      contentObjectId: null,
+      restoreContentObjectId,
+      attribution: {
+        originVaultId: filled("Vault", 93),
+        memberId: filled("Member", 94),
+        clientCredentialId: filled("ClientCredential", 95),
+        assertedAt: 96,
+      },
+    };
+    const state: CanonicalVacuumContentState = {
+      vaultLabel: { value: null, headCauseIds: [] },
+      credentialLabels: [],
+      captures: [],
+      collections: [],
+      folders: [],
+      tags: [],
+      tagAssignments: [],
+      notes: [
+        {
+          noteId: filled("Note", 97),
+          targetKind: 1,
+          targetId: filled("Collection", 98),
+          state: 2,
+          versions: [deletedVersion],
+        },
+      ],
+      activeConflicts: [],
+    };
+
+    const built = buildVacuumContentCheckpoint(state, {
+      createCause: (sourceCauseId) => identifier("BaselineCause", sourceCauseId),
+    });
+    const decodedVersion = decodeVacuumContentCheckpoint(built.checkpoint).notes[0]?.versions[0] as
+      | (CanonicalVacuumContentState["notes"][number]["versions"][number] & {
+          readonly restoreContentObjectId: Identifier<"VaultObject"> | null;
+        })
+      | undefined;
+
+    expect(decodedVersion?.restoreContentObjectId).toEqual(restoreContentObjectId);
+    expect(built.dependencies).toEqual([
+      { type: DEPENDENCY_TYPES.NoteContentObject, id: restoreContentObjectId },
+    ]);
+  });
+
   it("reuses one fresh Baseline Cause across every retained fact controlled by one Event", () => {
     const sourceCause = filled("VaultRecord", 1);
     const mappedCause = filled("BaselineCause", 2);
@@ -266,6 +321,7 @@ describe("canonical Vacuum Content checkpoint", () => {
             {
               headCauseId: filled("VaultRecord", 26),
               contentObjectId: filled("VaultObject", 27),
+              restoreContentObjectId: null,
               attribution: {
                 originVaultId: filled("Vault", 17),
                 memberId: filled("Member", 18),
@@ -413,6 +469,15 @@ describe("canonical Vacuum Content checkpoint", () => {
     expect(prepared.continuityRecordIds).toEqual(
       canonicalSet([replay.vault.genesis.recordId, prepared.event.recordId]),
     );
+    expect(prepared.adoptedReplicaState).toMatchObject({
+      vaultId: replay.vault.replicaState.vaultId,
+      generationId: successorGenerationId,
+      causalFrontier: [prepared.successor.baseline.recordId],
+      authorityFrontier: [prepared.event.recordId],
+      continuityRecordIds: prepared.continuityRecordIds,
+      baselineId: prepared.successor.baseline.recordId,
+      adoption: { vacuumEventRecordId: prepared.event.recordId },
+    });
     expect(
       await verifyVaultEventSignature(prepared.event, replay.vault.clientSecret.signingPublicKey),
     ).toBe(true);
@@ -574,5 +639,131 @@ describe("canonical Vacuum Content checkpoint", () => {
         { type: DEPENDENCY_TYPES.NoteContentObject, id: noteContentObjectId },
       ]),
     );
+  });
+
+  it("replays an adopted successor Baseline as the empty Event Frontier", async () => {
+    const { replay } = await registrationReplay();
+    const prepared = await prepareInitialAuthorityVacuum({
+      replay,
+      successorGenerationId: filled("Generation", 60),
+      assertedAt: 3,
+    });
+    const adoptedVault: PersistedOpenedCanonicalVault = {
+      ...replay.vault,
+      directory: {
+        ...replay.vault.directory,
+        generationId: prepared.successor.baseline.generationId,
+      },
+      replicaState: prepared.adoptedReplicaState,
+      baseline: prepared.successor.baseline,
+    };
+    const openResolvedCompactItem = vi.fn();
+    const service = new CanonicalReplayService({
+      openVault: vi.fn(async () => adoptedVault),
+      openResolvedCompactItem,
+    } as never);
+
+    const adopted = await service.replayOpened(adoptedVault);
+
+    expect(adopted.events).toEqual([]);
+    expect(adopted.graph.has(prepared.successor.baseline.recordId)).toBe(true);
+    expect(
+      prepared.successor.content.causeMapping.every(({ baselineCauseId }) =>
+        adopted.graph.has(baselineCauseId),
+      ),
+    ).toBe(true);
+    expect(openResolvedCompactItem).not.toHaveBeenCalled();
+  });
+
+  it("authenticates an adopted successor through Genesis and its Vacuum Event", async () => {
+    const { replay } = await registrationReplay();
+    const prepared = await prepareInitialAuthorityVacuum({
+      replay,
+      successorGenerationId: filled("Generation", 70),
+      assertedAt: 3,
+    });
+
+    await expect(
+      validateCurrentVaultAuthority({
+        baseline: prepared.successor.baseline,
+        initialBaseline: replay.vault.baseline,
+        genesis: replay.vault.genesis,
+        vacuumEvent: prepared.event,
+        replicaState: prepared.adoptedReplicaState,
+        clientSecret: replay.vault.clientSecret,
+        epochSecret: replay.vault.epochSecret,
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("adopts Vacuum atomically without deleting predecessor authoritative data", async () => {
+    const { replay: sourceReplay } = await registrationReplay();
+    const installationWrappingKey = await crypto.subtle.generateKey(
+      { name: "AES-KW", length: 256 },
+      false,
+      ["wrapKey", "unwrapKey"],
+    );
+    const replay = {
+      ...sourceReplay,
+      vault: {
+        ...sourceReplay.vault,
+        installationWrappingKey,
+        replicaStateStorageBytes: new Uint8Array([1, 2, 3]),
+      },
+    } satisfies ReplayedCanonicalVault;
+    const commitReplicaMutation = vi.fn(async (_commit: ReplicaMutationCommit) => undefined);
+    const storage = {
+      getBytes: vi.fn(async () => undefined),
+      commitReplicaMutation,
+    };
+    const vaults = {
+      storage,
+      realm: NORMAL_STORAGE_REALM,
+      openVault: vi.fn(async () => replay.vault),
+    };
+    const service = new CanonicalVacuumService(vaults as never);
+    vi.spyOn(service.replay, "replay").mockResolvedValue(replay);
+
+    const outcome = await service.vacuum({
+      commandId: "vacuum-atomic-1",
+      vaultId: replay.vault.replicaState.vaultId,
+      assertedAt: 3,
+    });
+
+    expect(outcome.predecessorGenerationId).toEqual(replay.vault.replicaState.generationId);
+    expect(commitReplicaMutation).toHaveBeenCalledOnce();
+    const commit = commitReplicaMutation.mock.calls[0]?.[0];
+    expect(commit?.expectedReplicaState).toEqual(replay.vault.replicaStateStorageBytes);
+    expect(commit?.immutableItems).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ namespace: NAMESPACES.vaultRecord.key }),
+        expect.objectContaining({ namespace: NAMESPACES.commandOutcome.key }),
+      ]),
+    );
+    expect(commit?.immutableItems).toHaveLength(3);
+    expect(commit?.mutableItems).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ namespace: NAMESPACES.logicalResolution.key }),
+        expect.objectContaining({ namespace: NAMESPACES.vaultDirectory.key }),
+      ]),
+    );
+    expect(commit?.mutableItems).toHaveLength(3);
+    expect(commit?.deletedItems).toEqual([
+      {
+        namespace: NAMESPACES.libraryProjection.key,
+        scopeKey: expect.any(String),
+        itemKey: "current",
+      },
+      {
+        namespace: NAMESPACES.searchMaterialization.key,
+        scopeKey: expect.any(String),
+        itemKey: "current",
+      },
+    ]);
+    expect(
+      (commit?.deletedItems ?? []).some((item: { readonly namespace: string }) =>
+        [NAMESPACES.vaultRecord.key, NAMESPACES.vaultObject.key].includes(item.namespace as never),
+      ),
+    ).toBe(false);
   });
 });

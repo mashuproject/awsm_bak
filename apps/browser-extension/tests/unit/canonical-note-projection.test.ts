@@ -5,13 +5,39 @@ import { CausalGraph } from "../../src/domain/canonical/reducers";
 import { canonicalMap, canonicalSet } from "../../src/domain/canonical/value";
 import { reduceCanonicalNotes } from "../../src/runtime/library/canonical-note-projection";
 import type { ReplayedCanonicalVault } from "../../src/runtime/projection/canonical-replay";
+import { emptyCanonicalReplayVault } from "../helpers/canonical-replay";
+
+const testCredentialId = randomIdentifier("ClientCredential");
+const testAssertedAt = 1;
 
 function event(
   type: number,
   recordId: Identifier<"VaultRecord">,
   body: ReturnType<typeof canonicalMap>,
 ) {
-  return { family: 2, type, recordId, body } as const;
+  return {
+    family: 2,
+    type,
+    recordId,
+    body,
+    signerCredentialId: testCredentialId,
+    assertedAt: testAssertedAt,
+  } as const;
+}
+
+function projectedVersion(
+  headCauseId: Identifier<"VaultRecord">,
+  contentObjectId: Identifier<"VaultObject"> | null,
+) {
+  return {
+    headCauseId,
+    contentObjectId,
+    restoreContentObjectId: contentObjectId,
+    originVaultId: emptyCanonicalReplayVault.vault.replicaState.vaultId,
+    memberId: emptyCanonicalReplayVault.vault.replicaState.memberId,
+    clientCredentialId: testCredentialId,
+    assertedAt: testAssertedAt,
+  };
 }
 
 function target(kind: 1 | 2, id: Identifier<"Collection"> | Identifier<"Bundle">) {
@@ -71,6 +97,7 @@ describe("canonical Note projection", () => {
     ];
 
     const conflicted = reduceCanonicalNotes({
+      ...emptyCanonicalReplayVault,
       graph,
       events: prefix,
     } as unknown as ReplayedCanonicalVault);
@@ -81,8 +108,8 @@ describe("canonical Note projection", () => {
         targetId: collectionId,
         state: 3,
         versions: [
-          { headCauseId: firstRevised, contentObjectId: firstContentId },
-          { headCauseId: secondRevised, contentObjectId: secondContentId },
+          projectedVersion(firstRevised, firstContentId),
+          projectedVersion(secondRevised, secondContentId),
         ].toSorted((left, right) =>
           Buffer.from(left.headCauseId).compare(Buffer.from(right.headCauseId)),
         ),
@@ -95,6 +122,7 @@ describe("canonical Note projection", () => {
     });
 
     const replacement = reduceCanonicalNotes({
+      ...emptyCanonicalReplayVault,
       graph,
       events: [
         ...prefix,
@@ -126,14 +154,14 @@ describe("canonical Note projection", () => {
           targetKind: 1,
           targetId: collectionId,
           state: 1,
-          versions: [{ headCauseId: resolved, contentObjectId: firstContentId }],
+          versions: [projectedVersion(resolved, firstContentId)],
         },
         {
           noteId: splitNoteId,
           targetKind: 1,
           targetId: collectionId,
           state: 1,
-          versions: [{ headCauseId: resolved, contentObjectId: secondContentId }],
+          versions: [projectedVersion(resolved, secondContentId)],
         },
       ].toSorted((left, right) => Buffer.from(left.noteId).compare(Buffer.from(right.noteId))),
     );
@@ -182,6 +210,7 @@ describe("canonical Note projection", () => {
       ),
     ];
     const deleted = reduceCanonicalNotes({
+      ...emptyCanonicalReplayVault,
       graph,
       events: prefix,
     } as unknown as ReplayedCanonicalVault);
@@ -189,6 +218,7 @@ describe("canonical Note projection", () => {
     expect(deleted.notes[0]?.versions).toHaveLength(2);
 
     const active = reduceCanonicalNotes({
+      ...emptyCanonicalReplayVault,
       graph,
       events: [
         ...prefix,
@@ -253,6 +283,7 @@ describe("canonical Note projection", () => {
 
     expect(() =>
       reduceCanonicalNotes({
+        ...emptyCanonicalReplayVault,
         graph,
         events: [
           ...prefix,
@@ -272,6 +303,7 @@ describe("canonical Note projection", () => {
 
     expect(() =>
       reduceCanonicalNotes({
+        ...emptyCanonicalReplayVault,
         graph,
         events: [
           ...prefix,

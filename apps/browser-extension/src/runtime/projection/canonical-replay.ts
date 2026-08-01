@@ -1,3 +1,4 @@
+import { contentCheckpointCauseIds } from "../../domain/canonical/baseline-body";
 import type { Identifier } from "../../domain/canonical/identifiers";
 import {
   type AuthenticatedVaultEvent,
@@ -5,6 +6,7 @@ import {
   verifyVaultEventSignature,
 } from "../../domain/canonical/record";
 import { CausalGraph } from "../../domain/canonical/reducers";
+import { exactMap, mapValue } from "../../domain/canonical/schema";
 import { bytesEqual } from "../../domain/hash";
 import { NAMESPACES } from "../../drivers/indexeddb/canonical-schema";
 import type {
@@ -43,9 +45,16 @@ export class CanonicalReplayService {
     const visiting = new Set<string>();
     const ordered: AuthenticatedVaultEvent[] = [];
     const genesisKey = key(vault.genesis.recordId);
+    const baselineKey = key(vault.baseline.recordId);
+    const adoption = vault.replicaState.adoption;
+    if (adoption !== null) {
+      const body = exactMap(vault.baseline.body, [0, 1, 2, 3, 4, 5], "Successor Baseline body");
+      graph.addBaseline(vault.baseline.recordId, contentCheckpointCauseIds(mapValue(body, 2)));
+    }
 
     const visit = async (recordId: Identifier<"VaultRecord">): Promise<void> => {
       const recordKey = key(recordId);
+      if (adoption !== null && recordKey === baselineKey) return;
       if (events.has(recordKey)) return;
       if (visiting.has(recordKey)) throw new TypeError("The Vault Record graph contains a cycle");
       if (events.size >= MAX_REPLAY_RECORDS) throw new RangeError("Vault replay exceeds its bound");
@@ -88,8 +97,10 @@ export class CanonicalReplayService {
             "This replay slice cannot yet reduce post-Genesis authority or lifecycle Events",
           );
         }
-        if (!sameSet(event.authorityParentRecordIds, [vault.genesis.recordId])) {
-          throw new TypeError("Event does not name the initial accepted Authority Frontier");
+        const expectedAuthorityParent =
+          adoption === null ? vault.genesis.recordId : adoption.vacuumEventRecordId;
+        if (!sameSet(event.authorityParentRecordIds, [expectedAuthorityParent])) {
+          throw new TypeError("Event does not name the accepted Authority Frontier");
         }
         if (!bytesEqual(event.signerCredentialId, vault.clientSecret.clientCredentialId)) {
           throw new TypeError("Event is not signed by the active local Credential");
@@ -108,9 +119,39 @@ export class CanonicalReplayService {
       key(left).localeCompare(key(right)),
     );
     for (const frontier of frontiers) await visit(frontier);
-    if (!events.has(genesisKey)) throw new TypeError("The causal DAG does not reach Genesis");
+    if (adoption === null && !events.has(genesisKey)) {
+      throw new TypeError("The causal DAG does not reach Genesis");
+    }
     const closures = ordered.filter((event) => event.family === 3 && event.type === 2);
-    if (vault.replicaState.lifecycle === 1) {
+    if (adoption !== null) {
+      if (vault.replicaState.lifecycle === 1) {
+        if (
+          closures.length !== 0 ||
+          !sameSet(vault.replicaState.authorityFrontier, [adoption.vacuumEventRecordId]) ||
+          !sameSet(vault.replicaState.continuityRecordIds, [
+            vault.genesis.recordId,
+            adoption.vacuumEventRecordId,
+          ])
+        ) {
+          throw new TypeError("Open successor authority state is inconsistent");
+        }
+      } else {
+        const closure = closures[0];
+        if (
+          closure === undefined ||
+          closures.length !== 1 ||
+          !sameSet(vault.replicaState.causalFrontier, [closure.recordId]) ||
+          !sameSet(vault.replicaState.authorityFrontier, [closure.recordId]) ||
+          !sameSet(vault.replicaState.continuityRecordIds, [
+            vault.genesis.recordId,
+            adoption.vacuumEventRecordId,
+            closure.recordId,
+          ])
+        ) {
+          throw new TypeError("Closed successor authority state is inconsistent");
+        }
+      }
+    } else if (vault.replicaState.lifecycle === 1) {
       if (
         closures.length !== 0 ||
         !sameSet(vault.replicaState.authorityFrontier, [vault.genesis.recordId]) ||

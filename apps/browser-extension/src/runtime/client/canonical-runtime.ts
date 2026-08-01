@@ -25,6 +25,7 @@ import type {
   CanonicalVaultCreationCeremony,
   CanonicalVaultService,
 } from "../vault/canonical-service";
+import { CanonicalVacuumService } from "../vault/canonical-vacuum-service";
 
 export interface CanonicalClientVaultSummary {
   readonly vaultId: string;
@@ -210,6 +211,9 @@ export class CanonicalClientRuntime {
     readonly lifecycle: Pick<CanonicalLifecycleService, "close"> = new CanonicalLifecycleService(
       vaults,
     ),
+    readonly vacuumService: Pick<CanonicalVacuumService, "vacuum"> = new CanonicalVacuumService(
+      vaults,
+    ),
   ) {}
 
   async state(): Promise<CanonicalClientState> {
@@ -358,6 +362,30 @@ export class CanonicalClientRuntime {
       assertedAt: input.assertedAt,
     });
     return { eventRecordId: identifierStorageKey(outcome.eventRecordId) };
+  }
+
+  async vacuumVault(input: {
+    readonly expectedVaultId: string;
+    readonly commandId: string;
+    readonly assertedAt: number | bigint;
+  }): Promise<{
+    readonly predecessorGenerationId: string;
+    readonly successorGenerationId: string;
+    readonly vacuumEventRecordId: string;
+    readonly successorBaselineId: string;
+  }> {
+    await this.assertExpectedVault(input.expectedVaultId);
+    const outcome = await this.vacuumService.vacuum({
+      commandId: input.commandId,
+      vaultId: identifierFromStorageKey("Vault", input.expectedVaultId),
+      assertedAt: input.assertedAt,
+    });
+    return {
+      predecessorGenerationId: identifierStorageKey(outcome.predecessorGenerationId),
+      successorGenerationId: identifierStorageKey(outcome.successorGenerationId),
+      vacuumEventRecordId: identifierStorageKey(outcome.vacuumEventRecordId),
+      successorBaselineId: identifierStorageKey(outcome.successorBaselineId),
+    };
   }
 
   async listCollections(expectedVaultId: string): Promise<readonly CanonicalClientCollection[]> {

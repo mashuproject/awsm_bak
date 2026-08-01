@@ -1002,15 +1002,46 @@ async function canonicalClientRuntimeScenario(): Promise<unknown> {
       NAMESPACES.searchMaterialization.key,
       first.vaultId,
     );
+    const vacuum = await runtime.vacuumVault({
+      expectedVaultId: first.vaultId,
+      commandId: "facade-vacuum",
+      assertedAt: 33,
+    });
+    const repeatedVacuum = await runtime.vacuumVault({
+      expectedVaultId: first.vaultId,
+      commandId: "facade-vacuum",
+      assertedAt: 33,
+    });
+    const postVacuumSearchCaches = await storage.listBytes(
+      NORMAL_STORAGE_REALM,
+      NAMESPACES.searchMaterialization.key,
+      first.vaultId,
+    );
+    const postVacuumLibraryCaches = await storage.listBytes(
+      NORMAL_STORAGE_REALM,
+      NAMESPACES.libraryProjection.key,
+      first.vaultId,
+    );
+    const postVacuumNotes = await runtime.listNotes(first.vaultId);
+    await runtime.capture({
+      expectedVaultId: first.vaultId,
+      commandId: "facade-post-vacuum-capture",
+      originalUrl: url,
+      finalUrl: url,
+      title: "Facade capture after Vacuum",
+      capturedAt,
+      primary: { blob: snapshot.blob },
+    });
+    const postVacuumLibrary = await runtime.listLibrary(first.vaultId);
     const closure = await runtime.closeVault({
       expectedVaultId: first.vaultId,
       commandId: "facade-close",
-      assertedAt: 33,
+      assertedAt: 34,
     });
     const repeatedClosure = await runtime.closeVault({
       expectedVaultId: first.vaultId,
       commandId: "facade-close",
-      assertedAt: 33,
+      assertedAt: 34,
     });
     let closedWriteRejected: string | undefined;
     try {
@@ -1019,7 +1050,7 @@ async function canonicalClientRuntimeScenario(): Promise<unknown> {
         commandId: "facade-after-close",
         collectionId: destinationCollectionId,
         title: "Too late",
-        assertedAt: 34,
+        assertedAt: 35,
       });
     } catch (error) {
       closedWriteRejected = error instanceof Error ? error.message : String(error);
@@ -1116,6 +1147,13 @@ async function canonicalClientRuntimeScenario(): Promise<unknown> {
           const ciphertext = new TextDecoder().decode(bytes);
           return !ciphertext.includes("Facade capture") && !ciphertext.includes("Revised body.");
         }),
+        vacuumIdempotent:
+          vacuum.vacuumEventRecordId === repeatedVacuum.vacuumEventRecordId &&
+          vacuum.successorBaselineId === repeatedVacuum.successorBaselineId,
+        vacuumInvalidatedCaches:
+          postVacuumSearchCaches.length === 0 && postVacuumLibraryCaches.length === 0,
+        postVacuumCaptureCount: postVacuumLibrary.length,
+        postVacuumNoteBody: postVacuumNotes[0]?.versions[0]?.body,
         closureIdempotent: closure.eventRecordId === repeatedClosure.eventRecordId,
         closedWriteRejected,
         restartedClosedSearchNote:

@@ -34,6 +34,10 @@ export const LOCAL_STATE_FORMAT = 1 as const;
 export type LogicalResolutionKind = 1 | 2 | 3 | 4 | 5;
 export type LocalAvailability = 1 | 2 | 3 | 4;
 
+export interface CanonicalVacuumAdoption {
+  readonly vacuumEventRecordId: Identifier<"VaultRecord">;
+}
+
 export interface CanonicalReplicaState {
   readonly vaultId: Identifier<"Vault">;
   readonly generationId: Identifier<"Generation">;
@@ -48,7 +52,7 @@ export interface CanonicalReplicaState {
   readonly lifecycle: 1 | 2;
   readonly preservationRoots: readonly Identifier<"VaultRecord">[];
   readonly garbageCollectionFences: readonly Uint8Array[];
-  readonly adoption: null;
+  readonly adoption: CanonicalVacuumAdoption | null;
 }
 
 export interface LogicalResolution {
@@ -122,7 +126,7 @@ export function encodeCanonicalReplicaState(state: CanonicalReplicaState): Uint8
       state.lifecycle,
       canonicalSet(state.preservationRoots),
       canonicalSet(state.garbageCollectionFences),
-      state.adoption,
+      state.adoption === null ? null : indexedMap(1, state.adoption.vacuumEventRecordId),
     ),
   );
 }
@@ -162,10 +166,26 @@ export function decodeCanonicalReplicaState(bytes: Uint8Array): CanonicalReplica
     lifecycle: oneOfCodes(mapValue(map, 11), [1, 2] as const, "Replica lifecycle"),
     preservationRoots: idSetValue(mapValue(map, 12), "VaultRecord", "Local preservation roots"),
     garbageCollectionFences: canonicalSet(exactByteArray(mapValue(map, 13), "GC fences")),
-    adoption: nullable(mapValue(map, 14), () => {
-      throw new TypeError("Initial Replica State cannot contain an Adoption");
+    adoption: nullable(mapValue(map, 14), (value) => {
+      const adoption = exactMap(value, [0, 1], "Vacuum Adoption");
+      exactCode(mapValue(adoption, 0), 1, "Vacuum Adoption format");
+      return {
+        vacuumEventRecordId: identifierValue(
+          mapValue(adoption, 1),
+          "VaultRecord",
+          "Vacuum Adoption Event Record ID",
+        ),
+      };
     }),
   };
+  if (
+    state.adoption !== null &&
+    !state.continuityRecordIds.some((recordId) =>
+      bytesEqual(recordId, state.adoption?.vacuumEventRecordId ?? new Uint8Array()),
+    )
+  ) {
+    throw new TypeError("Vacuum Adoption is inconsistent with accepted Replica Safety State");
+  }
   if (!bytesEqual(encodeCanonicalReplicaState(state), bytes)) {
     throw new TypeError("Canonical Replica State bytes are not canonical");
   }

@@ -5,6 +5,7 @@ import { CausalGraph } from "../../src/domain/canonical/reducers";
 import { canonicalMap, canonicalSet } from "../../src/domain/canonical/value";
 import { reduceCanonicalTags } from "../../src/runtime/library/canonical-tag-projection";
 import type { ReplayedCanonicalVault } from "../../src/runtime/projection/canonical-replay";
+import { emptyCanonicalReplayVault } from "../helpers/canonical-replay";
 
 function event(
   type: number,
@@ -39,6 +40,7 @@ describe("canonical Tag projection", () => {
     graph.add(secondAssigned, [tagCreated]);
     graph.add(firstRemoved, [firstAssigned]);
     const replay = {
+      ...emptyCanonicalReplayVault,
       graph,
       events: [
         event(
@@ -144,6 +146,7 @@ describe("canonical Tag projection", () => {
     ];
 
     const dormant = reduceCanonicalTags({
+      ...emptyCanonicalReplayVault,
       graph,
       events: prefix,
     } as unknown as ReplayedCanonicalVault);
@@ -151,6 +154,7 @@ describe("canonical Tag projection", () => {
     expect(dormant.assignments[0]).toMatchObject({ active: false });
 
     const active = reduceCanonicalTags({
+      ...emptyCanonicalReplayVault,
       graph,
       events: [...prefix, event(23, restored, canonicalMap([[0, tagId]]))],
     } as unknown as ReplayedCanonicalVault);
@@ -203,6 +207,7 @@ describe("canonical Tag projection", () => {
     ];
     expect(() =>
       reduceCanonicalTags({
+        ...emptyCanonicalReplayVault,
         graph,
         events: [
           ...prefix,
@@ -213,6 +218,7 @@ describe("canonical Tag projection", () => {
 
     expect(() =>
       reduceCanonicalTags({
+        ...emptyCanonicalReplayVault,
         graph,
         events: [
           ...prefix,
@@ -236,6 +242,7 @@ describe("canonical Tag projection", () => {
 
     expect(() =>
       reduceCanonicalTags({
+        ...emptyCanonicalReplayVault,
         graph,
         events: [
           event(

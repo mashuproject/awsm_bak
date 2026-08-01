@@ -21,7 +21,7 @@ import {
   signedInteger,
   textValue,
 } from "./schema";
-import type { CanonicalValue } from "./value";
+import { type CanonicalValue, canonicalSet } from "./value";
 
 export interface BaselineBodyContext {
   readonly vaultId: Identifier<"Vault">;
@@ -172,15 +172,23 @@ function validateContentCheckpoint(
       mapValue(item, 3),
       "Note versions",
       (version, versionIndex) => {
-        const versionMap = exactMap(version, [0, 1, 2], `Note version ${versionIndex}`);
+        const versionMap = exactMap(version, [0, 1, 2, 3], `Note version ${versionIndex}`);
         cause(mapValue(versionMap, 0), "Note head Cause ID");
         const contentId = nullable(mapValue(versionMap, 1), (content) =>
           identifierValue(content, "VaultObject", "Note Content Object ID"),
         );
-        if (contentId !== null) {
-          requirements.push({ type: DEPENDENCY_TYPES.NoteContentObject, id: contentId });
+        const restoreContentId = nullable(mapValue(versionMap, 2), (content) =>
+          identifierValue(content, "VaultObject", "Note restore Content Object ID"),
+        );
+        if ((contentId === null) === (restoreContentId === null)) {
+          throw new TypeError(
+            "Checkpointed Note version must retain exactly one current or restore Content Object",
+          );
         }
-        attribution(mapValue(versionMap, 2), "Note author attribution");
+        const requiredContentId = contentId ?? restoreContentId;
+        if (requiredContentId === null) throw new TypeError("Checkpointed Note Content is absent");
+        requirements.push({ type: DEPENDENCY_TYPES.NoteContentObject, id: requiredContentId });
+        attribution(mapValue(versionMap, 3), "Note author attribution");
         return version;
       },
       { nonempty: true },
@@ -426,4 +434,107 @@ export function validateVaultBaselineBody(
     throw new TypeError("Baseline kind and predecessor commitment do not match");
   }
   assertRequirements([...contentRequirements, ...authorityRequirements], context.dependencies);
+}
+
+export function contentCheckpointCauseIds(
+  value: CanonicalValue,
+): readonly Identifier<"VaultRecord">[] {
+  const checkpoint = exactMap(value, [...Array(10).keys()], "Content checkpoint");
+  exactCode(mapValue(checkpoint, 0), 1, "Content checkpoint format");
+  const found = new Map<string, Identifier<"VaultRecord">>();
+  const add = (causeId: Identifier<"VaultRecord">): void => {
+    found.set(hex(causeId), causeId);
+  };
+  const addOne = (causeValue: CanonicalValue, field: string): void => {
+    add(identifierValue(causeValue, "VaultRecord", field));
+  };
+  const addSet = (causeValue: CanonicalValue, field: string): void => {
+    for (const causeId of idSetValue(causeValue, "VaultRecord", field)) add(causeId);
+  };
+  const addRedirect = (redirectValue: CanonicalValue, field: string): void => {
+    nullable(redirectValue, (entry) => {
+      const redirect = exactMap(entry, [0, 1], field);
+      addOne(mapValue(redirect, 1), `${field} Cause ID`);
+      return entry;
+    });
+  };
+  const addTail = (tailValue: CanonicalValue, field: string): void => {
+    nullable(tailValue, (entry) => {
+      const tail = exactMap(entry, [0, 1], field);
+      addOne(mapValue(tail, 1), `${field} Cause ID`);
+      return entry;
+    });
+  };
+
+  const vaultLabel = exactMap(mapValue(checkpoint, 1), [0, 1], "Checkpointed Vault label");
+  addSet(mapValue(vaultLabel, 1), "Vault label Cause IDs");
+  for (const entry of canonicalSetValue(
+    mapValue(checkpoint, 2),
+    "Credential labels",
+    (item) => item,
+  )) {
+    const labelEntry = exactMap(entry, [0, 1, 2], "Credential label");
+    addSet(mapValue(labelEntry, 2), "Credential label Cause IDs");
+  }
+  for (const entry of canonicalSetValue(mapValue(checkpoint, 3), "Captures", (item) => item)) {
+    const capture = exactMap(entry, [...Array(8).keys()], "Checkpointed Capture");
+    addSet(mapValue(capture, 3), "Capture assignment Cause IDs");
+    addSet(mapValue(capture, 5), "Capture lifecycle Cause IDs");
+    addOne(mapValue(capture, 6), "Capture registration Cause ID");
+  }
+  for (const entry of canonicalSetValue(mapValue(checkpoint, 4), "Collections", (item) => item)) {
+    const collection = exactMap(entry, [...Array(8).keys()], "Checkpointed Collection");
+    addSet(mapValue(collection, 2), "Collection title Cause IDs");
+    addSet(mapValue(collection, 4), "Collection Folder Cause IDs");
+    addRedirect(mapValue(collection, 5), "Collection redirect");
+    addTail(mapValue(collection, 6), "Intrinsic Collection tail");
+    addTail(mapValue(collection, 7), "Effective Collection tail");
+  }
+  for (const entry of canonicalSetValue(mapValue(checkpoint, 5), "Folders", (item) => item)) {
+    const folder = exactMap(entry, [...Array(7).keys()], "Checkpointed Folder");
+    addSet(mapValue(folder, 2), "Folder name Cause IDs");
+    addSet(mapValue(folder, 4), "Folder parent Cause IDs");
+    addSet(mapValue(folder, 6), "Folder lifecycle Cause IDs");
+  }
+  for (const entry of canonicalSetValue(mapValue(checkpoint, 6), "Tags", (item) => item)) {
+    const tag = exactMap(entry, [...Array(6).keys()], "Checkpointed Tag");
+    addSet(mapValue(tag, 2), "Tag name Cause IDs");
+    addRedirect(mapValue(tag, 3), "Tag redirect");
+    addSet(mapValue(tag, 5), "Tag lifecycle Cause IDs");
+  }
+  for (const entry of canonicalSetValue(
+    mapValue(checkpoint, 7),
+    "Tag assignments",
+    (item) => item,
+  )) {
+    const assignment = exactMap(entry, [0, 1, 2, 3], "Checkpointed Tag assignment");
+    addOne(mapValue(assignment, 1), "Tag assignment Cause ID");
+  }
+  for (const entry of canonicalSetValue(mapValue(checkpoint, 8), "Notes", (item) => item)) {
+    const note = exactMap(entry, [0, 1, 2, 3], "Checkpointed Note");
+    for (const versionValue of canonicalSetValue(
+      mapValue(note, 3),
+      "Note versions",
+      (item) => item,
+    )) {
+      const version = exactMap(versionValue, [0, 1, 2, 3], "Checkpointed Note version");
+      addOne(mapValue(version, 0), "Note head Cause ID");
+    }
+  }
+  for (const entry of canonicalSetValue(
+    mapValue(checkpoint, 9),
+    "Content Conflicts",
+    (item) => item,
+  )) {
+    const conflict = exactMap(entry, [0, 1, 2], "Content Conflict");
+    for (const candidateValue of canonicalSetValue(
+      mapValue(conflict, 2),
+      "Content Conflict candidates",
+      (item) => item,
+    )) {
+      const candidate = exactMap(candidateValue, [0, 1], "Content Conflict candidate");
+      addOne(mapValue(candidate, 0), "Content Conflict candidate Cause ID");
+    }
+  }
+  return canonicalSet([...found.values()]);
 }

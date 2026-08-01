@@ -450,7 +450,8 @@ note = {
 noteVersion = {
   0: headCauseId,
   1: noteContentObjectId, // null is a deletion head
-  2: authorAttribution    // section 2.4
+  2: restoreContentObjectId, // displaced content for deletion; otherwise null
+  3: authorAttribution        // section 2.4
 }
 ```
 
@@ -470,8 +471,10 @@ Cause ID; no discarded predecessor ancestry is invented.
 
 `vaultLabel` is `{0: label, 1: headCauseIds}`. `tagAssignments` contains only active observed
 assignment facts; retaining each `assignedCauseId` lets a later removal name it even though the
-predecessor Event is no longer reachable. A Note in state `1` has exactly one non-null version,
-state `2` has one or more null deletion heads, and state `3` has every current incompatible head.
+predecessor Event is no longer reachable. A Note in state `1` has exactly one non-null version whose
+restore field is null, state `2` has one or more null deletion heads whose restore fields retain
+their displaced Note Content Object, and state `3` has every current incompatible head. Each
+version retains exactly one current or restore Content Object dependency.
 Capture and Note attribution retains only the current checkpoint facts required for presentation.
 Its opaque source member and Credential IDs are historical provenance, not target authority, and
 do not keep predecessor Events reachable or reconstruct discarded activity history.

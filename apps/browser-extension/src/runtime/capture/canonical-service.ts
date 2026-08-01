@@ -1,4 +1,5 @@
 import { type Identifier, randomIdentifier } from "../../domain/canonical/identifiers";
+import { decodeVaultObject, type VaultObject } from "../../domain/canonical/object";
 import { bytesEqual } from "../../domain/hash";
 import {
   CanonicalStorageError,
@@ -115,6 +116,10 @@ export class CanonicalCaptureService {
         artifactObjectId: prepared.artifactObject.objectId,
         artifactStorageItemId: prepared.artifactRepresentation.storageItemId,
       };
+      const [descriptorExists, artifactObjectExists] = await Promise.all([
+        this.authenticateExistingObject(vault, prepared.descriptorObject),
+        this.authenticateExistingObject(vault, prepared.artifactObject),
+      ]);
       const resolutions: readonly LogicalResolution[] = [
         {
           vaultId: command.vaultId,
@@ -124,22 +129,30 @@ export class CanonicalCaptureService {
           keyEpochId: vault.epochSecret.keyEpochId,
           availability: 1,
         },
-        {
-          vaultId: command.vaultId,
-          kind: 3,
-          logicalId: prepared.descriptorObject.objectId,
-          storageItemId: prepared.descriptorObjectEnvelope.storageItemId,
-          keyEpochId: vault.epochSecret.keyEpochId,
-          availability: 1,
-        },
-        {
-          vaultId: command.vaultId,
-          kind: 3,
-          logicalId: prepared.artifactObject.objectId,
-          storageItemId: prepared.artifactObjectEnvelope.storageItemId,
-          keyEpochId: vault.epochSecret.keyEpochId,
-          availability: 1,
-        },
+        ...(descriptorExists
+          ? []
+          : [
+              {
+                vaultId: command.vaultId,
+                kind: 3 as const,
+                logicalId: prepared.descriptorObject.objectId,
+                storageItemId: prepared.descriptorObjectEnvelope.storageItemId,
+                keyEpochId: vault.epochSecret.keyEpochId,
+                availability: 1 as const,
+              },
+            ]),
+        ...(artifactObjectExists
+          ? []
+          : [
+              {
+                vaultId: command.vaultId,
+                kind: 3 as const,
+                logicalId: prepared.artifactObject.objectId,
+                storageItemId: prepared.artifactObjectEnvelope.storageItemId,
+                keyEpochId: vault.epochSecret.keyEpochId,
+                availability: 1 as const,
+              },
+            ]),
         {
           vaultId: command.vaultId,
           kind: 5,
@@ -178,18 +191,26 @@ export class CanonicalCaptureService {
           itemKey: identifierStorageKey(prepared.event.recordId),
           bytes: prepared.eventEnvelope.bytes,
         },
-        {
-          namespace: NAMESPACES.vaultObject.key,
-          scopeKey: vaultKey,
-          itemKey: identifierStorageKey(prepared.descriptorObject.objectId),
-          bytes: prepared.descriptorObjectEnvelope.bytes,
-        },
-        {
-          namespace: NAMESPACES.vaultObject.key,
-          scopeKey: vaultKey,
-          itemKey: identifierStorageKey(prepared.artifactObject.objectId),
-          bytes: prepared.artifactObjectEnvelope.bytes,
-        },
+        ...(descriptorExists
+          ? []
+          : [
+              {
+                namespace: NAMESPACES.vaultObject.key,
+                scopeKey: vaultKey,
+                itemKey: identifierStorageKey(prepared.descriptorObject.objectId),
+                bytes: prepared.descriptorObjectEnvelope.bytes,
+              },
+            ]),
+        ...(artifactObjectExists
+          ? []
+          : [
+              {
+                namespace: NAMESPACES.vaultObject.key,
+                scopeKey: vaultKey,
+                itemKey: identifierStorageKey(prepared.artifactObject.objectId),
+                bytes: prepared.artifactObjectEnvelope.bytes,
+              },
+            ]),
         {
           namespace: NAMESPACES.commandOutcome.key,
           scopeKey: vaultKey,
@@ -236,5 +257,36 @@ export class CanonicalCaptureService {
       throw new TypeError("Stored Capture outcome belongs to another Command");
     }
     return outcome;
+  }
+
+  private async authenticateExistingObject(
+    vault: Awaited<ReturnType<CanonicalVaultService["openVault"]>>,
+    object: VaultObject,
+  ): Promise<boolean> {
+    const vaultKey = identifierStorageKey(vault.replicaState.vaultId);
+    const existingBytes = await this.vaults.storage.getBytes(this.vaults.realm, {
+      namespace: NAMESPACES.vaultObject.key,
+      scopeKey: vaultKey,
+      itemKey: identifierStorageKey(object.objectId),
+    });
+    if (existingBytes === undefined) return false;
+    const existing = decodeVaultObject(
+      (
+        await this.vaults.openResolvedCompactItem({
+          vault,
+          kind: 3,
+          logicalId: object.objectId,
+          namespace: NAMESPACES.vaultObject.key,
+          payloadType: 2,
+        })
+      ).payloadBytes,
+    );
+    if (
+      !bytesEqual(existing.objectId, object.objectId) ||
+      !bytesEqual(existing.bytes, object.bytes)
+    ) {
+      throw new TypeError("Existing Capture Object conflicts with canonical content");
+    }
+    return true;
   }
 }

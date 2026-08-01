@@ -63,6 +63,9 @@ fails closed.
 Another Replica may adopt only after full verification. It may first Fork the predecessor, create
 a Complete Export, recover eligible captures, decline, or postpone. Concurrent successor
 Generations remain siblings. No Replica can force deletion of independently retained history.
+The adopting Client switches its Directory, Replica Safety State, local resolutions, idempotent
+outcome, and Materialization invalidation in one atomic commit; predecessor authoritative bytes
+remain available until a separate Garbage Collection decision.
 
 # Fork distinction
 

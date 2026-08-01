@@ -13,8 +13,10 @@ import {
   arrayValue,
   exactMap,
   identifierValue,
+  idSetValue,
   mapValue,
   nullable,
+  oneOfCodes,
   textValue,
 } from "../../domain/canonical/schema";
 import { canonicalMap, canonicalSet } from "../../domain/canonical/value";
@@ -153,6 +155,60 @@ export function reduceCanonicalFolders(replay: ReplayedCanonicalVault): Canonica
   const parentFacts: FolderParentFact[] = [];
   const lifecycleFacts: FolderLifecycleFact[] = [];
   const inactiveParentCauses = new Set<string>();
+
+  const baselineBody = exactMap(
+    replay.vault.baseline.body,
+    [0, 1, 2, 3, 4, 5],
+    "Vault Baseline body",
+  );
+  const baselineContent = exactMap(
+    mapValue(baselineBody, 2),
+    [...Array(10).keys()],
+    "Content checkpoint",
+  );
+  const baselineFolders = arrayValue(mapValue(baselineContent, 5), "Checkpointed Folders").map(
+    (entry, index) => exactMap(entry, [...Array(7).keys()], `Checkpointed Folder ${index}`),
+  );
+  for (const folder of baselineFolders) {
+    const folderId = identifierValue(mapValue(folder, 0), "Folder");
+    knownFolders.set(key(folderId), folderId);
+  }
+  for (const folder of baselineFolders) {
+    const folderId = identifierValue(mapValue(folder, 0), "Folder");
+    const name = textValue(mapValue(folder, 1), "Folder name", { maxUtf8Bytes: 1_024 });
+    const parentFolderId = nullable(mapValue(folder, 3), (value) =>
+      identifierValue(value, "Folder"),
+    );
+    const lifecycle = oneOfCodes(mapValue(folder, 5), [1, 2] as const, "Folder lifecycle");
+    const nameCauses = idSetValue(mapValue(folder, 2), "VaultRecord", "Folder name Cause IDs", {
+      nonempty: true,
+    });
+    const parentCauses = idSetValue(mapValue(folder, 4), "VaultRecord", "Folder parent Cause IDs");
+    const lifecycleCauses = idSetValue(
+      mapValue(folder, 6),
+      "VaultRecord",
+      "Folder lifecycle Cause IDs",
+      { nonempty: true },
+    );
+    const identityCause = nameCauses[0];
+    if (identityCause === undefined)
+      throw new TypeError("Checkpointed Folder has no identity Cause");
+    identities.push({
+      entityId: folderId,
+      causeId: identityCause,
+      authenticatedValue: canonicalMap([
+        [0, name],
+        [1, parentFolderId],
+      ]),
+    });
+    for (const causeId of nameCauses) nameFacts.push({ folderId, causeId, value: name });
+    for (const causeId of parentCauses) {
+      parentFacts.push({ folderId, causeId, value: parentFolderId });
+    }
+    for (const causeId of lifecycleCauses) {
+      lifecycleFacts.push({ folderId, causeId, value: lifecycle });
+    }
+  }
 
   const requireKnown = (folderId: Identifier<"Folder">, field: string): void => {
     if (!knownFolders.has(key(folderId))) throw new TypeError(`${field} is not a known Folder`);
@@ -400,17 +456,43 @@ export function reduceCanonicalCollectionFolders(
   replay: ReplayedCanonicalVault,
   folderProjection: CanonicalFolderProjection,
 ): readonly CanonicalCollectionFolderPlacement[] {
-  const facts = replay.events.flatMap((event): readonly CollectionFolderFact[] => {
-    if (event.family !== 2 || event.type !== 11) return [];
-    const body = exactMap(event.body, [0, 1], "Collection Folder Placement body");
-    return [
-      {
-        collectionId: identifierValue(mapValue(body, 0), "Collection"),
-        causeId: event.recordId,
-        value: nullable(mapValue(body, 1), (value) => identifierValue(value, "Folder")),
-      },
-    ];
+  const baselineBody = exactMap(
+    replay.vault.baseline.body,
+    [0, 1, 2, 3, 4, 5],
+    "Vault Baseline body",
+  );
+  const baselineContent = exactMap(
+    mapValue(baselineBody, 2),
+    [...Array(10).keys()],
+    "Content checkpoint",
+  );
+  const baselineFacts = arrayValue(
+    mapValue(baselineContent, 4),
+    "Checkpointed Collections",
+  ).flatMap((entry, index): readonly CollectionFolderFact[] => {
+    const collection = exactMap(entry, [...Array(8).keys()], `Checkpointed Collection ${index}`);
+    const collectionId = identifierValue(mapValue(collection, 0), "Collection");
+    const value = nullable(mapValue(collection, 3), (folderId) =>
+      identifierValue(folderId, "Folder"),
+    );
+    return idSetValue(mapValue(collection, 4), "VaultRecord", "Collection Folder Cause IDs").map(
+      (causeId) => ({ collectionId, causeId, value }),
+    );
   });
+  const facts = [
+    ...baselineFacts,
+    ...replay.events.flatMap((event): readonly CollectionFolderFact[] => {
+      if (event.family !== 2 || event.type !== 11) return [];
+      const body = exactMap(event.body, [0, 1], "Collection Folder Placement body");
+      return [
+        {
+          collectionId: identifierValue(mapValue(body, 0), "Collection"),
+          causeId: event.recordId,
+          value: nullable(mapValue(body, 1), (value) => identifierValue(value, "Folder")),
+        },
+      ];
+    }),
+  ];
   const foldersById = new Map(
     folderProjection.folders.map((folder) => [key(folder.folderId), folder]),
   );

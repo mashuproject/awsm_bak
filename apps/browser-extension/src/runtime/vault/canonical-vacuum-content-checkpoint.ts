@@ -41,6 +41,7 @@ import { reduceCanonicalNotes } from "../library/canonical-note-projection";
 import { reduceCollectionRedirects } from "../library/canonical-projection";
 import { reduceCanonicalTags } from "../library/canonical-tag-projection";
 import type { ReplayedCanonicalVault } from "../projection/canonical-replay";
+import type { CanonicalReplicaState } from "./canonical-local-state";
 
 export interface CanonicalCheckpointAttribution {
   readonly originVaultId: Identifier<"Vault">;
@@ -112,6 +113,7 @@ export interface CanonicalVacuumTagAssignmentState {
 export interface CanonicalVacuumNoteVersionState {
   readonly headCauseId: Identifier<"VaultRecord">;
   readonly contentObjectId: Identifier<"VaultObject"> | null;
+  readonly restoreContentObjectId: Identifier<"VaultObject"> | null;
   readonly attribution: CanonicalCheckpointAttribution;
 }
 
@@ -219,6 +221,7 @@ export interface PreparedInitialAuthorityVacuum {
   readonly event: AuthenticatedVaultEvent;
   readonly eventEnvelope: OpaqueEnvelope;
   readonly continuityRecordIds: readonly Identifier<"VaultRecord">[];
+  readonly adoptedReplicaState: CanonicalReplicaState;
 }
 
 interface CaptureHeadState extends CanonicalVacuumCaptureState {
@@ -571,7 +574,6 @@ export function deriveInitialAuthorityVacuumContentState(
   for (const label of credentialLabels) {
     credentialIds.set(key(label.clientCredentialId), label.clientCredentialId);
   }
-  const eventsById = new Map(replay.events.map((event) => [key(event.recordId), event]));
   return {
     vaultLabel:
       currentLabel === null
@@ -632,20 +634,18 @@ export function deriveInitialAuthorityVacuumContentState(
       targetKind: note.targetKind,
       targetId: note.targetId,
       state: note.state,
-      versions: note.versions.map((version) => {
-        const event = eventsById.get(key(version.headCauseId));
-        if (event === undefined) throw new TypeError("Note head author Event is unavailable");
-        return {
-          headCauseId: version.headCauseId,
-          contentObjectId: version.contentObjectId,
-          attribution: {
-            originVaultId: replay.vault.replicaState.vaultId,
-            memberId: replay.vault.replicaState.memberId,
-            clientCredentialId: event.signerCredentialId,
-            assertedAt: event.assertedAt,
-          },
-        };
-      }),
+      versions: note.versions.map((version) => ({
+        headCauseId: version.headCauseId,
+        contentObjectId: version.contentObjectId,
+        restoreContentObjectId:
+          version.contentObjectId === null ? version.restoreContentObjectId : null,
+        attribution: {
+          originVaultId: version.originVaultId,
+          memberId: version.memberId,
+          clientCredentialId: version.clientCredentialId,
+          assertedAt: version.assertedAt,
+        },
+      })),
     })),
     activeConflicts: [],
   };
@@ -834,13 +834,16 @@ export function decodeVacuumContentCheckpoint(value: CanonicalValue): CanonicalV
         state: oneOfCodes(mapValue(map, 2), [1, 2, 3] as const, "Note state"),
         versions: arrayValue(mapValue(map, 3), "Note versions").map(
           (versionValue, versionIndex) => {
-            const version = exactMap(versionValue, [0, 1, 2], `Note version ${versionIndex}`);
+            const version = exactMap(versionValue, [0, 1, 2, 3], `Note version ${versionIndex}`);
             return {
               headCauseId: identifierValue(mapValue(version, 0), "VaultRecord"),
               contentObjectId: nullable(mapValue(version, 1), (objectId) =>
                 identifierValue(objectId, "VaultObject"),
               ),
-              attribution: decodeAttribution(mapValue(version, 2), "Note attribution"),
+              restoreContentObjectId: nullable(mapValue(version, 2), (objectId) =>
+                identifierValue(objectId, "VaultObject"),
+              ),
+              attribution: decodeAttribution(mapValue(version, 3), "Note attribution"),
             };
           },
         ),
@@ -1161,11 +1164,25 @@ export async function prepareInitialAuthorityVacuum(input: {
   if (!bytesEqual(opened.payloadBytes, event.bytes)) {
     throw new TypeError("Vacuum Event protection changed its authenticated bytes");
   }
+  const continuityRecordIds = canonicalSet([
+    ...vault.replicaState.continuityRecordIds,
+    event.recordId,
+  ]);
   return {
     successor,
     event,
     eventEnvelope,
-    continuityRecordIds: canonicalSet([...vault.replicaState.continuityRecordIds, event.recordId]),
+    continuityRecordIds,
+    adoptedReplicaState: {
+      ...vault.replicaState,
+      generationId: input.successorGenerationId,
+      causalFrontier: [successor.baseline.recordId],
+      authorityFrontier: [event.recordId],
+      continuityRecordIds,
+      baselineId: successor.baseline.recordId,
+      lifecycle: 1,
+      adoption: { vacuumEventRecordId: event.recordId },
+    },
   };
 }
 
@@ -1296,6 +1313,7 @@ export function buildVacuumContentCheckpoint(
           indexedMap(
             mapCause(version.headCauseId),
             version.contentObjectId,
+            version.restoreContentObjectId,
             attribution(version.attribution),
           ),
         ),
@@ -1356,11 +1374,12 @@ export function buildVacuumContentCheckpoint(
       id: descriptorObjectId,
     })),
     ...retainedNotes.flatMap(({ versions }) =>
-      versions.flatMap(({ contentObjectId }) =>
-        contentObjectId === null
+      versions.flatMap(({ contentObjectId, restoreContentObjectId }) => {
+        const requiredObjectId = contentObjectId ?? restoreContentObjectId;
+        return requiredObjectId === null
           ? []
-          : [{ type: DEPENDENCY_TYPES.NoteContentObject, id: contentObjectId }],
-      ),
+          : [{ type: DEPENDENCY_TYPES.NoteContentObject, id: requiredObjectId }];
+      }),
     ),
   ]);
   const checkpoint = indexedMap(

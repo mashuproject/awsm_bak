@@ -6,6 +6,7 @@ import {
   type VaultObject,
 } from "../../domain/canonical/object";
 import {
+  type CausalGraph,
   type DirectedEdge,
   reduceCausalScalar,
   reduceDirectedGraph,
@@ -188,6 +189,42 @@ interface CollectionRedirectFact {
   readonly edges: readonly DirectedEdge[];
 }
 
+interface CollectionTailCandidate {
+  readonly bundleId: Identifier<"Bundle">;
+  readonly registrationRecordId: Identifier<"VaultRecord">;
+}
+
+export function selectCanonicalCollectionTail<T extends CollectionTailCandidate>(input: {
+  readonly candidates: readonly T[];
+  readonly checkpointActiveBundleIds: readonly Identifier<"Bundle">[];
+  readonly checkpointTailBundleId: Identifier<"Bundle"> | null;
+  readonly graph: CausalGraph;
+}): T | undefined {
+  const currentIds = new Set(input.candidates.map(({ bundleId }) => key(bundleId)));
+  const checkpointMembershipUnchanged =
+    currentIds.size === input.checkpointActiveBundleIds.length &&
+    input.checkpointActiveBundleIds.every((bundleId) => currentIds.has(key(bundleId)));
+  if (checkpointMembershipUnchanged && input.checkpointTailBundleId !== null) {
+    const checkpointTail = input.candidates.find(({ bundleId }) =>
+      bytesEqual(bundleId, input.checkpointTailBundleId as Identifier<"Bundle">),
+    );
+    if (checkpointTail === undefined) {
+      throw new TypeError("Checkpointed Collection Tail is not an active Capture");
+    }
+    return checkpointTail;
+  }
+  return input.candidates.toSorted((left, right) => {
+    if (input.graph.isAncestor(left.registrationRecordId, right.registrationRecordId)) return 1;
+    if (input.graph.isAncestor(right.registrationRecordId, left.registrationRecordId)) return -1;
+    return compareBytes(right.registrationRecordId, left.registrationRecordId);
+  })[0];
+}
+
+function baselineContentCheckpoint(vault: PersistedOpenedCanonicalVault) {
+  const body = exactMap(vault.baseline.body, [0, 1, 2, 3, 4, 5], "Vault Baseline body");
+  return exactMap(mapValue(body, 2), [...Array(10).keys()], "Content checkpoint");
+}
+
 function key(value: Uint8Array): string {
   return [...value].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
@@ -207,8 +244,7 @@ function compareInteger(left: number | bigint, right: number | bigint): number {
 }
 
 function baselineRegistrations(vault: PersistedOpenedCanonicalVault): readonly RegistrationFact[] {
-  const body = exactMap(vault.baseline.body, [0, 1, 2, 3, 4, 5], "Vault Baseline body");
-  const content = exactMap(mapValue(body, 2), [...Array(10).keys()], "Content checkpoint");
+  const content = baselineContentCheckpoint(vault);
   return arrayValue(mapValue(content, 3), "Checkpointed Captures").map((entry, index) => {
     const capture = exactMap(entry, [...Array(8).keys()], `Checkpointed Capture ${index}`);
     const attribution = exactMap(
@@ -227,6 +263,125 @@ function baselineRegistrations(vault: PersistedOpenedCanonicalVault): readonly R
       lifecycle: oneOfCodes(mapValue(capture, 4), [1, 2] as const, "Capture lifecycle"),
     };
   });
+}
+
+function baselineCaptureLifecycles(
+  vault: PersistedOpenedCanonicalVault,
+): readonly CaptureLifecycleFact[] {
+  return arrayValue(mapValue(baselineContentCheckpoint(vault), 3), "Checkpointed Captures").flatMap(
+    (entry, index): readonly CaptureLifecycleFact[] => {
+      const capture = exactMap(entry, [...Array(8).keys()], `Checkpointed Capture ${index}`);
+      const bundleId = identifierValue(mapValue(capture, 0), "Bundle");
+      const value = oneOfCodes(mapValue(capture, 4), [1, 2] as const, "Capture lifecycle");
+      return idSetValue(mapValue(capture, 5), "VaultRecord", "Capture lifecycle Cause IDs", {
+        nonempty: true,
+      }).map((causeId) => ({ bundleId, causeId, value }));
+    },
+  );
+}
+
+function baselineCapturePlacements(
+  vault: PersistedOpenedCanonicalVault,
+): readonly CapturePlacementFact[] {
+  return arrayValue(mapValue(baselineContentCheckpoint(vault), 3), "Checkpointed Captures").flatMap(
+    (entry, index): readonly CapturePlacementFact[] => {
+      const capture = exactMap(entry, [...Array(8).keys()], `Checkpointed Capture ${index}`);
+      const bundleId = identifierValue(mapValue(capture, 0), "Bundle");
+      const value = identifierValue(mapValue(capture, 2), "Collection");
+      return idSetValue(mapValue(capture, 3), "VaultRecord", "Capture assignment Cause IDs", {
+        nonempty: true,
+      }).map((causeId) => ({ bundleId, causeId, value }));
+    },
+  );
+}
+
+function baselineCollectionTitles(
+  vault: PersistedOpenedCanonicalVault,
+): readonly CollectionTitleFact[] {
+  return arrayValue(
+    mapValue(baselineContentCheckpoint(vault), 4),
+    "Checkpointed Collections",
+  ).flatMap((entry, index): readonly CollectionTitleFact[] => {
+    const collection = exactMap(entry, [...Array(8).keys()], `Checkpointed Collection ${index}`);
+    const collectionId = identifierValue(mapValue(collection, 0), "Collection");
+    const value = nullable(mapValue(collection, 1), (title) =>
+      textValue(title, "Collection title", { maxUtf8Bytes: 1_024 }),
+    );
+    return idSetValue(mapValue(collection, 2), "VaultRecord", "Collection title Cause IDs").map(
+      (causeId) => ({ collectionId, causeId, value }),
+    );
+  });
+}
+
+function baselineEffectiveCollectionState(vault: PersistedOpenedCanonicalVault): ReadonlyMap<
+  string,
+  {
+    readonly activeBundleIds: readonly Identifier<"Bundle">[];
+    readonly tailBundleId: Identifier<"Bundle"> | null;
+  }
+> {
+  const content = baselineContentCheckpoint(vault);
+  const redirects: DirectedEdge[] = [];
+  const state = new Map<
+    string,
+    {
+      collectionId: Identifier<"Collection">;
+      activeBundleIds: Identifier<"Bundle">[];
+      tailBundleId: Identifier<"Bundle"> | null;
+    }
+  >();
+  for (const [index, entry] of arrayValue(
+    mapValue(content, 4),
+    "Checkpointed Collections",
+  ).entries()) {
+    const collection = exactMap(entry, [...Array(8).keys()], `Checkpointed Collection ${index}`);
+    const collectionId = identifierValue(mapValue(collection, 0), "Collection");
+    const activeRedirect = nullable(mapValue(collection, 5), (value) => {
+      const redirect = exactMap(value, [0, 1], "Checkpointed Collection redirect");
+      return {
+        destinationId: identifierValue(mapValue(redirect, 0), "Collection"),
+        causeId: identifierValue(mapValue(redirect, 1), "VaultRecord"),
+      };
+    });
+    if (activeRedirect !== null) {
+      redirects.push({
+        sourceId: collectionId,
+        destinationId: activeRedirect.destinationId,
+        causeId: activeRedirect.causeId,
+      });
+    }
+    const tailBundleId = nullable(mapValue(collection, 7), (value) => {
+      const tail = exactMap(value, [0, 1], "Checkpointed effective Collection Tail");
+      return identifierValue(mapValue(tail, 0), "Bundle");
+    });
+    state.set(key(collectionId), { collectionId, activeBundleIds: [], tailBundleId });
+  }
+  for (const [index, entry] of arrayValue(
+    mapValue(content, 3),
+    "Checkpointed Captures",
+  ).entries()) {
+    const capture = exactMap(entry, [...Array(8).keys()], `Checkpointed Capture ${index}`);
+    if (oneOfCodes(mapValue(capture, 4), [1, 2] as const, "Capture lifecycle") !== 1) continue;
+    const bundleId = identifierValue(mapValue(capture, 0), "Bundle");
+    const assignedCollectionId = identifierValue(mapValue(capture, 2), "Collection");
+    const effectiveCollectionId = resolveCollectionRedirect(assignedCollectionId, redirects);
+    const current = state.get(key(effectiveCollectionId));
+    if (current === undefined) {
+      state.set(key(effectiveCollectionId), {
+        collectionId: effectiveCollectionId,
+        activeBundleIds: [bundleId],
+        tailBundleId: null,
+      });
+    } else {
+      current.activeBundleIds.push(bundleId);
+    }
+  }
+  return new Map(
+    [...state].map(([stateKey, value]) => [
+      stateKey,
+      { activeBundleIds: value.activeBundleIds, tailBundleId: value.tailBundleId },
+    ]),
+  );
 }
 
 function eventRegistrations(replay: ReplayedCanonicalVault): readonly RegistrationFact[] {
@@ -336,6 +491,28 @@ export function reduceCollectionRedirects(replay: ReplayedCanonicalVault) {
     [...facts.values()]
       .filter((fact) => !inactive.has(key(fact.causeId)))
       .flatMap(({ edges }) => edges);
+  for (const [index, entry] of arrayValue(
+    mapValue(baselineContentCheckpoint(replay.vault), 4),
+    "Checkpointed Collections",
+  ).entries()) {
+    const collection = exactMap(entry, [...Array(8).keys()], `Checkpointed Collection ${index}`);
+    const sourceId = identifierValue(mapValue(collection, 0), "Collection");
+    const redirect = nullable(mapValue(collection, 5), (redirectValue) => {
+      const value = exactMap(redirectValue, [0, 1], "Collection redirect");
+      return {
+        destinationId: identifierValue(mapValue(value, 0), "Collection"),
+        causeId: identifierValue(mapValue(value, 1), "VaultRecord"),
+      };
+    });
+    if (redirect !== null) {
+      const fact = facts.get(key(redirect.causeId));
+      const edge = { sourceId, destinationId: redirect.destinationId, causeId: redirect.causeId };
+      facts.set(key(redirect.causeId), {
+        causeId: redirect.causeId,
+        edges: [...(fact?.edges ?? []), edge],
+      });
+    }
+  }
   for (const event of replay.events) {
     if (event.family !== 2) continue;
     if (event.type === 8) {
@@ -567,9 +744,10 @@ export class CanonicalLibraryProjectionService {
       ...baselineRegistrations(vault),
       ...eventRegistrations(replay),
     ]);
-    const lifecycleFacts = eventCaptureLifecycles(replay);
-    const placementFacts = eventCapturePlacements(replay);
-    const titleFacts = eventCollectionTitles(replay);
+    const lifecycleFacts = [...baselineCaptureLifecycles(vault), ...eventCaptureLifecycles(replay)];
+    const placementFacts = [...baselineCapturePlacements(vault), ...eventCapturePlacements(replay)];
+    const titleFacts = [...baselineCollectionTitles(vault), ...eventCollectionTitles(replay)];
+    const baselineCollectionState = baselineEffectiveCollectionState(vault);
     const redirectReduction = reduceCollectionRedirects(replay);
     const folderProjection = reduceCanonicalFolders(replay);
     const collectionFolderPlacements = reduceCanonicalCollectionFolders(replay, folderProjection);
@@ -657,6 +835,14 @@ export class CanonicalLibraryProjectionService {
       );
     });
     const collectionIds = new Map<string, Identifier<"Collection">>();
+    for (const entry of arrayValue(
+      mapValue(baselineContentCheckpoint(vault), 4),
+      "Checkpointed Collections",
+    )) {
+      const collection = exactMap(entry, [...Array(8).keys()], "Checkpointed Collection");
+      const collectionId = identifierValue(mapValue(collection, 0), "Collection");
+      collectionIds.set(key(collectionId), collectionId);
+    }
     for (const capture of captures) {
       collectionIds.set(key(capture.assignedCollectionId), capture.assignedCollectionId);
       collectionIds.set(key(capture.currentCollectionId), capture.currentCollectionId);
@@ -676,15 +862,13 @@ export class CanonicalLibraryProjectionService {
           (capture) =>
             capture.lifecycle === 1 && bytesEqual(capture.effectiveCollectionId, collectionId),
         );
-        const tail = active.toSorted((left, right) => {
-          if (replay.graph.isAncestor(left.registrationRecordId, right.registrationRecordId)) {
-            return 1;
-          }
-          if (replay.graph.isAncestor(right.registrationRecordId, left.registrationRecordId)) {
-            return -1;
-          }
-          return compareBytes(right.registrationRecordId, left.registrationRecordId);
-        })[0];
+        const checkpoint = baselineCollectionState.get(key(collectionId));
+        const tail = selectCanonicalCollectionTail({
+          candidates: active,
+          checkpointActiveBundleIds: checkpoint?.activeBundleIds ?? [],
+          checkpointTailBundleId: checkpoint?.tailBundleId ?? null,
+          graph: replay.graph,
+        });
         const explicitTitle = reduceCausalScalar(
           titleFacts.filter((fact) => bytesEqual(fact.collectionId, collectionId)),
           replay.graph,
@@ -709,7 +893,6 @@ export class CanonicalLibraryProjectionService {
         };
       })
       .toSorted((left, right) => compareBytes(left.collectionId, right.collectionId));
-    const eventsById = new Map(replay.events.map((event) => [key(event.recordId), event]));
     const notes = await Promise.all(
       noteProjection.notes.map(async (note): Promise<CanonicalLibraryNote> => {
         const targetExists =
@@ -721,28 +904,17 @@ export class CanonicalLibraryProjectionService {
           ...note,
           versions: await Promise.all(
             note.versions.map(async (version): Promise<CanonicalLibraryNoteVersion> => {
-              const author = eventsById.get(key(version.headCauseId));
-              if (author === undefined)
-                throw new TypeError("Note head author Event is unavailable");
               if (version.contentObjectId === null) {
                 return {
                   ...version,
                   title: null,
                   body: null,
                   bodyDialect: null,
-                  originVaultId: vault.replicaState.vaultId,
-                  memberId: vault.clientSecret.memberId,
-                  clientCredentialId: author.signerCredentialId,
-                  assertedAt: author.assertedAt,
                 };
               }
               return {
                 ...version,
                 ...noteContentFields(await loadObject(version.contentObjectId)),
-                originVaultId: vault.replicaState.vaultId,
-                memberId: vault.clientSecret.memberId,
-                clientCredentialId: author.signerCredentialId,
-                assertedAt: author.assertedAt,
               };
             }),
           ),
