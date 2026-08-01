@@ -895,6 +895,52 @@ async function canonicalClientRuntimeScenario(): Promise<unknown> {
       assertedAt: 22,
     });
     const folderCollections = await runtime.listCollections(first.vaultId);
+    const tag = await runtime.createTag({
+      expectedVaultId: first.vaultId,
+      commandId: "facade-tag-create",
+      name: "Saved",
+      assertedAt: 23,
+    });
+    await runtime.renameTag({
+      expectedVaultId: first.vaultId,
+      commandId: "facade-tag-rename",
+      tagId: tag.tagId,
+      name: "Important",
+      assertedAt: 24,
+    });
+    await runtime.assignTag({
+      expectedVaultId: first.vaultId,
+      commandId: "facade-tag-assign",
+      tagId: tag.tagId,
+      targetKind: "Collection",
+      targetId: destinationCollectionId,
+      assertedAt: 25,
+    });
+    const activeTagAssignments = await runtime.listTagAssignments(first.vaultId);
+    await runtime.deleteTag({
+      expectedVaultId: first.vaultId,
+      commandId: "facade-tag-delete",
+      tagId: tag.tagId,
+      assertedAt: 26,
+    });
+    const dormantTagAssignments = await runtime.listTagAssignments(first.vaultId);
+    await runtime.restoreTag({
+      expectedVaultId: first.vaultId,
+      commandId: "facade-tag-restore",
+      tagId: tag.tagId,
+      assertedAt: 27,
+    });
+    const restoredTagAssignments = await runtime.listTagAssignments(first.vaultId);
+    await runtime.removeTagAssignments({
+      expectedVaultId: first.vaultId,
+      commandId: "facade-tag-remove",
+      tagId: tag.tagId,
+      targetKind: "Collection",
+      targetId: destinationCollectionId,
+      assertedAt: 28,
+    });
+    const tagAssignmentsAfterRemove = await runtime.listTagAssignments(first.vaultId);
+    const tags = await runtime.listTags(first.vaultId);
     const records = await storage.listBytes(
       NORMAL_STORAGE_REALM,
       NAMESPACES.vaultRecord.key,
@@ -913,6 +959,8 @@ async function canonicalClientRuntimeScenario(): Promise<unknown> {
       const restartedState = await restarted.state();
       const restartedFolders = await restarted.listFolders(first.vaultId);
       const restartedCollections = await restarted.listCollections(first.vaultId);
+      const restartedTags = await restarted.listTags(first.vaultId);
+      const restartedTagAssignments = await restarted.listTagAssignments(first.vaultId);
       return {
         recoveryWordCount: secondSetup.recoveryPhrase.split(" ").length,
         selectedAfterCreate,
@@ -939,6 +987,13 @@ async function canonicalClientRuntimeScenario(): Promise<unknown> {
         restartedCollectionFolderPlaced:
           restartedCollections.find(({ collectionId }) => collectionId === destinationCollectionId)
             ?.folderId === folder.folderId,
+        tagName: tags.find(({ tagId }) => tagId === tag.tagId)?.name,
+        tagAssignmentActive: activeTagAssignments[0]?.active,
+        tagAssignmentDormant: dormantTagAssignments[0]?.active,
+        tagAssignmentRestored: restoredTagAssignments[0]?.active,
+        tagAssignmentsAfterRemove: tagAssignmentsAfterRemove.length,
+        restartedTagName: restartedTags.find(({ tagId }) => tagId === tag.tagId)?.name,
+        restartedTagAssignments: restartedTagAssignments.length,
         recordCount: records.length,
         restartSelected: restartedState.vaults.find(({ selected }) => selected)?.label,
         restartVaultCount: restartedState.vaults.length,

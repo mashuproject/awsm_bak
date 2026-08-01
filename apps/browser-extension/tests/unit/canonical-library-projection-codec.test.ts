@@ -17,6 +17,8 @@ describe("canonical Library Projection codec", () => {
       captures: [],
       collections: [],
       folders: [],
+      tags: [],
+      tagAssignments: [],
       conflicts: [
         {
           kind: "CollectionMerge",
@@ -70,6 +72,8 @@ describe("canonical Library Projection codec", () => {
           lifecycle: 1,
         },
       ],
+      tags: [],
+      tagAssignments: [],
       conflicts: [
         {
           kind: "Folder",
@@ -79,6 +83,41 @@ describe("canonical Library Projection codec", () => {
           ),
         },
       ],
+    } as unknown as CanonicalLibraryProjection;
+
+    expect(decodeCanonicalLibraryProjection(encodeCanonicalLibraryProjection(value))).toEqual(
+      value,
+    );
+  });
+
+  it("round-trips duplicate-named Tags and dormant observed assignments", () => {
+    const firstTagId = randomIdentifier("Tag");
+    const secondTagId = randomIdentifier("Tag");
+    const assignmentId = randomIdentifier("TagAssignment");
+    const collectionId = randomIdentifier("Collection");
+    const value = {
+      vaultId: randomIdentifier("Vault"),
+      generationId: randomIdentifier("Generation"),
+      frontier: [randomIdentifier("VaultRecord")],
+      captures: [],
+      collections: [],
+      folders: [],
+      tags: [
+        { tagId: firstTagId, name: "same", lifecycle: 2, redirectedTo: null },
+        { tagId: secondTagId, name: "same", lifecycle: 1, redirectedTo: null },
+      ],
+      tagAssignments: [
+        {
+          assignmentId,
+          assignedCauseId: randomIdentifier("VaultRecord"),
+          tagId: firstTagId,
+          effectiveTagId: firstTagId,
+          targetKind: 1,
+          targetId: collectionId,
+          active: false,
+        },
+      ],
+      conflicts: [],
     } as unknown as CanonicalLibraryProjection;
 
     expect(decodeCanonicalLibraryProjection(encodeCanonicalLibraryProjection(value))).toEqual(

@@ -58,6 +58,23 @@ export interface CanonicalClientFolder {
   readonly lifecycle: "Active" | "Deleted";
 }
 
+export interface CanonicalClientTag {
+  readonly tagId: string;
+  readonly name: string;
+  readonly lifecycle: "Active" | "Deleted";
+  readonly redirectedTo: string | null;
+}
+
+export interface CanonicalClientTagAssignment {
+  readonly assignmentId: string;
+  readonly assignedCauseId: string;
+  readonly tagId: string;
+  readonly effectiveTagId: string;
+  readonly targetKind: "Collection" | "Capture";
+  readonly targetId: string;
+  readonly active: boolean;
+}
+
 export type CanonicalClientLibraryConflict =
   | {
       readonly kind: "CaptureIdentity";
@@ -134,6 +151,9 @@ export class CanonicalClientRuntime {
     private readonly createSetupId: () => string = () => crypto.randomUUID(),
     readonly content: CanonicalContentService = new CanonicalContentService(vaults),
     private readonly createFolderId: () => Identifier<"Folder"> = () => randomIdentifier("Folder"),
+    private readonly createTagId: () => Identifier<"Tag"> = () => randomIdentifier("Tag"),
+    private readonly createTagAssignmentId: () => Identifier<"TagAssignment"> = () =>
+      randomIdentifier("TagAssignment"),
   ) {}
 
   async state(): Promise<CanonicalClientState> {
@@ -544,6 +564,192 @@ export class CanonicalClientRuntime {
     return { eventRecordId: identifierStorageKey(outcome.eventRecordId) };
   }
 
+  async listTags(expectedVaultId: string): Promise<readonly CanonicalClientTag[]> {
+    await this.assertExpectedVault(expectedVaultId);
+    const projection = await this.library.load(identifierFromStorageKey("Vault", expectedVaultId));
+    return projection.tags.map((tag) => ({
+      tagId: identifierStorageKey(tag.tagId),
+      name: tag.name,
+      lifecycle: tag.lifecycle === 1 ? "Active" : "Deleted",
+      redirectedTo: tag.redirectedTo === null ? null : identifierStorageKey(tag.redirectedTo),
+    }));
+  }
+
+  async listTagAssignments(
+    expectedVaultId: string,
+  ): Promise<readonly CanonicalClientTagAssignment[]> {
+    await this.assertExpectedVault(expectedVaultId);
+    const projection = await this.library.load(identifierFromStorageKey("Vault", expectedVaultId));
+    return projection.tagAssignments.map((assignment) => ({
+      assignmentId: identifierStorageKey(assignment.assignmentId),
+      assignedCauseId: identifierStorageKey(assignment.assignedCauseId),
+      tagId: identifierStorageKey(assignment.tagId),
+      effectiveTagId: identifierStorageKey(assignment.effectiveTagId),
+      targetKind: assignment.targetKind === 1 ? "Collection" : "Capture",
+      targetId: identifierStorageKey(assignment.targetId),
+      active: assignment.active,
+    }));
+  }
+
+  async createTag(input: {
+    readonly expectedVaultId: string;
+    readonly commandId: string;
+    readonly name: string;
+    readonly assertedAt: number | bigint;
+  }): Promise<{ readonly tagId: string; readonly eventRecordId: string }> {
+    const tags = await this.listTags(input.expectedVaultId);
+    const tagId = this.createTagId();
+    if (tags.some((tag) => tag.tagId === identifierStorageKey(tagId))) {
+      throw runtimeError("TAG_ID_CONFLICT", "The generated Tag ID already exists.");
+    }
+    const outcome = await this.content.execute({
+      commandId: input.commandId,
+      vaultId: identifierFromStorageKey("Vault", input.expectedVaultId),
+      type: 18,
+      assertedAt: input.assertedAt,
+      body: canonicalMap([
+        [0, tagId],
+        [1, input.name],
+      ]),
+    });
+    return {
+      tagId: identifierStorageKey(tagId),
+      eventRecordId: identifierStorageKey(outcome.eventRecordId),
+    };
+  }
+
+  async renameTag(input: {
+    readonly expectedVaultId: string;
+    readonly commandId: string;
+    readonly tagId: string;
+    readonly name: string;
+    readonly assertedAt: number | bigint;
+  }): Promise<{ readonly eventRecordId: string }> {
+    await this.requireTag(input.expectedVaultId, input.tagId);
+    return this.executeTagEvent(
+      input,
+      19,
+      canonicalMap([
+        [0, identifierFromStorageKey("Tag", input.tagId)],
+        [1, input.name],
+      ]),
+    );
+  }
+
+  async assignTag(input: {
+    readonly expectedVaultId: string;
+    readonly commandId: string;
+    readonly tagId: string;
+    readonly targetKind: "Collection" | "Capture";
+    readonly targetId: string;
+    readonly assertedAt: number | bigint;
+  }): Promise<{ readonly assignmentId: string; readonly eventRecordId: string }> {
+    await Promise.all([
+      this.requireTag(input.expectedVaultId, input.tagId),
+      this.requireTagTarget(input.expectedVaultId, input.targetKind, input.targetId),
+    ]);
+    const assignmentId = this.createTagAssignmentId();
+    if (
+      (await this.listTagAssignments(input.expectedVaultId)).some(
+        (assignment) => assignment.assignmentId === identifierStorageKey(assignmentId),
+      )
+    ) {
+      throw runtimeError(
+        "TAG_ASSIGNMENT_ID_CONFLICT",
+        "The generated Tag Assignment ID already exists.",
+      );
+    }
+    const targetKind = input.targetKind === "Collection" ? 1 : 2;
+    const outcome = await this.content.execute({
+      commandId: input.commandId,
+      vaultId: identifierFromStorageKey("Vault", input.expectedVaultId),
+      type: 20,
+      assertedAt: input.assertedAt,
+      body: canonicalMap([
+        [0, assignmentId],
+        [1, identifierFromStorageKey("Tag", input.tagId)],
+        [
+          2,
+          canonicalMap([
+            [0, targetKind],
+            [
+              1,
+              identifierFromStorageKey(
+                input.targetKind === "Collection" ? "Collection" : "Bundle",
+                input.targetId,
+              ),
+            ],
+          ]),
+        ],
+      ]),
+    });
+    return {
+      assignmentId: identifierStorageKey(assignmentId),
+      eventRecordId: identifierStorageKey(outcome.eventRecordId),
+    };
+  }
+
+  async removeTagAssignments(input: {
+    readonly expectedVaultId: string;
+    readonly commandId: string;
+    readonly tagId: string;
+    readonly targetKind: "Collection" | "Capture";
+    readonly targetId: string;
+    readonly assertedAt: number | bigint;
+  }): Promise<{ readonly eventRecordId: string }> {
+    await Promise.all([
+      this.requireTag(input.expectedVaultId, input.tagId),
+      this.requireTagTarget(input.expectedVaultId, input.targetKind, input.targetId),
+    ]);
+    const causes = (await this.listTagAssignments(input.expectedVaultId))
+      .filter(
+        (assignment) =>
+          assignment.tagId === input.tagId &&
+          assignment.targetKind === input.targetKind &&
+          assignment.targetId === input.targetId,
+      )
+      .map(({ assignedCauseId }) => identifierFromStorageKey("VaultRecord", assignedCauseId));
+    if (causes.length === 0) {
+      throw runtimeError("TAG_ASSIGNMENT_NOT_FOUND", "The Tag relation has no active assignment.");
+    }
+    const outcome = await this.content.execute({
+      commandId: input.commandId,
+      vaultId: identifierFromStorageKey("Vault", input.expectedVaultId),
+      type: 21,
+      assertedAt: input.assertedAt,
+      body: canonicalMap([[0, canonicalSet(causes)]]),
+    });
+    return { eventRecordId: identifierStorageKey(outcome.eventRecordId) };
+  }
+
+  async deleteTag(input: {
+    readonly expectedVaultId: string;
+    readonly commandId: string;
+    readonly tagId: string;
+    readonly assertedAt: number | bigint;
+  }): Promise<{ readonly eventRecordId: string }> {
+    await this.requireTag(input.expectedVaultId, input.tagId);
+    return this.executeTagEvent(
+      input,
+      22,
+      canonicalMap([[0, identifierFromStorageKey("Tag", input.tagId)]]),
+    );
+  }
+
+  async restoreTag(input: {
+    readonly expectedVaultId: string;
+    readonly commandId: string;
+    readonly tagId: string;
+    readonly assertedAt: number | bigint;
+  }): Promise<{ readonly eventRecordId: string }> {
+    await this.requireTag(input.expectedVaultId, input.tagId);
+    return this.executeTagEvent(
+      input,
+      23,
+      canonicalMap([[0, identifierFromStorageKey("Tag", input.tagId)]]),
+    );
+  }
+
   async listLibraryConflicts(
     expectedVaultId: string,
   ): Promise<readonly CanonicalClientLibraryConflict[]> {
@@ -863,6 +1069,54 @@ export class CanonicalClientRuntime {
     readonly assertedAt: number | bigint;
   }): Promise<{ readonly eventRecordId: string }> {
     return this.changeCaptureLifecycle({ ...input, type: 5 });
+  }
+
+  private async requireTag(expectedVaultId: string, tagId: string): Promise<CanonicalClientTag> {
+    const tag = (await this.listTags(expectedVaultId)).find(
+      (candidate) => candidate.tagId === tagId,
+    );
+    if (tag === undefined) throw runtimeError("TAG_NOT_FOUND", "The Tag is not in the Vault.");
+    return tag;
+  }
+
+  private async requireTagTarget(
+    expectedVaultId: string,
+    targetKind: "Collection" | "Capture",
+    targetId: string,
+  ): Promise<void> {
+    const exists =
+      targetKind === "Collection"
+        ? (await this.listCollections(expectedVaultId)).some(
+            (collection) => collection.collectionId === targetId,
+          )
+        : (await this.listLibrary(expectedVaultId)).some(
+            (capture) => capture.bundleId === targetId,
+          );
+    if (!exists) {
+      throw runtimeError(
+        targetKind === "Collection" ? "COLLECTION_NOT_FOUND" : "CAPTURE_NOT_FOUND",
+        `The Tag target ${targetKind} is not in the Vault.`,
+      );
+    }
+  }
+
+  private async executeTagEvent(
+    input: {
+      readonly expectedVaultId: string;
+      readonly commandId: string;
+      readonly assertedAt: number | bigint;
+    },
+    type: 19 | 22 | 23,
+    body: CanonicalValue,
+  ): Promise<{ readonly eventRecordId: string }> {
+    const outcome = await this.content.execute({
+      commandId: input.commandId,
+      vaultId: identifierFromStorageKey("Vault", input.expectedVaultId),
+      type,
+      assertedAt: input.assertedAt,
+      body,
+    });
+    return { eventRecordId: identifierStorageKey(outcome.eventRecordId) };
   }
 
   private async requireFolder(

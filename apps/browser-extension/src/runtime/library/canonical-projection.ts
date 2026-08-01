@@ -48,6 +48,11 @@ import {
   reduceCanonicalCollectionFolders,
   reduceCanonicalFolders,
 } from "./canonical-folder-projection";
+import {
+  type CanonicalProjectedTag,
+  type CanonicalProjectedTagAssignment,
+  reduceCanonicalTags,
+} from "./canonical-tag-projection";
 
 const LIBRARY_PROJECTION_FORMAT = 1 as const;
 
@@ -109,6 +114,8 @@ export interface CanonicalLibraryProjection {
   readonly captures: readonly CanonicalLibraryCapture[];
   readonly collections: readonly CanonicalLibraryCollection[];
   readonly folders: readonly CanonicalProjectedFolder[];
+  readonly tags: readonly CanonicalProjectedTag[];
+  readonly tagAssignments: readonly CanonicalProjectedTagAssignment[];
   readonly conflicts: readonly CanonicalLibraryConflict[];
 }
 
@@ -508,6 +515,7 @@ export class CanonicalLibraryProjectionService {
     const redirectReduction = reduceCollectionRedirects(replay);
     const folderProjection = reduceCanonicalFolders(replay);
     const collectionFolderPlacements = reduceCanonicalCollectionFolders(replay, folderProjection);
+    const tagProjection = reduceCanonicalTags(replay);
     const redirectEdges = redirectReduction.edges;
     const objectCache = new Map<string, VaultObject>();
     const loadObject = async (objectId: Identifier<"VaultObject">): Promise<VaultObject> => {
@@ -649,6 +657,8 @@ export class CanonicalLibraryProjectionService {
       captures,
       collections,
       folders: folderProjection.folders,
+      tags: tagProjection.tags,
+      tagAssignments: tagProjection.assignments,
       conflicts: [
         ...selected.conflicts,
         ...redirectReduction.conflicts.map(
@@ -794,12 +804,24 @@ export function encodeCanonicalLibraryProjection(value: CanonicalLibraryProjecti
           folder.lifecycle,
         ),
       ),
+      value.tags.map((tag) => indexedMap(tag.tagId, tag.name, tag.lifecycle, tag.redirectedTo)),
+      value.tagAssignments.map((assignment) =>
+        indexedMap(
+          assignment.assignmentId,
+          assignment.assignedCauseId,
+          assignment.tagId,
+          assignment.effectiveTagId,
+          assignment.targetKind,
+          assignment.targetId,
+          assignment.active,
+        ),
+      ),
     ),
   );
 }
 
 export function decodeCanonicalLibraryProjection(bytes: Uint8Array): CanonicalLibraryProjection {
-  const map = exactMap(decodeCanonicalValue(bytes), [0, 1, 2, 3, 4, 5, 6, 7], "Library Projection");
+  const map = exactMap(decodeCanonicalValue(bytes), [...Array(10).keys()], "Library Projection");
   exactCode(mapValue(map, 0), LIBRARY_PROJECTION_FORMAT, "Library Projection format");
   const capturesValue = mapValue(map, 4);
   if (!Array.isArray(capturesValue)) throw new TypeError("Library captures must be an array");
@@ -869,6 +891,31 @@ export function decodeCanonicalLibraryProjection(bytes: Uint8Array): CanonicalLi
           identifierValue(value, "Folder"),
         ),
         lifecycle: oneOfCodes(mapValue(folder, 4), [1, 2] as const, "Folder lifecycle"),
+      };
+    }),
+    tags: arrayValue(mapValue(map, 8), "Library Tags").map((entry, index) => {
+      const tag = exactMap(entry, [0, 1, 2, 3], `Library Tag ${index}`);
+      return {
+        tagId: identifierValue(mapValue(tag, 0), "Tag"),
+        name: textValue(mapValue(tag, 1), "Tag name", { maxUtf8Bytes: 1_024 }),
+        lifecycle: oneOfCodes(mapValue(tag, 2), [1, 2] as const, "Tag lifecycle"),
+        redirectedTo: nullable(mapValue(tag, 3), (value) => identifierValue(value, "Tag")),
+      };
+    }),
+    tagAssignments: arrayValue(mapValue(map, 9), "Library Tag Assignments").map((entry, index) => {
+      const assignment = exactMap(entry, [0, 1, 2, 3, 4, 5, 6], `Tag Assignment ${index}`);
+      const targetKind = oneOfCodes(mapValue(assignment, 4), [1, 2] as const, "Tag target kind");
+      return {
+        assignmentId: identifierValue(mapValue(assignment, 0), "TagAssignment"),
+        assignedCauseId: identifierValue(mapValue(assignment, 1), "VaultRecord"),
+        tagId: identifierValue(mapValue(assignment, 2), "Tag"),
+        effectiveTagId: identifierValue(mapValue(assignment, 3), "Tag"),
+        targetKind,
+        targetId:
+          targetKind === 1
+            ? identifierValue(mapValue(assignment, 5), "Collection")
+            : identifierValue(mapValue(assignment, 5), "Bundle"),
+        active: booleanValue(mapValue(assignment, 6), "Tag Assignment activity"),
       };
     }),
     conflicts: conflictsValue.map((entry, index): CanonicalLibraryConflict => {

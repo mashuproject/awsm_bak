@@ -15,6 +15,8 @@ function fixture() {
   const generationId = randomIdentifier("Generation");
   const clientCredentialId = randomIdentifier("ClientCredential");
   const createdFolderId = randomIdentifier("Folder");
+  const createdTagId = randomIdentifier("Tag");
+  const createdTagAssignmentId = randomIdentifier("TagAssignment");
   const ceremony = {
     recoveryPhrase:
       "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
@@ -57,6 +59,8 @@ function fixture() {
     () => `setup-${++setup}`,
     content,
     () => createdFolderId,
+    () => createdTagId,
+    () => createdTagAssignmentId,
   );
   return {
     runtime,
@@ -68,6 +72,8 @@ function fixture() {
     firstVaultId,
     secondVaultId,
     createdFolderId,
+    createdTagId,
+    createdTagAssignmentId,
   };
 }
 
@@ -170,6 +176,8 @@ describe("canonical Client Runtime", () => {
       frontier: [randomIdentifier("VaultRecord")],
       conflicts: [],
       folders: [],
+      tags: [],
+      tagAssignments: [],
       captures: [
         {
           bundleId,
@@ -235,6 +243,8 @@ describe("canonical Client Runtime", () => {
         folderId: null,
       })),
       folders: [],
+      tags: [],
+      tagAssignments: [],
       conflicts: [
         {
           kind: "CollectionMerge",
@@ -311,6 +321,8 @@ describe("canonical Client Runtime", () => {
         folderId: null,
       })),
       folders: [],
+      tags: [],
+      tagAssignments: [],
       conflicts: [
         {
           kind: "CollectionMerge",
@@ -346,6 +358,8 @@ describe("canonical Client Runtime", () => {
       captures: [],
       collections: [],
       folders: [],
+      tags: [],
+      tagAssignments: [],
       conflicts: [
         {
           kind: "CollectionMerge",
@@ -401,6 +415,8 @@ describe("canonical Client Runtime", () => {
           lifecycle: 1,
         },
       ],
+      tags: [],
+      tagAssignments: [],
       conflicts: [],
     });
     vi.mocked(content.execute).mockResolvedValue({
@@ -545,6 +561,8 @@ describe("canonical Client Runtime", () => {
         effectiveParentFolderId: null,
         lifecycle: 1,
       })),
+      tags: [],
+      tagAssignments: [],
       conflicts: [
         {
           kind: "Folder",
@@ -624,6 +642,8 @@ describe("canonical Client Runtime", () => {
         effectiveParentFolderId: null,
         lifecycle: 1,
       })),
+      tags: [],
+      tagAssignments: [],
       conflicts: [
         {
           kind: "Folder",
@@ -669,6 +689,8 @@ describe("canonical Client Runtime", () => {
         effectiveParentFolderId: null,
         lifecycle: 1,
       })),
+      tags: [],
+      tagAssignments: [],
       conflicts: [
         {
           kind: "Folder",
@@ -691,5 +713,172 @@ describe("canonical Client Runtime", () => {
       }),
     ).rejects.toMatchObject({ id: "FOLDER_CONFLICT" });
     expect(content.execute).not.toHaveBeenCalled();
+  });
+
+  it("authors member-safe Tag workflows while deriving exact observed removal Causes", async () => {
+    const { runtime, library, content, firstVaultId, createdTagId, createdTagAssignmentId } =
+      fixture();
+    const tagId = randomIdentifier("Tag");
+    const assignmentId = randomIdentifier("TagAssignment");
+    const assignedCauseId = randomIdentifier("VaultRecord");
+    const collectionId = randomIdentifier("Collection");
+    const eventRecordId = randomIdentifier("VaultRecord");
+    vi.mocked(library.load).mockResolvedValue({
+      vaultId: firstVaultId,
+      generationId: randomIdentifier("Generation"),
+      frontier: [randomIdentifier("VaultRecord")],
+      captures: [],
+      collections: [
+        {
+          collectionId,
+          explicitTitle: null,
+          title: "Collection",
+          tailBundleId: null,
+          activeCaptureCount: 0,
+          redirectedTo: null,
+          folderId: null,
+        },
+      ],
+      folders: [],
+      tags: [{ tagId, name: "Saved", lifecycle: 1, redirectedTo: null }],
+      tagAssignments: [
+        {
+          assignmentId,
+          assignedCauseId,
+          tagId,
+          effectiveTagId: tagId,
+          targetKind: 1,
+          targetId: collectionId,
+          active: true,
+        },
+      ],
+      conflicts: [],
+    });
+    vi.mocked(content.execute).mockResolvedValue({
+      commandId: "tag-command",
+      vaultId: firstVaultId,
+      generationId: randomIdentifier("Generation"),
+      eventRecordId,
+    });
+    const vaultId = identifierStorageKey(firstVaultId);
+    const existingTagId = identifierStorageKey(tagId);
+    const targetId = identifierStorageKey(collectionId);
+
+    await expect(runtime.listTags(vaultId)).resolves.toEqual([
+      { tagId: existingTagId, name: "Saved", lifecycle: "Active", redirectedTo: null },
+    ]);
+    await expect(runtime.listTagAssignments(vaultId)).resolves.toEqual([
+      {
+        assignmentId: identifierStorageKey(assignmentId),
+        assignedCauseId: identifierStorageKey(assignedCauseId),
+        tagId: existingTagId,
+        effectiveTagId: existingTagId,
+        targetKind: "Collection",
+        targetId,
+        active: true,
+      },
+    ]);
+    await runtime.createTag({
+      expectedVaultId: vaultId,
+      commandId: "tag-create",
+      name: "Research",
+      assertedAt: 50,
+    });
+    await runtime.renameTag({
+      expectedVaultId: vaultId,
+      commandId: "tag-rename",
+      tagId: existingTagId,
+      name: "Reading",
+      assertedAt: 51,
+    });
+    await runtime.assignTag({
+      expectedVaultId: vaultId,
+      commandId: "tag-assign",
+      tagId: existingTagId,
+      targetKind: "Collection",
+      targetId,
+      assertedAt: 52,
+    });
+    await runtime.removeTagAssignments({
+      expectedVaultId: vaultId,
+      commandId: "tag-remove",
+      tagId: existingTagId,
+      targetKind: "Collection",
+      targetId,
+      assertedAt: 53,
+    });
+    await runtime.deleteTag({
+      expectedVaultId: vaultId,
+      commandId: "tag-delete",
+      tagId: existingTagId,
+      assertedAt: 54,
+    });
+    await runtime.restoreTag({
+      expectedVaultId: vaultId,
+      commandId: "tag-restore",
+      tagId: existingTagId,
+      assertedAt: 55,
+    });
+
+    expect(vi.mocked(content.execute).mock.calls.map(([command]) => command)).toEqual([
+      {
+        commandId: "tag-create",
+        vaultId: firstVaultId,
+        type: 18,
+        assertedAt: 50,
+        body: canonicalMap([
+          [0, createdTagId],
+          [1, "Research"],
+        ]),
+      },
+      {
+        commandId: "tag-rename",
+        vaultId: firstVaultId,
+        type: 19,
+        assertedAt: 51,
+        body: canonicalMap([
+          [0, tagId],
+          [1, "Reading"],
+        ]),
+      },
+      {
+        commandId: "tag-assign",
+        vaultId: firstVaultId,
+        type: 20,
+        assertedAt: 52,
+        body: canonicalMap([
+          [0, createdTagAssignmentId],
+          [1, tagId],
+          [
+            2,
+            canonicalMap([
+              [0, 1],
+              [1, collectionId],
+            ]),
+          ],
+        ]),
+      },
+      {
+        commandId: "tag-remove",
+        vaultId: firstVaultId,
+        type: 21,
+        assertedAt: 53,
+        body: canonicalMap([[0, canonicalSet([assignedCauseId])]]),
+      },
+      {
+        commandId: "tag-delete",
+        vaultId: firstVaultId,
+        type: 22,
+        assertedAt: 54,
+        body: canonicalMap([[0, tagId]]),
+      },
+      {
+        commandId: "tag-restore",
+        vaultId: firstVaultId,
+        type: 23,
+        assertedAt: 55,
+        body: canonicalMap([[0, tagId]]),
+      },
+    ]);
   });
 });
