@@ -30,6 +30,15 @@ importers:
       '@awsm/design-system':
         specifier: workspace:*
         version: link:../design-system
+      '@hpke/chacha20poly1305':
+        specifier: 1.8.0
+        version: 1.8.0
+      '@hpke/core':
+        specifier: 1.9.0
+        version: 1.9.0
+      '@hpke/dhkem-x25519':
+        specifier: 1.8.0
+        version: 1.8.0
       '@huggingface/transformers':
         specifier: 4.2.0
         version: 4.2.0
@@ -416,6 +425,22 @@ packages:
   '@google/design.md@0.3.0':
     resolution: {integrity: sha512-/mhxpEkR4iWNuHRN3xEOlvP0nR6rlZ/CONADzh3TbqsaTPYxXJojH4GjW3G9/U9uF2fuOdBUdRB72GTbWLRbRg==}
     hasBin: true
+
+  '@hpke/chacha20poly1305@1.8.0':
+    resolution: {integrity: sha512-FcBfAQ+Y99vMNJP2yrZ9wpL8V0GOwp1+zMyzvc6alasrBygfFjFm1yeUtyADJCu/27C3Lm5mJzx6u7pwg+cX5w==}
+    engines: {node: '>=16.0.0'}
+
+  '@hpke/common@1.10.1':
+    resolution: {integrity: sha512-moJwhmtLtuxiUzzNp1jpfBfx8yefKoO9D/RCR9dmwrnc7qjJqId1rEtQz+lSlU5cabX8daToMSx/7HayXOiaFw==}
+    engines: {node: '>=16.0.0'}
+
+  '@hpke/core@1.9.0':
+    resolution: {integrity: sha512-pFxWl1nNJeQCSUFs7+GAblHvXBCjn9EPN65vdKlYQil2aURaRxfGMO6vBKGqm1YHTKwiAxJQNEI70PbSowMP9Q==}
+    engines: {node: '>=16.0.0'}
+
+  '@hpke/dhkem-x25519@1.8.0':
+    resolution: {integrity: sha512-S1MWWkAfu+TFxySgv5+2P3O4Mx/jk7BsoplzQaA1s3sfUJVJ2UsZsSzSsMc+FXJumLXncoJFlO6mK6mDGspfmA==}
+    engines: {node: '>=16.0.0'}
 
   '@huggingface/jinja@0.5.9':
     resolution: {integrity: sha512-uWTG+l3VJRsl7EXxYizuL3P+cCPoc3cRqbWWRcQN0FhejRfbdq0RNhCmbY/YDtnTcz9icdLYuLDjsnz4d8JMuw==}
@@ -3188,6 +3213,20 @@ snapshots:
       zod: 3.25.76
     transitivePeerDependencies:
       - supports-color
+
+  '@hpke/chacha20poly1305@1.8.0':
+    dependencies:
+      '@hpke/common': 1.10.1
+
+  '@hpke/common@1.10.1': {}
+
+  '@hpke/core@1.9.0':
+    dependencies:
+      '@hpke/common': 1.10.1
+
+  '@hpke/dhkem-x25519@1.8.0':
+    dependencies:
+      '@hpke/common': 1.10.1
 
   '@huggingface/jinja@0.5.9': {}
 

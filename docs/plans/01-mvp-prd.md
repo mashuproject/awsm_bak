@@ -275,7 +275,8 @@ The canonical implementation is ready only when:
 4. per-member Recovery, Invitation, removal, resignation, and Key Epoch ceremonies pass real
    multi-Client fault scenarios;
 5. opaque Hosts cannot observe portable semantic metadata and public OpenAPI matches code;
-6. local, peer or headless, and hosted Replica pull paths pass convergence and withholding tests;
+6. local Replica behavior and opaque Hosted Replica pull paths pass multi-Remote convergence,
+   withholding, On-demand hydration, and Host-switching tests;
 7. Vacuum, Adoption, Fork, Closure, Export, Restore, and Garbage Collection pass crash and
    divergence tests;
 8. the Account dashboard remains Host-local, username-only, private, and non-duplicative; and
