@@ -56,6 +56,20 @@ using the exact header parameters. XChaCha20-Poly1305 encrypts independently aut
 Frame nonce and AAD derivation use the Artifact frame construction with domain
 `awsm:complete-export-frame:v1` and authenticate the exact header plus frame index and final flag.
 
+Each encrypted frame has this exact outer representation:
+
+```text
+uint32be(frameIndex) || uint8(flags) || uint32be(ciphertextLength) || ciphertext
+```
+
+Bit zero of `flags` is the final-frame bit and every other bit is zero. Non-final frames contain
+exactly 1,048,576 plaintext bytes. The one final frame contains zero through 1,048,576 plaintext
+bytes. Frame indexes begin at zero and are contiguous. The frame nonce is the first 16 bytes of the
+header nonce followed by the frame index encoded as `uint64be`. The AAD is the canonical transcript
+for domain `awsm:complete-export-frame:v1` over, in order, the exact canonical header bytes,
+`uint32be(frameIndex)`, the zero-or-one final byte, `uint32be(plaintextLength)`, and
+`uint32be(ciphertextLength)`.
+
 # 4. Plaintext stream
 
 The decrypted stream is a sequence of entries:
@@ -73,6 +87,18 @@ entryHeader = {
 
 Manifest is first and Export Key Inventory is last. Opaque items are ordered by Opaque Storage Item
 ID. Duplicate IDs, unknown kinds, mismatched lengths, or trailing data are invalid.
+
+`byteDigest` is SHA-256 over the exact entry bytes. An Opaque Storage Item entry uses its canonical
+Storage Item ID as `entryId`. Manifest and Export Key Inventory IDs use SHA-256 over the following
+exact constructions respectively:
+
+```text
+"awsm:complete-export-manifest-entry-id:v1" || 0x00 || uint32be(1) ||
+  uint64be(byteLength) || entryBytes
+
+"awsm:complete-export-key-inventory-entry-id:v1" || 0x00 || uint32be(1) ||
+  uint64be(byteLength) || entryBytes
+```
 
 # 5. Manifest and key inventory
 
