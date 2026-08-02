@@ -2,8 +2,10 @@ import { sealArtifactFrames } from "../../crypto/artifact-stream";
 import type { Identifier } from "../../domain/canonical/identifiers";
 import { bytesEqual } from "../../domain/hash";
 import type {
+  CanonicalArtifactImportStore,
   CanonicalArtifactStore,
   PreparedArtifactRepresentation,
+  PreparedOpaqueArtifactRepresentation,
 } from "../../runtime/artifact/canonical-store";
 import { createStorageItemIdHasher } from "../../storage/opaque-envelope";
 
@@ -105,7 +107,7 @@ async function matchingItem(
   }
 }
 
-export class CanonicalOpfsArtifactStore implements CanonicalArtifactStore {
+export class CanonicalOpfsArtifactStore implements CanonicalArtifactImportStore {
   async prepare(
     input: Parameters<CanonicalArtifactStore["prepare"]>[0],
   ): Promise<PreparedArtifactRepresentation> {
@@ -218,6 +220,102 @@ export class CanonicalOpfsArtifactStore implements CanonicalArtifactStore {
       itemFilename(storageItemId),
       storageItemId,
     );
+  }
+
+  async prepareOpaque(
+    input: Parameters<CanonicalArtifactImportStore["prepareOpaque"]>[0],
+  ): Promise<PreparedOpaqueArtifactRepresentation> {
+    if (!Number.isSafeInteger(input.envelopeByteLength) || input.envelopeByteLength < 1) {
+      throw new TypeError("Imported Artifact wrapper length must be a positive safe integer");
+    }
+    const prepared = await subdirectory(PREPARED_DIRECTORY);
+    const envelopeName = `${crypto.randomUUID()}.opaque`;
+    let writable: FileSystemWritableFileStream | undefined;
+    const reader = input.source.getReader();
+    try {
+      const envelopeHandle = await prepared.getFileHandle(envelopeName, { create: true });
+      writable = await envelopeHandle.createWritable({ keepExistingData: false });
+      const hasher = createStorageItemIdHasher(input.envelopeByteLength);
+      let length = 0;
+      for (;;) {
+        const next = await reader.read();
+        if (next.done) break;
+        if (!(next.value instanceof Uint8Array) || next.value.byteLength === 0) {
+          throw new TypeError("Imported Artifact wrapper chunks must contain bytes");
+        }
+        length += next.value.byteLength;
+        if (!Number.isSafeInteger(length) || length > input.envelopeByteLength) {
+          throw new TypeError("Imported Artifact wrapper exceeds its declared length");
+        }
+        hasher.update(next.value);
+        await writeBytes(writable, next.value);
+      }
+      if (length !== input.envelopeByteLength) {
+        throw new TypeError("Imported Artifact wrapper ended before its declared length");
+      }
+      const storageItemId = hasher.digest();
+      if (!bytesEqual(storageItemId, input.storageItemId)) {
+        throw new TypeError("Imported Artifact wrapper Storage Item ID does not match");
+      }
+      await writable.close();
+      writable = undefined;
+      if ((await envelopeHandle.getFile()).size !== input.envelopeByteLength) {
+        throw new Error("Prepared imported Artifact wrapper was truncated");
+      }
+      let promoted = false;
+      let discarded = false;
+      return {
+        artifactId: input.artifactId,
+        storageItemId,
+        envelopeByteLength: input.envelopeByteLength,
+        promote: async () => {
+          if (discarded) throw new Error("Prepared imported Artifact was already discarded");
+          if (promoted) return;
+          const items = await subdirectory(ITEMS_DIRECTORY);
+          const finalName = itemFilename(storageItemId);
+          if (await matchingItem(items, finalName, storageItemId)) {
+            await removeIfPresent(prepared, envelopeName);
+            promoted = true;
+            return;
+          }
+          await removeIfPresent(items, finalName);
+          let finalWritable: FileSystemWritableFileStream | undefined;
+          try {
+            const finalHandle = await items.getFileHandle(finalName, { create: true });
+            finalWritable = await finalHandle.createWritable({ keepExistingData: false });
+            const copied = await copyFile({
+              file: await envelopeHandle.getFile(),
+              writable: finalWritable,
+            });
+            if (copied !== input.envelopeByteLength) {
+              throw new Error("Imported Artifact promotion was truncated");
+            }
+            await finalWritable.close();
+            finalWritable = undefined;
+            if (!(await matchingItem(items, finalName, storageItemId))) {
+              throw new Error("Promoted imported Artifact failed its Storage Item identity check");
+            }
+            promoted = true;
+            await removeIfPresent(prepared, envelopeName);
+          } catch (error) {
+            await finalWritable?.abort().catch(() => undefined);
+            await removeIfPresent(items, finalName);
+            throw mapStorageError(error);
+          }
+        },
+        discard: async () => {
+          discarded = true;
+          await removeIfPresent(prepared, envelopeName);
+        },
+      };
+    } catch (error) {
+      await reader.cancel(error).catch(() => undefined);
+      await writable?.abort().catch(() => undefined);
+      await removeIfPresent(prepared, envelopeName).catch(() => undefined);
+      throw mapStorageError(error);
+    } finally {
+      reader.releaseLock();
+    }
   }
 
   async open(storageItemId: Identifier<"StorageItem">): Promise<ReadableStream<Uint8Array>> {

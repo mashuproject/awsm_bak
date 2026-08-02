@@ -1,6 +1,7 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 
 import { type CompactPayloadType, openCompactItem } from "../../crypto/compact";
+import { wipe } from "../../crypto/sodium";
 import { DEPENDENCY_TYPES, type TypedDependency } from "../../domain/canonical/dependencies";
 import { decodeFeatureManifest, featureManifestId } from "../../domain/canonical/features";
 import type { Identifier } from "../../domain/canonical/identifiers";
@@ -47,6 +48,7 @@ import {
 } from "../projection/canonical-authority-replay";
 import type { CanonicalReplicaState } from "../vault/canonical-local-state";
 import {
+  baselineVaultLabel,
   initialVaultClientAuthority,
   validateCurrentVaultAuthority,
 } from "../vault/canonical-open";
@@ -64,6 +66,12 @@ export interface ValidatedCompleteExportSemantics {
   readonly keyInventory: CompleteExportKeyInventory;
   readonly reachability: CompleteExportReachability;
   readonly replicaState: CanonicalReplicaState;
+  readonly baseline: VaultBaseline;
+  readonly vaultLabel: string | null;
+  readonly keyEpochs: readonly {
+    readonly keyEpochId: Identifier<"KeyEpoch">;
+    readonly displayNumber: number;
+  }[];
 }
 
 function key(value: Uint8Array): string {
@@ -74,7 +82,7 @@ function same(left: Uint8Array, right: Uint8Array, field: string): void {
   if (!bytesEqual(left, right)) throw new TypeError(`${field} does not match`);
 }
 
-async function readExactCompact(
+export async function readCompleteImportCompactBytes(
   source: CompleteImportPreparedSource,
   item: CompleteExportOpaqueItem,
 ): Promise<Uint8Array> {
@@ -160,7 +168,13 @@ async function validateSelectedEventAuthority(input: {
     string,
     { readonly item: CompleteExportOpaqueItem; readonly bytes: Uint8Array }
   >;
-}): Promise<CanonicalReplicaState> {
+}): Promise<{
+  readonly replicaState: CanonicalReplicaState;
+  readonly keyEpochs: readonly {
+    readonly keyEpochId: Identifier<"KeyEpoch">;
+    readonly displayNumber: number;
+  }[];
+}> {
   const baselineBody = exactMap(
     input.baseline.body,
     [0, 1, 2, 3, 4, 5],
@@ -273,6 +287,18 @@ async function validateSelectedEventAuthority(input: {
   if (currentEpochKey === undefined) {
     throw new TypeError("Complete Import omits a current Key Epoch Key");
   }
+  const keyEpochs = [...input.epochKeys.keys()].map((epochKey) => {
+    const authenticated = authority.keyEpochs.find(
+      ({ keyEpochId }) => key(keyEpochId) === epochKey,
+    );
+    if (authenticated === undefined) {
+      throw new TypeError("Complete Import Key Epoch is not authenticated by Authority State");
+    }
+    return {
+      keyEpochId: authenticated.keyEpochId,
+      displayNumber: authenticated.displayNumber,
+    };
+  });
   const continuityEvents = new Map<string, AuthenticatedVaultEvent>();
   const continuityVisiting = new Set<string>();
   const visitContinuity = (recordId: Identifier<"VaultRecord">): void => {
@@ -337,7 +363,7 @@ async function validateSelectedEventAuthority(input: {
       },
     },
   });
-  return replicaState;
+  return { replicaState, keyEpochs };
 }
 
 export async function validateCompleteExportSemantics(input: {
@@ -349,181 +375,195 @@ export async function validateCompleteExportSemantics(input: {
   const keyInventory = decodeCompleteExportKeyInventory(
     encodeCompleteExportKeyInventory(input.keyInventory),
   );
-  same(keyInventory.vaultId, manifest.vaultId, "Complete Export Key Inventory Vault ID");
-  same(
-    keyInventory.generationId,
-    manifest.generationId,
-    "Complete Export Key Inventory Generation ID",
-  );
-  const epochKeys = new Map(
-    keyInventory.entries.map((entry) => [key(entry.keyEpochId), entry.keyEpochKey]),
-  );
-  const referencedEpochIds = new Set(
-    manifest.opaqueItemInventory.map((item) => key(item.keyEpochId)),
-  );
-  if (
-    epochKeys.size !== referencedEpochIds.size ||
-    [...referencedEpochIds].some((epochId) => !epochKeys.has(epochId))
-  ) {
-    throw new TypeError("Complete Export Key Inventory is not the exact referenced Epoch set");
-  }
-  const records = new Map<string, VaultRecord>();
-  const objects = new Map<string, VaultObject>();
-  const features = new Map<string, Uint8Array>();
-  const keyEnvelopes = new Map<
-    string,
-    { readonly item: CompleteExportOpaqueItem; readonly bytes: Uint8Array }
-  >();
-  const itemsByStorageId = new Map(
-    manifest.opaqueItemInventory.map((item) => [key(item.storageItemId), item]),
-  );
+  try {
+    same(keyInventory.vaultId, manifest.vaultId, "Complete Export Key Inventory Vault ID");
+    same(
+      keyInventory.generationId,
+      manifest.generationId,
+      "Complete Export Key Inventory Generation ID",
+    );
+    const epochKeys = new Map(
+      keyInventory.entries.map((entry) => [key(entry.keyEpochId), entry.keyEpochKey]),
+    );
+    const referencedEpochIds = new Set(
+      manifest.opaqueItemInventory.map((item) => key(item.keyEpochId)),
+    );
+    if (
+      epochKeys.size !== referencedEpochIds.size ||
+      [...referencedEpochIds].some((epochId) => !epochKeys.has(epochId))
+    ) {
+      throw new TypeError("Complete Export Key Inventory is not the exact referenced Epoch set");
+    }
+    const records = new Map<string, VaultRecord>();
+    const objects = new Map<string, VaultObject>();
+    const features = new Map<string, Uint8Array>();
+    const keyEnvelopes = new Map<
+      string,
+      { readonly item: CompleteExportOpaqueItem; readonly bytes: Uint8Array }
+    >();
+    const itemsByStorageId = new Map(
+      manifest.opaqueItemInventory.map((item) => [key(item.storageItemId), item]),
+    );
 
-  for (const item of manifest.opaqueItemInventory) {
-    const epochKey = epochKeys.get(key(item.keyEpochId));
-    if (epochKey === undefined) {
-      throw new TypeError("Complete Export omits a referenced Key Epoch Key");
+    for (const item of manifest.opaqueItemInventory) {
+      const epochKey = epochKeys.get(key(item.keyEpochId));
+      if (epochKey === undefined) {
+        throw new TypeError("Complete Export omits a referenced Key Epoch Key");
+      }
+      if (item.namespace === 5) continue;
+      const bytes = await readCompleteImportCompactBytes(input.source, item);
+      same(sha256(bytes), item.byteDigest, "Prepared Opaque byte digest");
+      const envelope = decodeOpaqueEnvelope(bytes);
+      same(envelope.storageItemId, item.storageItemId, "Prepared Opaque Storage Item ID");
+      if (envelope.storageClass !== COMPACT_STORAGE_CLASS) {
+        throw new TypeError("Complete Import compact inventory item is not Compact");
+      }
+      if (item.namespace === 2) {
+        keyEnvelopes.set(key(item.logicalId), { item, bytes });
+        continue;
+      }
+      const opened = await openCompactItem({
+        vaultId: manifest.vaultId,
+        keyEpochId: item.keyEpochId,
+        keyEpochKey: epochKey,
+        envelopeBytes: bytes,
+      });
+      if (opened.payloadType !== expectedPayloadType(item.namespace)) {
+        throw new TypeError("Complete Import Compact payload type disagrees with its namespace");
+      }
+      const logicalKey = key(item.logicalId);
+      if (item.namespace === 1) {
+        const record = decodeRecord(opened.payloadBytes);
+        same(record.recordId, item.logicalId, "Complete Import Vault Record ID");
+        records.set(logicalKey, record);
+      } else if (item.namespace === 3) {
+        const object = decodeVaultObject(opened.payloadBytes);
+        same(object.objectId, item.logicalId, "Complete Import Vault Object ID");
+        objects.set(logicalKey, object);
+      } else {
+        same(
+          featureManifestId(opened.payloadBytes),
+          item.logicalId,
+          "Complete Import Feature Manifest ID",
+        );
+        features.set(logicalKey, opened.payloadBytes);
+      }
     }
-    if (item.namespace === 5) continue;
-    const bytes = await readExactCompact(input.source, item);
-    same(sha256(bytes), item.byteDigest, "Prepared Opaque byte digest");
-    const envelope = decodeOpaqueEnvelope(bytes);
-    same(envelope.storageItemId, item.storageItemId, "Prepared Opaque Storage Item ID");
-    if (envelope.storageClass !== COMPACT_STORAGE_CLASS) {
-      throw new TypeError("Complete Import compact inventory item is not Compact");
+
+    const baselineRoots = manifest.typedLogicalRoots.filter(
+      ({ type }) => type === DEPENDENCY_TYPES.VaultBaseline,
+    );
+    if (baselineRoots.length !== 1) {
+      throw new TypeError("Complete Export requires exactly one Baseline logical root");
     }
-    if (item.namespace === 2) {
-      keyEnvelopes.set(key(item.logicalId), { item, bytes });
-      continue;
-    }
-    const opened = await openCompactItem({
+    const baselineId = baselineRoots[0]?.id as Identifier<"VaultRecord">;
+    const reachability = await collectCompleteExportReachability({
       vaultId: manifest.vaultId,
-      keyEpochId: item.keyEpochId,
-      keyEpochKey: epochKey,
-      envelopeBytes: bytes,
+      generationId: manifest.generationId,
+      requiredFeatureSetId: manifest.requiredFeatureSetId,
+      baselineId,
+      causalFrontier: manifest.frontier,
+      authorityFrontier: manifest.continuityProofRoots,
+      loadRecord: async (id) => records.get(key(id)),
+      loadObject: async (id) => objects.get(key(id)),
+      loadFeatureManifest: async (id) => features.get(key(id)),
     });
-    if (opened.payloadType !== expectedPayloadType(item.namespace)) {
-      throw new TypeError("Complete Import Compact payload type disagrees with its namespace");
+    requireExactDependencies(manifest.typedLogicalRoots, reachability.typedLogicalRoots);
+    const expectedInventory = reachableInventoryKeys(reachability);
+    const actualInventory = new Set(
+      manifest.opaqueItemInventory.map((item) => `${item.namespace}:${key(item.logicalId)}`),
+    );
+    if (
+      expectedInventory.size !== actualInventory.size ||
+      [...expectedInventory].some((candidate) => !actualInventory.has(candidate))
+    ) {
+      throw new TypeError("Complete Export reachable inventory is not exact");
     }
-    const logicalKey = key(item.logicalId);
-    if (item.namespace === 1) {
-      const record = decodeRecord(opened.payloadBytes);
-      same(record.recordId, item.logicalId, "Complete Import Vault Record ID");
-      records.set(logicalKey, record);
-    } else if (item.namespace === 3) {
-      const object = decodeVaultObject(opened.payloadBytes);
-      same(object.objectId, item.logicalId, "Complete Import Vault Object ID");
-      objects.set(logicalKey, object);
-    } else {
-      same(
-        featureManifestId(opened.payloadBytes),
-        item.logicalId,
-        "Complete Import Feature Manifest ID",
+    const genesisCandidates = [...records.values()].filter(
+      (record): record is AuthenticatedVaultEvent =>
+        "family" in record && record.family === 1 && record.type === 1,
+    );
+    if (genesisCandidates.length !== 1) {
+      throw new TypeError("Complete Export must contain exactly one Genesis Event");
+    }
+    const genesis = genesisCandidates[0];
+    if (genesis === undefined) {
+      throw new TypeError("Complete Export must contain exactly one Genesis Event");
+    }
+    const initialClient = initialVaultClientAuthority(genesis);
+    same(
+      genesis.signerCredentialId,
+      initialClient.clientCredentialId,
+      "Genesis signer Credential ID",
+    );
+    if (!(await verifyVaultEventSignature(genesis, initialClient.signingPublicKey))) {
+      throw new TypeError("Vault Event signature is invalid");
+    }
+    const baseline = records.get(key(baselineId));
+    if (baseline === undefined || "family" in baseline) {
+      throw new TypeError("Complete Export Baseline root is not a Baseline");
+    }
+    const authority = await validateSelectedEventAuthority({
+      manifest,
+      baseline,
+      genesis,
+      records,
+      features,
+      epochKeys,
+      keyEnvelopes,
+    });
+
+    const artifactStore: CanonicalArtifactStore = {
+      prepare: async () => {
+        throw new TypeError("Complete Import semantic validation never prepares Artifacts");
+      },
+      open: async (storageItemId) => {
+        const item = itemsByStorageId.get(key(storageItemId));
+        if (item === undefined) throw new TypeError("Prepared Artifact wrapper is unavailable");
+        return input.source.openOpaque(item);
+      },
+      has: async (storageItemId) => itemsByStorageId.has(key(storageItemId)),
+      remove: async () => undefined,
+    };
+    for (const id of reachability.artifactIds) {
+      const object = [...objects.values()].find(
+        (candidate) =>
+          candidate.objectType === ARTIFACT_OBJECT && bytesEqual(artifactId(candidate), id),
       );
-      features.set(logicalKey, opened.payloadBytes);
+      const item = manifest.opaqueItemInventory.find(
+        (candidate) => candidate.namespace === 5 && bytesEqual(candidate.logicalId, id),
+      );
+      if (object === undefined || item === undefined) {
+        throw new TypeError("Complete Export reachable Artifact inventory is incomplete");
+      }
+      const epochKey = epochKeys.get(key(item.keyEpochId));
+      if (epochKey === undefined)
+        throw new TypeError("Complete Export omits an Artifact Epoch Key");
+      const verified = await verifyCanonicalArtifactRepresentation({
+        store: artifactStore,
+        storageItemId: item.storageItemId,
+        object,
+        keyEpochId: item.keyEpochId,
+        keyEpochKey: epochKey,
+        writePlaintext: async () => undefined,
+      });
+      if (verified.byteLength !== item.byteLength) {
+        throw new TypeError("Complete Import Artifact wrapper length does not match");
+      }
+      same(verified.byteDigest, item.byteDigest, "Complete Import Artifact wrapper digest");
     }
-  }
 
-  const baselineRoots = manifest.typedLogicalRoots.filter(
-    ({ type }) => type === DEPENDENCY_TYPES.VaultBaseline,
-  );
-  if (baselineRoots.length !== 1) {
-    throw new TypeError("Complete Export requires exactly one Baseline logical root");
+    return {
+      manifest,
+      keyInventory,
+      reachability,
+      replicaState: authority.replicaState,
+      baseline,
+      vaultLabel: baselineVaultLabel(baseline),
+      keyEpochs: authority.keyEpochs,
+    };
+  } catch (error) {
+    for (const entry of keyInventory.entries) await wipe(entry.keyEpochKey);
+    throw error;
   }
-  const baselineId = baselineRoots[0]?.id as Identifier<"VaultRecord">;
-  const reachability = await collectCompleteExportReachability({
-    vaultId: manifest.vaultId,
-    generationId: manifest.generationId,
-    requiredFeatureSetId: manifest.requiredFeatureSetId,
-    baselineId,
-    causalFrontier: manifest.frontier,
-    authorityFrontier: manifest.continuityProofRoots,
-    loadRecord: async (id) => records.get(key(id)),
-    loadObject: async (id) => objects.get(key(id)),
-    loadFeatureManifest: async (id) => features.get(key(id)),
-  });
-  requireExactDependencies(manifest.typedLogicalRoots, reachability.typedLogicalRoots);
-  const expectedInventory = reachableInventoryKeys(reachability);
-  const actualInventory = new Set(
-    manifest.opaqueItemInventory.map((item) => `${item.namespace}:${key(item.logicalId)}`),
-  );
-  if (
-    expectedInventory.size !== actualInventory.size ||
-    [...expectedInventory].some((candidate) => !actualInventory.has(candidate))
-  ) {
-    throw new TypeError("Complete Export reachable inventory is not exact");
-  }
-  const genesisCandidates = [...records.values()].filter(
-    (record): record is AuthenticatedVaultEvent =>
-      "family" in record && record.family === 1 && record.type === 1,
-  );
-  if (genesisCandidates.length !== 1) {
-    throw new TypeError("Complete Export must contain exactly one Genesis Event");
-  }
-  const genesis = genesisCandidates[0];
-  if (genesis === undefined) {
-    throw new TypeError("Complete Export must contain exactly one Genesis Event");
-  }
-  const initialClient = initialVaultClientAuthority(genesis);
-  same(
-    genesis.signerCredentialId,
-    initialClient.clientCredentialId,
-    "Genesis signer Credential ID",
-  );
-  if (!(await verifyVaultEventSignature(genesis, initialClient.signingPublicKey))) {
-    throw new TypeError("Vault Event signature is invalid");
-  }
-  const baseline = records.get(key(baselineId));
-  if (baseline === undefined || "family" in baseline) {
-    throw new TypeError("Complete Export Baseline root is not a Baseline");
-  }
-  const replicaState = await validateSelectedEventAuthority({
-    manifest,
-    baseline,
-    genesis,
-    records,
-    features,
-    epochKeys,
-    keyEnvelopes,
-  });
-
-  const artifactStore: CanonicalArtifactStore = {
-    prepare: async () => {
-      throw new TypeError("Complete Import semantic validation never prepares Artifacts");
-    },
-    open: async (storageItemId) => {
-      const item = itemsByStorageId.get(key(storageItemId));
-      if (item === undefined) throw new TypeError("Prepared Artifact wrapper is unavailable");
-      return input.source.openOpaque(item);
-    },
-    has: async (storageItemId) => itemsByStorageId.has(key(storageItemId)),
-    remove: async () => undefined,
-  };
-  for (const id of reachability.artifactIds) {
-    const object = [...objects.values()].find(
-      (candidate) =>
-        candidate.objectType === ARTIFACT_OBJECT && bytesEqual(artifactId(candidate), id),
-    );
-    const item = manifest.opaqueItemInventory.find(
-      (candidate) => candidate.namespace === 5 && bytesEqual(candidate.logicalId, id),
-    );
-    if (object === undefined || item === undefined) {
-      throw new TypeError("Complete Export reachable Artifact inventory is incomplete");
-    }
-    const epochKey = epochKeys.get(key(item.keyEpochId));
-    if (epochKey === undefined) throw new TypeError("Complete Export omits an Artifact Epoch Key");
-    const verified = await verifyCanonicalArtifactRepresentation({
-      store: artifactStore,
-      storageItemId: item.storageItemId,
-      object,
-      keyEpochId: item.keyEpochId,
-      keyEpochKey: epochKey,
-      writePlaintext: async () => undefined,
-    });
-    if (verified.byteLength !== item.byteLength) {
-      throw new TypeError("Complete Import Artifact wrapper length does not match");
-    }
-    same(verified.byteDigest, item.byteDigest, "Complete Import Artifact wrapper digest");
-  }
-
-  return { manifest, keyInventory, reachability, replicaState };
 }

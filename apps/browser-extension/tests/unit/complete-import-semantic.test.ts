@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { sealArtifactFrames } from "../../src/crypto/artifact-stream";
 import { createClientCredentialKeys } from "../../src/crypto/canonical";
 import { sealCompactItem } from "../../src/crypto/compact";
@@ -9,12 +9,19 @@ import { exactMap, mapValue } from "../../src/domain/canonical/schema";
 import { concatBytes } from "../../src/domain/canonical/transcript";
 import { canonicalMap } from "../../src/domain/canonical/value";
 import type {
+  CanonicalIndexedDb,
+  InitialVaultCommit,
+} from "../../src/drivers/indexeddb/canonical-database";
+import { CanonicalStorageError } from "../../src/drivers/indexeddb/canonical-database";
+import { NORMAL_STORAGE_REALM } from "../../src/drivers/indexeddb/canonical-schema";
+import type {
   CanonicalArtifactStore,
   PreparedArtifactRepresentation,
 } from "../../src/runtime/artifact/canonical-store";
 import { prepareCanonicalCapture } from "../../src/runtime/capture/canonical-prepare";
 import { prepareCompleteExportEntry } from "../../src/runtime/complete-export/container";
 import {
+  type CompleteExportKeyEpochEntry,
   type CompleteExportManifestInput,
   type CompleteExportOpaqueItem,
   completeExportStateDigest,
@@ -27,10 +34,18 @@ import {
   type CompleteImportPreparedSource,
   validateCompleteExportSemantics,
 } from "../../src/runtime/complete-import/semantic";
+import { CanonicalCompleteImportService } from "../../src/runtime/complete-import/service";
 import { createPageSnapshotBlob } from "../../src/runtime/page-snapshot";
 import { CanonicalReplayService } from "../../src/runtime/projection/canonical-replay";
 import { prepareCanonicalVaultCreation } from "../../src/runtime/vault/canonical-create";
-import type { CanonicalReplicaState } from "../../src/runtime/vault/canonical-local-state";
+import {
+  type CanonicalReplicaState,
+  decodeCanonicalReplicaState,
+  decodeEpochSecretState,
+  decodeLogicalResolution,
+  decodeVaultDirectoryEntry,
+  openWrappedLocalState,
+} from "../../src/runtime/vault/canonical-local-state";
 import type { OpenedCanonicalVault } from "../../src/runtime/vault/canonical-service";
 import { prepareVacuum } from "../../src/runtime/vault/canonical-vacuum-content-checkpoint";
 import { decodeOpaqueEnvelope } from "../../src/storage/opaque-envelope";
@@ -45,6 +60,7 @@ interface StoredOpaque {
   readonly namespace: 1 | 2 | 3 | 5;
   readonly logicalId: Uint8Array;
   readonly bytes: Uint8Array;
+  readonly keyEpochId?: Identifier<"KeyEpoch">;
 }
 
 function initialStored(creation: Creation): StoredOpaque[] {
@@ -168,6 +184,7 @@ async function packageFrom(input: {
   readonly authorityFrontierId?: Identifier<"VaultRecord">;
   readonly generationId?: Identifier<"Generation">;
   readonly baselineId?: Identifier<"VaultRecord">;
+  readonly keyEpochEntries?: readonly CompleteExportKeyEpochEntry[];
 }) {
   const { creation, stored } = input;
   const generationId = input.generationId ?? creation.ids.generationId;
@@ -178,7 +195,7 @@ async function packageFrom(input: {
       namespace: item.namespace,
       logicalId: item.logicalId,
       storageItemId: decodeOpaqueEnvelope(item.bytes).storageItemId,
-      keyEpochId: creation.secrets.keyEpoch.id,
+      keyEpochId: item.keyEpochId ?? creation.secrets.keyEpoch.id,
       byteLength: entry.header.byteLength,
       byteDigest: entry.header.byteDigest,
     };
@@ -206,7 +223,7 @@ async function packageFrom(input: {
     encodeCompleteExportKeyInventory({
       vaultId: creation.ids.vaultId,
       generationId,
-      entries: [
+      entries: input.keyEpochEntries ?? [
         {
           keyEpochId: creation.secrets.keyEpoch.id,
           keyEpochKey: creation.secrets.keyEpoch.key,
@@ -356,6 +373,13 @@ async function vacuumedVaultPackage(input: { readonly signingSecretKey?: Uint8Ar
       { namespace: 1, logicalId: event.recordId, bytes: eventEnvelope.bytes },
     ],
   });
+}
+
+async function installationWrappingKey(): Promise<CryptoKey> {
+  return crypto.subtle.generateKey({ name: "AES-KW", length: 256 }, false, [
+    "wrapKey",
+    "unwrapKey",
+  ]);
 }
 
 describe("canonical Complete Import semantic validation", () => {
@@ -526,6 +550,52 @@ describe("canonical Complete Import semantic validation", () => {
     );
   });
 
+  it("rejects a wrapper Epoch that is absent from authenticated Authority State", async () => {
+    const creation = await prepareCanonicalVaultCreation({ label: "Research", assertedAt: 1 });
+    const extraKey = new Uint8Array(32).fill(78);
+    const extraEpochId = keyEpochId(creation.ids.vaultId, extraKey);
+    const [baselineEnvelope, genesisEnvelope] = await Promise.all([
+      sealCompactItem({
+        vaultId: creation.ids.vaultId,
+        keyEpochId: extraEpochId,
+        keyEpochKey: extraKey,
+        payloadType: 1,
+        payloadBytes: creation.baseline.bytes,
+      }),
+      sealCompactItem({
+        vaultId: creation.ids.vaultId,
+        keyEpochId: extraEpochId,
+        keyEpochKey: extraKey,
+        payloadType: 1,
+        payloadBytes: creation.genesis.bytes,
+      }),
+    ]);
+    const fixture = await packageFrom({
+      creation,
+      frontierId: creation.genesis.recordId,
+      keyEpochEntries: [
+        {
+          keyEpochId: creation.secrets.keyEpoch.id,
+          keyEpochKey: creation.secrets.keyEpoch.key,
+        },
+        { keyEpochId: extraEpochId, keyEpochKey: extraKey },
+      ],
+      stored: initialStored(creation).map((item) => {
+        if (item.logicalId === creation.baseline.recordId) {
+          return { ...item, bytes: baselineEnvelope.bytes, keyEpochId: extraEpochId };
+        }
+        if (item.logicalId === creation.genesis.recordId) {
+          return { ...item, bytes: genesisEnvelope.bytes, keyEpochId: extraEpochId };
+        }
+        return item;
+      }),
+    });
+
+    await expect(validateCompleteExportSemantics(fixture)).rejects.toThrow(
+      "Complete Import Key Epoch is not authenticated by Authority State",
+    );
+  });
+
   it("authenticates a streamed Artifact wrapper against its reachable Artifact Object", async () => {
     const fixture = await capturedVaultPackage();
 
@@ -534,5 +604,173 @@ describe("canonical Complete Import semantic validation", () => {
     expect(validated.reachability.recordIds).toHaveLength(3);
     expect(validated.reachability.vaultObjectIds).toHaveLength(2);
     expect(validated.reachability.artifactIds).toHaveLength(1);
+  });
+
+  it("atomically activates an unknown package as an authoring-free local Replica", async () => {
+    const fixture = await initialVaultPackage();
+    const wrappingKey = await installationWrappingKey();
+    let committed: InitialVaultCommit | undefined;
+    const storage = {
+      getOrCreateInstallationWrappingKey: vi.fn(async () => wrappingKey),
+      commitInitialVault: vi.fn(async (input: InitialVaultCommit) => {
+        committed = input;
+      }),
+    } as unknown as CanonicalIndexedDb;
+
+    const result = await new CanonicalCompleteImportService(
+      storage,
+      NORMAL_STORAGE_REALM,
+      {} as never,
+    ).activateUnknown(fixture);
+
+    expect(result).toEqual({
+      vaultId: fixture.creation.ids.vaultId,
+      generationId: fixture.creation.ids.generationId,
+    });
+    expect(storage.commitInitialVault).toHaveBeenCalledOnce();
+    if (committed === undefined) throw new Error("missing captured Import commit");
+    expect(committed.immutableItems).toHaveLength(4);
+    expect(committed.replicaSafetyItems).toHaveLength(4);
+    expect(committed.trustedSecrets).toHaveLength(1);
+    const replicaState = decodeCanonicalReplicaState(
+      await openWrappedLocalState({
+        wrappingKey,
+        domain: "awsm.local.replica-state",
+        vaultId: fixture.creation.ids.vaultId,
+        identity: fixture.creation.ids.generationId,
+        wrappedBytes: committed.replicaState.bytes,
+      }),
+    );
+    expect(replicaState).toMatchObject({
+      authoringClientCredentialId: null,
+      memberId: null,
+      adoption: null,
+    });
+    const directory = decodeVaultDirectoryEntry(
+      await openWrappedLocalState({
+        wrappingKey,
+        domain: "awsm.local.vault-directory",
+        vaultId: fixture.creation.ids.vaultId,
+        identity: fixture.creation.ids.vaultId,
+        wrappedBytes: committed.vaultDirectoryEntry.bytes,
+      }),
+    );
+    expect(directory).toMatchObject({ label: "Research", selectedClientCredentialId: null });
+    const epoch = decodeEpochSecretState(
+      await openWrappedLocalState({
+        wrappingKey,
+        domain: "awsm.local.epoch-secret",
+        vaultId: fixture.creation.ids.vaultId,
+        identity: fixture.creation.secrets.keyEpoch.id,
+        wrappedBytes: committed.trustedSecrets[0]?.bytes ?? new Uint8Array(),
+      }),
+    );
+    expect(epoch).toMatchObject({ displayNumber: 0 });
+    expect(
+      await Promise.all(
+        committed.replicaSafetyItems?.map(async (item) =>
+          decodeLogicalResolution(
+            await openWrappedLocalState({
+              wrappingKey,
+              domain: "awsm.local.logical-resolution",
+              vaultId: fixture.creation.ids.vaultId,
+              identity: Uint8Array.from(
+                fixture.manifest.opaqueItemInventory.find((candidate) =>
+                  item.itemKey.endsWith(key(candidate.logicalId)),
+                )?.logicalId ?? [],
+              ),
+              wrappedBytes: item.bytes,
+            }),
+          ),
+        ) ?? [],
+      ),
+    ).toHaveLength(4);
+  });
+
+  it("promotes every authenticated Artifact wrapper before activating its resolutions", async () => {
+    const fixture = await capturedVaultPackage();
+    const wrappingKey = await installationWrappingKey();
+    const order: string[] = [];
+    const promote = vi.fn(async () => {
+      order.push("promote");
+    });
+    const discard = vi.fn(async () => undefined);
+    const prepareOpaque = vi.fn(
+      async (input: {
+        readonly artifactId: Identifier<"Artifact">;
+        readonly storageItemId: Identifier<"StorageItem">;
+        readonly envelopeByteLength: number;
+        readonly source: ReadableStream<Uint8Array>;
+      }) => {
+        expect((await new Response(input.source).arrayBuffer()).byteLength).toBe(
+          input.envelopeByteLength,
+        );
+        return {
+          artifactId: input.artifactId,
+          storageItemId: input.storageItemId,
+          envelopeByteLength: input.envelopeByteLength,
+          promote,
+          discard,
+        };
+      },
+    );
+    let committed: InitialVaultCommit | undefined;
+    const storage = {
+      getOrCreateInstallationWrappingKey: vi.fn(async () => wrappingKey),
+      commitInitialVault: vi.fn(async (input: InitialVaultCommit) => {
+        order.push("commit");
+        committed = input;
+      }),
+    } as unknown as CanonicalIndexedDb;
+
+    await new CanonicalCompleteImportService(storage, NORMAL_STORAGE_REALM, {
+      prepareOpaque,
+    } as never).activateUnknown(fixture);
+
+    expect(prepareOpaque).toHaveBeenCalledOnce();
+    expect(promote).toHaveBeenCalledOnce();
+    expect(discard).not.toHaveBeenCalled();
+    expect(order).toEqual(["promote", "commit"]);
+    if (committed === undefined) throw new Error("missing captured Import commit");
+    expect(committed.immutableItems).toHaveLength(7);
+    expect(committed.replicaSafetyItems).toHaveLength(8);
+  });
+
+  it("preserves the atomic Vault collision and cleans owned Artifact preparation state", async () => {
+    const fixture = await capturedVaultPackage();
+    const wrappingKey = await installationWrappingKey();
+    const promote = vi.fn(async () => undefined);
+    const discard = vi.fn(async () => undefined);
+    const storage = {
+      getOrCreateInstallationWrappingKey: vi.fn(async () => wrappingKey),
+      commitInitialVault: vi.fn(async () => {
+        throw new CanonicalStorageError(
+          "VAULT_ALREADY_EXISTS",
+          "The Vault already exists in this Storage Realm.",
+        );
+      }),
+    } as unknown as CanonicalIndexedDb;
+    const artifacts = {
+      prepareOpaque: vi.fn(async () => ({
+        artifactId: fixture.manifest.opaqueItemInventory.find(({ namespace }) => namespace === 5)
+          ?.logicalId,
+        storageItemId: fixture.manifest.opaqueItemInventory.find(({ namespace }) => namespace === 5)
+          ?.storageItemId,
+        envelopeByteLength: 1,
+        promote,
+        discard,
+      })),
+    };
+
+    await expect(
+      new CanonicalCompleteImportService(
+        storage,
+        NORMAL_STORAGE_REALM,
+        artifacts as never,
+      ).activateUnknown(fixture),
+    ).rejects.toMatchObject({ id: "VAULT_ALREADY_EXISTS" });
+    expect(promote).toHaveBeenCalledOnce();
+    expect(storage.commitInitialVault).toHaveBeenCalledOnce();
+    expect(discard).toHaveBeenCalledOnce();
   });
 });

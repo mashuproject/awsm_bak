@@ -89,6 +89,12 @@ Replica Safety update, cursor advancement, projection update, and cleanup. Resta
 complete valid state. Garbage Collection tests trace every Generation, dependency, preservation
 root, pending workflow, and fence before deletion.
 
+Complete Import tests mutate Genesis possession, descendant signatures, Continuity and Vacuum
+anchors, Baseline checkpoints, wrapper identities, Key Epoch authority, and exact dependency
+closure. Unknown-Vault activation proves Artifact promotion before one initial-Replica commit,
+authoring-free restart through the ordinary open path, collision atomicity, and cleanup or
+reconciliation of preparation-owned state after every failure boundary.
+
 Storage Relief always displays the non-blocking last-copy warning, records only local eviction,
 works with zero Remotes, and treats later absence or corrupt hydration honestly. On-demand Replicas
 can Capture without first hydrating unrelated wrappers.

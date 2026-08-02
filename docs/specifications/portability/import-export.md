@@ -160,7 +160,9 @@ omitted. The full encoded Manifest inserts the resulting digest at key `7`.
 Key Epoch entries are a sorted duplicate-free canonical set. The importer recomputes each Key Epoch
 ID from the Manifest Vault ID and its 32-byte Key Epoch Key. The inventory MUST contain exactly the
 duplicate-free Key Epoch ID set referenced by `opaqueItemInventory`; a missing or unreferenced entry
-is invalid.
+is invalid. Every listed Epoch MUST also be established by the authenticated Authority history;
+encrypting otherwise valid wrappers under an uncommitted key does not authorize installing that
+key as Trusted Secrets.
 
 `continuityProofRoots` is the exact accepted Authority Frontier and is encoded at key `8`. Every Continuity
 Proof Record and authority-semantic dependency reachable from those roots is present in the opaque
@@ -196,6 +198,14 @@ every Vacuum boundary through the selected Authority Frontier. The importer deri
 Replica Safety State—including Generation, causal and Authority Frontiers, Continuity Records,
 active Baseline, current Key Epoch, Required Feature Set, lifecycle, and Vacuum Adoption—from that
 validated state. It does not accept a separately asserted local-state snapshot from the package.
+
+For an unknown Vault ID, activation re-reads and re-verifies every prepared Compact wrapper, wraps
+fresh Replica Safety State, logical resolutions, Vault Directory state, and all authenticated Epoch
+Secrets under the Installation key, and streams every Artifact wrapper into content-addressed local
+storage. Artifact promotion completes before one initial-Vault database transaction exposes its
+resolution. A failed promotion exposes no Replica; a failed or colliding transaction exposes no
+new Replica and leaves any already promoted content-addressed orphan eligible for ordinary
+reconciliation. The imported Vault becomes the selected local Vault but remains authoring-free.
 
 If the installation already knows the Vault ID:
 

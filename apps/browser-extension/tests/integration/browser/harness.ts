@@ -1,5 +1,6 @@
 import { digestArtifactPayload, sealArtifactFrames } from "../../../src/crypto/artifact-stream";
 import { openCompactItem } from "../../../src/crypto/compact";
+import { DEPENDENCY_TYPES } from "../../../src/domain/canonical/dependencies";
 import {
   keyEpochId as deriveKeyEpochId,
   type Identifier,
@@ -54,6 +55,17 @@ import type {
 } from "../../../src/runtime/artifact/canonical-store";
 import { CanonicalCaptureService } from "../../../src/runtime/capture/canonical-service";
 import { CanonicalClientRuntime } from "../../../src/runtime/client/canonical-runtime";
+import { prepareCompleteExportEntry } from "../../../src/runtime/complete-export/container";
+import {
+  type CompleteExportManifestInput,
+  type CompleteExportOpaqueItem,
+  completeExportStateDigest,
+  decodeCompleteExportKeyInventory,
+  decodeCompleteExportManifest,
+  encodeCompleteExportKeyInventory,
+  encodeCompleteExportManifest,
+} from "../../../src/runtime/complete-export/contracts";
+import { CanonicalCompleteImportService } from "../../../src/runtime/complete-import/service";
 import { prepareVaultEpochStorage } from "../../../src/runtime/import/credentials";
 import { CanonicalLibraryProjectionService } from "../../../src/runtime/library/canonical-projection";
 import { createPageSnapshotBlob } from "../../../src/runtime/page-snapshot";
@@ -519,6 +531,155 @@ async function canonicalVaultInitializationScenario(): Promise<unknown> {
     };
   } finally {
     await reopened.close();
+    await deleteBrowserDatabase(databaseName);
+  }
+}
+
+async function canonicalCompleteImportScenario(): Promise<unknown> {
+  const databaseName = `awsm-canonical-complete-import-${crypto.randomUUID()}`;
+  const creation = await prepareCanonicalVaultCreation({
+    label: "Imported research",
+    assertedAt: 1_800_000_000_001,
+  });
+  const stored = [
+    {
+      namespace: 1 as const,
+      logicalId: creation.baseline.recordId,
+      bytes: creation.baselineEnvelope.bytes,
+    },
+    {
+      namespace: 1 as const,
+      logicalId: creation.genesis.recordId,
+      bytes: creation.genesisEnvelope.bytes,
+    },
+    {
+      namespace: 2 as const,
+      logicalId: creation.recoveryKeyEnvelope.id,
+      bytes: creation.recoveryKeyEnvelope.envelope.bytes,
+    },
+    {
+      namespace: 2 as const,
+      logicalId: creation.clientKeyEnvelope.id,
+      bytes: creation.clientKeyEnvelope.envelope.bytes,
+    },
+  ];
+  const opaqueItemInventory: CompleteExportOpaqueItem[] = stored.map((item) => {
+    const entry = prepareCompleteExportEntry(2, item.bytes);
+    return {
+      namespace: item.namespace,
+      logicalId: item.logicalId,
+      storageItemId: decodeOpaqueEnvelope(item.bytes).storageItemId,
+      keyEpochId: creation.secrets.keyEpoch.id,
+      byteLength: entry.header.byteLength,
+      byteDigest: entry.header.byteDigest,
+    };
+  });
+  const manifestInput: CompleteExportManifestInput = {
+    vaultId: creation.ids.vaultId,
+    generationId: creation.ids.generationId,
+    frontier: [creation.genesis.recordId],
+    requiredFeatureSetId: creation.baseline.requiredFeatureSetId,
+    typedLogicalRoots: [
+      { type: DEPENDENCY_TYPES.VaultRecord, id: creation.genesis.recordId },
+      { type: DEPENDENCY_TYPES.VaultBaseline, id: creation.baseline.recordId },
+    ],
+    opaqueItemInventory,
+    continuityProofRoots: [creation.genesis.recordId],
+  };
+  const manifest = decodeCompleteExportManifest(
+    encodeCompleteExportManifest({
+      format: 1,
+      ...manifestInput,
+      stateDigest: completeExportStateDigest(manifestInput),
+    }),
+  );
+  const keyInventory = decodeCompleteExportKeyInventory(
+    encodeCompleteExportKeyInventory({
+      vaultId: creation.ids.vaultId,
+      generationId: creation.ids.generationId,
+      entries: [
+        {
+          keyEpochId: creation.secrets.keyEpoch.id,
+          keyEpochKey: creation.secrets.keyEpoch.key,
+        },
+      ],
+    }),
+  );
+  const bytesByStorageId = new Map(
+    stored.map((item, index) => [
+      bytesKey(opaqueItemInventory[index]?.storageItemId ?? new Uint8Array()),
+      item.bytes,
+    ]),
+  );
+  const source = {
+    openOpaque: async (item: CompleteExportOpaqueItem) => {
+      const bytes = bytesByStorageId.get(bytesKey(item.storageItemId));
+      if (bytes === undefined) throw new Error("Missing Complete Import fixture bytes");
+      return new Blob([Uint8Array.from(bytes)]).stream();
+    },
+  };
+  const first = new CanonicalIndexedDb(databaseName);
+  try {
+    await new CanonicalCompleteImportService(
+      first,
+      NORMAL_STORAGE_REALM,
+      new CanonicalOpfsArtifactStore(),
+    ).activateUnknown({ manifest, keyInventory, source });
+    const recordCount = (
+      await first.listBytes(
+        NORMAL_STORAGE_REALM,
+        NAMESPACES.vaultRecord.key,
+        bytesKey(creation.ids.vaultId),
+      )
+    ).length;
+    const resolutionCount = (
+      await first.listBytes(
+        NORMAL_STORAGE_REALM,
+        NAMESPACES.logicalResolution.key,
+        bytesKey(creation.ids.vaultId),
+      )
+    ).length;
+    const epochCount = (
+      await first.listBytes(
+        NORMAL_STORAGE_REALM,
+        NAMESPACES.epochSecret.key,
+        bytesKey(creation.ids.vaultId),
+      )
+    ).length;
+    await first.close();
+
+    const restarted = new CanonicalIndexedDb(databaseName);
+    try {
+      const opened = await new CanonicalVaultService(restarted, NORMAL_STORAGE_REALM).openVault(
+        creation.ids.vaultId,
+      );
+      let duplicate = "missing";
+      try {
+        await new CanonicalCompleteImportService(
+          restarted,
+          NORMAL_STORAGE_REALM,
+          new CanonicalOpfsArtifactStore(),
+        ).activateUnknown({ manifest, keyInventory, source });
+      } catch (error) {
+        duplicate = canonicalStorageErrorId(error);
+      }
+      return {
+        vaultLabel: opened.directory.label,
+        readOnly:
+          opened.clientSecret === null &&
+          opened.replicaState.authoringClientCredentialId === null &&
+          opened.replicaState.memberId === null,
+        recordCount,
+        resolutionCount,
+        epochCount,
+        restartedReadable: sameBytes(opened.genesis.recordId, creation.genesis.recordId),
+        duplicate,
+      };
+    } finally {
+      await restarted.close();
+    }
+  } finally {
+    await first.close().catch(() => undefined);
     await deleteBrowserDatabase(databaseName);
   }
 }
@@ -1418,6 +1579,29 @@ async function canonicalOpfsArtifactScenario(): Promise<unknown> {
   const opened = await store.open(prepared.storageItemId);
   const openedBytes = new Uint8Array(await new Response(opened).arrayBuffer());
   const envelope = decodeOpaqueEnvelope(openedBytes);
+  await store.remove(prepared.storageItemId);
+  const imported = await store.prepareOpaque({
+    artifactId,
+    storageItemId: prepared.storageItemId,
+    envelopeByteLength: openedBytes.byteLength,
+    source: new Blob([Uint8Array.from(openedBytes)]).stream(),
+  });
+  const importedBeforePromotion = await store.has(prepared.storageItemId);
+  await imported.promote();
+  const importedPresent = await store.has(prepared.storageItemId);
+  const tamperedBytes = Uint8Array.from(openedBytes);
+  tamperedBytes[tamperedBytes.byteLength - 1] = (tamperedBytes.at(-1) ?? 0) ^ 1;
+  let opaqueTamperRejected = false;
+  try {
+    await store.prepareOpaque({
+      artifactId,
+      storageItemId: prepared.storageItemId,
+      envelopeByteLength: tamperedBytes.byteLength,
+      source: new Blob([tamperedBytes]).stream(),
+    });
+  } catch {
+    opaqueTamperRejected = true;
+  }
 
   const root = await navigator.storage.getDirectory();
   const items = await (
@@ -1455,6 +1639,9 @@ async function canonicalOpfsArtifactScenario(): Promise<unknown> {
     retainedAfterDiscard,
     frameCount: prepared.stream.frameCount,
     envelopeStorageIdMatches: sameBytes(envelope.storageItemId, prepared.storageItemId),
+    importedBeforePromotion,
+    importedPresent,
+    opaqueTamperRejected,
     corruptionDetected,
     repairedPresent,
     orphanRemoved,
@@ -7482,10 +7669,13 @@ async function run(): Promise<void> {
                                                                                                                                         : scenario ===
                                                                                                                                             "canonical-member-recovery"
                                                                                                                                           ? await canonicalMemberRecoveryScenario()
-                                                                                                                                          : {
-                                                                                                                                              error:
-                                                                                                                                                "unknown scenario",
-                                                                                                                                            };
+                                                                                                                                          : scenario ===
+                                                                                                                                              "canonical-complete-import"
+                                                                                                                                            ? await canonicalCompleteImportScenario()
+                                                                                                                                            : {
+                                                                                                                                                error:
+                                                                                                                                                  "unknown scenario",
+                                                                                                                                              };
   const output = document.querySelector("#result");
   if (output !== null) {
     output.textContent = JSON.stringify(result);

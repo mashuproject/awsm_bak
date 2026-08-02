@@ -73,6 +73,18 @@ test("atomically restores an encrypted canonical Vault after browser restart", a
   });
 });
 
+test("atomically activates and restarts an unknown canonical Complete Import", async ({ page }) => {
+  await expect(scenario(page, "canonical-complete-import")).resolves.toEqual({
+    vaultLabel: "Imported research",
+    readOnly: true,
+    recordCount: 2,
+    resolutionCount: 4,
+    epochCount: 1,
+    restartedReadable: true,
+    duplicate: "VAULT_ALREADY_EXISTS",
+  });
+});
+
 test("requires Recovery Phrase confirmation before committing a canonical Vault", async ({
   page,
 }) => {
@@ -218,6 +230,9 @@ test("streams canonical multi-frame Artifact wrappers through content-addressed 
     retainedAfterDiscard: true,
     frameCount: 2,
     envelopeStorageIdMatches: true,
+    importedBeforePromotion: false,
+    importedPresent: true,
+    opaqueTamperRejected: true,
     corruptionDetected: true,
     repairedPresent: true,
     orphanRemoved: true,
