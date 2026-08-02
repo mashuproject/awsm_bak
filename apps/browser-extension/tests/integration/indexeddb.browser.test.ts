@@ -85,6 +85,7 @@ test("atomically activates Complete Import and restores canonical Backup snapsho
     predecessorMaterializationsRemoved: true,
     predecessorAfterAdoption: { relation: "incoming-generation-ancestor", changed: false },
     successorStatePreserved: true,
+    garbageCollectionReclaimedPredecessor: true,
     backupSnapshotCommitted: true,
     backupRestoredReadable: true,
     backupKnownNoop: true,

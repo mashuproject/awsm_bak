@@ -116,6 +116,15 @@ Replica mutation, activate an unknown Vault as authoring-free, route a known Vau
 Import collision rules, and prove restart in real browser storage. Retention tests trace every
 cross-Snapshot dependency before removing a Snapshot or shared entry.
 
+Replica Garbage Collection tests authenticate the current Replica before tracing, retain active and
+explicitly preserved causal branches, retain only Authority Parents and typed dependencies for the
+Continuity Proof, and reclaim an adopted successor's Initial Baseline only when no other root needs
+it. Transaction tests require exact prior-Replica compare-and-swap for compact bytes, resolutions,
+and unused Epoch Secrets; active fences cause no mutation. Heavy-wrapper tests preserve the cleanup
+identity across interruption and exclude every Storage Item retained through physical
+deduplication. Real-browser proof deletes predecessor compact state after Vacuum Adoption and then
+reopens the successor through the ordinary authority path.
+
 Storage Relief always displays the non-blocking last-copy warning, records only local eviction,
 works with zero Remotes, and treats later absence or corrupt hydration honestly. On-demand Replicas
 can Capture without first hydrating unrelated wrappers.

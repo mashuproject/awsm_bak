@@ -112,6 +112,7 @@ import {
   createKeywordStatistics,
   projectionGeneration,
 } from "../../../src/runtime/search/statistics";
+import { CanonicalReplicaGarbageCollectionService } from "../../../src/runtime/storage/garbage-collection-service";
 import type { StorageReliefFaults } from "../../../src/runtime/storage-relief/contracts";
 import { StorageReliefJobRunner } from "../../../src/runtime/storage-relief/runner";
 import { InterruptedStaleDiscardReconciler } from "../../../src/runtime/synchronization/recovery-reconciliation";
@@ -932,6 +933,7 @@ async function canonicalCompleteImportScenario(): Promise<unknown> {
   let predecessorMaterializationsRemoved = false;
   let predecessorAfterAdoption: unknown = null;
   let successorStatePreserved = false;
+  let garbageCollectionReclaimedPredecessor = false;
   try {
     await new CanonicalCompleteImportService(
       vacuumStorage,
@@ -989,6 +991,28 @@ async function canonicalCompleteImportScenario(): Promise<unknown> {
       ).replicaState.generationId,
       vacuum.successor.baseline.generationId,
     );
+    const vaults = new CanonicalVaultService(vacuumStorage, NORMAL_STORAGE_REALM);
+    const garbageCollection = await new CanonicalReplicaGarbageCollectionService({
+      replays: new CanonicalReplayService(vaults),
+    }).collect(creation.ids.vaultId);
+    const reopenedAfterGarbageCollection = await vaults.openVault(creation.ids.vaultId);
+    garbageCollectionReclaimedPredecessor =
+      garbageCollection.removedCompactItemCount >= 1 &&
+      garbageCollection.removedResolutionCount >= 1 &&
+      (await vacuumStorage.getBytes(NORMAL_STORAGE_REALM, {
+        namespace: NAMESPACES.vaultRecord.key,
+        scopeKey: vaultKey,
+        itemKey: bytesKey(creation.baseline.recordId),
+      })) === undefined &&
+      (await vacuumStorage.getBytes(NORMAL_STORAGE_REALM, {
+        namespace: NAMESPACES.logicalResolution.key,
+        scopeKey: vaultKey,
+        itemKey: `1:${bytesKey(creation.baseline.recordId)}`,
+      })) === undefined &&
+      sameBytes(
+        reopenedAfterGarbageCollection.replicaState.generationId,
+        vacuum.successor.baseline.generationId,
+      );
   } finally {
     await vacuumStorage.close();
     await deleteBrowserDatabase(vacuumDatabaseName);
@@ -1160,6 +1184,7 @@ async function canonicalCompleteImportScenario(): Promise<unknown> {
         predecessorMaterializationsRemoved,
         predecessorAfterAdoption,
         successorStatePreserved,
+        garbageCollectionReclaimedPredecessor,
         backupSnapshotCommitted,
         backupRestoredReadable,
         backupKnownNoop,

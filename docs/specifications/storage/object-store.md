@@ -123,6 +123,12 @@ Replica Garbage Collection may delete an item only after a complete current trac
 reachable from any root. A predecessor commitment in a successor Baseline is audit linkage, not a
 reachability edge.
 
+The trusted client authenticates the active Replica before tracing. An adopted successor retains
+Genesis, the signed Authority Parent graph, every authority-validation dependency, the current
+Baseline, and current causal state. It does not retain Genesis's Initial Baseline commitment or a
+Continuity Event's unrelated causal Content parents unless another recognized Generation or local
+preservation root reaches them. Any active Garbage Collection fence blocks the trace.
+
 An opaque Replica Host cannot run semantic Garbage Collection. It may delete exact opaque items
 when instructed by an authorized trusted client, apply disclosed non-semantic Host policy, or reap
 an entire Hosted Replica. None proves global unreachability.
@@ -142,6 +148,14 @@ An operation that cannot atomically commit all physical parts MUST use a sealed 
 5. reclaim abandoned Prepared Data after the outcome is known.
 
 No incomplete Bundle, Baseline, Artifact, or authority dependency becomes reachable.
+
+Garbage Collection applies the same boundary in reverse. Compact items, their protected local
+resolutions, and Key Epoch Secrets made unused by that exact deletion commit together against the
+prior Replica Safety State. A streamable wrapper remains Present with its resolution and required
+Epoch Secret until a durable cleanup Job owns its exact Opaque Storage Item ID, holds the narrow
+maintenance lease, revalidates that no current resolution retains it, removes it idempotently, and
+then retires the obsolete resolution and any newly unused secret. Merely reporting a wrapper as a
+cleanup candidate is not successful reclamation.
 
 # 11. Import and synchronization
 

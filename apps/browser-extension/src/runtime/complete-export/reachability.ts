@@ -27,6 +27,11 @@ export interface CompleteExportReachabilityInput {
   readonly loadFeatureManifest?: (
     id: Identifier<"FeatureManifest">,
   ) => Promise<Uint8Array | undefined>;
+  /**
+   * Treats Genesis's Initial Baseline commitment as historical evidence after an adopted Vacuum.
+   * Only trusted Replica Garbage Collection may select this policy.
+   */
+  readonly omitGenesisBaselineDependency?: boolean;
 }
 
 export interface CompleteExportReachability {
@@ -142,7 +147,18 @@ export async function collectCompleteExportReachability(
     records.set(recordKey, next.id);
     recordModes.set(recordKey, next.mode);
     assertBound();
-    for (const dependency of record.dependencies) addDependency(dependency);
+    for (const dependency of record.dependencies) {
+      if (
+        input.omitGenesisBaselineDependency &&
+        isEvent(record) &&
+        record.family === 1 &&
+        record.type === 1 &&
+        dependency.type === DEPENDENCY_TYPES.VaultBaseline
+      ) {
+        continue;
+      }
+      addDependency(dependency);
+    }
     if (isEvent(record)) {
       for (const authorityParent of record.authorityParentRecordIds) {
         recordQueue.push({ id: authorityParent, mode: 1 });

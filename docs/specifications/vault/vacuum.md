@@ -188,6 +188,12 @@ Genesis to the current Vacuum Event. It MAY also remove the Initial Baseline ref
 after a successor is adopted, because fresh Continuity verification bootstraps initial authority
 from Genesis and authenticates the current Baseline through the Vacuum chain.
 
+Before reclaiming those compact representations, the Client authenticates and replays the current
+successor, computes the complete trace, and commits bytes, matching local resolutions, and
+newly-unused Epoch Secrets against the exact prior Replica Safety State. Any active Garbage
+Collection fence blocks that commit. Unreachable heavy wrappers remain tracked until the separate
+resumable cleanup stage satisfies the Object Store cross-backend contract.
+
 # 8. Invariants
 
 - Vault ID remains stable; Generation ID changes.

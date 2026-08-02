@@ -117,6 +117,19 @@ fence. It deletes only an exact unreachable opaque representation, never a logic
 required by a recognized state. A Continuity Event's unrelated causal Content parent ID does not
 retain that Content Record; its signed Authority Parents and authority-validation dependencies do.
 
+The Runtime first authenticates and replays the selected Replica. A nonempty Garbage Collection
+fence prevents collection. For an adopted successor, Genesis and the complete Continuity Proof stay
+reachable while Genesis's Initial Baseline and unrelated predecessor Content may be reclaimed when
+no explicit preservation root retains them. Compact bytes, matching Logical Resolutions, and
+newly-unused Epoch Secrets are one exact prior-state compare-and-swap.
+
+Heavy Artifact wrappers cross the transactional-store boundary. The trace may identify an
+unreachable wrapper, but its protected Logical Resolution and required Epoch Secret remain until a
+durable Replica Garbage Collection Job completes lease-serialized physical cleanup. Physical
+deduplication keeps a wrapper whenever any retained logical resolution names the same Opaque
+Storage Item ID. Failure or restart therefore leaves either a resumable cleanup identity or the old
+safe state, never an untracked missing wrapper.
+
 Materializations may be replaced when their generation, corpus revision, algorithm, tokenizer,
 model, vector, quantization, ranking, or schema identity changes. Vacuum invalidates predecessor-
 Generation Materializations rather than migrating them.
