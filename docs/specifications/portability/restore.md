@@ -24,6 +24,13 @@ Features, Baseline authentication, the complete current causal and dependency cl
 Continuity Proof, every wrapper, and the final state digest. It does not require discarded Content
 parents named only inside retained Continuity Event bytes.
 
+The exact encrypted package byte length and SHA-256 digest MUST equal the enclosing opaque Snapshot
+Manifest before any Replica mutation. The Complete Export Manifest remains inside that encrypted
+package and is independently decoded and authenticated after client-side decryption; it is never
+copied into the outer Snapshot metadata. Package parsing may stage opaque Prepared Data first, but
+malformed Snapshot metadata, wrong protection, truncation, extension, substitution, or semantic
+failure exposes no Replica and discards that staging.
+
 Unknown Required Features, unavailable entries, corrupt wrappers, wrong protection secrets, or
 incomplete history fail the entire Restore. No partially restored Vault appears in the Workspace.
 
@@ -40,6 +47,14 @@ For a known Vault ID, Restore applies the same collision rules as Complete Impor
 - verify and explicitly adopt a Vacuum successor;
 - preserve divergent or unpublished local work through an offered safe outcome; and
 - never keep two active Workspace entries with the same Vault ID.
+
+Restore determines only whether the Vault ID is already present, then delegates activation or
+reconciliation to the ordinary Complete Import Runtime. That Runtime reruns semantic validation,
+uses the exact prior-Replica compare-and-swap for accepted changes, and returns equal, ancestor, or
+divergent input without mutation. A successful unknown-Vault Restore remains authoring-free. If
+another activation establishes the same Vault ID after the presence check, the losing Restore
+handles the exact destination collision by rerunning ordinary known-Vault reconciliation over the
+still-verified Prepared Data; unrelated storage failures remain failures.
 
 # 4. Authoring after restore
 
@@ -58,6 +73,8 @@ authority when independent continued work is desired.
 
 Activation is one atomic safety-state transition. Failure before it leaves no active Replica.
 Cleanup of Prepared Data is idempotent and cannot delete Backup bytes or another Realm's state.
+Decoded package Key Epoch Key copies are wiped after activation, reconciliation, or failure; the
+passphrase string follows the platform's documented JavaScript zeroization limitation.
 
 # 7. Invariants
 

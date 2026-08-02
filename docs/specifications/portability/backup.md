@@ -27,6 +27,43 @@ A Snapshot may reference earlier entries in the same verified Backup Set for ded
 dependency graph is explicit, content-addressed, and closed under retention. No Snapshot relies on
 an active Replica or Host after successful verification.
 
+The base self-contained Snapshot stores one exact Complete Export package. Reusing that encrypted
+container and semantic Manifest does not make the Backup Set a live Replica or synchronization
+participant; the Backup Set adds destination verification, immutable Snapshot publication, and
+retention semantics. Cross-Snapshot entry references are an optional physical optimization and
+MUST NOT be required to restore a self-contained Snapshot.
+
+## 2.1 Snapshot Manifest
+
+The canonical initial Snapshot Manifest is:
+
+```text
+{
+  0: 1,                           // Snapshot Manifest format
+  1: backupSetId,                 // 32 random nonzero bytes
+  2: snapshotId,                  // 32-byte derived identity
+  3: 1,                           // Complete Export passphrase protection profile
+  4: packageByteLength,           // positive safe integer
+  5: packageByteDigest            // SHA-256 of exact encrypted package bytes
+}
+```
+
+`snapshotId` is:
+
+```text
+SHA-256(Transcript(
+  "awsm:backup-snapshot-id:v1",
+  [CanonicalCBOR({0, 1, 3, 4, 5})]
+))
+```
+
+The outer Snapshot Manifest exposes no Vault ID, Generation, Frontier, semantic Manifest, opaque
+inventory, label, or Key Epoch material. Its exact encrypted package digest transitively binds the
+Complete Export Vault, Generation, Frontiers, Required Feature Set, state digest, logical
+reachability, Continuity Proof, and opaque inventory that the trusted Client verifies only after
+decryption. Unknown fields, profiles, or formats fail closed. Creation time and destination are
+Backup Set-local policy metadata and never influence Snapshot identity.
+
 # 3. Protection
 
 Backup protection uses either the Complete Export passphrase profile or a separately configured
@@ -40,6 +77,13 @@ authoring unavailable.
 Creation authenticates the selected Frontier, retrieves every required wrapper, writes immutable
 entries, verifies the destination byte-for-byte, then commits the Snapshot manifest last. An
 interrupted uncommitted Snapshot is cleanup state and is never reported as a successful backup.
+
+For a self-contained Snapshot, the Runtime reopens the exact destination bytes, decrypts and stages
+the package through the ordinary Complete Import parser, verifies its byte length and digest,
+authenticates its complete semantic and Authority closure, and requires the verified Complete Export
+Manifest to equal the producer's Manifest byte-for-byte. Only then may the destination atomically
+publish the Snapshot Manifest. Failure aborts the unpublished destination state and discards
+verification Prepared Data; a published Snapshot is not invalidated by later cleanup residue.
 
 # 5. Retention
 

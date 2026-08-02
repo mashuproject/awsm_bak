@@ -9,6 +9,11 @@ import type { CanonicalIndexedDb } from "../../src/drivers/indexeddb/canonical-d
 import { NORMAL_STORAGE_REALM } from "../../src/drivers/indexeddb/canonical-schema";
 import type { CanonicalArtifactStore } from "../../src/runtime/artifact/canonical-store";
 import {
+  type CanonicalBackupPreparedSnapshot,
+  CanonicalBackupService,
+  type CanonicalBackupVerificationArea,
+} from "../../src/runtime/backup/service";
+import {
   decodeCompleteExportEntryHeader,
   openCompleteExportStream,
 } from "../../src/runtime/complete-export/container";
@@ -169,7 +174,8 @@ describe("canonical Complete Export Service", () => {
     } as unknown as CanonicalArtifactStore;
     const encrypted: Uint8Array[] = [];
 
-    const result = await new CanonicalCompleteExportService(replays, artifacts).export({
+    const exporter = new CanonicalCompleteExportService(replays, artifacts);
+    const result = await exporter.export({
       vaultId: creation.ids.vaultId,
       passphrase: "correct horse battery staple",
       salt: new Uint8Array(16).fill(7),
@@ -222,5 +228,71 @@ describe("canonical Complete Export Service", () => {
     expect(vaults.listEpochSecrets).toHaveBeenCalledWith(vault);
     expect(result.opaqueItemCount).toBe(5);
     expect(local.commit.replicaState.bytes).toEqual(replicaBytes);
+
+    const backupBytes: Uint8Array[] = [];
+    let committedSnapshot: Uint8Array | undefined;
+    const prepared: CanonicalBackupPreparedSnapshot = {
+      write: async (bytes) => {
+        backupBytes.push(Uint8Array.from(bytes));
+      },
+      finish: async () => undefined,
+      open: async function* () {
+        for (const bytes of backupBytes) yield Uint8Array.from(bytes);
+      },
+      commit: async (bytes) => {
+        committedSnapshot = Uint8Array.from(bytes);
+      },
+      abort: async () => undefined,
+    };
+    const staged = new Map<string, Uint8Array>();
+    const verification: CanonicalBackupVerificationArea = {
+      beginOpaque: async (item) => {
+        const chunks: Uint8Array[] = [];
+        const itemKey = Buffer.from(item.storageItemId).toString("hex");
+        return {
+          write: async (bytes) => {
+            chunks.push(Uint8Array.from(bytes));
+          },
+          finish: async () => {
+            staged.set(itemKey, concatBytes(chunks));
+          },
+          abort: async () => {
+            staged.delete(itemKey);
+          },
+        };
+      },
+      abortAll: async () => {
+        staged.clear();
+      },
+      openOpaque: async (item) => {
+        const bytes = staged.get(Buffer.from(item.storageItemId).toString("hex"));
+        if (bytes === undefined) throw new Error("missing staged Backup item");
+        return new ReadableStream({
+          start(controller) {
+            controller.enqueue(Uint8Array.from(bytes));
+            controller.close();
+          },
+        });
+      },
+      discard: async () => {
+        staged.clear();
+      },
+    };
+    await expect(
+      new CanonicalBackupService({
+        exporter,
+        createVerificationArea: async () => verification,
+      }).createSnapshot({
+        backupSetId: new Uint8Array(32).fill(12),
+        vaultId: creation.ids.vaultId,
+        passphrase: "correct horse battery staple",
+        salt: new Uint8Array(16).fill(13),
+        nonce: new Uint8Array(24).fill(14),
+        prepared,
+      }),
+    ).rejects.toThrow(/Key Epoch is not authenticated/u);
+
+    expect(committedSnapshot).toBeUndefined();
+    expect(staged.size).toBe(0);
   }, 20_000);
 });

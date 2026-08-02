@@ -73,7 +73,9 @@ test("atomically restores an encrypted canonical Vault after browser restart", a
   });
 });
 
-test("atomically activates and restarts an unknown canonical Complete Import", async ({ page }) => {
+test("atomically activates Complete Import and restores canonical Backup snapshots", async ({
+  page,
+}) => {
   await expect(scenario(page, "canonical-complete-import")).resolves.toEqual({
     vaultLabel: "Imported research",
     readOnly: true,
@@ -83,6 +85,9 @@ test("atomically activates and restarts an unknown canonical Complete Import", a
     predecessorMaterializationsRemoved: true,
     predecessorAfterAdoption: { relation: "incoming-generation-ancestor", changed: false },
     successorStatePreserved: true,
+    backupSnapshotCommitted: true,
+    backupRestoredReadable: true,
+    backupKnownNoop: true,
     recordCount: 2,
     resolutionCount: 4,
     epochCount: 1,

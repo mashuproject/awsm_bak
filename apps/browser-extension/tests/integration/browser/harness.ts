@@ -53,9 +53,18 @@ import type {
   CanonicalArtifactStore,
   PreparedArtifactRepresentation,
 } from "../../../src/runtime/artifact/canonical-store";
+import type {
+  CanonicalBackupPreparedSnapshot,
+  CanonicalBackupVerificationArea,
+} from "../../../src/runtime/backup/service";
+import { CanonicalBackupService } from "../../../src/runtime/backup/service";
 import { CanonicalCaptureService } from "../../../src/runtime/capture/canonical-service";
 import { CanonicalClientRuntime } from "../../../src/runtime/client/canonical-runtime";
-import { prepareCompleteExportEntry } from "../../../src/runtime/complete-export/container";
+import {
+  prepareCompleteExportEntry,
+  sealCompleteExportStream,
+  sequenceCompleteExportEntries,
+} from "../../../src/runtime/complete-export/container";
 import {
   type CompleteExportManifestInput,
   type CompleteExportOpaqueItem,
@@ -76,6 +85,7 @@ import {
   createDeviceKeyEnvelope,
 } from "../../../src/runtime/recovery/device";
 import { createRecoveryKit } from "../../../src/runtime/recovery/kit";
+import { CanonicalRestoreService } from "../../../src/runtime/restore/service";
 import { buildSearchDocument } from "../../../src/runtime/search/documents";
 import { SearchKeywordIndexer } from "../../../src/runtime/search/indexer";
 import { buildKeywordRow } from "../../../src/runtime/search/keyword";
@@ -716,6 +726,65 @@ async function canonicalCompleteImportScenario(): Promise<unknown> {
     };
   };
   const initialPackage = packageFrom(stored, creation.genesis.recordId);
+  const createBackupVerificationArea = (): CanonicalBackupVerificationArea => {
+    const staged = new Map<string, Uint8Array>();
+    return {
+      beginOpaque: async (item) => {
+        const chunks: Uint8Array[] = [];
+        const itemKey = bytesKey(item.storageItemId);
+        return {
+          write: async (bytes) => {
+            chunks.push(Uint8Array.from(bytes));
+          },
+          finish: async () => {
+            staged.set(itemKey, concatBytes(chunks));
+          },
+          abort: async () => {
+            staged.delete(itemKey);
+          },
+        };
+      },
+      abortAll: async () => {
+        staged.clear();
+      },
+      openOpaque: async (item) => {
+        const bytes = staged.get(bytesKey(item.storageItemId));
+        if (bytes === undefined) throw new Error("Missing staged Backup wrapper");
+        return new Blob([Uint8Array.from(bytes)]).stream();
+      },
+      discard: async () => {
+        staged.clear();
+      },
+    };
+  };
+  const backupOpaqueEntries = await Promise.all(
+    initialPackage.manifest.opaqueItemInventory.map(async (item) =>
+      prepareCompleteExportEntry(
+        2,
+        new Uint8Array(
+          await new Response(await initialPackage.source.openOpaque(item)).arrayBuffer(),
+        ),
+      ),
+    ),
+  );
+  backupOpaqueEntries.sort((left, right) =>
+    bytesKey(left.header.entryId).localeCompare(bytesKey(right.header.entryId)),
+  );
+  const encryptedBackupPackage: Uint8Array[] = [];
+  const backupPassphrase = "correct horse battery staple";
+  const sealedBackupPackage = await sealCompleteExportStream({
+    passphrase: backupPassphrase,
+    salt: new Uint8Array(16).fill(71),
+    nonce: new Uint8Array(24).fill(72),
+    plaintext: sequenceCompleteExportEntries([
+      prepareCompleteExportEntry(1, encodeCompleteExportManifest(initialPackage.manifest)),
+      ...backupOpaqueEntries,
+      prepareCompleteExportEntry(3, encodeCompleteExportKeyInventory(initialPackage.keyInventory)),
+    ]),
+    write: async (bytes) => {
+      encryptedBackupPackage.push(Uint8Array.from(bytes));
+    },
+  });
   const [reprotectedBaseline, reprotectedGenesis] = await Promise.all([
     sealCompactItem({
       vaultId: creation.ids.vaultId,
@@ -924,6 +993,84 @@ async function canonicalCompleteImportScenario(): Promise<unknown> {
     await vacuumStorage.close();
     await deleteBrowserDatabase(vacuumDatabaseName);
   }
+  const backupRestoreDatabaseName = `awsm-canonical-backup-restore-${crypto.randomUUID()}`;
+  const backupRestoreStorage = new CanonicalIndexedDb(backupRestoreDatabaseName);
+  let backupSnapshotCommitted = false;
+  let backupRestoredReadable = false;
+  let backupKnownNoop = false;
+  try {
+    const backupBytes: Uint8Array[] = [];
+    let snapshotManifestBytes: Uint8Array | undefined;
+    const prepared: CanonicalBackupPreparedSnapshot = {
+      write: async (bytes) => {
+        backupBytes.push(Uint8Array.from(bytes));
+      },
+      finish: async () => undefined,
+      open: async function* () {
+        for (const bytes of backupBytes) yield Uint8Array.from(bytes);
+      },
+      commit: async (bytes) => {
+        snapshotManifestBytes = Uint8Array.from(bytes);
+      },
+      abort: async () => undefined,
+    };
+    const backup = await new CanonicalBackupService({
+      exporter: {
+        export: async (input) => {
+          for (const bytes of encryptedBackupPackage) await input.write(bytes);
+          return {
+            manifest: initialPackage.manifest,
+            opaqueItemCount: initialPackage.manifest.opaqueItemInventory.length,
+            frameCount: sealedBackupPackage.frameCount,
+          };
+        },
+      },
+      createVerificationArea: async () => createBackupVerificationArea(),
+    }).createSnapshot({
+      backupSetId: new Uint8Array(32).fill(73),
+      vaultId: creation.ids.vaultId,
+      passphrase: backupPassphrase,
+      salt: new Uint8Array(16).fill(71),
+      nonce: new Uint8Array(24).fill(72),
+      prepared,
+    });
+    if (snapshotManifestBytes === undefined) throw new Error("Backup did not commit its Snapshot");
+    backupSnapshotCommitted = true;
+    const vaults = new CanonicalVaultService(backupRestoreStorage, NORMAL_STORAGE_REALM);
+    const completeImports = new CanonicalCompleteImportService(
+      backupRestoreStorage,
+      NORMAL_STORAGE_REALM,
+      new CanonicalOpfsArtifactStore(),
+    );
+    const restores = new CanonicalRestoreService({ vaults, completeImports });
+    const restored = await restores.restore({
+      snapshotManifestBytes,
+      passphrase: backupPassphrase,
+      encrypted: (async function* () {
+        for (const bytes of backupBytes) yield Uint8Array.from(bytes);
+      })(),
+      verification: createBackupVerificationArea(),
+    });
+    const opened = await vaults.openVault(creation.ids.vaultId);
+    backupRestoredReadable =
+      restored.kind === "activated" &&
+      sameBytes(restored.snapshotId, backup.snapshot.snapshotId) &&
+      sameBytes(opened.genesis.recordId, creation.genesis.recordId) &&
+      opened.clientSecret === null;
+    const repeated = await restores.restore({
+      snapshotManifestBytes,
+      passphrase: backupPassphrase,
+      encrypted: (async function* () {
+        for (const bytes of backupBytes) yield Uint8Array.from(bytes);
+      })(),
+      verification: createBackupVerificationArea(),
+    });
+    backupKnownNoop =
+      repeated.kind === "reconciled" && repeated.relation === "equal" && !repeated.changed;
+  } finally {
+    await backupRestoreStorage.close();
+    await deleteBrowserDatabase(backupRestoreDatabaseName);
+  }
   const first = new CanonicalIndexedDb(databaseName);
   try {
     await new CanonicalCompleteImportService(
@@ -1013,6 +1160,9 @@ async function canonicalCompleteImportScenario(): Promise<unknown> {
         predecessorMaterializationsRemoved,
         predecessorAfterAdoption,
         successorStatePreserved,
+        backupSnapshotCommitted,
+        backupRestoredReadable,
+        backupKnownNoop,
         recordCount,
         resolutionCount,
         epochCount,

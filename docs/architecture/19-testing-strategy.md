@@ -108,6 +108,14 @@ adoption tests reopen the successor through the ordinary Vault path, invalidate 
 and Search Materializations in the same compare-and-swap transaction, preserve local safety roots,
 and leave predecessor authoritative bytes available to separate Garbage Collection.
 
+Backup tests require exact destination readback before manifest-last Snapshot publication, complete
+package and semantic validation, no committed Snapshot after write, readback, protection,
+authentication, or commit failure, and cleanup of Prepared Data and Key Epoch copies. Restore tests
+bind the encrypted package length and digest to the Snapshot, reject Manifest substitution before
+Replica mutation, activate an unknown Vault as authoring-free, route a known Vault through ordinary
+Import collision rules, and prove restart in real browser storage. Retention tests trace every
+cross-Snapshot dependency before removing a Snapshot or shared entry.
+
 Storage Relief always displays the non-blocking last-copy warning, records only local eviction,
 works with zero Remotes, and treats later absence or corrupt hydration honestly. On-demand Replicas
 can Capture without first hydrating unrelated wrappers.
