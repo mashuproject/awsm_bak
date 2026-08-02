@@ -123,7 +123,19 @@ it. Transaction tests require exact prior-Replica compare-and-swap for compact b
 and unused Epoch Secrets; active fences cause no mutation. Heavy-wrapper tests preserve the cleanup
 identity across interruption and exclude every Storage Item retained through physical
 deduplication. Real-browser proof deletes predecessor compact state after Vacuum Adoption and then
-reopens the successor through the ordinary authority path.
+reopens the successor through the ordinary authority path. It also creates a real unreachable
+streamable wrapper, interrupts after OPFS removal, proves the Job, fence, resolution, and Epoch
+safety state survive, expires and reacquires the lease, repeats deletion idempotently, and proves
+the final conditional transaction removes the fence and resolution, retains one Succeeded Job with
+the exact whole-operation outcome, and leaves the wrapper absent before ordinary restart. A later
+heavy-cleanup proof conditionally retires the prior terminal Job when it installs the next Job and
+fences. Concurrent promotion tests reject either the exact fenced Artifact ID or Storage Item ID
+while permitting unrelated pairs. Resume tests also inject newly unreachable compact state under a
+candidate Epoch and prove that the bounded Job leaves both for the next collection.
+
+Physical-deduplication tests retain a wrapper reached by any logical Artifact, reclaim unreachable
+alias resolutions without scheduling physical deletion, and reject conflicting Key Epoch claims
+for one exact wrapper.
 
 Storage Relief always displays the non-blocking last-copy warning, records only local eviction,
 works with zero Remotes, and treats later absence or corrupt hydration honestly. On-demand Replicas

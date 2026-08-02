@@ -78,6 +78,13 @@ describe("canonical Replica Garbage Collection plan", () => {
       key(predecessorArtifact),
     );
     expect(plan.artifactCleanupStorageItemIds).toEqual([resolutions[5]?.storageItemId]);
+    expect(plan.artifactCleanupCandidates).toEqual([
+      {
+        artifactId: predecessorArtifact,
+        storageItemId: resolutions[5]?.storageItemId,
+        keyEpochId: historicalEpoch,
+      },
+    ]);
     expect(plan.deleteEpochSecretIds.map(key)).toEqual([key(obsoleteEpoch)]);
     expect(plan.retainedArtifactStorageItemIds.map(key)).toEqual([
       key(resolutions[4]?.storageItemId as Uint8Array),
@@ -129,8 +136,56 @@ describe("canonical Replica Garbage Collection plan", () => {
       epochSecretIds: [activeEpoch],
     });
 
-    expect(plan.deleteResolutions).toEqual([]);
+    expect(plan.deleteResolutions).toEqual([resolutions[1]]);
     expect(plan.artifactCleanupStorageItemIds).toEqual([]);
     expect(plan.retainedArtifactStorageItemIds).toEqual([sharedStorageItemId]);
+  });
+
+  it("rejects one physical wrapper resolved under conflicting Key Epochs", () => {
+    const retainedArtifact = filled("Artifact", 20);
+    const unreachableArtifact = filled("Artifact", 21);
+    const sharedStorageItemId = filled("StorageItem", 22);
+    const activeEpoch = filled("KeyEpoch", 8);
+    const otherEpoch = filled("KeyEpoch", 9);
+
+    expect(() =>
+      planReplicaGarbageCollection({
+        currentKeyEpochId: activeEpoch,
+        reachability: {
+          typedLogicalRoots: [],
+          recordIds: [],
+          vaultObjectIds: [],
+          keyEnvelopeIds: [],
+          featureManifestIds: [],
+          artifactIds: [retainedArtifact],
+        },
+        resolutions: [
+          { ...resolution(5, retainedArtifact, 22, 8), storageItemId: sharedStorageItemId },
+          { ...resolution(5, unreachableArtifact, 22, 9), storageItemId: sharedStorageItemId },
+        ],
+        compactItems: [],
+        epochSecretIds: [activeEpoch, otherEpoch],
+      }),
+    ).toThrow(/physical Artifact wrapper has conflicting Key Epoch IDs/u);
+
+    expect(() =>
+      planReplicaGarbageCollection({
+        currentKeyEpochId: activeEpoch,
+        reachability: {
+          typedLogicalRoots: [],
+          recordIds: [],
+          vaultObjectIds: [],
+          keyEnvelopeIds: [],
+          featureManifestIds: [],
+          artifactIds: [],
+        },
+        resolutions: [
+          { ...resolution(5, retainedArtifact, 22, 8), storageItemId: sharedStorageItemId },
+          { ...resolution(5, unreachableArtifact, 22, 9), storageItemId: sharedStorageItemId },
+        ],
+        compactItems: [],
+        epochSecretIds: [activeEpoch, otherEpoch],
+      }),
+    ).toThrow(/physical Artifact wrapper has conflicting Key Epoch IDs/u);
   });
 });

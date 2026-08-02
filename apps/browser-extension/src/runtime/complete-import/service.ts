@@ -27,6 +27,7 @@ import type {
   CompleteExportOpaqueItem,
 } from "../complete-export/contracts";
 import { CanonicalReplayService } from "../projection/canonical-replay";
+import { assertArtifactStorageItemNotGarbageCollectionFenced } from "../storage/garbage-collection-fence";
 import {
   type CanonicalReplicaState,
   canonicalLocalStorageContext,
@@ -471,7 +472,14 @@ export class CanonicalCompleteImportService {
           await wipe(encoded);
         }
       }
-      for (const prepared of preparedArtifacts) await prepared.promote();
+      for (const prepared of preparedArtifacts) {
+        assertArtifactStorageItemNotGarbageCollectionFenced(
+          replay.vault.replicaState.garbageCollectionFences,
+          prepared.artifactId,
+          prepared.storageItemId,
+        );
+        await prepared.promote();
+      }
       await this.storage.commitReplicaMutation({
         realm: this.realm,
         expectedReplicaState: replay.vault.replicaStateStorageBytes,

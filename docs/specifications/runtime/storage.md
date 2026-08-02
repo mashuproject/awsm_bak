@@ -54,25 +54,26 @@ disposable.
 
 The canonical Client registry currently declares these revision-1 namespaces:
 
-| Namespace key                            | Family               | Scope        | Mutation           |
-| ---------------------------------------- | -------------------- | ------------ | ------------------ |
-| `awsm.storage.vault-record`              | Vault Records        | Vault        | immutable          |
-| `awsm.storage.key-envelope`              | Vault Objects        | Vault        | immutable          |
-| `awsm.storage.vault-object`              | Vault Objects        | Vault        | immutable          |
-| `awsm.storage.feature-manifest`          | Vault Objects        | Vault        | immutable          |
-| `awsm.storage.artifact-wrapper`          | Vault Objects        | Vault        | immutable          |
-| `awsm.storage.replica-state`             | Replica Safety State | Replica      | mutable CAS state  |
-| `awsm.storage.logical-resolution`        | Replica Safety State | Replica      | mutable resolution |
-| `awsm.storage.vault-directory`           | Installation State   | Installation | mutable            |
-| `awsm.storage.installation-selection`    | Installation State   | Installation | mutable            |
-| `awsm.storage.installation-wrapping-key` | Trusted Secrets      | Installation | immutable          |
-| `awsm.storage.client-secret`             | Trusted Secrets      | Vault        | mutable lifecycle  |
-| `awsm.storage.epoch-secret`              | Trusted Secrets      | Vault        | mutable lifecycle  |
-| `awsm.storage.command-outcome`           | Execution State      | Vault        | immutable          |
-| `awsm.storage.prepared-capture`          | Prepared Data        | Job          | immutable          |
-| `awsm.storage.incoming-quarantine`       | Quarantine           | Remote       | immutable          |
-| `awsm.storage.library-projection`        | Materializations     | Replica      | replaceable        |
-| `awsm.storage.managed-resource`          | Managed Resources    | Installation | immutable          |
+| Namespace key                                 | Family               | Scope        | Mutation                  |
+| --------------------------------------------- | -------------------- | ------------ | ------------------------- |
+| `awsm.storage.vault-record`                   | Vault Records        | Vault        | immutable                 |
+| `awsm.storage.key-envelope`                   | Vault Objects        | Vault        | immutable                 |
+| `awsm.storage.vault-object`                   | Vault Objects        | Vault        | immutable                 |
+| `awsm.storage.feature-manifest`               | Vault Objects        | Vault        | immutable                 |
+| `awsm.storage.artifact-wrapper`               | Vault Objects        | Vault        | immutable                 |
+| `awsm.storage.replica-state`                  | Replica Safety State | Replica      | mutable CAS state         |
+| `awsm.storage.logical-resolution`             | Replica Safety State | Replica      | mutable resolution        |
+| `awsm.storage.vault-directory`                | Installation State   | Installation | mutable                   |
+| `awsm.storage.installation-selection`         | Installation State   | Installation | mutable                   |
+| `awsm.storage.installation-wrapping-key`      | Trusted Secrets      | Installation | immutable                 |
+| `awsm.storage.client-secret`                  | Trusted Secrets      | Vault        | mutable lifecycle         |
+| `awsm.storage.epoch-secret`                   | Trusted Secrets      | Vault        | mutable lifecycle         |
+| `awsm.storage.command-outcome`                | Execution State      | Vault        | immutable                 |
+| `awsm.storage.replica-garbage-collection-job` | Execution State      | Vault        | mutable conditional state |
+| `awsm.storage.prepared-capture`               | Prepared Data        | Job          | immutable                 |
+| `awsm.storage.incoming-quarantine`            | Quarantine           | Remote       | immutable                 |
+| `awsm.storage.library-projection`             | Materializations     | Replica      | replaceable               |
+| `awsm.storage.managed-resource`               | Managed Resources    | Installation | immutable                 |
 
 Every stored key includes Storage Realm, namespace key, declared scope key, and item key. The
 initial canonical local database is created only from an empty database at schema revision `1`;
@@ -129,6 +130,30 @@ durable Replica Garbage Collection Job completes lease-serialized physical clean
 deduplication keeps a wrapper whenever any retained logical resolution names the same Opaque
 Storage Item ID. Failure or restart therefore leaves either a resumable cleanup identity or the old
 safe state, never an untracked missing wrapper.
+
+Physical deduplication retains the shared wrapper, not an unreachable logical alias resolution.
+That alias resolution may be removed in the compact transaction only when its Key Epoch agrees
+with the retained resolution for the exact wrapper; conflicting Epoch claims fail closed.
+
+The Job records every exact logical Artifact ID, Opaque Storage Item ID, and Key Epoch ID plus the
+already-committed compact outcome. Its deterministic candidate-set idempotency key and random local
+Job ID are Execution State, not Vault identity. One initial Replica-state compare-and-swap installs
+the Job and a duplicate-free set of logical Artifact plus Storage Item pairs as Garbage Collection
+fences before physical removal. Capture, known-Vault Import, synchronization, and any other trusted
+path that can promote wrapper bytes MUST reject either a fenced logical Artifact ID or fenced
+Storage Item ID; unrelated Artifact identities and ordinary additive work remain available.
+
+A conditional Job transition acquires or renews the narrow cleanup lease. Lease time is local
+operational scheduling state and never orders Vault Events or supplies authority. Removal is
+idempotent. The final compare-and-swap requires the same leased Job and current Replica Safety
+State, then removes every candidate Logical Resolution, any newly unused Epoch Secret, and the
+fences while replacing the leased Job with one Succeeded record containing the stable complete
+outcome. A crash before that transaction leaves the complete resumable identity; a crash after it
+leaves the result. A live lease prevents duplicate workers; an expired lease increments the attempt
+and resumes the same candidates. The latest terminal Job is retained locally until the initial
+transaction for a later heavy cleanup conditionally removes it while installing the new Job and
+fences. A resumed Job does not absorb newly discovered unreachable compact state: that state and
+its required Epoch Secrets remain for a later collection.
 
 Materializations may be replaced when their generation, corpus revision, algorithm, tokenizer,
 model, vector, quantization, ranking, or schema identity changes. Vacuum invalidates predecessor-

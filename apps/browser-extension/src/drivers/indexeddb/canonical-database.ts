@@ -58,6 +58,7 @@ export interface InitialVaultCommit {
 export interface ReplicaMutationCommit {
   readonly realm: StorageRealm;
   readonly expectedReplicaState: Uint8Array;
+  readonly expectedMutableItems?: readonly NamespaceBytes[];
   readonly nextReplicaState: NamespaceBytes;
   readonly immutableItems?: readonly NamespaceBytes[];
   readonly mutableItems?: readonly NamespaceBytes[];
@@ -489,6 +490,7 @@ export class CanonicalIndexedDb {
     const immutableItems = input.immutableItems ?? [];
     const mutableItems = input.mutableItems ?? [];
     const deletedItems = input.deletedItems ?? [];
+    const expectedMutableItems = input.expectedMutableItems ?? [];
     const allWrittenItems = [input.nextReplicaState, ...immutableItems, ...mutableItems];
     for (const item of allWrittenItems) assertBytes(item);
     for (const item of immutableItems) {
@@ -501,10 +503,18 @@ export class CanonicalIndexedDb {
         throw new TypeError(`${item.namespace} cannot be replaced as mutable state`);
       }
     }
+    for (const item of expectedMutableItems) {
+      assertBytes(item);
+      if (descriptor(item.namespace).immutable) {
+        throw new TypeError(`${item.namespace} cannot be a mutable compare-and-swap input`);
+      }
+    }
+    assertUniqueItems(input.realm, expectedMutableItems);
     assertUniqueItems(input.realm, [...allWrittenItems, ...deletedItems]);
 
     const families = [
       ...familyNames(allWrittenItems),
+      ...familyNames(expectedMutableItems),
       ...deletedItems.map((item) => descriptor(item.namespace).family),
     ];
     const database = await this.databasePromise;
@@ -518,6 +528,19 @@ export class CanonicalIndexedDb {
           "VAULT_CONTEXT_CHANGED",
           "The Replica frontier changed before the commit.",
         );
+      }
+      for (const item of expectedMutableItems) {
+        const stored = await requestValue(
+          transaction
+            .objectStore(descriptor(item.namespace).family)
+            .get(storageKey(input.realm, item)),
+        );
+        if (!(stored instanceof Uint8Array) || !bytesEqual(stored, item.bytes)) {
+          throw new CanonicalStorageError(
+            "VAULT_CONTEXT_CHANGED",
+            "Mutable safety state changed before the commit.",
+          );
+        }
       }
       for (const item of immutableItems) {
         await this.putImmutableInTransaction(transaction, input.realm, item);

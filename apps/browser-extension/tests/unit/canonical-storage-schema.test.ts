@@ -59,4 +59,17 @@ describe("canonical storage schema", () => {
       immutable: true,
     });
   });
+
+  it("keeps Replica Garbage Collection orchestration in local Execution State", () => {
+    expect(NAMESPACES.replicaGarbageCollectionJob).toMatchObject({
+      key: "awsm.storage.replica-garbage-collection-job",
+      family: STORAGE_FAMILIES.ExecutionState,
+      scope: "Vault",
+      protection: "LocalClear",
+      synchronization: "Never",
+      exportTreatment: "Excluded",
+      backupTreatment: "Excluded",
+      immutable: false,
+    });
+  });
 });

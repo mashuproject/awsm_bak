@@ -55,6 +55,8 @@ test("enforces the canonical storage families, Realms, immutability, and frontie
     initializationAtomic: true,
     staleFrontier: "VAULT_CONTEXT_CHANGED",
     staleWriteAbsent: true,
+    staleMutable: "VAULT_CONTEXT_CHANGED",
+    staleMutableWriteAbsent: true,
   });
 });
 
@@ -86,6 +88,8 @@ test("atomically activates Complete Import and restores canonical Backup snapsho
     predecessorAfterAdoption: { relation: "incoming-generation-ancestor", changed: false },
     successorStatePreserved: true,
     garbageCollectionReclaimedPredecessor: true,
+    garbageCollectionReclaimedArtifact: true,
+    garbageCollectionResumedAfterInterruption: true,
     backupSnapshotCommitted: true,
     backupRestoredReadable: true,
     backupKnownNoop: true,

@@ -69,6 +69,20 @@ Ordinary additive Capture and synchronization are not globally stopped merely be
 exists. A Host uses independent local database transactions for Accounts, Grants, quotas, and
 opaque admission.
 
+A Replica Garbage Collection Job fences only its exact logical Artifact and Opaque Storage Item
+pairs. Its ready-to-running transition conditionally replaces the exact prior Job bytes, increments
+the attempt, and installs a local expiry. A live lease returns a busy outcome without physical
+deletion; an expired lease may be reclaimed by another worker. The Job is non-cancellable after its
+fences commit because removing the fences before physical cleanup would permit an unsafe logical or
+physical replacement. Local lease timestamps have no synchronized or causal meaning.
+
+The final conditional transition replaces the exact leased Job with one Succeeded Job containing
+the stable whole-operation outcome while the same transaction removes the cleanup fences and
+obsolete safety state. A crash after that commit therefore retains the result instead of making a
+successful operation indistinguishable from missing state. One latest terminal Replica Garbage
+Collection Job remains per Vault; installation of a later heavy-cleanup Job conditionally removes
+the prior terminal record in the same transaction.
+
 # 8. Progress and diagnostics
 
 Progress reports exact stage-local counts and bytes when safe, never semantic content. Monotonic
@@ -80,6 +94,14 @@ messages; logs retain no secrets or cross-Vault data.
 Startup validates every nonterminal Job against its namespace, Realm, selected Vault or Hosted
 Replica, input identities, lease, and prepared bytes. It resumes only declared resumable stages.
 Otherwise it fails safely and retains enough evidence for cleanup or explicit user retry.
+
+Replica Garbage Collection startup additionally requires exactly one nonterminal Job and no
+terminal sibling for a nonempty fence set, exact equality between that Job's Artifact/Storage Item
+pairs and those fences, and a fresh authenticated reachability proof containing every candidate as
+still unreachable. Terminal Jobs own no fence and are never resumed. An active Job without fences,
+multiple terminal Jobs, missing or mismatched work, and newly reachable candidates fail closed
+without deletion. Newly discovered unreachable state outside the durable candidate set remains
+intact for a later collection and cannot expand the resumed Job's deletion or Key Epoch scope.
 
 # 10. Invariants
 

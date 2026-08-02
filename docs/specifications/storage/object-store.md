@@ -157,6 +157,23 @@ maintenance lease, revalidates that no current resolution retains it, removes it
 then retires the obsolete resolution and any newly unused secret. Merely reporting a wrapper as a
 cleanup candidate is not successful reclamation.
 
+When an unreachable Artifact resolution shares a wrapper with a reachable logical Artifact,
+Garbage Collection retains the physical bytes but may remove the unreachable alias resolution in
+the compact transaction. Every local resolution of one wrapper must agree on its Key Epoch,
+regardless of reachability; disagreement is corrupt local safety state and fails closed.
+
+The cleanup Job persists before removal and binds each physical candidate to its logical Artifact
+and Key Epoch. Exact Artifact/Storage Item pairs are also installed as Replica Safety State fences
+in the same transaction that performs compact reclamation. Trusted promotion paths reject either
+the same logical Artifact or same physical Storage Item; a Replica-state compare-and-swap closes the
+race when a fence is installed after preparation. The final transaction conditionally replaces the
+leased Job with one Succeeded record carrying the complete stable outcome and removes the candidate
+resolutions, newly unused secrets, and fences. If the Runtime stops after physical removal, another
+worker repeats the idempotent removal after the lease expires and completes that same transaction.
+The latest terminal Job remains local until the next heavy cleanup conditionally retires it while
+installing its own Job and fences. Unrelated state discovered on resume is not added to the Job's
+deletion scope and retains any required Key Epoch Secret until a later trace.
+
 # 11. Import and synchronization
 
 External bytes enter Quarantine. Trusted local preparation enters Prepared Data. The two states

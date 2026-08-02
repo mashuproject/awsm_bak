@@ -112,6 +112,7 @@ import {
   createKeywordStatistics,
   projectionGeneration,
 } from "../../../src/runtime/search/statistics";
+import { decodeReplicaGarbageCollectionJob } from "../../../src/runtime/storage/garbage-collection-job";
 import { CanonicalReplicaGarbageCollectionService } from "../../../src/runtime/storage/garbage-collection-service";
 import type { StorageReliefFaults } from "../../../src/runtime/storage-relief/contracts";
 import { StorageReliefJobRunner } from "../../../src/runtime/storage-relief/runner";
@@ -133,6 +134,7 @@ import {
   decodeInstallationSelection,
   decodeVaultDirectoryEntry,
   encodeCanonicalReplicaState,
+  encodeLogicalResolution,
   encodeVaultDirectoryEntry,
   openWrappedLocalState,
   prepareCanonicalVaultStorage,
@@ -386,6 +388,37 @@ async function canonicalStorageScenario(): Promise<unknown> {
     } catch (error) {
       staleFrontier = canonicalStorageErrorId(error);
     }
+    const mutableJob = {
+      namespace: NAMESPACES.replicaGarbageCollectionJob.key,
+      scopeKey: vaultKey,
+      itemKey: "conditional-job",
+      bytes: Uint8Array.of(30),
+    } as const;
+    await storage.putMutable(NORMAL_STORAGE_REALM, mutableJob);
+    const staleMutableRecord = {
+      namespace: NAMESPACES.vaultRecord.key,
+      scopeKey: vaultKey,
+      itemKey: "stale-mutable-record",
+      bytes: Uint8Array.of(31),
+    } as const;
+    let staleMutable = "missing";
+    try {
+      await storage.commitReplicaMutation({
+        realm: NORMAL_STORAGE_REALM,
+        expectedReplicaState: nextReplicaState.bytes,
+        expectedMutableItems: [{ ...mutableJob, bytes: Uint8Array.of(32) }],
+        nextReplicaState: { ...initialReplicaState, bytes: Uint8Array.of(33) },
+        mutableItems: [{ ...mutableJob, bytes: Uint8Array.of(34) }],
+        immutableItems: [staleMutableRecord],
+      });
+    } catch (error) {
+      staleMutable = canonicalStorageErrorId(error);
+    }
+    const currentReplicaAfterMutableConflict = await storage.getBytes(
+      NORMAL_STORAGE_REALM,
+      nextReplicaState,
+    );
+    const currentJobAfterMutableConflict = await storage.getBytes(NORMAL_STORAGE_REALM, mutableJob);
 
     return {
       databaseVersion,
@@ -400,6 +433,11 @@ async function canonicalStorageScenario(): Promise<unknown> {
       initializationAtomic,
       staleFrontier,
       staleWriteAbsent: (await storage.getBytes(NORMAL_STORAGE_REALM, staleRecord)) === undefined,
+      staleMutable,
+      staleMutableWriteAbsent:
+        currentReplicaAfterMutableConflict?.[0] === 20 &&
+        currentJobAfterMutableConflict?.[0] === 30 &&
+        (await storage.getBytes(NORMAL_STORAGE_REALM, staleMutableRecord)) === undefined,
     };
   } finally {
     await storage.close();
@@ -934,6 +972,8 @@ async function canonicalCompleteImportScenario(): Promise<unknown> {
   let predecessorAfterAdoption: unknown = null;
   let successorStatePreserved = false;
   let garbageCollectionReclaimedPredecessor = false;
+  let garbageCollectionReclaimedArtifact = false;
+  let garbageCollectionResumedAfterInterruption = false;
   try {
     await new CanonicalCompleteImportService(
       vacuumStorage,
@@ -992,10 +1032,104 @@ async function canonicalCompleteImportScenario(): Promise<unknown> {
       vacuum.successor.baseline.generationId,
     );
     const vaults = new CanonicalVaultService(vacuumStorage, NORMAL_STORAGE_REALM);
+    const artifactStore = new CanonicalOpfsArtifactStore();
+    const beforeGarbageCollection = await vaults.openVault(creation.ids.vaultId);
+    const orphanedArtifactId = randomIdentifier("Artifact");
+    const orphanedArtifactBytes = new TextEncoder().encode("unreachable predecessor artifact");
+    const orphanedArtifact = await artifactStore.prepare({
+      vaultId: creation.ids.vaultId,
+      keyEpochId: beforeGarbageCollection.epochSecret.keyEpochId,
+      keyEpochKey: beforeGarbageCollection.epochSecret.key,
+      artifactId: orphanedArtifactId,
+      contract: {
+        plaintextLength: orphanedArtifactBytes.byteLength,
+        plaintextDigest: await digestArtifactPayload({
+          plaintextLength: orphanedArtifactBytes.byteLength,
+          source: chunkedSource(orphanedArtifactBytes),
+        }),
+      },
+      source: chunkedSource(orphanedArtifactBytes),
+    });
+    await orphanedArtifact.promote();
+    const orphanedResolution = await prepareWrappedLocalStateItem({
+      namespace: NAMESPACES.logicalResolution.key,
+      scopeKey: vaultKey,
+      itemKey: `5:${bytesKey(orphanedArtifactId)}`,
+      wrappingKey: beforeGarbageCollection.installationWrappingKey,
+      domain: "awsm.local.logical-resolution",
+      context: canonicalLocalStorageContext(creation.ids.vaultId, orphanedArtifactId),
+      bytes: encodeLogicalResolution({
+        vaultId: creation.ids.vaultId,
+        kind: 5,
+        logicalId: orphanedArtifactId,
+        storageItemId: orphanedArtifact.storageItemId,
+        keyEpochId: beforeGarbageCollection.epochSecret.keyEpochId,
+        availability: 1,
+      }),
+    });
+    await vacuumStorage.commitReplicaMutation({
+      realm: NORMAL_STORAGE_REALM,
+      expectedReplicaState: beforeGarbageCollection.replicaStateStorageBytes,
+      nextReplicaState: {
+        namespace: NAMESPACES.replicaState.key,
+        scopeKey: vaultKey,
+        itemKey: "current",
+        bytes: beforeGarbageCollection.replicaStateStorageBytes,
+      },
+      mutableItems: [orphanedResolution],
+    });
+    let interruptedAfterRemoval = false;
+    try {
+      await new CanonicalReplicaGarbageCollectionService({
+        replays: new CanonicalReplayService(vaults),
+        artifacts: {
+          remove: async (storageItemId) => {
+            await artifactStore.remove(storageItemId);
+            throw new Error("injected post-removal interruption");
+          },
+        },
+        now: () => 1_000,
+      }).collect(creation.ids.vaultId);
+    } catch (error) {
+      interruptedAfterRemoval =
+        error instanceof Error && error.message === "injected post-removal interruption";
+    }
+    const interruptedVault = await vaults.openVault(creation.ids.vaultId);
+    const interruptedJobs = await vacuumStorage.listBytes(
+      NORMAL_STORAGE_REALM,
+      NAMESPACES.replicaGarbageCollectionJob.key,
+      vaultKey,
+    );
+    const interruptedJob =
+      interruptedJobs.length === 1 && interruptedJobs[0] !== undefined
+        ? decodeReplicaGarbageCollectionJob(interruptedJobs[0].bytes)
+        : null;
+    const interruptionPersisted =
+      interruptedAfterRemoval &&
+      !(await artifactStore.has(orphanedArtifact.storageItemId)) &&
+      interruptedVault.replicaState.garbageCollectionFences.length === 1 &&
+      interruptedJob?.state === 2 &&
+      interruptedJob.attempt === 1 &&
+      (await vacuumStorage.getBytes(NORMAL_STORAGE_REALM, {
+        namespace: NAMESPACES.logicalResolution.key,
+        scopeKey: vaultKey,
+        itemKey: `5:${bytesKey(orphanedArtifactId)}`,
+      })) !== undefined;
     const garbageCollection = await new CanonicalReplicaGarbageCollectionService({
       replays: new CanonicalReplayService(vaults),
+      artifacts: artifactStore,
+      now: () => 31_001,
     }).collect(creation.ids.vaultId);
     const reopenedAfterGarbageCollection = await vaults.openVault(creation.ids.vaultId);
+    const terminalJobs = await vacuumStorage.listBytes(
+      NORMAL_STORAGE_REALM,
+      NAMESPACES.replicaGarbageCollectionJob.key,
+      vaultKey,
+    );
+    const terminalJob =
+      terminalJobs.length === 1 && terminalJobs[0] !== undefined
+        ? decodeReplicaGarbageCollectionJob(terminalJobs[0].bytes)
+        : null;
     garbageCollectionReclaimedPredecessor =
       garbageCollection.removedCompactItemCount >= 1 &&
       garbageCollection.removedResolutionCount >= 1 &&
@@ -1013,6 +1147,26 @@ async function canonicalCompleteImportScenario(): Promise<unknown> {
         reopenedAfterGarbageCollection.replicaState.generationId,
         vacuum.successor.baseline.generationId,
       );
+    garbageCollectionReclaimedArtifact =
+      garbageCollection.removedArtifactCount === 1 &&
+      !(await artifactStore.has(orphanedArtifact.storageItemId)) &&
+      (await vacuumStorage.getBytes(NORMAL_STORAGE_REALM, {
+        namespace: NAMESPACES.logicalResolution.key,
+        scopeKey: vaultKey,
+        itemKey: `5:${bytesKey(orphanedArtifactId)}`,
+      })) === undefined &&
+      terminalJob?.state === 3 &&
+      terminalJob.attempt === 2 &&
+      terminalJob.terminalOutcome?.removedCompactItemCount ===
+        garbageCollection.removedCompactItemCount &&
+      terminalJob.terminalOutcome.removedResolutionCount ===
+        garbageCollection.removedResolutionCount &&
+      terminalJob.terminalOutcome.removedEpochSecretCount ===
+        garbageCollection.removedEpochSecretCount &&
+      terminalJob.terminalOutcome.removedArtifactCount === garbageCollection.removedArtifactCount &&
+      reopenedAfterGarbageCollection.replicaState.garbageCollectionFences.length === 0;
+    garbageCollectionResumedAfterInterruption =
+      interruptionPersisted && garbageCollectionReclaimedArtifact;
   } finally {
     await vacuumStorage.close();
     await deleteBrowserDatabase(vacuumDatabaseName);
@@ -1185,6 +1339,8 @@ async function canonicalCompleteImportScenario(): Promise<unknown> {
         predecessorAfterAdoption,
         successorStatePreserved,
         garbageCollectionReclaimedPredecessor,
+        garbageCollectionReclaimedArtifact,
+        garbageCollectionResumedAfterInterruption,
         backupSnapshotCommitted,
         backupRestoredReadable,
         backupKnownNoop,

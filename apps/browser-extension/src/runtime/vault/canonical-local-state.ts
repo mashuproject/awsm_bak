@@ -3,6 +3,7 @@ import { readySodium } from "../../crypto/sodium";
 import type { Identifier } from "../../domain/canonical/identifiers";
 import { keyEpochId } from "../../domain/canonical/identifiers";
 import {
+  arrayValue,
   exactCode,
   exactMap,
   identifierValue,
@@ -38,6 +39,11 @@ export interface CanonicalVacuumAdoption {
   readonly vacuumEventRecordId: Identifier<"VaultRecord">;
 }
 
+export interface CanonicalGarbageCollectionFence {
+  readonly artifactId: Identifier<"Artifact">;
+  readonly storageItemId: Identifier<"StorageItem">;
+}
+
 export interface CanonicalReplicaState {
   readonly vaultId: Identifier<"Vault">;
   readonly generationId: Identifier<"Generation">;
@@ -51,7 +57,7 @@ export interface CanonicalReplicaState {
   readonly memberId: Identifier<"Member"> | null;
   readonly lifecycle: 1 | 2;
   readonly preservationRoots: readonly Identifier<"VaultRecord">[];
-  readonly garbageCollectionFences: readonly Uint8Array[];
+  readonly garbageCollectionFences: readonly CanonicalGarbageCollectionFence[];
   readonly adoption: CanonicalVacuumAdoption | null;
 }
 
@@ -125,7 +131,7 @@ export function encodeCanonicalReplicaState(state: CanonicalReplicaState): Uint8
       state.memberId,
       state.lifecycle,
       canonicalSet(state.preservationRoots),
-      canonicalSet(state.garbageCollectionFences),
+      garbageCollectionFenceValues(state.garbageCollectionFences),
       state.adoption === null ? null : indexedMap(1, state.adoption.vacuumEventRecordId),
     ),
   );
@@ -165,7 +171,7 @@ export function decodeCanonicalReplicaState(bytes: Uint8Array): CanonicalReplica
     ),
     lifecycle: oneOfCodes(mapValue(map, 11), [1, 2] as const, "Replica lifecycle"),
     preservationRoots: idSetValue(mapValue(map, 12), "VaultRecord", "Local preservation roots"),
-    garbageCollectionFences: canonicalSet(exactByteArray(mapValue(map, 13), "GC fences")),
+    garbageCollectionFences: decodeGarbageCollectionFences(mapValue(map, 13)),
     adoption: nullable(mapValue(map, 14), (value) => {
       const adoption = exactMap(value, [0, 1], "Vacuum Adoption");
       exactCode(mapValue(adoption, 0), 1, "Vacuum Adoption format");
@@ -192,9 +198,53 @@ export function decodeCanonicalReplicaState(bytes: Uint8Array): CanonicalReplica
   return state;
 }
 
-function exactByteArray(value: CanonicalValue, field: string): readonly Uint8Array[] {
-  if (!Array.isArray(value)) throw new TypeError(`${field} must be a canonical set`);
-  return value.map((entry, index) => exactBytes(entry, 32, `${field}[${index}]`));
+function garbageCollectionFenceValue(
+  fence: CanonicalGarbageCollectionFence,
+): ReadonlyMap<number, CanonicalValue> {
+  return canonicalMap([
+    [0, fence.artifactId],
+    [1, fence.storageItemId],
+  ]);
+}
+
+function garbageCollectionFenceValues(
+  fences: readonly CanonicalGarbageCollectionFence[],
+): readonly ReadonlyMap<number, CanonicalValue>[] {
+  const artifactKeys = fences.map(({ artifactId }) => identifierStorageKey(artifactId));
+  if (new Set(artifactKeys).size !== artifactKeys.length) {
+    throw new TypeError("Garbage Collection fences contain a duplicate Artifact ID");
+  }
+  return canonicalSet(fences.map(garbageCollectionFenceValue));
+}
+
+function decodeGarbageCollectionFences(
+  value: CanonicalValue,
+): readonly CanonicalGarbageCollectionFence[] {
+  const encoded = arrayValue(value, "Garbage Collection fences");
+  const fences = encoded.map((entry, index) => {
+    const fence = exactMap(entry, [0, 1], `Garbage Collection fence ${index}`);
+    return {
+      artifactId: identifierValue(
+        mapValue(fence, 0),
+        "Artifact",
+        `Garbage Collection fence ${index} Artifact ID`,
+      ),
+      storageItemId: identifierValue(
+        mapValue(fence, 1),
+        "StorageItem",
+        `Garbage Collection fence ${index} Storage Item ID`,
+      ),
+    };
+  });
+  if (
+    !bytesEqual(
+      encodeCanonicalValue(encoded),
+      encodeCanonicalValue(garbageCollectionFenceValues(fences)),
+    )
+  ) {
+    throw new TypeError("Garbage Collection fences must be a sorted duplicate-free canonical set");
+  }
+  return fences;
 }
 
 export function encodeLogicalResolution(value: LogicalResolution): Uint8Array {

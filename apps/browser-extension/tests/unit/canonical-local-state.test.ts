@@ -233,6 +233,27 @@ describe("canonical local Vault state", () => {
     ).toEqual(adopted);
   });
 
+  it("round-trips typed Artifact and Storage Item Garbage Collection fences", async () => {
+    const creation = await prepareCanonicalVaultCreation({ label: "GC", assertedAt: 1 });
+    const prepared = await prepareCanonicalVaultStorage({
+      creation,
+      label: "GC",
+      realm: NORMAL_STORAGE_REALM,
+      wrappingKey: await wrappingKey(),
+    });
+    const fenced = {
+      ...prepared.replicaState,
+      garbageCollectionFences: [
+        {
+          artifactId: randomIdentifier("Artifact"),
+          storageItemId: randomIdentifier("StorageItem"),
+        },
+      ],
+    };
+
+    expect(decodeCanonicalReplicaState(encodeCanonicalReplicaState(fenced))).toEqual(fenced);
+  });
+
   it("round-trips a readable Replica with no local authoring Credential", async () => {
     const creation = await prepareCanonicalVaultCreation({ label: "Imported", assertedAt: 1 });
     const prepared = await prepareCanonicalVaultStorage({

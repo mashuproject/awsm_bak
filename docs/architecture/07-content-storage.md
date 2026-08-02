@@ -51,7 +51,11 @@ not claim that another copy exists. Hydration may use any Remote that supplies v
 Vacuum establishes a new shared Baseline but deletes nothing by itself. Local Garbage Collection
 traces every recognized Generation, dependency, preservation root, prepared workflow, and safety
 fence, then removes only proven-unreachable physical representations. Materializations follow
-their own disposable lifecycle.
+their own disposable lifecycle. Heavy wrapper cleanup persists its exact Artifact, Storage Item,
+and Key Epoch identities in a local Job, fences only those logical/physical pairs, and remains
+resumable between idempotent physical deletion and the final safety-state transaction. That
+transaction terminalizes the Job with one stable outcome while removing its fences and obsolete
+safety state. The latest terminal Job remains until a later heavy cleanup replaces it.
 
 # References
 

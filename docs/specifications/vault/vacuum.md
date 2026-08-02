@@ -194,6 +194,14 @@ newly-unused Epoch Secrets against the exact prior Replica Safety State. Any act
 Collection fence blocks that commit. Unreachable heavy wrappers remain tracked until the separate
 resumable cleanup stage satisfies the Object Store cross-backend contract.
 
+That stage first persists one local Garbage Collection Job and fences each exact logical Artifact
+and Opaque Storage Item pair. It retains every candidate resolution and required Key Epoch across
+interruption, allows unrelated additive work, and blocks replacement of either candidate identity.
+Successful physical removal is followed by one conditional safety-state transaction that retires
+those resolutions, newly unused Epoch Secrets, and its fences while terminalizing the Job with a
+stable complete outcome. The latest terminal Job remains local until a later heavy cleanup replaces
+it.
+
 # 8. Invariants
 
 - Vault ID remains stable; Generation ID changes.

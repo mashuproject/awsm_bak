@@ -1,6 +1,7 @@
-import type { Identifier } from "../../domain/canonical/identifiers";
+import { type Identifier, identifier } from "../../domain/canonical/identifiers";
 import type { CompleteExportReachability } from "../complete-export/reachability";
 import type { LogicalResolution, LogicalResolutionKind } from "../vault/canonical-local-state";
+import type { ReplicaGarbageCollectionArtifactCandidate } from "./garbage-collection-job";
 
 export interface GarbageCollectionCompactItem {
   readonly kind: Exclude<LogicalResolutionKind, 5>;
@@ -19,6 +20,7 @@ export interface ReplicaGarbageCollectionPlan {
   readonly deleteCompactItems: readonly GarbageCollectionCompactItem[];
   readonly deleteResolutions: readonly LogicalResolution[];
   readonly deleteEpochSecretIds: readonly Identifier<"KeyEpoch">[];
+  readonly artifactCleanupCandidates: readonly ReplicaGarbageCollectionArtifactCandidate[];
   readonly artifactCleanupStorageItemIds: readonly Identifier<"StorageItem">[];
   readonly retainedArtifactStorageItemIds: readonly Identifier<"StorageItem">[];
 }
@@ -91,6 +93,19 @@ export function planReplicaGarbageCollection(
       throw new TypeError("A reachable logical item has no local resolution");
     }
   }
+  const artifactEpochsByStorage = new Map<string, Set<string>>();
+  for (const resolution of resolutions.values()) {
+    if (resolution.kind !== 5) continue;
+    const storageKey = key(resolution.storageItemId);
+    const epochKeys = artifactEpochsByStorage.get(storageKey) ?? new Set<string>();
+    epochKeys.add(key(resolution.keyEpochId));
+    artifactEpochsByStorage.set(storageKey, epochKeys);
+  }
+  for (const epochKeys of artifactEpochsByStorage.values()) {
+    if (epochKeys.size !== 1) {
+      throw new TypeError("A physical Artifact wrapper has conflicting Key Epoch IDs");
+    }
+  }
 
   const retainedResolutions = [...resolutions.entries()]
     .filter(([itemKey]) => reachable.has(itemKey))
@@ -98,11 +113,9 @@ export function planReplicaGarbageCollection(
   const deferredArtifactResolutions = [...resolutions.entries()]
     .filter(([itemKey, resolution]) => !reachable.has(itemKey) && resolution.kind === 5)
     .map(([, resolution]) => resolution);
-  const deleteResolutions = sortLogical(
-    [...resolutions.entries()]
-      .filter(([itemKey, resolution]) => !reachable.has(itemKey) && resolution.kind !== 5)
-      .map(([, resolution]) => resolution),
-  );
+  const unreachableCompactResolutions = [...resolutions.entries()]
+    .filter(([itemKey, resolution]) => !reachable.has(itemKey) && resolution.kind !== 5)
+    .map(([, resolution]) => resolution);
 
   const compactIdentities = new Set<string>();
   for (const item of input.compactItems) {
@@ -116,9 +129,25 @@ export function planReplicaGarbageCollection(
     input.compactItems.filter((item) => !reachable.has(logicalKey(item.kind, item.logicalId))),
   );
 
+  const retainedArtifacts = retainedResolutions.filter(({ kind }) => kind === 5);
+  const retainedArtifactStorageItemIds = deduplicatedIds(
+    retainedArtifacts.map(({ storageItemId }) => storageItemId),
+  );
+  const retainedArtifactStorageKeys = new Set(retainedArtifactStorageItemIds.map(key));
+  const deduplicatedArtifactResolutions = deferredArtifactResolutions.filter(({ storageItemId }) =>
+    retainedArtifactStorageKeys.has(key(storageItemId)),
+  );
+  const cleanupArtifactResolutions = deferredArtifactResolutions.filter(
+    ({ storageItemId }) => !retainedArtifactStorageKeys.has(key(storageItemId)),
+  );
+  const deleteResolutions = sortLogical([
+    ...unreachableCompactResolutions,
+    ...deduplicatedArtifactResolutions,
+  ]);
+
   const epochSecretIds = uniqueIds(input.epochSecretIds, "Key Epoch Secret inventory");
   const retainedEpochKeys = new Set<string>([key(input.currentKeyEpochId)]);
-  for (const resolution of [...retainedResolutions, ...deferredArtifactResolutions]) {
+  for (const resolution of [...retainedResolutions, ...cleanupArtifactResolutions]) {
     retainedEpochKeys.add(key(resolution.keyEpochId));
   }
   for (const epochKey of retainedEpochKeys) {
@@ -127,19 +156,20 @@ export function planReplicaGarbageCollection(
     }
   }
 
-  const retainedArtifacts = retainedResolutions.filter(({ kind }) => kind === 5);
-  const retainedArtifactStorageItemIds = deduplicatedIds(
-    retainedArtifacts.map(({ storageItemId }) => storageItemId),
-  );
-  const retainedArtifactStorageKeys = new Set(retainedArtifactStorageItemIds.map(key));
+  const artifactCleanupCandidates = cleanupArtifactResolutions
+    .map(({ logicalId, storageItemId, keyEpochId }) => ({
+      artifactId: identifier("Artifact", logicalId),
+      storageItemId,
+      keyEpochId,
+    }))
+    .toSorted((left, right) => compareBytes(left.artifactId, right.artifactId));
   return {
     deleteCompactItems,
     deleteResolutions,
     deleteEpochSecretIds: epochSecretIds.filter((epochId) => !retainedEpochKeys.has(key(epochId))),
+    artifactCleanupCandidates,
     artifactCleanupStorageItemIds: deduplicatedIds(
-      deferredArtifactResolutions
-        .map(({ storageItemId }) => storageItemId)
-        .filter((storageItemId) => !retainedArtifactStorageKeys.has(key(storageItemId))),
+      artifactCleanupCandidates.map(({ storageItemId }) => storageItemId),
     ),
     retainedArtifactStorageItemIds,
   };

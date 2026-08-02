@@ -8,6 +8,7 @@ import {
 } from "../../drivers/indexeddb/canonical-database";
 import { NAMESPACES } from "../../drivers/indexeddb/canonical-schema";
 import type { CanonicalArtifactStore } from "../artifact/canonical-store";
+import { assertArtifactStorageItemNotGarbageCollectionFenced } from "../storage/garbage-collection-fence";
 import {
   canonicalLocalStorageContext,
   encodeCanonicalReplicaState,
@@ -219,6 +220,11 @@ export class CanonicalCaptureService {
         },
       ];
       try {
+        assertArtifactStorageItemNotGarbageCollectionFenced(
+          vault.replicaState.garbageCollectionFences,
+          prepared.artifactId,
+          prepared.artifactRepresentation.storageItemId,
+        );
         await prepared.artifactRepresentation.promote();
         await this.vaults.storage.commitReplicaMutation({
           realm: this.vaults.realm,

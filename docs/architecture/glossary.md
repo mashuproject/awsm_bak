@@ -533,7 +533,11 @@ The recovered Bundle ID is deterministically derived from the target Vault ID an
 A trusted-client-local operation that reclaims bytes proven unreachable from every active or
 retained Generation, Continuity Proof, Recovery Snapshot, pending operation, predecessor state, or
 other local preservation root. It is not a Vault Event. An opaque Host cannot infer semantic
-reachability.
+reachability. Cross-backend Artifact cleanup persists one local Job and exact logical Artifact plus
+Opaque Storage Item fence pairs before physical deletion; interruption retains the Job, protected
+resolution, and required Key Epoch until idempotent cleanup resumes and one final safety-state
+transaction retires the obsolete safety state and records a stable terminal Job outcome. The latest
+terminal Job remains local until a later heavy cleanup replaces it.
 
 # 5. Cryptography and feature evolution
 
