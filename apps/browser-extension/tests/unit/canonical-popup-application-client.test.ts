@@ -71,4 +71,51 @@ describe("canonical popup application client", () => {
       ),
     );
   });
+
+  it("sends only canonical popup mutations and validates their outcomes", async () => {
+    const transport = {
+      request: vi
+        .fn()
+        .mockResolvedValueOnce({ setupId: "setup-1", recoveryPhrase: "alpha beta gamma" })
+        .mockResolvedValueOnce({ vaults: [] })
+        .mockResolvedValueOnce(undefined)
+        .mockResolvedValueOnce({
+          selectedVaultId: "a".repeat(64),
+          vaults: [{ vaultId: "a".repeat(64), label: null, selected: true }],
+        })
+        .mockResolvedValueOnce({ bundleId: "b".repeat(64) }),
+      subscribe: vi.fn(() => () => undefined),
+    };
+    const client = createCanonicalPopupApplicationClient(transport);
+
+    await expect(
+      client.beginVaultCreation({ expectedVaultId: null, label: "Research" }),
+    ).resolves.toEqual({
+      setupId: "setup-1",
+      recoveryPhrase: "alpha beta gamma",
+    });
+    await expect(
+      client.confirmVaultCreation({ setupId: "setup-1", recoveryPhrase: "alpha beta gamma" }),
+    ).resolves.toEqual({ vaults: [] });
+    await expect(client.cancelVaultCreation("setup-1")).resolves.toBeUndefined();
+    await expect(
+      client.selectVault({ expectedVaultId: null, vaultId: "a".repeat(64) }),
+    ).resolves.toEqual({
+      selectedVaultId: "a".repeat(64),
+      vaults: [{ vaultId: "a".repeat(64), label: null, selected: true }],
+    });
+    await expect(
+      client.captureActivePage({ expectedVaultId: "a".repeat(64), tabId: 4 }),
+    ).resolves.toEqual({
+      bundleId: "b".repeat(64),
+    });
+
+    expect(transport.request.mock.calls).toEqual([
+      [{ type: "BeginVaultCreation", expectedVaultId: null, label: "Research" }],
+      [{ type: "ConfirmVaultCreation", setupId: "setup-1", recoveryPhrase: "alpha beta gamma" }],
+      [{ type: "CancelVaultCreation", setupId: "setup-1" }],
+      [{ type: "SelectVault", expectedVaultId: null, vaultId: "a".repeat(64) }],
+      [{ type: "CaptureActivePage", expectedVaultId: "a".repeat(64), tabId: 4 }],
+    ]);
+  });
 });

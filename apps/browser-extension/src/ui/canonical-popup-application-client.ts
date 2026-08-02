@@ -1,3 +1,4 @@
+import type { CanonicalApplicationRequest } from "../app/canonical-application";
 import type {
   CanonicalClientLibraryItem,
   CanonicalClientState,
@@ -16,11 +17,28 @@ export class CanonicalPopupApplicationClientError extends Error {
 }
 
 interface CanonicalPopupApplicationTransport {
-  request(request: {
-    readonly type: "GetState" | "ListLibrary";
-    readonly expectedVaultId?: string;
-  }): Promise<unknown>;
+  request(request: CanonicalApplicationRequest): Promise<unknown>;
   subscribe(listener: () => void): () => void;
+}
+
+export interface CanonicalPopupApplicationClient extends CanonicalPopupClient {
+  beginVaultCreation(input: {
+    readonly expectedVaultId: string | null;
+    readonly label: string | null;
+  }): Promise<{ readonly setupId: string; readonly recoveryPhrase: string }>;
+  confirmVaultCreation(input: {
+    readonly setupId: string;
+    readonly recoveryPhrase: string;
+  }): Promise<CanonicalClientState>;
+  cancelVaultCreation(setupId: string): Promise<void>;
+  selectVault(input: {
+    readonly expectedVaultId: string | null;
+    readonly vaultId: string;
+  }): Promise<CanonicalClientState>;
+  captureActivePage(input: {
+    readonly expectedVaultId: string;
+    readonly tabId?: number;
+  }): Promise<{ readonly bundleId: string }>;
 }
 
 function plainRecord(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -156,9 +174,44 @@ function decodeLibrary(value: unknown): readonly CanonicalClientLibraryItem[] {
   return library;
 }
 
+function decodeVaultCreation(value: unknown): {
+  readonly setupId: string;
+  readonly recoveryPhrase: string;
+} {
+  if (
+    !plainRecord(value) ||
+    !exactKeys(value, ["setupId", "recoveryPhrase"]) ||
+    typeof value.setupId !== "string" ||
+    value.setupId.length < 1 ||
+    value.setupId.length > 128 ||
+    typeof value.recoveryPhrase !== "string" ||
+    value.recoveryPhrase.length < 1 ||
+    value.recoveryPhrase.length > 1_024
+  ) {
+    throw protocolError();
+  }
+  return { setupId: value.setupId, recoveryPhrase: value.recoveryPhrase };
+}
+
+function decodeCapture(value: unknown): { readonly bundleId: string } {
+  if (!plainRecord(value) || !exactKeys(value, ["bundleId"]) || !identifier(value.bundleId)) {
+    throw protocolError();
+  }
+  return { bundleId: value.bundleId };
+}
+
+function assertNullableVaultId(value: string | null): void {
+  if (value !== null && !identifier(value))
+    throw new TypeError("Popup expected Vault ID is invalid.");
+}
+
+function assertText(value: string, field: string): void {
+  if (value.length < 1 || value.length > 1_024) throw new TypeError(`Popup ${field} is invalid.`);
+}
+
 export function createCanonicalPopupApplicationClient(
   transport: CanonicalPopupApplicationTransport,
-): CanonicalPopupClient {
+): CanonicalPopupApplicationClient {
   return {
     async state(): Promise<CanonicalClientState> {
       return decodeState(await transport.request({ type: "GetState" }));
@@ -168,6 +221,58 @@ export function createCanonicalPopupApplicationClient(
     },
     subscribe(listener: () => void): () => void {
       return transport.subscribe(listener);
+    },
+    async beginVaultCreation(input) {
+      assertNullableVaultId(input.expectedVaultId);
+      if (input.label !== null && input.label.length > 1_024)
+        throw new TypeError("Popup Vault label is invalid.");
+      return decodeVaultCreation(
+        await transport.request({
+          type: "BeginVaultCreation",
+          expectedVaultId: input.expectedVaultId,
+          label: input.label,
+        }),
+      );
+    },
+    async confirmVaultCreation(input) {
+      assertText(input.setupId, "setup ID");
+      assertText(input.recoveryPhrase, "Recovery Phrase");
+      return decodeState(
+        await transport.request({
+          type: "ConfirmVaultCreation",
+          setupId: input.setupId,
+          recoveryPhrase: input.recoveryPhrase,
+        }),
+      );
+    },
+    async cancelVaultCreation(setupId) {
+      assertText(setupId, "setup ID");
+      const value = await transport.request({ type: "CancelVaultCreation", setupId });
+      if (value !== undefined) throw protocolError();
+    },
+    async selectVault(input) {
+      assertNullableVaultId(input.expectedVaultId);
+      if (!identifier(input.vaultId)) throw new TypeError("Popup Vault ID is invalid.");
+      return decodeState(
+        await transport.request({
+          type: "SelectVault",
+          expectedVaultId: input.expectedVaultId,
+          vaultId: input.vaultId,
+        }),
+      );
+    },
+    async captureActivePage(input) {
+      if (!identifier(input.expectedVaultId)) throw new TypeError("Popup Vault ID is invalid.");
+      if (input.tabId !== undefined && (!Number.isSafeInteger(input.tabId) || input.tabId < 0)) {
+        throw new TypeError("Popup tab ID is invalid.");
+      }
+      return decodeCapture(
+        await transport.request({
+          type: "CaptureActivePage",
+          expectedVaultId: input.expectedVaultId,
+          ...(input.tabId === undefined ? {} : { tabId: input.tabId }),
+        }),
+      );
     },
   };
 }
