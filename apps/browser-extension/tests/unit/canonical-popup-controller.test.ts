@@ -119,4 +119,37 @@ describe("canonical popup controller", () => {
       ],
     });
   });
+
+  it("allows the initiating surface to await an explicit fresh render", async () => {
+    const client = {
+      state: vi
+        .fn()
+        .mockResolvedValueOnce({
+          selectedVaultId: "a".repeat(64),
+          vaults: [{ vaultId: "a".repeat(64), label: "Research", selected: true }],
+        })
+        .mockResolvedValueOnce({
+          selectedVaultId: "b".repeat(64),
+          vaults: [{ vaultId: "b".repeat(64), label: "Inbox", selected: true }],
+        }),
+      listLibrary: vi.fn(async () => []),
+      subscribe: vi.fn(() => () => undefined),
+    };
+    const render = vi.fn();
+    const controller = new CanonicalPopupController(client, render) as unknown as {
+      start(): Promise<void>;
+      refresh(): Promise<void>;
+    };
+
+    await controller.start();
+    await controller.refresh();
+
+    expect(render).toHaveBeenNthCalledWith(2, {
+      state: {
+        selectedVaultId: "b".repeat(64),
+        vaults: [{ vaultId: "b".repeat(64), label: "Inbox", selected: true }],
+      },
+      library: [],
+    });
+  });
 });

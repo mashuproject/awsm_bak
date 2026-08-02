@@ -45,6 +45,11 @@ export class CanonicalPopupController {
     this.unsubscribe = undefined;
   }
 
+  async refresh(): Promise<void> {
+    if (!this.active) throw new Error("The canonical popup controller is not active.");
+    await this.invalidate();
+  }
+
   private invalidate(): Promise<void> {
     this.generation += 1;
     if (this.reconciliation === undefined) {
