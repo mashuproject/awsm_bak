@@ -164,9 +164,10 @@ synchronization-setup entrypoint is removed rather than left as a broken compati
 retired direct application protocol, its Library-preferences and direct popup/Library view helpers,
 and their sole-contract tests are also removed. The offscreen entrypoint now contains only
 canonical screenshot stitching; its retired export and MHTML-download message protocols are
-removed. Remaining disconnected experimental source and browser journeys, including old Search and
-synchronization paths, require a separate audit and canonical replacement or deletion before v0.3
-is complete.
+removed. The unshipped old Search request/permission surface and old Storage Relief request/view
+surface are removed with their sole-contract tests. Remaining disconnected experimental source and
+browser journeys, including old Search and synchronization paths, require a separate audit and
+canonical replacement or deletion before v0.3 is complete.
 
 # 4. Replica Host impact
 

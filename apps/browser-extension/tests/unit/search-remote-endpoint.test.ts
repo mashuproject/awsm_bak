@@ -1,5 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
-import { SearchProviderPermission } from "../../src/hosts/shared/search-provider-permission";
+import { describe, expect, it } from "vitest";
 import {
   normalizeRemoteSearchEndpoint,
   remoteSearchEndpointIdentity,
@@ -34,43 +33,5 @@ describe("remote Search endpoint and permission boundary", () => {
     ]) {
       expect(() => normalizeRemoteSearchEndpoint(endpoint)).toThrow();
     }
-  });
-
-  it("requests only the host pattern and Firefox disclosure categories", async () => {
-    const chromeApi = {
-      getAll: vi.fn(async () => ({ origins: [] })),
-      contains: vi.fn(async () => false),
-      request: vi.fn(async () => true),
-    };
-    await expect(
-      new SearchProviderPermission(
-        "https://embeddings.example.test:8443/v1/embeddings",
-        chromeApi,
-        false,
-      ).acquire(),
-    ).resolves.toBe(true);
-    expect(chromeApi.request).toHaveBeenCalledWith({
-      origins: ["https://embeddings.example.test/*"],
-    });
-
-    const firefoxApi = {
-      getAll: vi.fn(async () => ({ origins: [] })),
-      contains: vi.fn(async () => false),
-      request: vi.fn(async () => true),
-    };
-    await new SearchProviderPermission(
-      "https://embeddings.example.test/v1/embeddings",
-      firefoxApi,
-      true,
-    ).acquire();
-    expect(firefoxApi.request).toHaveBeenCalledWith({
-      origins: ["https://embeddings.example.test/*"],
-      data_collection: [
-        "websiteContent",
-        "browsingActivity",
-        "authenticationInfo",
-        "personallyIdentifyingInfo",
-      ],
-    });
   });
 });
