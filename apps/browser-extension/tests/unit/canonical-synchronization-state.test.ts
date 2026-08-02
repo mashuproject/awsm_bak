@@ -31,6 +31,7 @@ function remote(): CanonicalReplicaRemote {
     name: "Staging replica",
     endpoint: "https://sync.example.test/",
     hostedReplicaHandle: REPLICA_HANDLE,
+    locatorSalt: new Uint8Array(32).fill(2),
     enabled: true,
     inventoryPageSize: 100,
   };

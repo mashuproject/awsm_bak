@@ -1,5 +1,6 @@
 import type { Identifier } from "../../domain/canonical/identifiers";
 import {
+  byteString,
   exactCode,
   exactMap,
   identifierValue,
@@ -36,6 +37,7 @@ export interface CanonicalReplicaRemote {
   readonly name: string;
   readonly endpoint: string;
   readonly hostedReplicaHandle: string;
+  readonly locatorSalt: Uint8Array;
   readonly enabled: boolean;
   readonly inventoryPageSize: number;
 }
@@ -236,6 +238,7 @@ export function encodeCanonicalReplicaRemote(value: CanonicalReplicaRemote): Uin
   textValue(value.name, "Replica Remote name", { maxUtf8Bytes: 256 });
   endpoint(value.endpoint);
   uuid(value.hostedReplicaHandle, "Hosted Replica handle");
+  byteString(value.locatorSalt, 32, "Hosted Replica locator salt");
   nonnegativeInteger(value.inventoryPageSize, "Replica Remote inventory page size");
   if (value.inventoryPageSize < 1 || value.inventoryPageSize > 500) {
     throw new RangeError("Replica Remote inventory page size must be between 1 and 500");
@@ -249,14 +252,15 @@ export function encodeCanonicalReplicaRemote(value: CanonicalReplicaRemote): Uin
       [4, value.name],
       [5, value.endpoint],
       [6, value.hostedReplicaHandle],
-      [7, value.enabled],
-      [8, value.inventoryPageSize],
+      [7, value.locatorSalt],
+      [8, value.enabled],
+      [9, value.inventoryPageSize],
     ]),
   );
 }
 
 export function decodeCanonicalReplicaRemote(bytes: Uint8Array): CanonicalReplicaRemote {
-  const map = exactMap(decodeCanonicalValue(bytes), [...Array(9).keys()], "Replica Remote");
+  const map = exactMap(decodeCanonicalValue(bytes), [...Array(10).keys()], "Replica Remote");
   exactCode(mapValue(map, 0), SYNCHRONIZATION_STATE_FORMAT, "Replica Remote format");
   exactCode(mapValue(map, 1), REMOTE_TRANSPORT_HOSTED_HTTP, "Replica Remote transport");
   const value: CanonicalReplicaRemote = {
@@ -265,13 +269,14 @@ export function decodeCanonicalReplicaRemote(bytes: Uint8Array): CanonicalReplic
     name: textValue(mapValue(map, 4), "Replica Remote name", { maxUtf8Bytes: 256 }),
     endpoint: endpoint(mapValue(map, 5)),
     hostedReplicaHandle: uuid(mapValue(map, 6), "Hosted Replica handle"),
+    locatorSalt: byteString(mapValue(map, 7), 32, "Hosted Replica locator salt"),
     enabled: (() => {
-      const enabled = mapValue(map, 7);
+      const enabled = mapValue(map, 8);
       if (typeof enabled !== "boolean")
         throw new TypeError("Replica Remote enabled must be boolean");
       return enabled;
     })(),
-    inventoryPageSize: nonnegativeInteger(mapValue(map, 8), "Replica Remote inventory page size"),
+    inventoryPageSize: nonnegativeInteger(mapValue(map, 9), "Replica Remote inventory page size"),
   };
   if (value.inventoryPageSize < 1 || value.inventoryPageSize > 500) {
     throw new RangeError("Replica Remote inventory page size must be between 1 and 500");
