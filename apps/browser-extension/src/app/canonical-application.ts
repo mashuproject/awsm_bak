@@ -1,3 +1,4 @@
+import type { CanonicalPrimaryCaptureInput } from "../runtime/capture/canonical-prepare";
 import type { CanonicalClientRuntime } from "../runtime/client/canonical-runtime";
 
 export type CanonicalApplicationRequest =
@@ -18,6 +19,11 @@ export type CanonicalApplicationRequest =
       readonly expectedVaultId: string | null;
       readonly vaultId: string;
     }
+  | {
+      readonly type: "CaptureActivePage";
+      readonly expectedVaultId: string;
+      readonly tabId?: number;
+    }
   | { readonly type: "ListLibrary"; readonly expectedVaultId: string };
 
 type CanonicalApplicationRuntime = Pick<
@@ -27,8 +33,19 @@ type CanonicalApplicationRuntime = Pick<
   | "confirmVaultCreation"
   | "cancelVaultCreation"
   | "selectVault"
+  | "capture"
   | "listLibrary"
 >;
+
+interface CanonicalApplicationPageCapture {
+  captureActivePage(tabId?: number): Promise<{
+    readonly originalUrl: string;
+    readonly finalUrl: string;
+    readonly title: string;
+    readonly capturedAt: number;
+    readonly primary: CanonicalPrimaryCaptureInput;
+  }>;
+}
 
 function plainRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return (
@@ -50,6 +67,10 @@ function text(value: unknown): value is string {
 
 function nullableText(value: unknown): value is string | null {
   return value === null || text(value);
+}
+
+function tabId(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
 export function decodeCanonicalApplicationRequest(value: unknown): CanonicalApplicationRequest {
@@ -96,6 +117,21 @@ export function decodeCanonicalApplicationRequest(value: unknown): CanonicalAppl
         return { type: value.type, expectedVaultId: value.expectedVaultId, vaultId: value.vaultId };
       }
       break;
+    case "CaptureActivePage":
+      if (exactKeys(value, ["type", "expectedVaultId"]) && text(value.expectedVaultId)) {
+        return {
+          type: value.type,
+          expectedVaultId: value.expectedVaultId,
+        };
+      }
+      if (
+        exactKeys(value, ["type", "expectedVaultId", "tabId"]) &&
+        text(value.expectedVaultId) &&
+        tabId(value.tabId)
+      ) {
+        return { type: value.type, expectedVaultId: value.expectedVaultId, tabId: value.tabId };
+      }
+      break;
     case "ListLibrary":
       if (exactKeys(value, ["type", "expectedVaultId"]) && text(value.expectedVaultId)) {
         return { type: value.type, expectedVaultId: value.expectedVaultId };
@@ -109,6 +145,8 @@ export class CanonicalApplication {
   constructor(
     private readonly runtime: CanonicalApplicationRuntime,
     private readonly now: () => number = Date.now,
+    private readonly pageCapture?: CanonicalApplicationPageCapture,
+    private readonly createCaptureCommandId: () => string = () => crypto.randomUUID(),
   ) {}
 
   async handle(value: unknown): Promise<unknown> {
@@ -134,6 +172,19 @@ export class CanonicalApplication {
           expectedVaultId: request.expectedVaultId,
           vaultId: request.vaultId,
         });
+      case "CaptureActivePage": {
+        if (this.pageCapture === undefined) {
+          throw Object.assign(new Error("Browser page capture is unavailable."), {
+            id: "CAPTURE_UNAVAILABLE",
+          });
+        }
+        const captured = await this.pageCapture.captureActivePage(request.tabId);
+        return this.runtime.capture({
+          expectedVaultId: request.expectedVaultId,
+          commandId: this.createCaptureCommandId(),
+          ...captured,
+        });
+      }
       case "ListLibrary":
         return this.runtime.listLibrary(request.expectedVaultId);
     }

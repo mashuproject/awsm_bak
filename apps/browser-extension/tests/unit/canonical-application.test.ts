@@ -11,6 +11,7 @@ describe("canonical application", () => {
       cancelVaultCreation: vi.fn(),
       selectVault: vi.fn(),
       listLibrary: vi.fn(),
+      capture: vi.fn(),
     };
     const application = new CanonicalApplication(runtime, () => 1234);
 
@@ -48,6 +49,7 @@ describe("canonical application", () => {
       cancelVaultCreation: vi.fn().mockResolvedValue(undefined),
       selectVault: vi.fn().mockResolvedValue({ selectedVaultId: "b".repeat(64), vaults: [] }),
       listLibrary: vi.fn().mockResolvedValue([]),
+      capture: vi.fn(),
     };
     const application = new CanonicalApplication(runtime, () => 1234);
     const expectedVaultId = "a".repeat(64);
@@ -72,5 +74,48 @@ describe("canonical application", () => {
     expect(runtime.cancelVaultCreation).toHaveBeenCalledWith("setup");
     expect(runtime.selectVault).toHaveBeenCalledWith({ expectedVaultId, vaultId: "b".repeat(64) });
     expect(runtime.listLibrary).toHaveBeenCalledWith(expectedVaultId);
+  });
+
+  it("collects a browser page only through the canonical capture Host before authoring it", async () => {
+    const runtime = {
+      state: vi.fn(),
+      beginVaultCreation: vi.fn(),
+      confirmVaultCreation: vi.fn(),
+      cancelVaultCreation: vi.fn(),
+      selectVault: vi.fn(),
+      listLibrary: vi.fn(),
+      capture: vi.fn().mockResolvedValue({ bundleId: "b".repeat(64) }),
+    };
+    const capturePage = {
+      captureActivePage: vi.fn().mockResolvedValue({
+        originalUrl: "https://example.test/",
+        finalUrl: "https://example.test/",
+        title: "Example",
+        capturedAt: 1234,
+        primary: { blob: new Blob(["snapshot"]) },
+      }),
+    };
+    const application = new CanonicalApplication(
+      runtime,
+      () => 1234,
+      capturePage,
+      () => "command",
+    );
+    const expectedVaultId = "a".repeat(64);
+
+    await expect(
+      application.handle({ type: "CaptureActivePage", expectedVaultId, tabId: 9 }),
+    ).resolves.toEqual({ bundleId: "b".repeat(64) });
+
+    expect(capturePage.captureActivePage).toHaveBeenCalledWith(9);
+    expect(runtime.capture).toHaveBeenCalledWith({
+      expectedVaultId,
+      commandId: "command",
+      originalUrl: "https://example.test/",
+      finalUrl: "https://example.test/",
+      title: "Example",
+      capturedAt: 1234,
+      primary: { blob: expect.any(Blob) },
+    });
   });
 });

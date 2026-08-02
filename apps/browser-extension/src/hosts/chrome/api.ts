@@ -127,7 +127,7 @@ export class ChromeCaptureHost implements CaptureHost {
 
   async collectPageSnapshot(
     tabId: number,
-    command: CapturePageCommandV1,
+    input: { readonly observedUrl: string },
     capturedAt: string,
     clientVersion: string,
     onFrozen: () => Promise<void> = async () => undefined,
@@ -510,7 +510,7 @@ export class ChromeCaptureHost implements CaptureHost {
     await onFrozen();
     const metadata: CaptureMetadataV1 = {
       version: 1,
-      originalUrl: command.observedUrl,
+      originalUrl: input.observedUrl,
       finalUrl: collected.page.finalUrl,
       title: collected.page.title,
       capturedAt,
