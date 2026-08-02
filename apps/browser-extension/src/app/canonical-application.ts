@@ -1,0 +1,141 @@
+import type { CanonicalClientRuntime } from "../runtime/client/canonical-runtime";
+
+export type CanonicalApplicationRequest =
+  | { readonly type: "GetState" }
+  | {
+      readonly type: "BeginVaultCreation";
+      readonly expectedVaultId: string | null;
+      readonly label: string | null;
+    }
+  | {
+      readonly type: "ConfirmVaultCreation";
+      readonly setupId: string;
+      readonly recoveryPhrase: string;
+    }
+  | { readonly type: "CancelVaultCreation"; readonly setupId: string }
+  | {
+      readonly type: "SelectVault";
+      readonly expectedVaultId: string | null;
+      readonly vaultId: string;
+    }
+  | { readonly type: "ListLibrary"; readonly expectedVaultId: string };
+
+type CanonicalApplicationRuntime = Pick<
+  CanonicalClientRuntime,
+  | "state"
+  | "beginVaultCreation"
+  | "confirmVaultCreation"
+  | "cancelVaultCreation"
+  | "selectVault"
+  | "listLibrary"
+>;
+
+function plainRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null)
+  );
+}
+
+function exactKeys(value: Readonly<Record<string, unknown>>, keys: readonly string[]): boolean {
+  const actual = Object.keys(value).toSorted();
+  const expected = [...keys].toSorted();
+  return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
+}
+
+function text(value: unknown): value is string {
+  return typeof value === "string";
+}
+
+function nullableText(value: unknown): value is string | null {
+  return value === null || text(value);
+}
+
+export function decodeCanonicalApplicationRequest(value: unknown): CanonicalApplicationRequest {
+  if (!plainRecord(value) || !text(value.type)) {
+    throw new TypeError("Unsupported application Command");
+  }
+  switch (value.type) {
+    case "GetState":
+      if (exactKeys(value, ["type"])) return { type: value.type };
+      break;
+    case "BeginVaultCreation":
+      if (
+        exactKeys(value, ["type", "expectedVaultId", "label"]) &&
+        nullableText(value.expectedVaultId) &&
+        nullableText(value.label)
+      ) {
+        return {
+          type: value.type,
+          expectedVaultId: value.expectedVaultId,
+          label: value.label,
+        };
+      }
+      break;
+    case "ConfirmVaultCreation":
+      if (
+        exactKeys(value, ["type", "setupId", "recoveryPhrase"]) &&
+        text(value.setupId) &&
+        text(value.recoveryPhrase)
+      ) {
+        return { type: value.type, setupId: value.setupId, recoveryPhrase: value.recoveryPhrase };
+      }
+      break;
+    case "CancelVaultCreation":
+      if (exactKeys(value, ["type", "setupId"]) && text(value.setupId)) {
+        return { type: value.type, setupId: value.setupId };
+      }
+      break;
+    case "SelectVault":
+      if (
+        exactKeys(value, ["type", "expectedVaultId", "vaultId"]) &&
+        nullableText(value.expectedVaultId) &&
+        text(value.vaultId)
+      ) {
+        return { type: value.type, expectedVaultId: value.expectedVaultId, vaultId: value.vaultId };
+      }
+      break;
+    case "ListLibrary":
+      if (exactKeys(value, ["type", "expectedVaultId"]) && text(value.expectedVaultId)) {
+        return { type: value.type, expectedVaultId: value.expectedVaultId };
+      }
+      break;
+  }
+  throw new TypeError("Unsupported application Command");
+}
+
+export class CanonicalApplication {
+  constructor(
+    private readonly runtime: CanonicalApplicationRuntime,
+    private readonly now: () => number = Date.now,
+  ) {}
+
+  async handle(value: unknown): Promise<unknown> {
+    const request = decodeCanonicalApplicationRequest(value);
+    switch (request.type) {
+      case "GetState":
+        return this.runtime.state();
+      case "BeginVaultCreation":
+        return this.runtime.beginVaultCreation({
+          expectedVaultId: request.expectedVaultId,
+          label: request.label,
+          assertedAt: this.now(),
+        });
+      case "ConfirmVaultCreation":
+        return this.runtime.confirmVaultCreation({
+          setupId: request.setupId,
+          recoveryPhrase: request.recoveryPhrase,
+        });
+      case "CancelVaultCreation":
+        return this.runtime.cancelVaultCreation(request.setupId);
+      case "SelectVault":
+        return this.runtime.selectVault({
+          expectedVaultId: request.expectedVaultId,
+          vaultId: request.vaultId,
+        });
+      case "ListLibrary":
+        return this.runtime.listLibrary(request.expectedVaultId);
+    }
+  }
+}
