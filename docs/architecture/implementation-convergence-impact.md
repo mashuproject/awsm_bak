@@ -1,8 +1,8 @@
 # Canonical Architecture Implementation Impact
 
-**Status:** Cold-start implementation scope
+**Status:** Active convergence scope and cold-start handoff
 
-**Evidence scope:** repository checkout inspected 2026-08-01
+**Evidence scope:** repository checkout inspected through 2026-08-02
 
 **Depends On:**
 
@@ -12,9 +12,10 @@
 
 # 1. Purpose
 
-This document tells an implementer starting cold where the current experimental implementation
-diverges from the reconciled canonical contract and what must be replaced. It is an impact scope,
-not authorization to implement, deploy, reset an environment, or change production.
+This document tells an implementer starting cold what has converged, where the remaining
+experimental implementation diverges from the reconciled canonical contract, and what must still
+be replaced. It is an impact scope, not authorization to implement, deploy, reset an environment,
+or change production.
 
 # 2. Replacement rule
 
@@ -129,6 +130,29 @@ accessible status helpers. Add trusted Client surfaces for:
 
 Physical-device labels may remain ordinary presentation when describing a browser session, but
 must not become portable Vault authority.
+
+## 3.6 Current browser convergence evidence
+
+The repository now contains an executable canonical substrate for codecs, identifiers,
+cryptography, opaque protection, IndexedDB namespaces, Initial Baseline and Genesis, signed Record
+and Authority replay, retained Continuity Proof dependencies, local creation and Capture, core
+content projection, keyword Search, Storage Relief foundations, Vacuum, Closure, state-only Fork,
+Invitations, Client and Recovery Credential Events, Key Epoch transitions, Key Delivery, and
+Feature Activation. This is repository evidence from the focused and full browser test suites; it
+does not establish packaged UI behavior or deployed state.
+
+Member Recovery currently covers the selected readable-Replica path: an effective phrase opens the
+exact authenticated Recovery Envelope set, enrolls a fresh same-member Client in one Frontier-CAS
+mutation, protects the recovered local keyring, and immediately supports confirmation-gated
+all-head Recovery replacement. Unit crypto/replay proof and a real Chromium IndexedDB restart prove
+the retired phrase, one effective replacement head, fresh local Client authority, and subsequent
+authorship. Unscoped discovery from Host inventory, withholding/freshness proof across Remotes,
+multi-Client conflict journeys, and the management UI remain target work.
+
+The extension entrypoint, popup, Library, Search, export/import, synchronization, and management
+surfaces still use superseded orchestration. Canonical modules therefore remain implementation
+foundations rather than a shipped v0.3 Client until those entrypoints are switched and the old
+paths are deleted.
 
 # 4. Replica Host impact
 

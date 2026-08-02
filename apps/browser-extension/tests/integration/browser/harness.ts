@@ -57,6 +57,7 @@ import { CanonicalClientRuntime } from "../../../src/runtime/client/canonical-ru
 import { prepareVaultEpochStorage } from "../../../src/runtime/import/credentials";
 import { CanonicalLibraryProjectionService } from "../../../src/runtime/library/canonical-projection";
 import { createPageSnapshotBlob } from "../../../src/runtime/page-snapshot";
+import { CanonicalReplayService } from "../../../src/runtime/projection/canonical-replay";
 import {
   createDeviceCertificate,
   createDeviceIdentity,
@@ -101,13 +102,17 @@ import {
 } from "../../../src/runtime/vault";
 import { prepareCanonicalVaultCreation } from "../../../src/runtime/vault/canonical-create";
 import {
+  canonicalLocalStorageContext,
   decodeCanonicalReplicaState,
   decodeClientSecretState,
   decodeEpochSecretState,
   decodeInstallationSelection,
   decodeVaultDirectoryEntry,
+  encodeCanonicalReplicaState,
+  encodeVaultDirectoryEntry,
   openWrappedLocalState,
   prepareCanonicalVaultStorage,
+  prepareWrappedLocalStateItem,
 } from "../../../src/runtime/vault/canonical-local-state";
 import { CanonicalVaultService } from "../../../src/runtime/vault/canonical-service";
 import type { VaultRecordsV1 } from "../../../src/runtime/vault/contracts";
@@ -640,6 +645,169 @@ async function canonicalCaptureCommitScenario(): Promise<unknown> {
     };
   } finally {
     await storage.close();
+    await deleteBrowserDatabase(databaseName);
+  }
+}
+
+async function canonicalMemberRecoveryScenario(): Promise<unknown> {
+  const databaseName = `awsm-canonical-member-recovery-${crypto.randomUUID()}`;
+  const storage = new CanonicalIndexedDb(databaseName);
+  const artifacts = new BrowserMemoryCanonicalArtifactStore();
+  try {
+    const vaults = new CanonicalVaultService(storage, NORMAL_STORAGE_REALM);
+    const runtime = new CanonicalClientRuntime(
+      vaults,
+      new CanonicalCaptureService(vaults, artifacts),
+      new CanonicalLibraryProjectionService(vaults, artifacts),
+    );
+    const setup = await runtime.beginVaultCreation({
+      expectedVaultId: null,
+      label: "Recovery vault",
+      assertedAt: 1,
+    });
+    const created = await runtime.confirmVaultCreation({
+      setupId: setup.setupId,
+      recoveryPhrase: setup.recoveryPhrase,
+    });
+    const vaultId = identifierFromStorageKey("Vault", created.vaultId);
+    const opened = await vaults.openVault(vaultId);
+    const originalMemberId = opened.replicaState.memberId;
+    const originalClientCredentialId = opened.replicaState.authoringClientCredentialId;
+    if (originalMemberId === null || originalClientCredentialId === null) {
+      throw new Error("New Vault did not retain its initial local Client authority");
+    }
+    const vaultStorageKey = bytesKey(vaultId);
+    const readOnlyReplicaState = {
+      ...opened.replicaState,
+      authoringClientCredentialId: null,
+      memberId: null,
+    };
+    const [nextReplicaState, directoryItem] = await Promise.all([
+      prepareWrappedLocalStateItem({
+        namespace: NAMESPACES.replicaState.key,
+        scopeKey: vaultStorageKey,
+        itemKey: "current",
+        wrappingKey: opened.installationWrappingKey,
+        domain: "awsm.local.replica-state",
+        context: canonicalLocalStorageContext(vaultId, opened.replicaState.generationId),
+        bytes: encodeCanonicalReplicaState(readOnlyReplicaState),
+      }),
+      prepareWrappedLocalStateItem({
+        namespace: NAMESPACES.vaultDirectory.key,
+        scopeKey: "installation",
+        itemKey: vaultStorageKey,
+        wrappingKey: opened.installationWrappingKey,
+        domain: "awsm.local.vault-directory",
+        context: canonicalLocalStorageContext(vaultId, vaultId),
+        bytes: encodeVaultDirectoryEntry({
+          ...opened.directory,
+          selectedClientCredentialId: null,
+        }),
+      }),
+    ]);
+    await storage.commitReplicaMutation({
+      realm: NORMAL_STORAGE_REALM,
+      expectedReplicaState: opened.replicaStateStorageBytes,
+      nextReplicaState,
+      mutableItems: [directoryItem],
+      deletedItems: [
+        {
+          namespace: NAMESPACES.clientSecret.key,
+          scopeKey: vaultStorageKey,
+          itemKey: bytesKey(originalClientCredentialId),
+        },
+      ],
+    });
+    const readOnly = await vaults.openVault(vaultId);
+    const recovery = await runtime.recoverMember({
+      expectedVaultId: created.vaultId,
+      commandId: "browser-member-recovery",
+      recoveryPhrase: setup.recoveryPhrase,
+      assertedAt: 2,
+    });
+    const recoveredReplay = await new CanonicalReplayService(vaults).replay(vaultId);
+    const recoveryEvent = recoveredReplay.events.find(
+      ({ recordId }) => bytesKey(recordId) === recovery.eventRecordId,
+    );
+    const replacementSetup = await runtime.beginRecoveryPhraseReplacement({
+      expectedVaultId: created.vaultId,
+      assertedAt: 3,
+    });
+    const replacement = await runtime.confirmRecoveryPhraseReplacement({
+      setupId: replacementSetup.setupId,
+      recoveryPhrase: replacementSetup.recoveryPhrase,
+    });
+    let oldPhraseRetired = false;
+    try {
+      await runtime.recoverMember({
+        expectedVaultId: created.vaultId,
+        commandId: "browser-retired-member-recovery",
+        recoveryPhrase: setup.recoveryPhrase,
+        assertedAt: 4,
+      });
+    } catch (error) {
+      oldPhraseRetired =
+        error instanceof Error &&
+        error.message === "Recovery Phrase does not match an effective Recovery Credential";
+    }
+    await storage.close();
+
+    const restartedStorage = new CanonicalIndexedDb(databaseName);
+    try {
+      const restartedVaults = new CanonicalVaultService(restartedStorage, NORMAL_STORAGE_REALM);
+      const restartedRuntime = new CanonicalClientRuntime(
+        restartedVaults,
+        new CanonicalCaptureService(restartedVaults, artifacts),
+        new CanonicalLibraryProjectionService(restartedVaults, artifacts),
+      );
+      const restarted = await restartedVaults.openVault(vaultId);
+      const restartedReplay = await new CanonicalReplayService(restartedVaults).replay(vaultId);
+      const activeClient = restartedReplay.authority.clientCredentials.get(
+        recovery.clientCredentialId,
+      );
+      const authored = await restartedRuntime.closeVault({
+        expectedVaultId: created.vaultId,
+        commandId: "browser-recovered-close",
+        assertedAt: 5,
+      });
+      const [clientSecrets, epochSecrets] = await Promise.all([
+        restartedStorage.listBytes(
+          NORMAL_STORAGE_REALM,
+          NAMESPACES.clientSecret.key,
+          vaultStorageKey,
+        ),
+        restartedStorage.listBytes(
+          NORMAL_STORAGE_REALM,
+          NAMESPACES.epochSecret.key,
+          vaultStorageKey,
+        ),
+      ]);
+      return {
+        readOnlyBeforeRecovery:
+          readOnly.clientSecret === null &&
+          readOnly.replicaState.memberId === null &&
+          readOnly.replicaState.authoringClientCredentialId === null,
+        recoveredSameMember: recovery.memberId === bytesKey(originalMemberId),
+        freshClientCredential: recovery.clientCredentialId !== bytesKey(originalClientCredentialId),
+        recoveryEventAccepted: recoveryEvent?.family === 1 && recoveryEvent.type === 9,
+        replacementRevision: replacement.revision,
+        oldPhraseRetired,
+        effectiveRecoveryHeads: restartedReplay.authority.recoveryCredentials.filter(
+          ({ effective }) => effective,
+        ).length,
+        restartedClientActive:
+          restarted.clientSecret !== null &&
+          bytesKey(restarted.clientSecret.clientCredentialId) === recovery.clientCredentialId &&
+          activeClient?.active === true,
+        authoredAfterRestart: authored.eventRecordId.length === 64,
+        clientSecretCount: clientSecrets.length,
+        epochSecretCount: epochSecrets.length,
+      };
+    } finally {
+      await restartedStorage.close();
+    }
+  } finally {
+    await storage.close().catch(() => undefined);
     await deleteBrowserDatabase(databaseName);
   }
 }
@@ -7311,10 +7479,13 @@ async function run(): Promise<void> {
                                                                                                                                       : scenario ===
                                                                                                                                           "stale-discard-restart"
                                                                                                                                         ? await staleDiscardRestartScenario()
-                                                                                                                                        : {
-                                                                                                                                            error:
-                                                                                                                                              "unknown scenario",
-                                                                                                                                          };
+                                                                                                                                        : scenario ===
+                                                                                                                                            "canonical-member-recovery"
+                                                                                                                                          ? await canonicalMemberRecoveryScenario()
+                                                                                                                                          : {
+                                                                                                                                              error:
+                                                                                                                                                "unknown scenario",
+                                                                                                                                            };
   const output = document.querySelector("#result");
   if (output !== null) {
     output.textContent = JSON.stringify(result);

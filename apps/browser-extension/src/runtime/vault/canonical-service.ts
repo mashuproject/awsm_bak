@@ -5,6 +5,7 @@ import {
   openCompactItem,
 } from "../../crypto/compact";
 import { openKeyEnvelope } from "../../crypto/key-envelope";
+import { wipe } from "../../crypto/sodium";
 import type { Identifier } from "../../domain/canonical/identifiers";
 import {
   type AuthenticatedVaultEvent,
@@ -422,6 +423,38 @@ export class CanonicalVaultService {
       throw new TypeError("Exactly one current Key Envelope must open for the selected Client");
     }
     return openedVault;
+  }
+
+  async listEpochSecrets(
+    vault: PersistedOpenedCanonicalVault,
+  ): Promise<readonly EpochSecretState[]> {
+    const vaultKey = identifierStorageKey(vault.replicaState.vaultId);
+    const items = await this.storage.listBytes(this.realm, NAMESPACES.epochSecret.key, vaultKey);
+    const secrets: EpochSecretState[] = [];
+    try {
+      for (const item of items) {
+        const epochId = identifierFromStorageKey("KeyEpoch", item.itemKey);
+        const plaintext = await openWrappedLocalState({
+          wrappingKey: vault.installationWrappingKey,
+          domain: "awsm.local.epoch-secret",
+          vaultId: vault.replicaState.vaultId,
+          identity: epochId,
+          wrappedBytes: item.bytes,
+        });
+        try {
+          const secret = decodeEpochSecretState(plaintext);
+          sameBytes(secret.vaultId, vault.replicaState.vaultId, "Epoch Secret Vault ID");
+          sameBytes(secret.keyEpochId, epochId, "Epoch Secret storage identity");
+          secrets.push(secret);
+        } finally {
+          await wipe(plaintext);
+        }
+      }
+      return secrets;
+    } catch (error) {
+      await Promise.all(secrets.map(({ key }) => wipe(key)));
+      throw error;
+    }
   }
 
   async readLogicalResolution(input: {

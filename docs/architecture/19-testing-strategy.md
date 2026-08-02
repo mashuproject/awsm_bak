@@ -55,6 +55,15 @@ in a multi-head recovery conflict, rejection of a closed ancestor phrase, descen
 replacement, partial synchronization between ceremony Events, concurrent candidate recoveries, and
 inability to claim global freshness from one withholding Replica.
 
+The readable-Replica recovery path additionally proves that a wrong but valid phrase and an
+incomplete or duplicate authenticated Envelope slot set cause no phrase-authorized opaque read;
+every opened Envelope is bound to its exact Vault, Epoch, Credential, revision, and ID; Enrollment,
+local secrets, selection, logical resolutions, and Replica Safety State commit under one Frontier
+compare-and-swap; and a real storage restart can replay and author with the fresh Client. The next
+ceremony proves full fresh-phrase confirmation, all-head Replacement, rejection of the retired
+phrase, retry after phrase mismatch, consumption after cancellation or failed commit, and one
+effective Recovery head after restart.
+
 # Replica and Host tests
 
 At least two independent Client implementations or profiles and two isolated Hosts exercise:

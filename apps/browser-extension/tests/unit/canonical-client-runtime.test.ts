@@ -11,6 +11,8 @@ import type { CanonicalLibraryProjectionService } from "../../src/runtime/librar
 import type { CanonicalSearchService } from "../../src/runtime/search/canonical-service";
 import type { CanonicalForkService } from "../../src/runtime/vault/canonical-fork-service";
 import type { CanonicalLifecycleService } from "../../src/runtime/vault/canonical-lifecycle-service";
+import type { CanonicalMemberRecoveryService } from "../../src/runtime/vault/canonical-member-recovery-service";
+import type { CanonicalRecoveryReplacementService } from "../../src/runtime/vault/canonical-recovery-replacement-service";
 import type { CanonicalVaultService } from "../../src/runtime/vault/canonical-service";
 import type { CanonicalVacuumService } from "../../src/runtime/vault/canonical-vacuum-service";
 
@@ -64,6 +66,21 @@ function fixture() {
   const lifecycle = { close: vi.fn() } as unknown as CanonicalLifecycleService;
   const vacuumService = { vacuum: vi.fn() } as unknown as CanonicalVacuumService;
   const forkService = { begin: vi.fn(async () => ceremony) } as unknown as CanonicalForkService;
+  const memberRecovery = { enroll: vi.fn() } as unknown as CanonicalMemberRecoveryService;
+  const replacementCeremony = {
+    recoveryPhrase: "legal winner thank year wave sausage worth useful legal winner thank yellow",
+    confirm: vi.fn(async () => ({
+      vaultId: firstVaultId,
+      memberId: randomIdentifier("Member"),
+      recoveryCredentialId: randomIdentifier("RecoveryCredential"),
+      revision: 1,
+      eventRecordId: randomIdentifier("VaultRecord"),
+    })),
+    cancel: vi.fn(async () => undefined),
+  };
+  const recoveryReplacement = {
+    begin: vi.fn(async () => replacementCeremony),
+  } as unknown as CanonicalRecoveryReplacementService;
   let setup = 0;
   const runtime = new CanonicalClientRuntime(
     vaults,
@@ -79,6 +96,8 @@ function fixture() {
     lifecycle,
     vacuumService,
     forkService,
+    memberRecovery,
+    recoveryReplacement,
   );
   return {
     runtime,
@@ -90,6 +109,9 @@ function fixture() {
     lifecycle,
     vacuumService,
     forkService,
+    memberRecovery,
+    recoveryReplacement,
+    replacementCeremony,
     ceremony,
     firstVaultId,
     secondVaultId,
@@ -159,6 +181,104 @@ describe("canonical Client Runtime", () => {
         recoveryPhrase: ceremony.recoveryPhrase,
       }),
     ).rejects.toMatchObject({ id: "VAULT_FORK_NOT_FOUND" });
+  });
+
+  it("recovers the selected Member into a fresh local Client Credential", async () => {
+    const { runtime, memberRecovery, firstVaultId } = fixture();
+    const expectedVaultId = identifierStorageKey(firstVaultId);
+    const memberId = randomIdentifier("Member");
+    const clientCredentialId = randomIdentifier("ClientCredential");
+    const eventRecordId = randomIdentifier("VaultRecord");
+    vi.mocked(memberRecovery.enroll).mockResolvedValue({
+      commandId: "recover-1",
+      vaultId: firstVaultId,
+      generationId: randomIdentifier("Generation"),
+      memberId,
+      clientCredentialId,
+      eventRecordId,
+    });
+
+    await expect(
+      runtime.recoverMember({
+        expectedVaultId,
+        commandId: "recover-1",
+        recoveryPhrase: "twelve private words",
+        assertedAt: 12,
+      }),
+    ).resolves.toEqual({
+      memberId: identifierStorageKey(memberId),
+      clientCredentialId: identifierStorageKey(clientCredentialId),
+      eventRecordId: identifierStorageKey(eventRecordId),
+    });
+    expect(memberRecovery.enroll).toHaveBeenCalledWith({
+      commandId: "recover-1",
+      vaultId: firstVaultId,
+      recoveryPhrase: "twelve private words",
+      assertedAt: 12,
+    });
+  });
+
+  it("keeps the replacement Recovery Phrase memory-only until exact confirmation", async () => {
+    const { runtime, recoveryReplacement, replacementCeremony, firstVaultId } = fixture();
+    const expectedVaultId = identifierStorageKey(firstVaultId);
+
+    const setup = await runtime.beginRecoveryPhraseReplacement({
+      expectedVaultId,
+      assertedAt: 13,
+    });
+    expect(setup).toEqual({
+      setupId: "setup-1",
+      recoveryPhrase: replacementCeremony.recoveryPhrase,
+    });
+    expect(recoveryReplacement.begin).toHaveBeenCalledWith({
+      vaultId: firstVaultId,
+      assertedAt: 13,
+    });
+    const replaced = await runtime.confirmRecoveryPhraseReplacement({
+      setupId: setup.setupId,
+      recoveryPhrase: replacementCeremony.recoveryPhrase,
+    });
+    expect(replaced.revision).toBe(1);
+    expect(replaced.recoveryCredentialId).toHaveLength(64);
+    await expect(
+      runtime.confirmRecoveryPhraseReplacement({
+        setupId: setup.setupId,
+        recoveryPhrase: replacementCeremony.recoveryPhrase,
+      }),
+    ).rejects.toMatchObject({ id: "RECOVERY_REPLACEMENT_NOT_FOUND" });
+  });
+
+  it("retains a replacement setup only for a retryable phrase mismatch", async () => {
+    const { runtime, replacementCeremony, firstVaultId } = fixture();
+    const expectedVaultId = identifierStorageKey(firstVaultId);
+    vi.mocked(replacementCeremony.confirm)
+      .mockRejectedValueOnce(
+        Object.assign(new Error("phrase mismatch"), { id: "RECOVERY_PHRASE_MISMATCH" }),
+      )
+      .mockRejectedValueOnce(new Error("storage failed"));
+
+    const setup = await runtime.beginRecoveryPhraseReplacement({
+      expectedVaultId,
+      assertedAt: 14,
+    });
+    await expect(
+      runtime.confirmRecoveryPhraseReplacement({
+        setupId: setup.setupId,
+        recoveryPhrase: "wrong phrase",
+      }),
+    ).rejects.toMatchObject({ id: "RECOVERY_PHRASE_MISMATCH" });
+    await expect(
+      runtime.confirmRecoveryPhraseReplacement({
+        setupId: setup.setupId,
+        recoveryPhrase: replacementCeremony.recoveryPhrase,
+      }),
+    ).rejects.toThrow("storage failed");
+    await expect(
+      runtime.confirmRecoveryPhraseReplacement({
+        setupId: setup.setupId,
+        recoveryPhrase: replacementCeremony.recoveryPhrase,
+      }),
+    ).rejects.toMatchObject({ id: "RECOVERY_REPLACEMENT_NOT_FOUND" });
   });
 
   it("rejects stale selection commands before changing the selected Vault", async () => {

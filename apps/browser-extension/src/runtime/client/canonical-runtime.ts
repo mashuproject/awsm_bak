@@ -22,6 +22,11 @@ import type {
 import { type CanonicalSearchCoverage, CanonicalSearchService } from "../search/canonical-service";
 import { type CanonicalForkCeremony, CanonicalForkService } from "../vault/canonical-fork-service";
 import { CanonicalLifecycleService } from "../vault/canonical-lifecycle-service";
+import { CanonicalMemberRecoveryService } from "../vault/canonical-member-recovery-service";
+import {
+  type CanonicalRecoveryReplacementCeremony,
+  CanonicalRecoveryReplacementService,
+} from "../vault/canonical-recovery-replacement-service";
 import type {
   CanonicalVaultCreationCeremony,
   CanonicalVaultService,
@@ -148,8 +153,17 @@ interface PendingVaultFork {
   readonly ceremony: CanonicalForkCeremony;
 }
 
+interface PendingRecoveryReplacement {
+  readonly expectedVaultId: string;
+  readonly ceremony: CanonicalRecoveryReplacementCeremony;
+}
+
 function runtimeError(id: string, message: string): Error {
   return Object.assign(new Error(message), { id });
+}
+
+function isErrorId(error: unknown, id: string): boolean {
+  return error instanceof Error && "id" in error && error.id === id;
 }
 
 function selectedVaultId(state: CanonicalClientState): string | null {
@@ -199,6 +213,7 @@ function assertAcyclicFolderParents(parents: ReadonlyMap<string, string>): void 
 export class CanonicalClientRuntime {
   private readonly pendingVaultCreations = new Map<string, PendingVaultCreation>();
   private readonly pendingVaultForks = new Map<string, PendingVaultFork>();
+  private readonly pendingRecoveryReplacements = new Map<string, PendingRecoveryReplacement>();
 
   constructor(
     readonly vaults: CanonicalVaultService,
@@ -225,6 +240,14 @@ export class CanonicalClientRuntime {
       vaults,
       captures.artifacts,
     ),
+    readonly memberRecovery: Pick<
+      CanonicalMemberRecoveryService,
+      "enroll"
+    > = new CanonicalMemberRecoveryService(vaults),
+    readonly recoveryReplacement: Pick<
+      CanonicalRecoveryReplacementService,
+      "begin"
+    > = new CanonicalRecoveryReplacementService(vaults),
   ) {}
 
   async state(): Promise<CanonicalClientState> {
@@ -259,7 +282,7 @@ export class CanonicalClientRuntime {
       assertedAt: input.assertedAt,
     });
     const setupId = this.createSetupId();
-    if (this.pendingVaultCreations.has(setupId) || this.pendingVaultForks.has(setupId)) {
+    if (this.hasPendingSetup(setupId)) {
       await ceremony.cancel();
       throw runtimeError("VAULT_CREATION_CONFLICT", "The Vault creation setup ID is not unique.");
     }
@@ -297,7 +320,7 @@ export class CanonicalClientRuntime {
       assertedAt: input.assertedAt,
     });
     const setupId = this.createSetupId();
-    if (this.pendingVaultCreations.has(setupId) || this.pendingVaultForks.has(setupId)) {
+    if (this.hasPendingSetup(setupId)) {
       await ceremony.cancel();
       throw runtimeError("VAULT_FORK_CONFLICT", "The Fork setup ID is not unique.");
     }
@@ -322,6 +345,87 @@ export class CanonicalClientRuntime {
   async cancelVaultFork(setupId: string): Promise<void> {
     const pending = this.requirePendingFork(setupId);
     this.pendingVaultForks.delete(setupId);
+    await pending.ceremony.cancel();
+  }
+
+  async recoverMember(input: {
+    readonly expectedVaultId: string;
+    readonly commandId: string;
+    readonly recoveryPhrase: string;
+    readonly assertedAt: number | bigint;
+  }): Promise<{
+    readonly memberId: string;
+    readonly clientCredentialId: string;
+    readonly eventRecordId: string;
+  }> {
+    await this.assertExpectedVault(input.expectedVaultId);
+    const outcome = await this.memberRecovery.enroll({
+      commandId: input.commandId,
+      vaultId: identifierFromStorageKey("Vault", input.expectedVaultId),
+      recoveryPhrase: input.recoveryPhrase,
+      assertedAt: input.assertedAt,
+    });
+    return {
+      memberId: identifierStorageKey(outcome.memberId),
+      clientCredentialId: identifierStorageKey(outcome.clientCredentialId),
+      eventRecordId: identifierStorageKey(outcome.eventRecordId),
+    };
+  }
+
+  async beginRecoveryPhraseReplacement(input: {
+    readonly expectedVaultId: string;
+    readonly assertedAt: number | bigint;
+  }): Promise<{ readonly setupId: string; readonly recoveryPhrase: string }> {
+    await this.assertExpectedVault(input.expectedVaultId);
+    const ceremony = await this.recoveryReplacement.begin({
+      vaultId: identifierFromStorageKey("Vault", input.expectedVaultId),
+      assertedAt: input.assertedAt,
+    });
+    const setupId = this.createSetupId();
+    if (this.hasPendingSetup(setupId)) {
+      await ceremony.cancel();
+      throw runtimeError(
+        "RECOVERY_REPLACEMENT_CONFLICT",
+        "The Recovery replacement setup ID is not unique.",
+      );
+    }
+    this.pendingRecoveryReplacements.set(setupId, {
+      expectedVaultId: input.expectedVaultId,
+      ceremony,
+    });
+    return { setupId, recoveryPhrase: ceremony.recoveryPhrase };
+  }
+
+  async confirmRecoveryPhraseReplacement(input: {
+    readonly setupId: string;
+    readonly recoveryPhrase: string;
+  }): Promise<{
+    readonly recoveryCredentialId: string;
+    readonly revision: number;
+    readonly eventRecordId: string;
+  }> {
+    const pending = this.requirePendingRecoveryReplacement(input.setupId);
+    await this.assertExpectedVault(pending.expectedVaultId);
+    let replaced: Awaited<ReturnType<CanonicalRecoveryReplacementCeremony["confirm"]>>;
+    try {
+      replaced = await pending.ceremony.confirm(input.recoveryPhrase);
+    } catch (error) {
+      if (!isErrorId(error, "RECOVERY_PHRASE_MISMATCH")) {
+        this.pendingRecoveryReplacements.delete(input.setupId);
+      }
+      throw error;
+    }
+    this.pendingRecoveryReplacements.delete(input.setupId);
+    return {
+      recoveryCredentialId: identifierStorageKey(replaced.recoveryCredentialId),
+      revision: replaced.revision,
+      eventRecordId: identifierStorageKey(replaced.eventRecordId),
+    };
+  }
+
+  async cancelRecoveryPhraseReplacement(setupId: string): Promise<void> {
+    const pending = this.requirePendingRecoveryReplacement(setupId);
+    this.pendingRecoveryReplacements.delete(setupId);
     await pending.ceremony.cancel();
   }
 
@@ -1672,6 +1776,25 @@ export class CanonicalClientRuntime {
       throw runtimeError("VAULT_FORK_NOT_FOUND", "The Fork ceremony is unavailable.");
     }
     return pending;
+  }
+
+  private requirePendingRecoveryReplacement(setupId: string): PendingRecoveryReplacement {
+    const pending = this.pendingRecoveryReplacements.get(setupId);
+    if (pending === undefined) {
+      throw runtimeError(
+        "RECOVERY_REPLACEMENT_NOT_FOUND",
+        "The Recovery replacement ceremony is unavailable.",
+      );
+    }
+    return pending;
+  }
+
+  private hasPendingSetup(setupId: string): boolean {
+    return (
+      this.pendingVaultCreations.has(setupId) ||
+      this.pendingVaultForks.has(setupId) ||
+      this.pendingRecoveryReplacements.has(setupId)
+    );
   }
 
   private async assertExpectedVault(expectedVaultId: string | null): Promise<void> {

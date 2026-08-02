@@ -85,6 +85,24 @@ test("requires Recovery Phrase confirmation before committing a canonical Vault"
   });
 });
 
+test("recovers a canonical Member into a fresh Client and reopens it after restart", async ({
+  page,
+}) => {
+  await expect(scenario(page, "canonical-member-recovery")).resolves.toEqual({
+    readOnlyBeforeRecovery: true,
+    recoveredSameMember: true,
+    freshClientCredential: true,
+    recoveryEventAccepted: true,
+    replacementRevision: 1,
+    oldPhraseRetired: true,
+    effectiveRecoveryHeads: 1,
+    restartedClientActive: true,
+    authoredAfterRestart: true,
+    clientSecretCount: 1,
+    epochSecretCount: 1,
+  });
+});
+
 test("atomically commits concurrent canonical Captures and returns idempotent outcomes", async ({
   page,
 }) => {

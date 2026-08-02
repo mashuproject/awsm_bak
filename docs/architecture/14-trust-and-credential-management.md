@@ -28,6 +28,14 @@ Epoch. A current member may enroll another own Client Credential through an exis
 Credential. Recovery can independently enroll one after complete Frontier, Continuity Proof, and
 authority verification. Another existing Client need not approve.
 
+When a Client already has a readable authenticated Replica but no usable own Client Credential,
+the local recovery flow matches the complete Recovery Phrase to one effective same-member Recovery
+Credential before opening its exact authenticated Key Envelope slot for every readable Key Epoch.
+It creates and live-challenges a fresh Client Credential, then atomically stores the signed
+Enrollment, its Key Envelopes, Installation-wrapped local secrets, Replica Safety State, and local
+selection. Phrase-derived private material and plaintext Epoch keys are never persisted outside
+the protected local-secret boundary.
+
 An Invitation carries capabilities and a one-use bearer secret. A candidate presents a fresh
 member identity, Client Credential, Recovery Credential, and proof of possession through a live
 connection between Replicas. Acceptance is a signed Authority Event. Invitations do not expire by
@@ -52,6 +60,15 @@ Recovery Phrase replacement creates a fresh Recovery Credential and invalidates 
 future authority. Concurrent replacements preserve all candidates as a Recovery Conflict. A phrase
 matching an effective candidate may recover, but resolving the conflict requires a descendant that
 observes every head. No revision number or timestamp chooses automatically.
+
+Recovery-authorized Client Enrollment and Recovery Credential Replacement are consecutive
+ceremonies, not one synthetic Event. The Client presents fresh-phrase confirmation as the immediate
+next step and does not describe recovery as finished until it succeeds. A phrase mismatch leaves
+that memory-only confirmation retryable; cancellation or an attempted commit that fails makes the
+setup unusable and wipes its mutable private-key and plaintext-key buffers. JavaScript strings
+cannot be reliably zeroized and remain subject to runtime memory management. A crash between the
+two Events leaves the newly enrolled Client active and the prior Recovery Phrase effective, so the
+Client resumes replacement rather than inventing partial portable state.
 
 # Key delivery
 

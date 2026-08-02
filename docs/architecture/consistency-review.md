@@ -2,9 +2,10 @@
 
 **Status:** Review Record — reconciled target; repository verification complete
 
-**Evidence scope:** repository checkout inspected 2026-08-01
+**Evidence scope:** target reconciliation inspected 2026-08-01; implementation evidence updated
+through 2026-08-02
 
-**Implementation scope:** documentation only
+**Implementation scope:** active browser and Host convergence
 
 # 1. Result
 
@@ -15,9 +16,11 @@ channel access, and Client-local API access are independent domains.
 
 This is a repository-evidence conclusion about the target documents. It is not deployed-state
 evidence and does not claim that the browser extension, Rails application, staging, or production
-already implements the target. The current implementation remains an earlier pre-release Device,
-Recovery Kit, Root Key, semantic-Host, and linear-Generation experiment where the inspected code,
-generated OpenAPI, and current public pages say so.
+already implements the complete target. The repository now has a substantial canonical browser
+substrate, including authenticated Continuity replay and a selected-readable-Replica Member
+Recovery foundation. Shipped extension entrypoints, the generated Rails OpenAPI, Host behavior,
+and current public pages still expose the earlier pre-release experiment where their inspected
+code says so.
 
 # 2. Authority used
 
@@ -150,6 +153,15 @@ not:
 Current public pages remain current-implementation copy. The Roadmap retains deterministic
 rendering of the tracked canonical glossary as implementation work, preventing a second editable
 definition source without pretending that behavior exists today.
+
+Subsequent repository work has implemented canonical browser foundations without changing this
+evidence boundary. In particular, selected readable-Replica Recovery now verifies the complete
+authenticated authority state, matches phrase-derived public keys before phrase-authorized opaque
+Envelope access, enrolls a fresh same-member Client atomically, and follows it with a
+confirmation-gated all-head Recovery replacement. Focused real-crypto tests and a real Chromium
+IndexedDB restart prove that narrow path. They do not yet prove phrase-only discovery without a
+known Vault, a packaged management surface, multi-Remote withholding behavior, Rails Host opacity,
+or any live deployment.
 
 # 8. Deliberately future work
 

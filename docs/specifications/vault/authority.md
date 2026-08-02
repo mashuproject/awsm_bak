@@ -468,6 +468,11 @@ whose signer need not already be active. At a recovery-conflicted complete front
 effective candidate may authorize Enrollment without becoming the winner. The next ceremony step
 is a descendant all-head Recovery Credential Replacement.
 
+Enrollment and Replacement remain two independently authenticated Events and two atomic local
+commits. A Client SHOULD present Replacement immediately after recovery-authorized Enrollment. If
+it stops between them, the enrolled Client Credential is active and the previously effective
+Recovery head set remains effective; resumption creates an ordinary descendant Replacement.
+
 The dependency set exactly contains the proposal's historical Client Credential Key Envelopes.
 
 # 17. Client Credential End Event body
@@ -514,6 +519,11 @@ Transcript(
 The Event signer MUST be an active Client Credential belonging to `memberId`. The replaced ID set
 MUST equal every effective recovery head. Its dependencies are exactly the new Recovery Envelopes.
 Acceptance derives the new Recovery Fence.
+
+The fresh phrase is Client-private ceremony input, not portable Event data. A Client MUST obtain
+exact full-phrase confirmation before committing the Event. A mismatch changes no portable or
+local persistent state and may be retried; cancellation or any attempted commit consumes the
+prepared replacement so its secret-bearing material cannot be reused.
 
 # 19. Key Epoch Transition Event body
 
