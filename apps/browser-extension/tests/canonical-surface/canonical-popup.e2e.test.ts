@@ -158,9 +158,21 @@ test("runs the canonical local Vault ceremony through a packaged extension", asy
     await assertInteractiveTargets(first);
     await expectReadableContrast(first);
 
+    const openLibrary = first.getByRole("button", { name: "Open Library" });
+    await expect(openLibrary).toBeVisible();
+    const libraryOpened = client.context.waitForEvent("page");
+    await openLibrary.click();
+    const library = await libraryOpened;
+    await library.setViewportSize({ width: 1_024, height: 700 });
+    await expect(library.getByRole("heading", { name: "Library", exact: true })).toBeVisible();
+    await expect(library.getByText("Vault · Field Notes")).toBeVisible();
+    await expect(library.getByText("Capture a page from the popup to add it here.")).toBeVisible();
+
     await first.getByRole("button", { name: "Archive this page" }).click();
     await expect(first.getByRole("heading", { name: "Recent captures" })).toBeVisible();
     await expect(first.getByText("Captured fixture")).toBeVisible();
+    await expect(library.getByText("Captured fixture")).toBeVisible();
+    await expect(library.getByText("Available locally")).toBeVisible();
 
     await first.setViewportSize({ width: 360, height: 700 });
     await expect(first.getByRole("button", { name: "Archive this page" })).toBeVisible();
@@ -173,6 +185,13 @@ test("runs the canonical local Vault ceremony through a packaged extension", asy
     const second = await popup(client);
     await expect(second.getByRole("heading", { name: "Archive this page" })).toBeVisible();
     await expect(second.getByText("Vault · Field Notes")).toBeVisible();
+
+    await expectReadableContrast(library);
+    await library.screenshot({ path: testInfo.outputPath("canonical-library.png") });
+    await library.setViewportSize({ width: 360, height: 700 });
+    await expect(library.getByText("Captured fixture")).toBeVisible();
+    await expectReadableContrast(library);
+    await library.screenshot({ path: testInfo.outputPath("canonical-library-narrow.png") });
 
     await first.setViewportSize({ width: 400, height: 700 });
     const vaultSettings = first.getByRole("button", { name: "Vault settings" });

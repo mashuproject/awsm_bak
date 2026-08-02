@@ -3,63 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>AWSM library</title>
-    <link rel="stylesheet" href="./style.css" />
+    <title>AWSM Library</title>
+    <link rel="stylesheet" href="./canonical-style.css" />
   </head>
   <body>
-    <div class="library-shell">
-      <aside class="library-sidebar" id="library-sidebar" aria-label="Library sections">
-        <div class="library-sidebar__header">
-          <p class="library-wordmark">AWSM</p>
-          <button id="sidebar-close" type="button">Close menu</button>
-        </div>
-        <section class="library-sidebar__section" aria-labelledby="active-vault-label">
-          <p id="active-vault-label" class="library-sidebar__label">Active Vault</p>
-          <p id="sidebar-vault-name" class="library-sidebar__value">Loading…</p>
-          <button id="manage-vaults" type="button">Manage or switch Vault</button>
-        </section>
-        <nav aria-label="Library">
-          <button id="show-archive" type="button" aria-current="page">Library</button>
-          <p class="library-sidebar__label">Collections</p>
-          <span class="library-sidebar__hint">Active Collections appear in the workspace.</span>
-          <button id="show-deleted" type="button">Deleted</button>
-        </nav>
-        <div class="library-sidebar__utilities">
-          <button id="storage-settings" type="button">Storage &amp; maintenance</button>
-          <button id="account-settings" type="button">Account &amp; synchronization</button>
-        </div>
-      </aside>
-      <div class="library-workspace" id="library-workspace">
-        <header>
-          <button id="sidebar-toggle" type="button" aria-expanded="false" aria-controls="library-sidebar">Menu</button>
-          <div><p class="eyebrow">Private archive</p><div id="library-title"></div></div>
-          <button id="header-settings" type="button">Settings</button>
-        </header>
-        <section class="library-search" id="library-search" aria-labelledby="library-search-label">
-          <search>
-            <form id="library-search-form">
-              <label id="library-search-label" for="library-search-input">Search this Vault</label>
-              <div class="library-search__controls">
-                <input
-                  id="library-search-input"
-                  name="query"
-                  type="search"
-                  maxlength="1024"
-                  autocomplete="off"
-                  placeholder="Search titles, URLs, and captured text"
-                />
-                <button id="library-search-submit" type="submit">Search</button>
-              </div>
-            </form>
-          </search>
-          <div id="library-search-filters" class="library-search-filters"></div>
-          <div id="library-search-filter-chips" class="library-search-filter-chips" aria-live="polite"></div>
-          <button id="library-search-clear" type="button" hidden>Back to Library</button>
-        </section>
-        <main id="app" aria-busy="true"></main>
-      </div>
-    </div>
-    <p id="announcer" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
+    <main id="app" aria-busy="true"></main>
+    <p id="announcer" class="sr-only" aria-live="polite"></p>
     <script type="module" src="./main.ts"></script>
   </body>
 </html>

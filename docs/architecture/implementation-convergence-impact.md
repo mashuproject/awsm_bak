@@ -149,18 +149,18 @@ the retired phrase, one effective replacement head, fresh local Client authority
 authorship. Unscoped discovery from Host inventory, withholding/freshness proof across Remotes,
 multi-Client conflict journeys, and full multi-member management remain target work.
 
-The shipped background and popup now use only the canonical application boundary. They support
-local Vault creation and selection, Recovery Phrase confirmation and selected-replica recovery,
-page Capture, a current recent-Capture view, Recovery Phrase replacement, Fork, Vacuum, and
-Closure. A packaged Chromium journey builds those actual entrypoints and proves the local ceremony,
-Capture, live second-popup reconciliation, management disclosures, and retained readable Capture
-after Closure.
+The shipped background, popup, and Library now use only the canonical application boundary. They
+support local Vault creation and selection, Recovery Phrase confirmation and selected-replica
+recovery, page Capture, a current recent-Capture view, Recovery Phrase replacement, Fork, Vacuum,
+Closure, and a live selected-Vault Capture projection. A packaged Chromium journey builds those
+actual entrypoints and proves the local ceremony, a Library opened through the popup, Capture
+appearing in that already-open Library without reload, live second-popup reconciliation, management
+disclosures, and retained readable Capture after Closure.
 
-Library, Search, export/import, synchronization, availability, member and invitation management,
-and conflict-resolution surfaces still require canonical replacements. The remaining old Library
-and synchronization setup pages are dangling superseded surfaces, not supported compatibility
-paths; remove or replace them together with their old orchestration and tests before v0.3 is
-complete.
+Search, export/import, synchronization, availability, member and invitation management, Capture
+detail, and conflict-resolution surfaces still require canonical replacements. The remaining old
+synchronization setup page is a dangling superseded surface, not a supported compatibility path;
+remove or replace it together with its old orchestration and tests before v0.3 is complete.
 
 # 4. Replica Host impact
 

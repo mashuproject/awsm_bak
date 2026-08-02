@@ -300,6 +300,25 @@ function renderRecentCaptures(view: CanonicalPopupView, content: DocumentFragmen
   content.append(recent);
 }
 
+function openLibraryControl(): HTMLButtonElement {
+  const openLibrary = element(
+    "button",
+    "Open Library",
+    "canonical-popup__quiet",
+  ) as HTMLButtonElement;
+  openLibrary.type = "button";
+  openLibrary.addEventListener("click", () => {
+    openLibrary.disabled = true;
+    void browser.tabs
+      .create({ url: browser.runtime.getURL("/library.html") })
+      .catch(showError)
+      .finally(() => {
+        openLibrary.disabled = false;
+      });
+  });
+  return openLibrary;
+}
+
 function renderCapture(view: CanonicalPopupView, content: DocumentFragment): void {
   const presentation = canonicalPopupPresentation(view.state);
   if (presentation.kind !== "Capture") throw new Error("Popup Capture presentation is invalid.");
@@ -343,7 +362,7 @@ function renderCapture(view: CanonicalPopupView, content: DocumentFragment): voi
     vaultScreen = { kind: "Settings" };
     render(view);
   });
-  content.append(settings);
+  content.append(openLibraryControl(), settings);
   renderRecentCaptures(view, content);
 }
 
@@ -439,7 +458,7 @@ function renderClosedVault(view: CanonicalPopupView, content: DocumentFragment):
     vaultScreen = { kind: "Settings" };
     render(view);
   });
-  content.append(settings);
+  content.append(openLibraryControl(), settings);
   renderRecentCaptures(view, content);
 }
 
