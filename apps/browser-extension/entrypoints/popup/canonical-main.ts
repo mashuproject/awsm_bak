@@ -207,6 +207,59 @@ function renderRecoveryConfirmation(content: DocumentFragment): void {
   content.append(form);
 }
 
+function renderRecoveryResume(
+  presentation: Extract<
+    ReturnType<typeof canonicalPopupPresentation>,
+    { readonly kind: "ResumeRecoveryPhrase" }
+  >,
+  content: DocumentFragment,
+): void {
+  content.append(
+    element(
+      "p",
+      "Your Vault setup is waiting for its Recovery Phrase. Enter the phrase you wrote down to finish, or cancel this setup and begin again.",
+      "canonical-popup__warning",
+    ),
+  );
+  const form = element("form", undefined, "canonical-popup__form");
+  const phraseLabel = element("label", "Recovery Phrase");
+  const phrase = element("input") as HTMLInputElement;
+  phrase.autocomplete = "off";
+  phrase.required = true;
+  phraseLabel.append(phrase);
+  const actions = element("div", undefined, "canonical-popup__actions");
+  const cancel = element("button", "Cancel setup") as HTMLButtonElement;
+  cancel.type = "button";
+  cancel.addEventListener("click", () => {
+    action(cancel, async () => {
+      transientError = undefined;
+      await client.cancelVaultCreation(presentation.setupId);
+      await controller.refresh();
+    });
+  });
+  const submit = element(
+    "button",
+    "Resume Vault creation",
+    "canonical-popup__primary",
+  ) as HTMLButtonElement;
+  submit.type = "submit";
+  actions.append(cancel, submit);
+  form.append(phraseLabel, actions);
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    action(submit, async () => {
+      transientError = undefined;
+      await client.confirmVaultCreation({
+        setupId: presentation.setupId,
+        recoveryPhrase: phrase.value,
+      });
+      announcer.textContent = "Vault created.";
+      await controller.refresh();
+    });
+  });
+  content.append(form);
+}
+
 function renderCapture(view: CanonicalPopupView, content: DocumentFragment): void {
   const presentation = canonicalPopupPresentation(view.state);
   if (presentation.kind !== "Capture") throw new Error("Popup Capture presentation is invalid.");
@@ -273,13 +326,16 @@ function render(view: CanonicalPopupView): void {
           ? "Choose a Vault"
           : presentation.kind === "ConfirmRecoveryPhrase"
             ? "Protect your Vault"
-            : "Archive this page",
+            : presentation.kind === "ResumeRecoveryPhrase"
+              ? "Resume Vault setup"
+              : "Archive this page",
     ),
   );
   if (transientError !== undefined) content.append(status(transientError, "error"));
   if (presentation.kind === "CreateVault") renderCreateVault(view, content);
   if (presentation.kind === "SelectVault") renderVaultSelection(view, content);
   if (presentation.kind === "ConfirmRecoveryPhrase") renderRecoveryConfirmation(content);
+  if (presentation.kind === "ResumeRecoveryPhrase") renderRecoveryResume(presentation, content);
   if (presentation.kind === "Capture") renderCapture(view, content);
   app.replaceChildren(content);
   app.setAttribute("aria-busy", "false");

@@ -29,7 +29,7 @@ export interface CanonicalPopupApplicationClient extends CanonicalPopupClient {
   confirmVaultCreation(input: {
     readonly setupId: string;
     readonly recoveryPhrase: string;
-  }): Promise<CanonicalClientState>;
+  }): Promise<{ readonly vaultId: string }>;
   cancelVaultCreation(setupId: string): Promise<void>;
   selectVault(input: {
     readonly expectedVaultId: string | null;
@@ -57,6 +57,13 @@ function exactKeys(value: Readonly<Record<string, unknown>>, keys: readonly stri
 
 function identifier(value: unknown): value is string {
   return typeof value === "string" && /^[0-9a-f]{64}$/u.test(value);
+}
+
+function setupId(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(value)
+  );
 }
 
 function safeTimestamp(value: unknown): value is number | bigint {
@@ -99,15 +106,28 @@ function decodeVaultSummary(value: unknown): CanonicalClientVaultSummary {
 function decodeState(value: unknown): CanonicalClientState {
   if (
     !plainRecord(value) ||
-    ![1, 2].includes(Object.keys(value).length) ||
+    ![1, 2, 3].includes(Object.keys(value).length) ||
     !Array.isArray(value.vaults)
   ) {
     throw protocolError();
   }
   const hasSelectedVault = Object.hasOwn(value, "selectedVaultId");
+  const hasPendingCreation = Object.hasOwn(value, "pendingVaultCreation");
+  const pendingCreation = plainRecord(value.pendingVaultCreation)
+    ? value.pendingVaultCreation
+    : undefined;
   if (
-    !exactKeys(value, hasSelectedVault ? ["selectedVaultId", "vaults"] : ["vaults"]) ||
-    (hasSelectedVault && !identifier(value.selectedVaultId))
+    !exactKeys(value, [
+      "vaults",
+      ...(hasSelectedVault ? ["selectedVaultId"] : []),
+      ...(hasPendingCreation ? ["pendingVaultCreation"] : []),
+    ]) ||
+    (hasSelectedVault && !identifier(value.selectedVaultId)) ||
+    (hasPendingCreation &&
+      (pendingCreation === undefined ||
+        !exactKeys(pendingCreation, ["setupId", "expectedVaultId"]) ||
+        !setupId(pendingCreation.setupId) ||
+        !(pendingCreation.expectedVaultId === null || identifier(pendingCreation.expectedVaultId))))
   ) {
     throw protocolError();
   }
@@ -122,9 +142,18 @@ function decodeState(value: unknown): CanonicalClientState {
   ) {
     throw protocolError();
   }
-  return hasSelectedVault
-    ? { selectedVaultId: value.selectedVaultId as string, vaults }
-    : { vaults };
+  return {
+    ...(hasSelectedVault ? { selectedVaultId: value.selectedVaultId as string } : {}),
+    ...(pendingCreation === undefined
+      ? {}
+      : {
+          pendingVaultCreation: {
+            setupId: pendingCreation.setupId as string,
+            expectedVaultId: pendingCreation.expectedVaultId as string | null,
+          },
+        }),
+    vaults,
+  };
 }
 
 function decodeLibraryItem(value: unknown): CanonicalClientLibraryItem {
@@ -200,6 +229,13 @@ function decodeCapture(value: unknown): { readonly bundleId: string } {
   return { bundleId: value.bundleId };
 }
 
+function decodeVaultCreated(value: unknown): { readonly vaultId: string } {
+  if (!plainRecord(value) || !exactKeys(value, ["vaultId"]) || !identifier(value.vaultId)) {
+    throw protocolError();
+  }
+  return { vaultId: value.vaultId };
+}
+
 function assertNullableVaultId(value: string | null): void {
   if (value !== null && !identifier(value))
     throw new TypeError("Popup expected Vault ID is invalid.");
@@ -237,7 +273,7 @@ export function createCanonicalPopupApplicationClient(
     async confirmVaultCreation(input) {
       assertText(input.setupId, "setup ID");
       assertText(input.recoveryPhrase, "Recovery Phrase");
-      return decodeState(
+      return decodeVaultCreated(
         await transport.request({
           type: "ConfirmVaultCreation",
           setupId: input.setupId,

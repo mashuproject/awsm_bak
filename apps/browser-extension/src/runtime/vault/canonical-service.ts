@@ -270,6 +270,34 @@ export class CanonicalVaultService {
     }
   }
 
+  async pendingCreation(): Promise<
+    { readonly setupId: string; readonly expectedVaultId: Identifier<"Vault"> | null } | undefined
+  > {
+    const entries = await this.storage.listBytes(
+      this.realm,
+      NAMESPACES.pendingVaultCreation.key,
+      "installation",
+    );
+    if (entries.length === 0) return undefined;
+    if (entries.length !== 1) {
+      throw new TypeError("The Installation has more than one pending Vault creation.");
+    }
+    const entry = entries[0];
+    if (entry === undefined) throw new TypeError("Pending Vault creation inventory is invalid.");
+    const { pending } = await this.readPendingVaultCreation(entry.itemKey);
+    try {
+      return {
+        setupId: pending.setupId,
+        expectedVaultId:
+          pending.expectedVaultId === null
+            ? null
+            : identifier("Vault", Uint8Array.from(pending.expectedVaultId)),
+      };
+    } finally {
+      await wipePendingVaultCreation(pending);
+    }
+  }
+
   async resumeCreate(input: {
     readonly setupId: string;
     readonly recoveryPhrase: string;

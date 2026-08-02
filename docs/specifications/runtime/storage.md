@@ -99,6 +99,11 @@ Recovery Envelope, and atomically creates the initial Replica while exact-byte c
 deleting the pending item. Cancellation performs the same exact-byte conditional deletion without
 creating a Vault. Pending creation data is never synchronized, exported, or backed up.
 
+The Client may enumerate this singleton local namespace only to rediscover the random setup ID
+after a UI or Runtime restart. It may present that ID's resumable status and expected local Vault
+context to its own UI, but never the protected creation material, Recovery Phrase, or phrase
+entropy. A second creation is rejected until the pending setup is confirmed or cancelled.
+
 # 4. Storage Realms
 
 A Storage Realm cross-cuts every family. Normal, private/incognito, temporary, test, and future

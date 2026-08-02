@@ -30,6 +30,18 @@ describe("canonical popup presentation", () => {
     ).toEqual({ kind: "ConfirmRecoveryPhrase", recoveryPhrase: "alpha beta gamma" });
   });
 
+  it("asks for the phrase again when a durable creation is resumed", () => {
+    expect(
+      canonicalPopupPresentation({
+        pendingVaultCreation: {
+          setupId: "019fa62e-a653-7f63-b2bf-94e7ed5e46ca",
+          expectedVaultId: null,
+        },
+        vaults: [],
+      }),
+    ).toEqual({ kind: "ResumeRecoveryPhrase", setupId: "019fa62e-a653-7f63-b2bf-94e7ed5e46ca" });
+  });
+
   it("presents the selected Vault and its current Library for Capture", () => {
     expect(
       canonicalPopupPresentation({

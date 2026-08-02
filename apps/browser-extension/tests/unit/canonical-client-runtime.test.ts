@@ -54,6 +54,7 @@ function fixture() {
       },
     ]),
     beginCreate: vi.fn(async () => ceremony),
+    pendingCreation: vi.fn(async () => undefined),
     pendingCreationExpectedVault: vi.fn(async () => {
       throw Object.assign(new Error("The Vault creation ceremony is unavailable."), {
         id: "VAULT_CREATION_NOT_FOUND",
@@ -140,6 +141,40 @@ describe("canonical Client Runtime", () => {
         { vaultId: identifierStorageKey(secondVaultId), label: null, selected: false },
       ],
     });
+  });
+
+  it("surfaces a durable Vault-creation setup without exposing its Recovery Phrase", async () => {
+    const { runtime, vaults } = fixture();
+    vi.mocked(vaults.pendingCreation).mockResolvedValue({
+      setupId: "019fa62e-a653-7f63-b2bf-94e7ed5e46ca",
+      expectedVaultId: null,
+    });
+
+    const state = await runtime.state();
+    expect(state).toMatchObject({
+      pendingVaultCreation: {
+        setupId: "019fa62e-a653-7f63-b2bf-94e7ed5e46ca",
+        expectedVaultId: null,
+      },
+    });
+    expect(state.pendingVaultCreation).not.toHaveProperty("recoveryPhrase");
+  });
+
+  it("does not replace a durable Vault-creation setup with a second ceremony", async () => {
+    const { runtime, vaults, firstVaultId } = fixture();
+    vi.mocked(vaults.pendingCreation).mockResolvedValue({
+      setupId: "019fa62e-a653-7f63-b2bf-94e7ed5e46ca",
+      expectedVaultId: null,
+    });
+
+    await expect(
+      runtime.beginVaultCreation({
+        expectedVaultId: identifierStorageKey(firstVaultId),
+        label: "Second",
+        assertedAt: 10,
+      }),
+    ).rejects.toMatchObject({ id: "VAULT_CREATION_PENDING" });
+    expect(vaults.beginCreate).not.toHaveBeenCalled();
   });
 
   it("persists Recovery Phrase setup outside runtime memory and consumes it after confirmation", async () => {

@@ -41,6 +41,10 @@ export interface CanonicalClientVaultSummary {
 
 export interface CanonicalClientState {
   readonly selectedVaultId?: string;
+  readonly pendingVaultCreation?: {
+    readonly setupId: string;
+    readonly expectedVaultId: string | null;
+  };
   readonly vaults: readonly CanonicalClientVaultSummary[];
 }
 
@@ -251,7 +255,10 @@ export class CanonicalClientRuntime {
   ) {}
 
   async state(): Promise<CanonicalClientState> {
-    const directory = await this.vaults.listVaults();
+    const [directory, pendingCreation] = await Promise.all([
+      this.vaults.listVaults(),
+      this.vaults.pendingCreation(),
+    ]);
     const selected = directory.filter(({ selected: isSelected }) => isSelected);
     if (selected.length > 1) {
       throw runtimeError(
@@ -263,6 +270,17 @@ export class CanonicalClientRuntime {
       ...(selected[0] === undefined
         ? {}
         : { selectedVaultId: identifierStorageKey(selected[0].vaultId) }),
+      ...(pendingCreation === undefined
+        ? {}
+        : {
+            pendingVaultCreation: {
+              setupId: pendingCreation.setupId,
+              expectedVaultId:
+                pendingCreation.expectedVaultId === null
+                  ? null
+                  : identifierStorageKey(pendingCreation.expectedVaultId),
+            },
+          }),
       vaults: directory.map((entry) => ({
         vaultId: identifierStorageKey(entry.vaultId),
         label: entry.label,
@@ -277,6 +295,12 @@ export class CanonicalClientRuntime {
     readonly assertedAt: number | bigint;
   }): Promise<{ readonly setupId: string; readonly recoveryPhrase: string }> {
     await this.assertExpectedVault(input.expectedVaultId);
+    if ((await this.vaults.pendingCreation()) !== undefined) {
+      throw runtimeError(
+        "VAULT_CREATION_PENDING",
+        "Finish or cancel the existing Vault creation before starting another one.",
+      );
+    }
     const setupId = this.createSetupId();
     if (this.hasPendingSetup(setupId)) {
       throw runtimeError("VAULT_CREATION_CONFLICT", "The Vault creation setup ID is not unique.");

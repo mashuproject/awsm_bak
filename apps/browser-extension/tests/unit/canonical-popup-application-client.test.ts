@@ -72,12 +72,33 @@ describe("canonical popup application client", () => {
     );
   });
 
+  it("exposes only the non-secret identity of a resumable Vault creation", async () => {
+    const client = createCanonicalPopupApplicationClient({
+      request: vi.fn().mockResolvedValue({
+        pendingVaultCreation: {
+          setupId: "019fa62e-a653-7f63-b2bf-94e7ed5e46ca",
+          expectedVaultId: null,
+        },
+        vaults: [],
+      }),
+      subscribe: vi.fn(() => () => undefined),
+    });
+
+    await expect(client.state()).resolves.toEqual({
+      pendingVaultCreation: {
+        setupId: "019fa62e-a653-7f63-b2bf-94e7ed5e46ca",
+        expectedVaultId: null,
+      },
+      vaults: [],
+    });
+  });
+
   it("sends only canonical popup mutations and validates their outcomes", async () => {
     const transport = {
       request: vi
         .fn()
         .mockResolvedValueOnce({ setupId: "setup-1", recoveryPhrase: "alpha beta gamma" })
-        .mockResolvedValueOnce({ vaults: [] })
+        .mockResolvedValueOnce({ vaultId: "a".repeat(64) })
         .mockResolvedValueOnce(undefined)
         .mockResolvedValueOnce({
           selectedVaultId: "a".repeat(64),
@@ -96,7 +117,7 @@ describe("canonical popup application client", () => {
     });
     await expect(
       client.confirmVaultCreation({ setupId: "setup-1", recoveryPhrase: "alpha beta gamma" }),
-    ).resolves.toEqual({ vaults: [] });
+    ).resolves.toEqual({ vaultId: "a".repeat(64) });
     await expect(client.cancelVaultCreation("setup-1")).resolves.toBeUndefined();
     await expect(
       client.selectVault({ expectedVaultId: null, vaultId: "a".repeat(64) }),

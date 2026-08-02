@@ -12,6 +12,7 @@ export type CanonicalPopupPresentation =
   | { readonly kind: "CreateVault" }
   | { readonly kind: "SelectVault"; readonly vaults: readonly CanonicalClientVaultSummary[] }
   | { readonly kind: "ConfirmRecoveryPhrase"; readonly recoveryPhrase: string }
+  | { readonly kind: "ResumeRecoveryPhrase"; readonly setupId: string }
   | { readonly kind: "Capture"; readonly vault: CanonicalClientVaultSummary };
 
 export function canonicalPopupPresentation(
@@ -23,6 +24,9 @@ export function canonicalPopupPresentation(
       kind: "ConfirmRecoveryPhrase",
       recoveryPhrase: pendingRecoveryConfirmation.recoveryPhrase,
     };
+  }
+  if (state.pendingVaultCreation !== undefined) {
+    return { kind: "ResumeRecoveryPhrase", setupId: state.pendingVaultCreation.setupId };
   }
   if (state.selectedVaultId === undefined) {
     return state.vaults.length === 0

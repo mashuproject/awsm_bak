@@ -93,6 +93,7 @@ describe("canonical Vault creation ceremony", () => {
       getBytes: vi.fn(async () =>
         pending === undefined ? undefined : Uint8Array.from(pending.bytes),
       ),
+      listBytes: vi.fn(async () => (pending === undefined ? [] : [pending])),
       commitExecutionMutation: vi.fn(
         async (input: {
           readonly mutableItems?: readonly (typeof pending extends infer Item ? Item : never)[];
@@ -115,6 +116,7 @@ describe("canonical Vault creation ceremony", () => {
       assertedAt: 123,
     });
     expect(pending).toMatchObject({ itemKey: setupId });
+    await expect(service.pendingCreation()).resolves.toEqual({ setupId, expectedVaultId: null });
     await expect(
       service.resumeCreate({ setupId, recoveryPhrase: "not a recovery phrase" }),
     ).rejects.toMatchObject({ id: "RECOVERY_PHRASE_MISMATCH" });

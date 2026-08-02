@@ -8,6 +8,7 @@ describe("canonical background", () => {
   it("composes one canonical Runtime with the browser Capture Host", async () => {
     const vaults = {
       listVaults: vi.fn().mockResolvedValue([]),
+      pendingCreation: vi.fn().mockResolvedValue(undefined),
     } as unknown as CanonicalVaultService;
     const pageCapture = {
       captureActivePage: vi.fn(),
