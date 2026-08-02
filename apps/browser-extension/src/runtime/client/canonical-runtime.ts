@@ -277,15 +277,19 @@ export class CanonicalClientRuntime {
     readonly assertedAt: number | bigint;
   }): Promise<{ readonly setupId: string; readonly recoveryPhrase: string }> {
     await this.assertExpectedVault(input.expectedVaultId);
+    const setupId = this.createSetupId();
+    if (this.hasPendingSetup(setupId)) {
+      throw runtimeError("VAULT_CREATION_CONFLICT", "The Vault creation setup ID is not unique.");
+    }
     const ceremony = await this.vaults.beginCreate({
+      setupId,
+      expectedVaultId:
+        input.expectedVaultId === null
+          ? null
+          : identifierFromStorageKey("Vault", input.expectedVaultId),
       label: input.label,
       assertedAt: input.assertedAt,
     });
-    const setupId = this.createSetupId();
-    if (this.hasPendingSetup(setupId)) {
-      await ceremony.cancel();
-      throw runtimeError("VAULT_CREATION_CONFLICT", "The Vault creation setup ID is not unique.");
-    }
     this.pendingVaultCreations.set(setupId, {
       expectedVaultId: input.expectedVaultId,
       ceremony,
@@ -297,7 +301,7 @@ export class CanonicalClientRuntime {
     readonly setupId: string;
     readonly recoveryPhrase: string;
   }): Promise<{ readonly vaultId: string }> {
-    const pending = this.requirePendingCreation(input.setupId);
+    const pending = await this.requirePendingCreation(input.setupId, input.recoveryPhrase);
     await this.assertExpectedVault(pending.expectedVaultId);
     const created = await pending.ceremony.confirm(input.recoveryPhrase);
     this.pendingVaultCreations.delete(input.setupId);
@@ -305,9 +309,13 @@ export class CanonicalClientRuntime {
   }
 
   async cancelVaultCreation(setupId: string): Promise<void> {
-    const pending = this.requirePendingCreation(setupId);
-    this.pendingVaultCreations.delete(setupId);
+    const pending = this.pendingVaultCreations.get(setupId);
+    if (pending === undefined) {
+      await this.vaults.cancelPendingCreate(setupId);
+      return;
+    }
     await pending.ceremony.cancel();
+    this.pendingVaultCreations.delete(setupId);
   }
 
   async beginVaultFork(input: {
@@ -1762,12 +1770,22 @@ export class CanonicalClientRuntime {
     return { eventRecordId: identifierStorageKey(outcome.eventRecordId) };
   }
 
-  private requirePendingCreation(setupId: string): PendingVaultCreation {
+  private async requirePendingCreation(
+    setupId: string,
+    recoveryPhrase: string,
+  ): Promise<PendingVaultCreation> {
     const pending = this.pendingVaultCreations.get(setupId);
-    if (pending === undefined) {
-      throw runtimeError("VAULT_CREATION_NOT_FOUND", "The Vault creation ceremony is unavailable.");
-    }
-    return pending;
+    if (pending !== undefined) return pending;
+    const expectedVaultId = await this.vaults.pendingCreationExpectedVault(setupId);
+    const expectedVaultIdStorageKey =
+      expectedVaultId === null ? null : identifierStorageKey(expectedVaultId);
+    await this.assertExpectedVault(expectedVaultIdStorageKey);
+    const resumed = {
+      expectedVaultId: expectedVaultIdStorageKey,
+      ceremony: await this.vaults.resumeCreate({ setupId, recoveryPhrase }),
+    };
+    this.pendingVaultCreations.set(setupId, resumed);
+    return resumed;
   }
 
   private requirePendingFork(setupId: string): PendingVaultFork {

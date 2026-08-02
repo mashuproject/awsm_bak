@@ -73,6 +73,65 @@ describe("canonical Vault creation ceremony", () => {
     ).toBe(true);
     await expect(ceremony.confirm(ceremony.recoveryPhrase)).rejects.toThrow(/no longer active/u);
   });
+
+  it("rehydrates an installation-wrapped creation after restart and consumes it atomically", async () => {
+    const setupId = "019fa62e-a653-7f63-b2bf-94e7ed5e46ca";
+    const wrappingKey = await crypto.subtle.generateKey({ name: "AES-KW", length: 256 }, false, [
+      "wrapKey",
+      "unwrapKey",
+    ]);
+    let pending:
+      | {
+          readonly namespace: string;
+          readonly scopeKey: string;
+          readonly itemKey: string;
+          readonly bytes: Uint8Array;
+        }
+      | undefined;
+    const storage = {
+      getOrCreateInstallationWrappingKey: vi.fn(async () => wrappingKey),
+      getBytes: vi.fn(async () =>
+        pending === undefined ? undefined : Uint8Array.from(pending.bytes),
+      ),
+      commitExecutionMutation: vi.fn(
+        async (input: {
+          readonly mutableItems?: readonly (typeof pending extends infer Item ? Item : never)[];
+          readonly deletedItems?: readonly { readonly itemKey: string }[];
+        }) => {
+          const mutable = input.mutableItems?.[0];
+          if (mutable !== undefined)
+            pending = { ...mutable, bytes: Uint8Array.from(mutable.bytes) };
+          if (input.deletedItems?.some(({ itemKey }) => itemKey === setupId)) pending = undefined;
+        },
+      ),
+      commitInitialVault: vi.fn(async () => undefined),
+    } as unknown as CanonicalIndexedDb;
+    const service = new CanonicalVaultService(storage, NORMAL_STORAGE_REALM);
+
+    const begun = await service.beginCreate({
+      setupId,
+      expectedVaultId: null,
+      label: "Restart-safe",
+      assertedAt: 123,
+    });
+    expect(pending).toMatchObject({ itemKey: setupId });
+    await expect(
+      service.resumeCreate({ setupId, recoveryPhrase: "not a recovery phrase" }),
+    ).rejects.toMatchObject({ id: "RECOVERY_PHRASE_MISMATCH" });
+
+    const resumed = await service.resumeCreate({
+      setupId,
+      recoveryPhrase: begun.recoveryPhrase,
+    });
+    await resumed.confirm(begun.recoveryPhrase);
+
+    expect(storage.commitInitialVault).toHaveBeenCalledWith(
+      expect.objectContaining({
+        expectedMutableItems: [expect.objectContaining({ itemKey: setupId })],
+        deletedItems: [expect.objectContaining({ itemKey: setupId })],
+      }),
+    );
+  });
 });
 
 describe("canonical Vault selection", () => {

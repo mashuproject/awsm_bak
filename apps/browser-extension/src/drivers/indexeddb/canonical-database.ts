@@ -54,6 +54,8 @@ export interface InitialVaultCommit {
   readonly vaultDirectoryEntry: NamespaceBytes;
   readonly installationStateItems?: readonly NamespaceBytes[];
   readonly trustedSecrets: readonly NamespaceBytes[];
+  readonly expectedMutableItems?: readonly NamespaceBytes[];
+  readonly deletedItems?: readonly Omit<NamespaceBytes, "bytes">[];
 }
 
 export interface ReplicaMutationCommit {
@@ -423,6 +425,8 @@ export class CanonicalIndexedDb {
       ...(input.installationStateItems ?? []),
       ...input.trustedSecrets,
     ];
+    const expectedMutableItems = input.expectedMutableItems ?? [];
+    const deletedItems = input.deletedItems ?? [];
     for (const item of allItems) {
       assertBytes(item);
       assertInitialItemScope(item, input.vaultKey);
@@ -453,11 +457,31 @@ export class CanonicalIndexedDb {
         throw new TypeError(`${item.namespace} is not an initial Vault secret`);
       }
     }
+    for (const item of expectedMutableItems) {
+      assertBytes(item);
+      const namespace = descriptor(item.namespace);
+      if (namespace.family !== STORAGE_FAMILIES.PreparedData || namespace.immutable) {
+        throw new TypeError(`${item.namespace} is not mutable Prepared Data`);
+      }
+    }
+    for (const item of deletedItems) {
+      const namespace = descriptor(item.namespace);
+      if (namespace.family !== STORAGE_FAMILIES.PreparedData || namespace.immutable) {
+        throw new TypeError(`${item.namespace} is not mutable Prepared Data`);
+      }
+    }
     assertUniqueItems(input.realm, allItems);
+    assertUniqueItems(input.realm, expectedMutableItems);
+    assertUniqueItems(input.realm, deletedItems);
+    assertUniqueItems(input.realm, [...allItems, ...deletedItems]);
 
     const database = await this.databasePromise;
-    const families = familyNames(allItems);
-    const transaction = database.transaction(families, "readwrite");
+    const families = [
+      ...familyNames(allItems),
+      ...familyNames(expectedMutableItems),
+      ...deletedItems.map((item) => descriptor(item.namespace).family),
+    ];
+    const transaction = database.transaction([...new Set(families)], "readwrite");
     try {
       const replicaStore = transaction.objectStore(STORAGE_FAMILIES.ReplicaSafetyState);
       const directoryStore = transaction.objectStore(STORAGE_FAMILIES.InstallationState);
@@ -470,6 +494,19 @@ export class CanonicalIndexedDb {
           "VAULT_ALREADY_EXISTS",
           "The Vault already exists in this Storage Realm.",
         );
+      }
+      for (const item of expectedMutableItems) {
+        const stored = await requestValue(
+          transaction
+            .objectStore(descriptor(item.namespace).family)
+            .get(storageKey(input.realm, item)),
+        );
+        if (!(stored instanceof Uint8Array) || !bytesEqual(stored, item.bytes)) {
+          throw new CanonicalStorageError(
+            "STORAGE_CONTEXT_CHANGED",
+            "Prepared Data changed before initial Vault activation.",
+          );
+        }
       }
       for (const item of input.immutableItems) {
         transaction
@@ -494,6 +531,11 @@ export class CanonicalIndexedDb {
         transaction
           .objectStore(STORAGE_FAMILIES.TrustedSecrets)
           .add(Uint8Array.from(item.bytes), storageKey(input.realm, item));
+      }
+      for (const item of deletedItems) {
+        transaction
+          .objectStore(descriptor(item.namespace).family)
+          .delete(storageKey(input.realm, item));
       }
       await transactionDone(transaction);
     } catch (error) {
@@ -671,11 +713,14 @@ export class CanonicalIndexedDb {
     const deletedItems = input.deletedItems ?? [];
     const allowedFamilies = new Set<StorageFamily>([
       STORAGE_FAMILIES.ExecutionState,
+      STORAGE_FAMILIES.PreparedData,
       STORAGE_FAMILIES.Quarantine,
     ]);
     const assertExecutionItem = (item: Omit<NamespaceBytes, "bytes">): void => {
       if (!allowedFamilies.has(descriptor(item.namespace).family)) {
-        throw new TypeError(`${item.namespace} is not Execution State or Quarantine`);
+        throw new TypeError(
+          `${item.namespace} is not Execution State, Prepared Data, or Quarantine`,
+        );
       }
     };
     for (const item of expectedAbsentItems) assertExecutionItem(item);
@@ -690,7 +735,9 @@ export class CanonicalIndexedDb {
       assertBytes(item);
       assertExecutionItem(item);
       if (!descriptor(item.namespace).immutable) {
-        throw new TypeError(`${item.namespace} is not immutable Execution State or Quarantine`);
+        throw new TypeError(
+          `${item.namespace} is not immutable Execution State, Prepared Data, or Quarantine`,
+        );
       }
     }
     for (const item of mutableItems) {

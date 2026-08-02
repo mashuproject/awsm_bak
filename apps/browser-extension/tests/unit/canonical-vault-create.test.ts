@@ -131,4 +131,54 @@ describe("canonical local Vault creation", () => {
     expect(mapField(label, 0)).toBeNull();
     expect(mapField(label, 1)).toEqual([]);
   });
+
+  it("rebuilds a prepared creation only from its phrase and exact persisted protected material", async () => {
+    const initial = await prepareCanonicalVaultCreation({
+      label: "Restart-safe",
+      assertedAt: 42,
+      deterministic: {
+        ids: {
+          vaultId: filled("Vault", 31),
+          generationId: filled("Generation", 32),
+          firstMemberId: filled("Member", 33),
+          clientCredentialId: filled("ClientCredential", 34),
+          recoveryCredentialId: filled("RecoveryCredential", 35),
+          labelCauseId: filled("BaselineCause", 36),
+        },
+        recoveryEntropy: new Uint8Array(16).fill(37),
+        clientSigningSeed: new Uint8Array(32).fill(38),
+        clientWrappingPrivateKey: new Uint8Array(32).fill(39),
+        keyEpochKey: new Uint8Array(32).fill(40),
+        baselineProtectionParameters: new Uint8Array(64).fill(41),
+        genesisProtectionParameters: new Uint8Array(64).fill(42),
+      },
+    });
+
+    const resumed = await prepareCanonicalVaultCreation({
+      label: "Restart-safe",
+      assertedAt: 42,
+      deterministic: {
+        ids: initial.ids,
+        recoveryEntropy: decodeRecoveryPhrase(initial.recoveryPhrase),
+        clientSigningSeed: initial.secrets.client.signingSeed,
+        clientWrappingPrivateKey: initial.secrets.client.wrappingPrivateKey,
+        keyEpochKey: initial.secrets.keyEpoch.key,
+        recoveryEnvelopeBytes: initial.recoveryKeyEnvelope.envelope.bytes,
+        clientEnvelopeBytes: initial.clientKeyEnvelope.envelope.bytes,
+        baselineProtectionParameters: initial.baselineEnvelope.protectionParameters,
+        genesisProtectionParameters: initial.genesisEnvelope.protectionParameters,
+      },
+    });
+
+    expect(resumed.recoveryKeyEnvelope.envelope.bytes).toEqual(
+      initial.recoveryKeyEnvelope.envelope.bytes,
+    );
+    expect(resumed.clientKeyEnvelope.envelope.bytes).toEqual(
+      initial.clientKeyEnvelope.envelope.bytes,
+    );
+    expect(resumed.baseline.bytes).toEqual(initial.baseline.bytes);
+    expect(resumed.genesis.bytes).toEqual(initial.genesis.bytes);
+    expect(resumed.baselineEnvelope.bytes).toEqual(initial.baselineEnvelope.bytes);
+    expect(resumed.genesisEnvelope.bytes).toEqual(initial.genesisEnvelope.bytes);
+  });
 });

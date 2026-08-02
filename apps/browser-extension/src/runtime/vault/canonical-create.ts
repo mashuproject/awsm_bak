@@ -105,6 +105,8 @@ export interface CanonicalVaultCreationDeterminism {
   readonly clientSigningSeed?: Uint8Array;
   readonly clientWrappingPrivateKey?: Uint8Array;
   readonly keyEpochKey?: Uint8Array;
+  readonly recoveryEnvelopeBytes?: Uint8Array;
+  readonly clientEnvelopeBytes?: Uint8Array;
   readonly recoveryEnvelopePadding?: Uint8Array;
   readonly clientEnvelopePadding?: Uint8Array;
   readonly baselineProtectionParameters?: Uint8Array;
@@ -189,6 +191,28 @@ function assertOpenedEnvelope(
   }
 }
 
+function assertCreationEnvelope(
+  envelope: SealedKeyEnvelope,
+  expected: {
+    readonly vaultId: Identifier<"Vault">;
+    readonly keyEpoch: KeyEpoch;
+    readonly targetKind: 1 | 2;
+    readonly targetCredentialId: Identifier<"RecoveryCredential" | "ClientCredential">;
+    readonly targetRevision: number | null;
+  },
+): void {
+  if (
+    !bytesEqual(envelope.vaultId, expected.vaultId) ||
+    !bytesEqual(envelope.keyEpochId, expected.keyEpoch.id) ||
+    !bytesEqual(envelope.keyEpochKey, expected.keyEpoch.key) ||
+    envelope.targetKind !== expected.targetKind ||
+    !bytesEqual(envelope.targetCredentialId, expected.targetCredentialId) ||
+    envelope.targetRevision !== expected.targetRevision
+  ) {
+    throw new TypeError("Initial Key Envelope does not match the prepared Vault creation");
+  }
+}
+
 export async function prepareCanonicalVaultCreation(input: {
   readonly label: string | null;
   readonly assertedAt: number | bigint;
@@ -215,29 +239,58 @@ export async function prepareCanonicalVaultCreation(input: {
   const certificate = clientCertificate(ids, client);
   const recoveryDescriptor = recoveryCredential(ids, recovery);
 
-  const recoveryKeyEnvelope = await sealKeyEnvelope({
+  const recoveryKeyEnvelope =
+    deterministic.recoveryEnvelopeBytes === undefined
+      ? await sealKeyEnvelope({
+          vaultId: ids.vaultId,
+          keyEpochId: keyEpoch.id,
+          keyEpochKey: keyEpoch.key,
+          targetKind: 1,
+          targetCredentialId: ids.recoveryCredentialId,
+          targetRevision: 0,
+          recipientWrappingPublicKey: recovery.wrappingPublicKey,
+          ...(deterministic.recoveryEnvelopePadding === undefined
+            ? {}
+            : { outerPadding: deterministic.recoveryEnvelopePadding }),
+        })
+      : await openKeyEnvelope({
+          targetKind: 1,
+          recipientWrappingPrivateKey: recovery.wrappingPrivateKey,
+          envelopeBytes: deterministic.recoveryEnvelopeBytes,
+        });
+  const clientKeyEnvelope =
+    deterministic.clientEnvelopeBytes === undefined
+      ? await sealKeyEnvelope({
+          vaultId: ids.vaultId,
+          keyEpochId: keyEpoch.id,
+          keyEpochKey: keyEpoch.key,
+          targetKind: 2,
+          targetCredentialId: ids.clientCredentialId,
+          targetRevision: null,
+          recipientWrappingPublicKey: client.wrappingPublicKey,
+          ...(deterministic.clientEnvelopePadding === undefined
+            ? {}
+            : { outerPadding: deterministic.clientEnvelopePadding }),
+        })
+      : await openKeyEnvelope({
+          targetKind: 2,
+          recipientWrappingPrivateKey: client.wrappingPrivateKey,
+          envelopeBytes: deterministic.clientEnvelopeBytes,
+        });
+
+  assertCreationEnvelope(recoveryKeyEnvelope, {
     vaultId: ids.vaultId,
-    keyEpochId: keyEpoch.id,
-    keyEpochKey: keyEpoch.key,
+    keyEpoch,
     targetKind: 1,
     targetCredentialId: ids.recoveryCredentialId,
     targetRevision: 0,
-    recipientWrappingPublicKey: recovery.wrappingPublicKey,
-    ...(deterministic.recoveryEnvelopePadding === undefined
-      ? {}
-      : { outerPadding: deterministic.recoveryEnvelopePadding }),
   });
-  const clientKeyEnvelope = await sealKeyEnvelope({
+  assertCreationEnvelope(clientKeyEnvelope, {
     vaultId: ids.vaultId,
-    keyEpochId: keyEpoch.id,
-    keyEpochKey: keyEpoch.key,
+    keyEpoch,
     targetKind: 2,
     targetCredentialId: ids.clientCredentialId,
     targetRevision: null,
-    recipientWrappingPublicKey: client.wrappingPublicKey,
-    ...(deterministic.clientEnvelopePadding === undefined
-      ? {}
-      : { outerPadding: deterministic.clientEnvelopePadding }),
   });
 
   assertOpenedEnvelope(

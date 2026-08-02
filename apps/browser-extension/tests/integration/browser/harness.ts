@@ -1440,49 +1440,86 @@ async function canonicalCompleteImportScenario(): Promise<unknown> {
 
 async function canonicalVaultCeremonyScenario(): Promise<unknown> {
   const databaseName = `awsm-canonical-ceremony-${crypto.randomUUID()}`;
-  const storage = new CanonicalIndexedDb(databaseName);
+  const firstStorage = new CanonicalIndexedDb(databaseName);
+  const artifacts = new BrowserMemoryCanonicalArtifactStore();
   try {
-    const service = new CanonicalVaultService(storage, NORMAL_STORAGE_REALM);
-    const ceremony = await service.beginCreate({ label: "Confirmed vault", assertedAt: 99 });
+    const service = new CanonicalVaultService(firstStorage, NORMAL_STORAGE_REALM);
+    const runtime = new CanonicalClientRuntime(
+      service,
+      new CanonicalCaptureService(service, artifacts),
+      new CanonicalLibraryProjectionService(service, artifacts),
+    );
+    const setup = await runtime.beginVaultCreation({
+      expectedVaultId: null,
+      label: "Confirmed vault",
+      assertedAt: 99,
+    });
     let mismatch = "missing";
     try {
-      await ceremony.confirm("not a real phrase");
+      await runtime.confirmVaultCreation({
+        setupId: setup.setupId,
+        recoveryPhrase: "not a real phrase",
+      });
     } catch (error) {
       mismatch =
         error instanceof Error && "id" in error && typeof error.id === "string"
           ? error.id
           : "unexpected";
     }
-    const created = await ceremony.confirm(ceremony.recoveryPhrase);
-    const opened = await service.openVault(created.vaultId);
-    const directories = await storage.listBytes(
-      NORMAL_STORAGE_REALM,
-      NAMESPACES.vaultDirectory.key,
-      "installation",
-    );
-    const selectionItem = {
-      namespace: NAMESPACES.installationSelection.key,
-      scopeKey: "installation",
-      itemKey: "current",
-    } as const;
-    const selectionBytes = await storage.getBytes(NORMAL_STORAGE_REALM, selectionItem);
-    if (selectionBytes === undefined) throw new Error("Missing Installation Selection");
-    const selection = decodeInstallationSelection(selectionBytes);
-    let reused = "missing";
+    await firstStorage.close();
+
+    const restartedStorage = new CanonicalIndexedDb(databaseName);
     try {
-      await ceremony.confirm(ceremony.recoveryPhrase);
-    } catch (error) {
-      reused = error instanceof Error ? error.message : "unexpected";
+      const restartedService = new CanonicalVaultService(restartedStorage, NORMAL_STORAGE_REALM);
+      const restartedRuntime = new CanonicalClientRuntime(
+        restartedService,
+        new CanonicalCaptureService(restartedService, artifacts),
+        new CanonicalLibraryProjectionService(restartedService, artifacts),
+      );
+      const created = await restartedRuntime.confirmVaultCreation({
+        setupId: setup.setupId,
+        recoveryPhrase: setup.recoveryPhrase,
+      });
+      const vaultId = identifierFromStorageKey("Vault", created.vaultId);
+      const opened = await restartedService.openVault(vaultId);
+      const directories = await restartedStorage.listBytes(
+        NORMAL_STORAGE_REALM,
+        NAMESPACES.vaultDirectory.key,
+        "installation",
+      );
+      const selectionItem = {
+        namespace: NAMESPACES.installationSelection.key,
+        scopeKey: "installation",
+        itemKey: "current",
+      } as const;
+      const selectionBytes = await restartedStorage.getBytes(NORMAL_STORAGE_REALM, selectionItem);
+      if (selectionBytes === undefined) throw new Error("Missing Installation Selection");
+      const selection = decodeInstallationSelection(selectionBytes);
+      let reused = "missing";
+      try {
+        await restartedRuntime.confirmVaultCreation({
+          setupId: setup.setupId,
+          recoveryPhrase: setup.recoveryPhrase,
+        });
+      } catch (error) {
+        reused =
+          error instanceof Error && "id" in error && typeof error.id === "string"
+            ? error.id
+            : "unexpected";
+      }
+      return {
+        mismatch,
+        directoryCount: directories.length,
+        selected: sameBytes(selection.vaultId, vaultId),
+        opened: sameBytes(opened.directory.vaultId, vaultId),
+        resumedAfterRestart: true,
+        reused,
+      };
+    } finally {
+      await restartedStorage.close();
     }
-    return {
-      mismatch,
-      directoryCount: directories.length,
-      selected: sameBytes(selection.vaultId, created.vaultId),
-      opened: sameBytes(opened.directory.vaultId, created.vaultId),
-      reused,
-    };
   } finally {
-    await storage.close();
+    await firstStorage.close().catch(() => undefined);
     await deleteBrowserDatabase(databaseName);
   }
 }
@@ -1492,7 +1529,12 @@ async function canonicalCaptureCommitScenario(): Promise<unknown> {
   const storage = new CanonicalIndexedDb(databaseName);
   try {
     const vaults = new CanonicalVaultService(storage, NORMAL_STORAGE_REALM);
-    const ceremony = await vaults.beginCreate({ label: "Capture vault", assertedAt: 1 });
+    const ceremony = await vaults.beginCreate({
+      setupId: crypto.randomUUID(),
+      expectedVaultId: null,
+      label: "Capture vault",
+      assertedAt: 1,
+    });
     const created = await ceremony.confirm(ceremony.recoveryPhrase);
     const artifacts = new BrowserMemoryCanonicalArtifactStore();
     const captures = new CanonicalCaptureService(vaults, artifacts);
@@ -1732,7 +1774,12 @@ async function canonicalLibraryProjectionScenario(): Promise<unknown> {
   const storage = new CanonicalIndexedDb(databaseName);
   try {
     const vaults = new CanonicalVaultService(storage, NORMAL_STORAGE_REALM);
-    const ceremony = await vaults.beginCreate({ label: "Library vault", assertedAt: 1 });
+    const ceremony = await vaults.beginCreate({
+      setupId: crypto.randomUUID(),
+      expectedVaultId: null,
+      label: "Library vault",
+      assertedAt: 1,
+    });
     const created = await ceremony.confirm(ceremony.recoveryPhrase);
     const artifacts = new BrowserMemoryCanonicalArtifactStore();
     const captures = new CanonicalCaptureService(vaults, artifacts);

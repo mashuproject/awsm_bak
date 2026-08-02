@@ -54,6 +54,13 @@ function fixture() {
       },
     ]),
     beginCreate: vi.fn(async () => ceremony),
+    pendingCreationExpectedVault: vi.fn(async () => {
+      throw Object.assign(new Error("The Vault creation ceremony is unavailable."), {
+        id: "VAULT_CREATION_NOT_FOUND",
+      });
+    }),
+    resumeCreate: vi.fn(),
+    cancelPendingCreate: vi.fn(),
     selectVault: vi.fn(async () => undefined),
     openVault: vi.fn(async () => ({
       replicaState: { requiredFeatureSetId: randomIdentifier("RequiredFeatureSet") },
@@ -135,8 +142,8 @@ describe("canonical Client Runtime", () => {
     });
   });
 
-  it("keeps Recovery Phrase setup memory-only and consumes it after confirmation", async () => {
-    const { runtime, ceremony, firstVaultId, secondVaultId } = fixture();
+  it("persists Recovery Phrase setup outside runtime memory and consumes it after confirmation", async () => {
+    const { runtime, vaults, ceremony, firstVaultId, secondVaultId } = fixture();
     const expectedVaultId = identifierStorageKey(firstVaultId);
 
     const setup = await runtime.beginVaultCreation({
@@ -145,6 +152,12 @@ describe("canonical Client Runtime", () => {
       assertedAt: 10,
     });
     expect(setup).toEqual({ setupId: "setup-1", recoveryPhrase: ceremony.recoveryPhrase });
+    expect(vaults.beginCreate).toHaveBeenCalledWith({
+      setupId: setup.setupId,
+      expectedVaultId: firstVaultId,
+      label: "Second",
+      assertedAt: 10,
+    });
     await expect(
       runtime.confirmVaultCreation({
         setupId: setup.setupId,
@@ -157,6 +170,19 @@ describe("canonical Client Runtime", () => {
         recoveryPhrase: ceremony.recoveryPhrase,
       }),
     ).rejects.toMatchObject({ id: "VAULT_CREATION_NOT_FOUND" });
+  });
+
+  it("checks the selected Vault before rebuilding a persisted creation after restart", async () => {
+    const { runtime, vaults, ceremony } = fixture();
+    vi.mocked(vaults.pendingCreationExpectedVault).mockResolvedValue(null);
+
+    await expect(
+      runtime.confirmVaultCreation({
+        setupId: "persisted-setup",
+        recoveryPhrase: ceremony.recoveryPhrase,
+      }),
+    ).rejects.toMatchObject({ id: "VAULT_CONTEXT_CHANGED" });
+    expect(vaults.resumeCreate).not.toHaveBeenCalled();
   });
 
   it("keeps Fork setup memory-only and activates its fresh Vault after phrase confirmation", async () => {

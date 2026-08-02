@@ -117,7 +117,7 @@ test("atomically activates Complete Import and restores canonical Backup snapsho
   });
 });
 
-test("requires Recovery Phrase confirmation before committing a canonical Vault", async ({
+test("survives a client restart before Recovery Phrase confirmation and atomically consumes setup", async ({
   page,
 }) => {
   await expect(scenario(page, "canonical-vault-ceremony")).resolves.toEqual({
@@ -125,7 +125,8 @@ test("requires Recovery Phrase confirmation before committing a canonical Vault"
     directoryCount: 1,
     selected: true,
     opened: true,
-    reused: "The Vault creation ceremony is no longer active.",
+    resumedAfterRestart: true,
+    reused: "VAULT_CREATION_NOT_FOUND",
   });
 });
 

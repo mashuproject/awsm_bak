@@ -1,18 +1,21 @@
-import { normalizeRecoveryPhrase } from "../../crypto/canonical";
+import { decodeRecoveryPhrase, normalizeRecoveryPhrase } from "../../crypto/canonical";
 import {
   type CompactPayloadType,
   type OpenedCompactItem,
   openCompactItem,
 } from "../../crypto/compact";
+import { CryptoOperationError } from "../../crypto/errors";
+import { unwrapInstallationBytes, wrapInstallationBytes } from "../../crypto/installation-wrap";
 import { openKeyEnvelope } from "../../crypto/key-envelope";
 import { wipe } from "../../crypto/sodium";
-import type { Identifier } from "../../domain/canonical/identifiers";
+import { type Identifier, identifier } from "../../domain/canonical/identifiers";
 import {
   type AuthenticatedVaultEvent,
   decodeVaultBaseline,
   decodeVaultEvent,
   type VaultBaseline,
 } from "../../domain/canonical/record";
+import { transcript } from "../../domain/canonical/transcript";
 import { bytesEqual } from "../../domain/hash";
 import {
   type CanonicalIndexedDb,
@@ -43,6 +46,11 @@ import {
   type VaultDirectoryEntry,
 } from "./canonical-local-state";
 import { baselineVaultLabel, validateCurrentVaultAuthority } from "./canonical-open";
+import {
+  type CanonicalPendingVaultCreation,
+  decodeCanonicalPendingVaultCreation,
+  encodeCanonicalPendingVaultCreation,
+} from "./canonical-pending-vault-creation";
 
 export interface CreatedCanonicalVault {
   readonly vaultId: Identifier<"Vault">;
@@ -100,6 +108,53 @@ function sameBytes(left: Uint8Array, right: Uint8Array, field: string): void {
   if (!bytesEqual(left, right)) throw new TypeError(`${field} does not match`);
 }
 
+const encoder = new TextEncoder();
+
+interface PersistedPendingVaultCreation {
+  readonly item: {
+    readonly namespace: typeof NAMESPACES.pendingVaultCreation.key;
+    readonly scopeKey: "installation";
+    readonly itemKey: string;
+    readonly bytes: Uint8Array;
+  };
+}
+
+function pendingVaultCreationItem(setupId: string) {
+  return {
+    namespace: NAMESPACES.pendingVaultCreation.key,
+    scopeKey: "installation" as const,
+    itemKey: setupId,
+  };
+}
+
+function pendingVaultCreationContext(setupId: string): Uint8Array {
+  return transcript("awsm:pending-vault-creation-context:v1", [encoder.encode(setupId)]);
+}
+
+function creationNotFound(): Error {
+  return Object.assign(new Error("The Vault creation ceremony is unavailable."), {
+    id: "VAULT_CREATION_NOT_FOUND",
+  });
+}
+
+function recoveryPhraseMismatch(): Error {
+  return Object.assign(new Error("The full Recovery Phrase does not match."), {
+    id: "RECOVERY_PHRASE_MISMATCH",
+  });
+}
+
+async function wipePendingVaultCreation(value: CanonicalPendingVaultCreation): Promise<void> {
+  await Promise.all([
+    wipe(value.clientSigningSeed),
+    wipe(value.clientWrappingPrivateKey),
+    wipe(value.keyEpochKey),
+    wipe(value.recoveryEnvelopeBytes),
+    wipe(value.clientEnvelopeBytes),
+    wipe(value.baselineProtectionParameters),
+    wipe(value.genesisProtectionParameters),
+  ]);
+}
+
 export class CanonicalVaultCreationCeremony {
   readonly recoveryPhrase: string;
   private active = true;
@@ -109,6 +164,7 @@ export class CanonicalVaultCreationCeremony {
     private readonly realm: StorageRealm,
     private readonly label: string | null,
     private readonly prepared: PreparedCanonicalVaultCreation,
+    private readonly persisted: PersistedPendingVaultCreation | null = null,
   ) {
     this.recoveryPhrase = prepared.recoveryPhrase;
   }
@@ -127,7 +183,15 @@ export class CanonicalVaultCreationCeremony {
       realm: this.realm,
       wrappingKey,
     });
-    await this.storage.commitInitialVault(storage.commit);
+    await this.storage.commitInitialVault({
+      ...storage.commit,
+      ...(this.persisted === null
+        ? {}
+        : {
+            expectedMutableItems: [this.persisted.item],
+            deletedItems: [pendingVaultCreationItem(this.persisted.item.itemKey)],
+          }),
+    });
     this.active = false;
     const result = {
       vaultId: this.prepared.ids.vaultId,
@@ -141,6 +205,13 @@ export class CanonicalVaultCreationCeremony {
 
   async cancel(): Promise<void> {
     if (!this.active) return;
+    if (this.persisted !== null) {
+      await this.storage.commitExecutionMutation({
+        realm: this.realm,
+        expectedMutableItems: [this.persisted.item],
+        deletedItems: [pendingVaultCreationItem(this.persisted.item.itemKey)],
+      });
+    }
     this.active = false;
     await this.wipePreparedSecrets();
   }
@@ -161,11 +232,101 @@ export class CanonicalVaultService {
   ) {}
 
   async beginCreate(input: {
+    readonly setupId: string;
+    readonly expectedVaultId: Identifier<"Vault"> | null;
     readonly label: string | null;
     readonly assertedAt: number | bigint;
   }): Promise<CanonicalVaultCreationCeremony> {
     const prepared = await prepareCanonicalVaultCreation(input);
-    return new CanonicalVaultCreationCeremony(this.storage, this.realm, input.label, prepared);
+    try {
+      const persisted = await this.persistPendingVaultCreation({
+        setupId: input.setupId,
+        expectedVaultId: input.expectedVaultId,
+        label: input.label,
+        assertedAt: input.assertedAt,
+        prepared,
+      });
+      return new CanonicalVaultCreationCeremony(
+        this.storage,
+        this.realm,
+        input.label,
+        prepared,
+        persisted,
+      );
+    } catch (error) {
+      await wipePreparedCanonicalVaultCreation(prepared);
+      throw error;
+    }
+  }
+
+  async pendingCreationExpectedVault(setupId: string): Promise<Identifier<"Vault"> | null> {
+    const { pending } = await this.readPendingVaultCreation(setupId);
+    try {
+      return pending.expectedVaultId === null
+        ? null
+        : identifier("Vault", Uint8Array.from(pending.expectedVaultId));
+    } finally {
+      await wipePendingVaultCreation(pending);
+    }
+  }
+
+  async resumeCreate(input: {
+    readonly setupId: string;
+    readonly recoveryPhrase: string;
+  }): Promise<CanonicalVaultCreationCeremony> {
+    const { pending, persisted } = await this.readPendingVaultCreation(input.setupId);
+    let recoveryEntropy: Uint8Array | undefined;
+    try {
+      try {
+        recoveryEntropy = decodeRecoveryPhrase(input.recoveryPhrase);
+      } catch {
+        throw recoveryPhraseMismatch();
+      }
+      let prepared: PreparedCanonicalVaultCreation;
+      try {
+        prepared = await prepareCanonicalVaultCreation({
+          label: pending.label,
+          assertedAt: pending.assertedAt,
+          deterministic: {
+            ids: pending.ids,
+            recoveryEntropy,
+            clientSigningSeed: pending.clientSigningSeed,
+            clientWrappingPrivateKey: pending.clientWrappingPrivateKey,
+            keyEpochKey: pending.keyEpochKey,
+            recoveryEnvelopeBytes: pending.recoveryEnvelopeBytes,
+            clientEnvelopeBytes: pending.clientEnvelopeBytes,
+            baselineProtectionParameters: pending.baselineProtectionParameters,
+            genesisProtectionParameters: pending.genesisProtectionParameters,
+          },
+        });
+      } catch (error) {
+        if (error instanceof CryptoOperationError) throw recoveryPhraseMismatch();
+        throw error;
+      }
+      return new CanonicalVaultCreationCeremony(
+        this.storage,
+        this.realm,
+        pending.label,
+        prepared,
+        persisted,
+      );
+    } finally {
+      if (recoveryEntropy !== undefined) await wipe(recoveryEntropy);
+      await wipePendingVaultCreation(pending);
+    }
+  }
+
+  async cancelPendingCreate(setupId: string): Promise<void> {
+    const { pending, persisted } = await this.readPendingVaultCreation(setupId);
+    try {
+      await this.storage.commitExecutionMutation({
+        realm: this.realm,
+        expectedMutableItems: [persisted.item],
+        deletedItems: [pendingVaultCreationItem(setupId)],
+      });
+    } finally {
+      await wipePendingVaultCreation(pending);
+    }
   }
 
   async listVaults(): Promise<readonly CanonicalVaultDirectoryItem[]> {
@@ -537,6 +698,82 @@ export class CanonicalVaultService {
       "Resolution Storage Item ID",
     );
     return envelopeBytes;
+  }
+
+  private async persistPendingVaultCreation(input: {
+    readonly setupId: string;
+    readonly expectedVaultId: Identifier<"Vault"> | null;
+    readonly label: string | null;
+    readonly assertedAt: number | bigint;
+    readonly prepared: PreparedCanonicalVaultCreation;
+  }): Promise<PersistedPendingVaultCreation> {
+    const plaintext = encodeCanonicalPendingVaultCreation({
+      setupId: input.setupId,
+      expectedVaultId: input.expectedVaultId,
+      label: input.label,
+      assertedAt: input.assertedAt,
+      ids: input.prepared.ids,
+      clientSigningSeed: input.prepared.secrets.client.signingSeed,
+      clientWrappingPrivateKey: input.prepared.secrets.client.wrappingPrivateKey,
+      keyEpochKey: input.prepared.secrets.keyEpoch.key,
+      recoveryEnvelopeBytes: input.prepared.recoveryKeyEnvelope.envelope.bytes,
+      clientEnvelopeBytes: input.prepared.clientKeyEnvelope.envelope.bytes,
+      baselineProtectionParameters: input.prepared.baselineEnvelope.protectionParameters,
+      genesisProtectionParameters: input.prepared.genesisEnvelope.protectionParameters,
+    });
+    try {
+      const wrappingKey = await this.storage.getOrCreateInstallationWrappingKey(this.realm);
+      const key = pendingVaultCreationItem(input.setupId);
+      const wrapped = await wrapInstallationBytes({
+        wrappingKey,
+        domain: "awsm.local.pending-vault-creation",
+        context: pendingVaultCreationContext(input.setupId),
+        bytes: plaintext,
+      });
+      const item = { ...key, bytes: wrapped };
+      await this.storage.commitExecutionMutation({
+        realm: this.realm,
+        expectedAbsentItems: [key],
+        mutableItems: [item],
+      });
+      return { item: { ...key, bytes: Uint8Array.from(wrapped) } };
+    } finally {
+      await wipe(plaintext);
+    }
+  }
+
+  private async readPendingVaultCreation(setupId: string): Promise<{
+    readonly pending: CanonicalPendingVaultCreation;
+    readonly persisted: PersistedPendingVaultCreation;
+  }> {
+    const key = pendingVaultCreationItem(setupId);
+    const wrapped = await this.storage.getBytes(this.realm, key);
+    if (wrapped === undefined) throw creationNotFound();
+    const wrappingKey = await this.storage.getOrCreateInstallationWrappingKey(this.realm);
+    const plaintext = await unwrapInstallationBytes({
+      wrappingKey,
+      domain: "awsm.local.pending-vault-creation",
+      context: pendingVaultCreationContext(setupId),
+      wrappedBytes: wrapped,
+    });
+    let pending: CanonicalPendingVaultCreation | undefined;
+    try {
+      pending = decodeCanonicalPendingVaultCreation(plaintext);
+      if (pending.setupId !== setupId) {
+        throw new TypeError(
+          "Pending Vault creation setup identity does not match storage identity",
+        );
+      }
+      return {
+        pending,
+        persisted: { item: { ...key, bytes: Uint8Array.from(wrapped) } },
+      };
+    } catch (error) {
+      if (pending !== undefined) await wipePendingVaultCreation(pending);
+      throw error;
+    } finally {
+      await wipe(plaintext);
+    }
   }
 
   private async requireBytes(item: {

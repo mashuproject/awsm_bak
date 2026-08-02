@@ -74,6 +74,7 @@ The canonical Client registry currently declares these revision-1 namespaces:
 | `awsm.storage.replica-garbage-collection-job` | Execution State      | Vault        | mutable conditional state |
 | `awsm.storage.pull-synchronization-job`       | Execution State      | Vault        | mutable resumable state   |
 | `awsm.storage.prepared-capture`               | Prepared Data        | Job          | immutable                 |
+| `awsm.storage.pending-vault-creation`         | Prepared Data        | Installation | mutable conditional state |
 | `awsm.storage.incoming-quarantine`            | Quarantine           | Remote       | immutable                 |
 | `awsm.storage.library-projection`             | Materializations     | Replica      | replaceable               |
 | `awsm.storage.search-materialization`         | Materializations     | Replica      | replaceable               |
@@ -89,6 +90,14 @@ Credential and local member binding are optional. Complete Import installs all t
 stores no Client Secret. Key Epoch Secrets required to read the validated Replica remain Trusted
 Secrets protected by the Installation Wrapping Key. The absence of local authoring identity never
 changes portable membership facts inside Vault Records.
+
+A pending Vault creation is installation-wrapped Prepared Data, keyed by one random setup ID. It
+contains the exact local private creation material and protected initial Envelope and Compact
+parameters needed to survive a Client restart, but never the Recovery Phrase or its entropy. A
+confirmation derives the Recovery Credential from the phrase supplied then, verifies the retained
+Recovery Envelope, and atomically creates the initial Replica while exact-byte compare-and-swap
+deleting the pending item. Cancellation performs the same exact-byte conditional deletion without
+creating a Vault. Pending creation data is never synchronized, exported, or backed up.
 
 # 4. Storage Realms
 
