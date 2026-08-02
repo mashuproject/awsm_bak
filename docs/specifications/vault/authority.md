@@ -258,7 +258,7 @@ The three Ed25519 signatures cover:
 ```text
 Transcript(
   "awsm:invitation-join-request:v1",
-  [canonical keys 0 through 4]
+  [canonical CBOR map containing exactly keys 0 through 4]
 )
 ```
 
@@ -349,7 +349,8 @@ A cancelled receipt is:
 }
 ```
 
-The signature is Ed25519 over `Transcript("awsm:invitation-receipt:v1", [canonical keys 0..4])`.
+The signature is Ed25519 over
+`Transcript("awsm:invitation-receipt:v1", [canonical CBOR map containing exactly keys 0..4])`.
 For cancellation, the authority first verifies the exact request using the Cancellation Capability
 verifier and binds that request ID into the receipt. Neither secret enters the request or receipt.
 
@@ -424,9 +425,9 @@ excluding Key Epoch.
 ```
 
 The proposed signature covers
-`Transcript("awsm:client-enrollment-proposal:v1", [canonical keys 0..4])`. A live HPKE challenge
-proves the proposed wrapping private key before commit. Proposal ID is the SHA-256 Transcript digest
-under `awsm:client-enrollment-proposal-id:v1`.
+`Transcript("awsm:client-enrollment-proposal:v1", [canonical CBOR map containing exactly keys
+0..4])`. A live HPKE challenge proves the proposed wrapping private key before commit. Proposal ID
+is the SHA-256 Transcript digest under `awsm:client-enrollment-proposal-id:v1`.
 
 # 16. Client Credential Enrollment Event body
 

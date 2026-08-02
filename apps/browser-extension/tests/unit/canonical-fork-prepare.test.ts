@@ -30,6 +30,7 @@ import { prepareCanonicalVaultCreation } from "../../src/runtime/vault/canonical
 import { prepareCanonicalFork } from "../../src/runtime/vault/canonical-fork-prepare";
 import { CanonicalForkCeremony } from "../../src/runtime/vault/canonical-fork-service";
 import { prepareCanonicalVaultStorage } from "../../src/runtime/vault/canonical-local-state";
+import { singleCredentialAuthority } from "../helpers/canonical-replay";
 
 async function wrappingKey(): Promise<CryptoKey> {
   return crypto.subtle.generateKey({ name: "AES-KW", length: 256 }, false, [
@@ -99,9 +100,13 @@ async function prepareEmptyFork(
       },
       graph,
       events: [source.genesis],
-      credentialMembers: new Map([
-        [Buffer.from(source.ids.clientCredentialId).toString("hex"), source.ids.firstMemberId],
-      ]),
+      authority: singleCredentialAuthority({
+        clientCredentialId: source.ids.clientCredentialId,
+        memberId: source.ids.firstMemberId,
+        signingPublicKey: source.secrets.client.signingPublicKey,
+        wrappingPublicKey: source.secrets.client.wrappingPublicKey,
+        lifecycle,
+      }),
     },
     artifactStore: {} as CanonicalArtifactStore,
     assertedAt: 2,
@@ -287,9 +292,12 @@ describe("canonical Fork preparation", () => {
           },
           graph,
           events: [source.genesis, registration],
-          credentialMembers: new Map([
-            [Buffer.from(source.ids.clientCredentialId).toString("hex"), source.ids.firstMemberId],
-          ]),
+          authority: singleCredentialAuthority({
+            clientCredentialId: source.ids.clientCredentialId,
+            memberId: source.ids.firstMemberId,
+            signingPublicKey: source.secrets.client.signingPublicKey,
+            wrappingPublicKey: source.secrets.client.wrappingPublicKey,
+          }),
         },
         artifactStore: {} as CanonicalArtifactStore,
         assertedAt: 3,

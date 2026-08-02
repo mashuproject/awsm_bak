@@ -14,6 +14,11 @@ import type {
   CanonicalVaultService,
   PersistedOpenedCanonicalVault,
 } from "../vault/canonical-service";
+import {
+  CanonicalAuthorityReplay,
+  type CanonicalAuthorityState,
+  canonicalAuthorityKeyEnvelopeRequirements,
+} from "./canonical-authority-replay";
 
 const MAX_REPLAY_RECORDS = 1_000_000;
 
@@ -35,16 +40,16 @@ export interface ReplayedCanonicalVault {
   readonly vault: PersistedOpenedCanonicalVault;
   readonly graph: CausalGraph;
   readonly events: readonly AuthenticatedVaultEvent[];
-  readonly credentialMembers: ReadonlyMap<string, Identifier<"Member">>;
+  readonly authority: CanonicalAuthorityState;
 }
 
 export function replayEventMemberId(
   replay: ReplayedCanonicalVault,
   event: AuthenticatedVaultEvent,
 ): Identifier<"Member"> {
-  const memberId = replay.credentialMembers.get(key(event.signerCredentialId));
-  if (memberId === undefined) throw new TypeError("Vault Event signer has no accepted Member");
-  return memberId;
+  const credential = replay.authority.clientCredentials.get(key(event.signerCredentialId));
+  if (credential === undefined) throw new TypeError("Vault Event signer has no accepted Member");
+  return credential.memberId;
 }
 
 export class CanonicalReplayService {
@@ -63,6 +68,10 @@ export class CanonicalReplayService {
     const baselineKey = key(vault.baseline.recordId);
     const adoption = vault.replicaState.adoption;
     const initialClient = initialVaultClientAuthority(vault.genesis);
+    const authorityReplay = new CanonicalAuthorityReplay(
+      vault.genesis,
+      adoption === null ? vault.genesis.recordId : adoption.vacuumEventRecordId,
+    );
     const body = exactMap(vault.baseline.body, [0, 1, 2, 3, 4, 5], "Accepted Baseline body");
     graph.addBaseline(vault.baseline.recordId, contentCheckpointCauseIds(mapValue(body, 2)));
 
@@ -103,25 +112,21 @@ export class CanonicalReplayService {
       for (const parent of parents) await visit(parent);
       if (event.family === 1 && event.type === 1) {
         if (recordKey !== genesisKey) throw new TypeError("Vault replay contains another Genesis");
+        if (!(await verifyVaultEventSignature(event, initialClient.signingPublicKey))) {
+          throw new TypeError("Vault Event signature is invalid");
+        }
       } else {
-        const isContent = event.family === 2;
-        const isExplicitClosure = event.family === 3 && event.type === 2;
-        if (!isContent && !isExplicitClosure) {
-          throw new TypeError(
-            "This replay slice cannot yet reduce post-Genesis authority or lifecycle Events",
-          );
+        const keyEnvelopeRequirements = canonicalAuthorityKeyEnvelopeRequirements(event);
+        await authorityReplay.validateAndAccept(event);
+        for (const requirement of keyEnvelopeRequirements) {
+          await this.vaults.readResolvedOpaqueItem({
+            vault,
+            kind: 2,
+            logicalId: requirement.keyEnvelopeId,
+            expectedKeyEpochId: requirement.keyEpochId,
+            namespace: NAMESPACES.keyEnvelope.key,
+          });
         }
-        const expectedAuthorityParent =
-          adoption === null ? vault.genesis.recordId : adoption.vacuumEventRecordId;
-        if (!sameSet(event.authorityParentRecordIds, [expectedAuthorityParent])) {
-          throw new TypeError("Event does not name the accepted Authority Frontier");
-        }
-        if (!bytesEqual(event.signerCredentialId, initialClient.clientCredentialId)) {
-          throw new TypeError("Event is not signed by the authenticated initial Credential");
-        }
-      }
-      if (!(await verifyVaultEventSignature(event, initialClient.signingPublicKey))) {
-        throw new TypeError("Vault Event signature is invalid");
       }
       graph.add(
         event.recordId,
@@ -139,11 +144,13 @@ export class CanonicalReplayService {
     if (adoption === null && !events.has(genesisKey)) {
       throw new TypeError("The causal DAG does not reach Genesis");
     }
-    const closures = ordered.filter((event) => event.family === 3 && event.type === 2);
+    const authority = authorityReplay.stateAt(vault.replicaState.authorityFrontier);
+    if (authority.lifecycle !== vault.replicaState.lifecycle) {
+      throw new TypeError("Replica lifecycle does not match accepted Authority State");
+    }
     if (adoption !== null) {
       if (vault.replicaState.lifecycle === 1) {
         if (
-          closures.length !== 0 ||
           !sameSet(vault.replicaState.authorityFrontier, [adoption.vacuumEventRecordId]) ||
           !containsAll(vault.replicaState.continuityRecordIds, [
             vault.genesis.recordId,
@@ -153,10 +160,9 @@ export class CanonicalReplayService {
           throw new TypeError("Open successor authority state is inconsistent");
         }
       } else {
-        const closure = closures[0];
+        const closure = ordered.find((event) => event.family === 3 && event.type === 2);
         if (
           closure === undefined ||
-          closures.length !== 1 ||
           !sameSet(vault.replicaState.causalFrontier, [closure.recordId]) ||
           !sameSet(vault.replicaState.authorityFrontier, [closure.recordId]) ||
           !containsAll(vault.replicaState.continuityRecordIds, [
@@ -168,31 +174,14 @@ export class CanonicalReplayService {
           throw new TypeError("Closed successor authority state is inconsistent");
         }
       }
-    } else if (vault.replicaState.lifecycle === 1) {
-      if (
-        closures.length !== 0 ||
-        !sameSet(vault.replicaState.authorityFrontier, [vault.genesis.recordId]) ||
-        !sameSet(vault.replicaState.continuityRecordIds, [vault.genesis.recordId])
-      ) {
-        throw new TypeError("Open initial authority state is inconsistent");
-      }
     } else {
-      const closure = closures[0];
-      if (
-        closure === undefined ||
-        closures.length !== 1 ||
-        !sameSet(vault.replicaState.causalFrontier, [closure.recordId]) ||
-        !sameSet(vault.replicaState.authorityFrontier, [closure.recordId]) ||
-        !sameSet(vault.replicaState.continuityRecordIds, [vault.genesis.recordId, closure.recordId])
-      ) {
-        throw new TypeError("Closed initial authority state is inconsistent");
+      const proofRecordIds = authorityReplay.reachableRecordIds(
+        vault.replicaState.authorityFrontier,
+      );
+      if (!sameSet(vault.replicaState.continuityRecordIds, proofRecordIds)) {
+        throw new TypeError("Initial Continuity Proof does not match accepted Authority State");
       }
     }
-    return {
-      vault,
-      graph,
-      events: ordered,
-      credentialMembers: new Map([[key(initialClient.clientCredentialId), initialClient.memberId]]),
-    };
+    return { vault, graph, events: ordered, authority };
   }
 }

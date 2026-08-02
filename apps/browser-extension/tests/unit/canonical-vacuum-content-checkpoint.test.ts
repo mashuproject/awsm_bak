@@ -32,6 +32,7 @@ import {
   prepareVacuumSuccessorBaseline,
 } from "../../src/runtime/vault/canonical-vacuum-content-checkpoint";
 import { CanonicalVacuumService } from "../../src/runtime/vault/canonical-vacuum-service";
+import { singleCredentialAuthority } from "../helpers/canonical-replay";
 
 function filled<Kind extends Parameters<typeof identifier>[0]>(kind: Kind, byte: number) {
   return identifier(kind, new Uint8Array(32).fill(byte));
@@ -129,9 +130,12 @@ async function registrationReplay(): Promise<{
       vault,
       graph,
       events: [creation.genesis, registration],
-      credentialMembers: new Map([
-        [Buffer.from(creation.ids.clientCredentialId).toString("hex"), creation.ids.firstMemberId],
-      ]),
+      authority: singleCredentialAuthority({
+        clientCredentialId: creation.ids.clientCredentialId,
+        memberId: creation.ids.firstMemberId,
+        signingPublicKey: creation.secrets.client.signingPublicKey,
+        wrappingPublicKey: creation.secrets.client.wrappingPublicKey,
+      }),
     },
     bundleId,
     descriptorObjectId,

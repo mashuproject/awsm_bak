@@ -511,6 +511,31 @@ export class CanonicalVaultService {
     return opened;
   }
 
+  async readResolvedOpaqueItem(input: {
+    readonly vault: PersistedOpenedCanonicalVault;
+    readonly kind: 2;
+    readonly logicalId: Identifier<"KeyEnvelope">;
+    readonly expectedKeyEpochId: Identifier<"KeyEpoch">;
+    readonly namespace: typeof NAMESPACES.keyEnvelope.key;
+  }): Promise<Uint8Array> {
+    const resolution = await this.readLogicalResolution(input);
+    if (resolution.availability !== 1) {
+      throw new TypeError("The required opaque item is not verified locally");
+    }
+    sameBytes(resolution.keyEpochId, input.expectedKeyEpochId, "Resolution Key Epoch ID");
+    const envelopeBytes = await this.requireBytes({
+      namespace: input.namespace,
+      scopeKey: identifierStorageKey(input.vault.replicaState.vaultId),
+      itemKey: identifierStorageKey(input.logicalId),
+    });
+    sameBytes(
+      resolution.storageItemId,
+      decodeOpaqueEnvelope(envelopeBytes).storageItemId,
+      "Resolution Storage Item ID",
+    );
+    return envelopeBytes;
+  }
+
   private async requireBytes(item: {
     readonly namespace: Parameters<CanonicalIndexedDb["getBytes"]>[1]["namespace"];
     readonly scopeKey: string;

@@ -9,6 +9,7 @@ import {
   CanonicalVaultCreationCeremony,
   CanonicalVaultService,
 } from "../../src/runtime/vault/canonical-service";
+import { COMPACT_STORAGE_CLASS, encodeOpaqueEnvelope } from "../../src/storage/opaque-envelope";
 
 function isWiped(bytes: Uint8Array): boolean {
   return bytes.every((byte) => byte === 0);
@@ -93,5 +94,66 @@ describe("canonical Vault selection", () => {
       itemKey: "current",
     });
     expect(decodeInstallationSelection(selection.bytes).vaultId).toEqual(vaultId);
+  });
+});
+
+describe("canonical opaque dependency resolution", () => {
+  it("returns only a locally verified Key Envelope with the resolved outer identity", async () => {
+    const vaultId = randomIdentifier("Vault");
+    const keyEpochId = randomIdentifier("KeyEpoch");
+    const keyEnvelopeId = randomIdentifier("KeyEnvelope");
+    const envelope = encodeOpaqueEnvelope({
+      storageClass: COMPACT_STORAGE_CLASS,
+      protectionParameters: new Uint8Array(64).fill(1),
+      payload: new Uint8Array(16).fill(2),
+    });
+    const storage = {
+      getBytes: vi.fn(async () => envelope.bytes),
+    } as unknown as CanonicalIndexedDb;
+    const service = new CanonicalVaultService(storage, NORMAL_STORAGE_REALM);
+    const readResolution = vi.spyOn(service, "readLogicalResolution").mockResolvedValue({
+      vaultId,
+      kind: 2,
+      logicalId: keyEnvelopeId,
+      storageItemId: envelope.storageItemId,
+      keyEpochId,
+      availability: 1,
+    });
+    const vault = { replicaState: { vaultId } } as never;
+
+    await expect(
+      service.readResolvedOpaqueItem({
+        vault,
+        kind: 2,
+        logicalId: keyEnvelopeId,
+        expectedKeyEpochId: keyEpochId,
+        namespace: NAMESPACES.keyEnvelope.key,
+      }),
+    ).resolves.toEqual(envelope.bytes);
+    expect(readResolution).toHaveBeenCalledWith({
+      vault,
+      kind: 2,
+      logicalId: keyEnvelopeId,
+      expectedKeyEpochId: keyEpochId,
+      namespace: NAMESPACES.keyEnvelope.key,
+    });
+
+    readResolution.mockResolvedValue({
+      vaultId,
+      kind: 2,
+      logicalId: keyEnvelopeId,
+      storageItemId: randomIdentifier("StorageItem"),
+      keyEpochId,
+      availability: 1,
+    });
+    await expect(
+      service.readResolvedOpaqueItem({
+        vault,
+        kind: 2,
+        logicalId: keyEnvelopeId,
+        expectedKeyEpochId: keyEpochId,
+        namespace: NAMESPACES.keyEnvelope.key,
+      }),
+    ).rejects.toThrow("Resolution Storage Item ID does not match");
   });
 });
