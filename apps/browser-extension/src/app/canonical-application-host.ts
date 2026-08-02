@@ -45,7 +45,7 @@ function knownFailure(error: unknown): CanonicalApplicationMessageResponse {
   };
 }
 
-function isStateChangedNotification(message: unknown): boolean {
+export function isCanonicalApplicationStateChanged(message: unknown): boolean {
   if (
     typeof message !== "object" ||
     message === null ||
@@ -66,7 +66,7 @@ export function installCanonicalApplicationMessageHandler(
   application: CanonicalApplicationPort,
 ): void {
   runtime.onMessage.addListener(async (message) => {
-    if (isStateChangedNotification(message)) return undefined;
+    if (isCanonicalApplicationStateChanged(message)) return undefined;
     try {
       return { ok: true, value: await application.handle(message) };
     } catch (error) {
