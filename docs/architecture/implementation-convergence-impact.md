@@ -211,7 +211,10 @@ remains.
 
 `docs/specifications/protocol/http-api.openapi.yaml`, its initializer, Committee validation,
 `spec/contracts/openapi_spec.rb`, and Rails request specs now form one executable contract. Browser
-synchronization HTTP clients have not yet switched to it and remain the next consumer to reconcile.
+synchronization now has a strict Hosted HTTP adapter plus Installation-wrapped Remote credentials,
+durable snapshot inventory/Quarantine, Host-locator retention, and local Compact classification.
+It has not yet crossed the next trust boundary: atomic Authority/dependency/DAG validation and
+promotion into accepted Replica state.
 
 ## 4.4 Account dashboard and public pages
 
