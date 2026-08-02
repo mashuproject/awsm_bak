@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { readySodium } from "../../src/crypto/sodium";
 import { DEPENDENCY_TYPES } from "../../src/domain/canonical/dependencies";
 import { advisoryExtensions } from "../../src/domain/canonical/features";
-import { randomIdentifier } from "../../src/domain/canonical/identifiers";
+import { type Identifier, randomIdentifier } from "../../src/domain/canonical/identifiers";
 import { signVaultEvent } from "../../src/domain/canonical/record";
 import { transcript } from "../../src/domain/canonical/transcript";
 import { canonicalMap, canonicalSet, encodeCanonicalValue } from "../../src/domain/canonical/value";
@@ -266,6 +266,119 @@ async function recoveryReplacement(
     creation.secrets.client.signingSecretKey,
   );
   return { event, recoveryCredentialId, envelopeId };
+}
+
+async function keyEpochTransition(
+  creation: Awaited<ReturnType<typeof prepareCanonicalVaultCreation>>,
+  input: {
+    readonly parentRecordIds: CanonicalReplicaState["authorityFrontier"];
+    readonly parentKeyEpochIds: readonly Uint8Array[];
+    readonly displayNumber: number;
+    readonly assertedAt: number;
+    readonly keyEpochId?: Identifier<"KeyEpoch">;
+    readonly recoveryTargets?: readonly {
+      readonly recoveryCredentialId: Uint8Array;
+      readonly revision: number;
+    }[];
+    readonly clientCredentialIds?: readonly Uint8Array[];
+    readonly duplicateFirstRecoveryTarget?: boolean;
+  },
+) {
+  const keyEpochId = input.keyEpochId ?? randomIdentifier("KeyEpoch");
+  const recoveryTargets = input.recoveryTargets ?? [
+    {
+      recoveryCredentialId: creation.ids.recoveryCredentialId,
+      revision: 0,
+    },
+  ];
+  const clientCredentialIds = input.clientCredentialIds ?? [creation.ids.clientCredentialId];
+  const recoveryEnvelopeIds = recoveryTargets.map(() => randomIdentifier("KeyEnvelope"));
+  const clientEnvelopeIds = clientCredentialIds.map(() => randomIdentifier("KeyEnvelope"));
+  const recoveryEnvelopeId = recoveryEnvelopeIds[0];
+  const clientEnvelopeId = clientEnvelopeIds[0];
+  const firstRecoveryTarget = recoveryTargets[0];
+  if (
+    recoveryEnvelopeId === undefined ||
+    clientEnvelopeId === undefined ||
+    firstRecoveryTarget === undefined
+  ) {
+    throw new TypeError("Key Epoch Transition fixture requires Recovery and Client targets");
+  }
+  const duplicateRecoveryEnvelopeId = input.duplicateFirstRecoveryTarget
+    ? randomIdentifier("KeyEnvelope")
+    : null;
+  const slots = canonicalSet([
+    ...recoveryTargets.map(({ recoveryCredentialId, revision }, index) => {
+      const envelopeId = recoveryEnvelopeIds[index];
+      if (envelopeId === undefined) throw new TypeError("Recovery target has no Envelope ID");
+      return canonicalMap([
+        [0, keyEpochId],
+        [1, 1],
+        [2, recoveryCredentialId],
+        [3, revision],
+        [4, envelopeId],
+      ]);
+    }),
+    ...clientCredentialIds.map((clientCredentialId, index) => {
+      const envelopeId = clientEnvelopeIds[index];
+      if (envelopeId === undefined) throw new TypeError("Client target has no Envelope ID");
+      return canonicalMap([
+        [0, keyEpochId],
+        [1, 2],
+        [2, clientCredentialId],
+        [3, null],
+        [4, envelopeId],
+      ]);
+    }),
+    ...(duplicateRecoveryEnvelopeId === null
+      ? []
+      : [
+          canonicalMap([
+            [0, keyEpochId],
+            [1, 1],
+            [2, firstRecoveryTarget.recoveryCredentialId],
+            [3, firstRecoveryTarget.revision],
+            [4, duplicateRecoveryEnvelopeId],
+          ]),
+        ]),
+  ]);
+  const event = await signVaultEvent(
+    {
+      vaultId: creation.ids.vaultId,
+      generationId: creation.ids.generationId,
+      parentRecordIds: input.parentRecordIds,
+      authorityParentRecordIds: input.parentRecordIds,
+      dependencies: [
+        ...recoveryEnvelopeIds,
+        ...clientEnvelopeIds,
+        ...(duplicateRecoveryEnvelopeId === null ? [] : [duplicateRecoveryEnvelopeId]),
+      ].map((id) => ({
+        type: DEPENDENCY_TYPES.KeyEnvelope,
+        id,
+      })),
+      requiredFeatureSetId: creation.genesis.requiredFeatureSetId,
+      extensions: advisoryExtensions([]),
+      family: 1,
+      type: 12,
+      signerCredentialId: creation.ids.clientCredentialId,
+      assertedAt: input.assertedAt,
+      body: canonicalMap([
+        [0, canonicalSet(input.parentKeyEpochIds)],
+        [1, keyEpochId],
+        [2, input.displayNumber],
+        [3, slots],
+      ]),
+    },
+    creation.secrets.client.signingSecretKey,
+  );
+  return {
+    event,
+    keyEpochId,
+    recoveryEnvelopeIds,
+    clientEnvelopeIds,
+    recoveryEnvelopeId,
+    clientEnvelopeId,
+  };
 }
 
 describe("canonical Authority replay", () => {
@@ -810,6 +923,230 @@ describe("canonical Authority replay", () => {
     ).toBe(true);
   });
 
+  it("transitions to a fresh Key Epoch with the exact eligible target set", async () => {
+    const creation = await prepareCanonicalVaultCreation({ label: "Epoch", assertedAt: 1 });
+    const transition = await keyEpochTransition(creation, {
+      parentRecordIds: [creation.genesis.recordId],
+      parentKeyEpochIds: [creation.secrets.keyEpoch.id],
+      displayNumber: 1,
+      assertedAt: 2,
+    });
+    const readResolvedOpaqueItem = vi.fn(
+      async (_input: { readonly logicalId: Uint8Array; readonly expectedKeyEpochId: Uint8Array }) =>
+        new Uint8Array([1]),
+    );
+    const replay = await new CanonicalReplayService({
+      openResolvedCompactItem: vi.fn(async () => ({ payloadBytes: transition.event.bytes })),
+      readResolvedOpaqueItem,
+    } as never).replayOpened(openedVaultAt(creation, transition.event));
+
+    expect(replay.authority.keyEpochs).toEqual(
+      expect.arrayContaining([
+        {
+          keyEpochId: creation.secrets.keyEpoch.id,
+          displayNumber: 0,
+          current: false,
+        },
+        { keyEpochId: transition.keyEpochId, displayNumber: 1, current: true },
+      ]),
+    );
+    expect(readResolvedOpaqueItem.mock.calls.map(([input]) => input.logicalId)).toEqual(
+      expect.arrayContaining([transition.recoveryEnvelopeId, transition.clientEnvelopeId]),
+    );
+    expect(readResolvedOpaqueItem.mock.calls.map(([input]) => input.expectedKeyEpochId)).toEqual([
+      transition.keyEpochId,
+      transition.keyEpochId,
+    ]);
+    expect(replay.authority.writeFences).toEqual([]);
+  });
+
+  it("rejects duplicate Key Epoch target slots before reading either Envelope", async () => {
+    const creation = await prepareCanonicalVaultCreation({
+      label: "Duplicate Epoch target",
+      assertedAt: 1,
+    });
+    const transition = await keyEpochTransition(creation, {
+      parentRecordIds: [creation.genesis.recordId],
+      parentKeyEpochIds: [creation.secrets.keyEpoch.id],
+      displayNumber: 1,
+      assertedAt: 2,
+      duplicateFirstRecoveryTarget: true,
+    });
+    const readResolvedOpaqueItem = vi.fn(async () => new Uint8Array([1]));
+
+    await expect(
+      new CanonicalReplayService({
+        openResolvedCompactItem: vi.fn(async () => ({ payloadBytes: transition.event.bytes })),
+        readResolvedOpaqueItem,
+      } as never).replayOpened(openedVaultAt(creation, transition.event)),
+    ).rejects.toThrow("Key Epoch Transition Envelope slots are not the exact eligible target set");
+    expect(readResolvedOpaqueItem).not.toHaveBeenCalled();
+  });
+
+  it("preserves sibling Key Epoch Transitions as a protected-write Conflict", async () => {
+    const creation = await prepareCanonicalVaultCreation({
+      label: "Epoch conflict",
+      assertedAt: 1,
+    });
+    const left = await keyEpochTransition(creation, {
+      parentRecordIds: [creation.genesis.recordId],
+      parentKeyEpochIds: [creation.secrets.keyEpoch.id],
+      displayNumber: 1,
+      assertedAt: 10_000,
+    });
+    const right = await keyEpochTransition(creation, {
+      parentRecordIds: [creation.genesis.recordId],
+      parentKeyEpochIds: [creation.secrets.keyEpoch.id],
+      displayNumber: 1,
+      assertedAt: -10_000,
+    });
+    const byId = new Map([
+      [Buffer.from(left.event.recordId).toString("hex"), left.event],
+      [Buffer.from(right.event.recordId).toString("hex"), right.event],
+    ]);
+    const replay = await new CanonicalReplayService({
+      openResolvedCompactItem: vi.fn(async ({ logicalId }: { logicalId: Uint8Array }) => ({
+        payloadBytes: byId.get(Buffer.from(logicalId).toString("hex"))?.bytes,
+      })),
+      readResolvedOpaqueItem: vi.fn(async () => new Uint8Array([1])),
+    } as never).replayOpened(
+      openedVaultAtFrontier(creation, [left.event.recordId, right.event.recordId]),
+    );
+
+    expect(replay.authority.keyEpochs.filter(({ current }) => current)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ keyEpochId: left.keyEpochId, displayNumber: 1 }),
+        expect.objectContaining({ keyEpochId: right.keyEpochId, displayNumber: 1 }),
+      ]),
+    );
+    expect(replay.authority.keyEpochConflicts).toEqual([
+      {
+        candidateRecordIds: expect.arrayContaining([left.event.recordId, right.event.recordId]),
+        keyEpochIds: expect.arrayContaining([left.keyEpochId, right.keyEpochId]),
+      },
+    ]);
+    expect(replay.authority.writeFences).toContainEqual(
+      expect.objectContaining({
+        kind: "key-epoch-conflict",
+        causeRecordIds: expect.arrayContaining([left.event.recordId, right.event.recordId]),
+      }),
+    );
+  });
+
+  it("rejects sibling Transitions that reuse one fresh Key Epoch identity", async () => {
+    const creation = await prepareCanonicalVaultCreation({
+      label: "Epoch identity collision",
+      assertedAt: 1,
+    });
+    const keyEpochId = randomIdentifier("KeyEpoch");
+    const left = await keyEpochTransition(creation, {
+      parentRecordIds: [creation.genesis.recordId],
+      parentKeyEpochIds: [creation.secrets.keyEpoch.id],
+      displayNumber: 1,
+      assertedAt: 2,
+      keyEpochId,
+    });
+    const right = await keyEpochTransition(creation, {
+      parentRecordIds: [creation.genesis.recordId],
+      parentKeyEpochIds: [creation.secrets.keyEpoch.id],
+      displayNumber: 1,
+      assertedAt: 3,
+      keyEpochId,
+    });
+    const byId = new Map(
+      [left.event, right.event].map(
+        (event) => [Buffer.from(event.recordId).toString("hex"), event] as const,
+      ),
+    );
+
+    await expect(
+      new CanonicalReplayService({
+        openResolvedCompactItem: vi.fn(async ({ logicalId }: { logicalId: Uint8Array }) => ({
+          payloadBytes: byId.get(Buffer.from(logicalId).toString("hex"))?.bytes,
+        })),
+        readResolvedOpaqueItem: vi.fn(async () => new Uint8Array([1])),
+      } as never).replayOpened(
+        openedVaultAtFrontier(creation, [left.event.recordId, right.event.recordId]),
+      ),
+    ).rejects.toThrow("Authority State reuses a Key Epoch identity");
+  });
+
+  it("resolves a Key Epoch Conflict through one exact all-head Transition", async () => {
+    const creation = await prepareCanonicalVaultCreation({
+      label: "Epoch resolution",
+      assertedAt: 1,
+    });
+    const left = await keyEpochTransition(creation, {
+      parentRecordIds: [creation.genesis.recordId],
+      parentKeyEpochIds: [creation.secrets.keyEpoch.id],
+      displayNumber: 1,
+      assertedAt: 2,
+    });
+    const right = await keyEpochTransition(creation, {
+      parentRecordIds: [creation.genesis.recordId],
+      parentKeyEpochIds: [creation.secrets.keyEpoch.id],
+      displayNumber: 1,
+      assertedAt: 3,
+    });
+    const resolution = await keyEpochTransition(creation, {
+      parentRecordIds: [left.event.recordId, right.event.recordId],
+      parentKeyEpochIds: [left.keyEpochId, right.keyEpochId],
+      displayNumber: 2,
+      assertedAt: 4,
+    });
+    const byId = new Map(
+      [left.event, right.event, resolution.event].map(
+        (event) => [Buffer.from(event.recordId).toString("hex"), event] as const,
+      ),
+    );
+    const replay = await new CanonicalReplayService({
+      openResolvedCompactItem: vi.fn(async ({ logicalId }: { logicalId: Uint8Array }) => ({
+        payloadBytes: byId.get(Buffer.from(logicalId).toString("hex"))?.bytes,
+      })),
+      readResolvedOpaqueItem: vi.fn(async () => new Uint8Array([1])),
+    } as never).replayOpened(
+      openedVaultAtFrontier(
+        creation,
+        [resolution.event.recordId],
+        [left.event.recordId, right.event.recordId, resolution.event.recordId],
+      ),
+    );
+
+    expect(replay.authority.keyEpochConflicts).toEqual([]);
+    expect(replay.authority.keyEpochs.filter(({ current }) => current)).toEqual([
+      { keyEpochId: resolution.keyEpochId, displayNumber: 2, current: true },
+    ]);
+    expect(replay.authority.writeFences).toEqual([]);
+
+    const partial = await keyEpochTransition(creation, {
+      parentRecordIds: [left.event.recordId, right.event.recordId],
+      parentKeyEpochIds: [left.keyEpochId],
+      displayNumber: 2,
+      assertedAt: 5,
+    });
+    byId.set(Buffer.from(partial.event.recordId).toString("hex"), partial.event);
+    const partialOpaqueRead = vi.fn(
+      async ({ logicalId }: { readonly logicalId: Uint8Array }) => logicalId,
+    );
+    await expect(
+      new CanonicalReplayService({
+        openResolvedCompactItem: vi.fn(async ({ logicalId }: { logicalId: Uint8Array }) => ({
+          payloadBytes: byId.get(Buffer.from(logicalId).toString("hex"))?.bytes,
+        })),
+        readResolvedOpaqueItem: partialOpaqueRead,
+      } as never).replayOpened(
+        openedVaultAtFrontier(
+          creation,
+          [partial.event.recordId],
+          [left.event.recordId, right.event.recordId, partial.event.recordId],
+        ),
+      ),
+    ).rejects.toThrow("Key Epoch Transition does not name every effective Epoch head");
+    expect(partialOpaqueRead.mock.calls.map(([input]) => input.logicalId)).not.toContainEqual(
+      partial.clientEnvelopeId,
+    );
+  });
+
   it("replays the complete Invitation, conflict, and member-removal lifecycle", async () => {
     const sodium = await readySodium();
     const creation = await prepareCanonicalVaultCreation({ label: "Members", assertedAt: 1 });
@@ -1302,6 +1639,46 @@ describe("canonical Authority replay", () => {
       subjectId: invitationId,
       causeRecordIds: [acceptance.recordId],
     });
+    const prematureConflictEpoch = await keyEpochTransition(creation, {
+      parentRecordIds: [acceptance.recordId, cancellation.recordId],
+      parentKeyEpochIds: [creation.secrets.keyEpoch.id],
+      displayNumber: 1,
+      assertedAt: 5,
+    });
+    byId.set(
+      Buffer.from(prematureConflictEpoch.event.recordId).toString("hex"),
+      prematureConflictEpoch.event,
+    );
+    const prematureConflictEpochReads = vi.fn(
+      async (_input: { readonly logicalId: Uint8Array }) => new Uint8Array([1]),
+    );
+    await expect(
+      new CanonicalReplayService({
+        openResolvedCompactItem: vi.fn(async ({ logicalId }: { logicalId: Uint8Array }) => ({
+          payloadBytes: byId.get(Buffer.from(logicalId).toString("hex"))?.bytes,
+        })),
+        readResolvedOpaqueItem: prematureConflictEpochReads,
+      } as never).replayOpened({
+        ...vault,
+        replicaState: {
+          ...vault.replicaState,
+          causalFrontier: [prematureConflictEpoch.event.recordId],
+          authorityFrontier: [prematureConflictEpoch.event.recordId],
+          continuityRecordIds: [
+            creation.genesis.recordId,
+            invitation.recordId,
+            acceptance.recordId,
+            cancellation.recordId,
+            prematureConflictEpoch.event.recordId,
+          ],
+        },
+      }),
+    ).rejects.toThrow("Key Epoch Transition cannot precede Invitation Conflict Resolution");
+    const prematureReadIds = prematureConflictEpochReads.mock.calls.map(
+      ([input]) => input.logicalId,
+    );
+    expect(prematureReadIds).not.toContainEqual(prematureConflictEpoch.recoveryEnvelopeId);
+    expect(prematureReadIds).not.toContainEqual(prematureConflictEpoch.clientEnvelopeId);
 
     const candidateContent = await signVaultEvent(
       {
@@ -1513,6 +1890,36 @@ describe("canonical Authority replay", () => {
       subjectId: invitationId,
       causeRecordIds: [acceptance.recordId],
     });
+    const excludingEpoch = await keyEpochTransition(creation, {
+      parentRecordIds: [cancelAll.recordId],
+      parentKeyEpochIds: [creation.secrets.keyEpoch.id],
+      displayNumber: 1,
+      assertedAt: 7,
+    });
+    byId.set(Buffer.from(excludingEpoch.event.recordId).toString("hex"), excludingEpoch.event);
+    const protectedAgain = await new CanonicalReplayService({
+      openResolvedCompactItem: vi.fn(async ({ logicalId }: { logicalId: Uint8Array }) => ({
+        payloadBytes: byId.get(Buffer.from(logicalId).toString("hex"))?.bytes,
+      })),
+      readResolvedOpaqueItem,
+    } as never).replayOpened({
+      ...vault,
+      replicaState: {
+        ...vault.replicaState,
+        causalFrontier: [excludingEpoch.event.recordId],
+        authorityFrontier: [excludingEpoch.event.recordId],
+        continuityRecordIds: [
+          creation.genesis.recordId,
+          invitation.recordId,
+          acceptance.recordId,
+          cancellation.recordId,
+          cancelAll.recordId,
+          excludingEpoch.event.recordId,
+        ],
+        currentKeyEpochId: excludingEpoch.keyEpochId,
+      },
+    });
+    expect(protectedAgain.authority.writeFences).toEqual([]);
     await expect(
       new CanonicalReplayService({
         openResolvedCompactItem: vi.fn(async ({ logicalId }: { logicalId: Uint8Array }) => ({
@@ -1638,6 +2045,51 @@ describe("canonical Authority replay", () => {
       subjectId: proposedClientCredentialId,
       causeRecordIds: [revokeInvitedCredential.recordId],
     });
+    const credentialExcludingEpoch = await keyEpochTransition(creation, {
+      parentRecordIds: [revokeInvitedCredential.recordId],
+      parentKeyEpochIds: [creation.secrets.keyEpoch.id],
+      displayNumber: 1,
+      assertedAt: 6,
+      recoveryTargets: [
+        {
+          recoveryCredentialId: creation.ids.recoveryCredentialId,
+          revision: 0,
+        },
+        { recoveryCredentialId: proposedRecoveryCredentialId, revision: 0 },
+      ],
+      clientCredentialIds: [creation.ids.clientCredentialId],
+    });
+    byId.set(
+      Buffer.from(credentialExcludingEpoch.event.recordId).toString("hex"),
+      credentialExcludingEpoch.event,
+    );
+    const protectedAfterCredentialExclusion = await new CanonicalReplayService({
+      openResolvedCompactItem: vi.fn(async ({ logicalId }: { logicalId: Uint8Array }) => ({
+        payloadBytes: byId.get(Buffer.from(logicalId).toString("hex"))?.bytes,
+      })),
+      readResolvedOpaqueItem,
+    } as never).replayOpened({
+      ...vault,
+      replicaState: {
+        ...vault.replicaState,
+        causalFrontier: [credentialExcludingEpoch.event.recordId],
+        authorityFrontier: [credentialExcludingEpoch.event.recordId],
+        continuityRecordIds: [
+          creation.genesis.recordId,
+          invitation.recordId,
+          acceptance.recordId,
+          revokeInvitedCredential.recordId,
+          credentialExcludingEpoch.event.recordId,
+        ],
+        currentKeyEpochId: credentialExcludingEpoch.keyEpochId,
+      },
+    });
+    expect(protectedAfterCredentialExclusion.authority.writeFences).toEqual([]);
+    expect(
+      protectedAfterCredentialExclusion.authority.clientCredentials.get(
+        Buffer.from(proposedClientCredentialId).toString("hex"),
+      )?.active,
+    ).toBe(false);
 
     const removeInvitedMember = await signVaultEvent(
       {
@@ -1657,6 +2109,41 @@ describe("canonical Authority replay", () => {
       creation.secrets.client.signingSecretKey,
     );
     byId.set(Buffer.from(removeInvitedMember.recordId).toString("hex"), removeInvitedMember);
+    const memberExcludingEpoch = await keyEpochTransition(creation, {
+      parentRecordIds: [removeInvitedMember.recordId],
+      parentKeyEpochIds: [creation.secrets.keyEpoch.id],
+      displayNumber: 1,
+      assertedAt: 6,
+    });
+    byId.set(
+      Buffer.from(memberExcludingEpoch.event.recordId).toString("hex"),
+      memberExcludingEpoch.event,
+    );
+    const protectedAfterMemberExclusion = await new CanonicalReplayService({
+      openResolvedCompactItem: vi.fn(async ({ logicalId }: { logicalId: Uint8Array }) => ({
+        payloadBytes: byId.get(Buffer.from(logicalId).toString("hex"))?.bytes,
+      })),
+      readResolvedOpaqueItem,
+    } as never).replayOpened({
+      ...vault,
+      replicaState: {
+        ...vault.replicaState,
+        causalFrontier: [memberExcludingEpoch.event.recordId],
+        authorityFrontier: [memberExcludingEpoch.event.recordId],
+        continuityRecordIds: [
+          creation.genesis.recordId,
+          invitation.recordId,
+          acceptance.recordId,
+          removeInvitedMember.recordId,
+          memberExcludingEpoch.event.recordId,
+        ],
+        currentKeyEpochId: memberExcludingEpoch.keyEpochId,
+      },
+    });
+    expect(protectedAfterMemberExclusion.authority.activeMemberIds).not.toContainEqual(
+      proposedMemberId,
+    );
+    expect(protectedAfterMemberExclusion.authority.writeFences).toEqual([]);
 
     const secondInvitationId = randomIdentifier("Invitation");
     const secondClientCredentialId = randomIdentifier("ClientCredential");

@@ -70,13 +70,21 @@ export interface CanonicalAuthorityState {
     readonly recoveryCredentialIds: readonly Identifier<"RecoveryCredential">[];
   }[];
   readonly keyEpochs: readonly CanonicalAuthorityKeyEpoch[];
+  readonly keyEpochConflicts: readonly {
+    readonly candidateRecordIds: readonly Identifier<"VaultRecord">[];
+    readonly keyEpochIds: readonly Identifier<"KeyEpoch">[];
+  }[];
   readonly writeFences: readonly CanonicalAuthorityWriteFence[];
   readonly clientCredentials: ReadonlyMap<string, CanonicalAuthorityClientCredential>;
   readonly lifecycle: 1 | 2;
 }
 
 export interface CanonicalAuthorityWriteFence {
-  readonly kind: "member-removal" | "client-credential-removal" | "invitation-conflict";
+  readonly kind:
+    | "member-removal"
+    | "client-credential-removal"
+    | "invitation-conflict"
+    | "key-epoch-conflict";
   readonly subjectId: Uint8Array;
   readonly causeRecordIds: readonly Identifier<"VaultRecord">[];
 }
@@ -199,7 +207,15 @@ interface RecoveryCredentialReplacement {
   readonly possessionSignature: Uint8Array;
 }
 
+interface KeyEpochTransition {
+  readonly parentKeyEpochIds: readonly Identifier<"KeyEpoch">[];
+  readonly keyEpochId: Identifier<"KeyEpoch">;
+  readonly displayNumber: number;
+  readonly envelopeSlots: readonly InvitationEnvelopeSlot[];
+}
+
 export class CanonicalAuthorityReplay {
+  readonly #vaultId: Identifier<"Vault">;
   readonly #anchorRecordId: Identifier<"VaultRecord">;
   readonly #firstMemberId: Identifier<"Member">;
   readonly #initialCredential: CanonicalAuthorityClientCredential;
@@ -212,12 +228,14 @@ export class CanonicalAuthorityReplay {
   readonly #resolvedInvitations = new Map<string, ResolvedInvitation>();
   readonly #clientEnrollments = new Map<string, ClientCredentialEnrollment>();
   readonly #recoveryReplacements = new Map<string, RecoveryCredentialReplacement>();
+  readonly #keyEpochTransitions = new Map<string, KeyEpochTransition>();
 
   constructor(
     genesis: AuthenticatedVaultEvent,
     anchorRecordId: Identifier<"VaultRecord"> = genesis.recordId,
   ) {
     const initial = initialVaultClientAuthority(genesis);
+    this.#vaultId = genesis.vaultId;
     this.#anchorRecordId = anchorRecordId;
     this.#firstMemberId = initial.memberId;
     this.#initialCredential = {
@@ -333,6 +351,7 @@ export class CanonicalAuthorityReplay {
     const resolvedInvitationFences: {
       readonly invitationId: Identifier<"Invitation">;
       readonly causeRecordIds: readonly Identifier<"VaultRecord">[];
+      readonly dischargeRecordId: Identifier<"VaultRecord">;
     }[] = [];
     for (const facts of terminalFactsByInvitation.values()) {
       const heads = [...causalMaxima(facts, this.#graph)].sort((left, right) =>
@@ -365,6 +384,7 @@ export class CanonicalAuthorityReplay {
           resolvedInvitationFences.push({
             invitationId,
             causeRecordIds: resolved.resolution.rejectedConsumedRecordIds,
+            dischargeRecordId: resolved.causeId,
           });
         }
         continue;
@@ -694,7 +714,90 @@ export class CanonicalAuthorityReplay {
         };
       })
       .sort((left, right) => compareIds(left.memberId, right.memberId));
+    const keyEpochCandidates = new Map<
+      string,
+      {
+        readonly keyEpoch: Omit<CanonicalAuthorityKeyEpoch, "current">;
+        readonly causeId: Identifier<"VaultRecord">;
+      }
+    >([
+      [
+        key(this.#initialKeyEpoch.keyEpochId),
+        {
+          keyEpoch: {
+            keyEpochId: this.#initialKeyEpoch.keyEpochId,
+            displayNumber: this.#initialKeyEpoch.displayNumber,
+          },
+          causeId: this.#anchorRecordId,
+        },
+      ],
+    ]);
+    const replacedKeyEpochIds = new Set<string>();
+    for (const event of this.#events) {
+      if (event.family !== 1 || event.type !== 12 || !this.#isIncluded(event.recordId, frontier)) {
+        continue;
+      }
+      const transition = this.#keyEpochTransitions.get(key(event.recordId));
+      if (transition === undefined) throw new TypeError("Key Epoch Transition state is missing");
+      const existing = keyEpochCandidates.get(key(transition.keyEpochId));
+      if (existing !== undefined) {
+        throw new TypeError("Authority State reuses a Key Epoch identity");
+      }
+      keyEpochCandidates.set(key(transition.keyEpochId), {
+        keyEpoch: {
+          keyEpochId: transition.keyEpochId,
+          displayNumber: transition.displayNumber,
+        },
+        causeId: event.recordId,
+      });
+      for (const parentKeyEpochId of transition.parentKeyEpochIds) {
+        replacedKeyEpochIds.add(key(parentKeyEpochId));
+      }
+    }
+    const keyEpochs = [...keyEpochCandidates.values()]
+      .map(
+        ({ keyEpoch }): CanonicalAuthorityKeyEpoch => ({
+          ...keyEpoch,
+          current: !replacedKeyEpochIds.has(key(keyEpoch.keyEpochId)),
+        }),
+      )
+      .sort((left, right) => compareIds(left.keyEpochId, right.keyEpochId));
+    const currentKeyEpochCandidates = [...keyEpochCandidates.values()].filter(
+      ({ keyEpoch }) => !replacedKeyEpochIds.has(key(keyEpoch.keyEpochId)),
+    );
+    const keyEpochConflicts =
+      currentKeyEpochCandidates.length > 1
+        ? [
+            {
+              candidateRecordIds: currentKeyEpochCandidates
+                .map(({ causeId }) => causeId)
+                .sort(compareIds),
+              keyEpochIds: currentKeyEpochCandidates
+                .map(({ keyEpoch }) => keyEpoch.keyEpochId)
+                .sort(compareIds),
+            },
+          ]
+        : [];
+    const hasDescendantKeyEpochTransition = (
+      cutoffRecordIds: readonly Identifier<"VaultRecord">[],
+    ): boolean =>
+      this.#events.some(
+        (event) =>
+          event.family === 1 &&
+          event.type === 12 &&
+          this.#isIncluded(event.recordId, frontier) &&
+          cutoffRecordIds.every((cutoffRecordId) =>
+            this.#graph.isAncestor(cutoffRecordId, event.recordId),
+          ),
+      );
     const writeFences = new Map<string, CanonicalAuthorityWriteFence>();
+    for (const conflict of keyEpochConflicts) {
+      writeFences.set(`key-epoch-conflict:${key(this.#vaultId)}`, {
+        kind: "key-epoch-conflict",
+        subjectId: this.#vaultId,
+        causeRecordIds: conflict.candidateRecordIds,
+      });
+    }
     for (const conflict of invitationConflicts) {
       const causeRecordIds = conflict.candidates
         .filter(({ outcome }) => outcome === 1)
@@ -708,6 +811,7 @@ export class CanonicalAuthorityReplay {
       });
     }
     for (const fence of resolvedInvitationFences) {
+      if (hasDescendantKeyEpochTransition([fence.dischargeRecordId])) continue;
       writeFences.set(`invitation-conflict:${key(fence.invitationId)}`, {
         kind: "invitation-conflict",
         subjectId: fence.invitationId,
@@ -726,10 +830,13 @@ export class CanonicalAuthorityReplay {
         if (bytesEqual(signer.memberId, targetMemberId)) continue;
         const fenceKey = `member-removal:${key(targetMemberId)}`;
         const existing = writeFences.get(fenceKey);
+        const causeRecordIds = [...(existing?.causeRecordIds ?? []), event.recordId].sort(
+          compareIds,
+        );
         writeFences.set(fenceKey, {
           kind: "member-removal",
           subjectId: targetMemberId,
-          causeRecordIds: [...(existing?.causeRecordIds ?? []), event.recordId].sort(compareIds),
+          causeRecordIds,
         });
       } else if (event.type === 10) {
         const signer = clientCredentials.get(key(event.signerCredentialId));
@@ -749,11 +856,24 @@ export class CanonicalAuthorityReplay {
         if (bytesEqual(signer.memberId, target.memberId)) continue;
         const fenceKey = `client-credential-removal:${key(targetCredentialId)}`;
         const existing = writeFences.get(fenceKey);
+        const causeRecordIds = [...(existing?.causeRecordIds ?? []), event.recordId].sort(
+          compareIds,
+        );
         writeFences.set(fenceKey, {
           kind: "client-credential-removal",
           subjectId: targetCredentialId,
-          causeRecordIds: [...(existing?.causeRecordIds ?? []), event.recordId].sort(compareIds),
+          causeRecordIds,
         });
+      }
+    }
+    for (const [fenceKey, fence] of writeFences) {
+      if (
+        (fence.kind === "member-removal" || fence.kind === "client-credential-removal") &&
+        fence.causeRecordIds.some((causeRecordId) =>
+          hasDescendantKeyEpochTransition([causeRecordId]),
+        )
+      ) {
+        writeFences.delete(fenceKey);
       }
     }
     return {
@@ -768,7 +888,8 @@ export class CanonicalAuthorityReplay {
         compareIds(left.recoveryCredentialId, right.recoveryCredentialId),
       ),
       recoveryConflicts,
-      keyEpochs: [this.#initialKeyEpoch],
+      keyEpochs,
+      keyEpochConflicts,
       writeFences: [...writeFences.values()].sort((left, right) =>
         compareIds(left.subjectId, right.subjectId),
       ),
@@ -1029,6 +1150,40 @@ export class CanonicalAuthorityReplay {
         await verifyRecoveryCredentialReplacement(replacement, event);
         validateRecoveryCredentialReplacementSlots(replacement, parentState);
         this.#recoveryReplacements.set(key(event.recordId), replacement);
+      } else if (event.type === 12) {
+        if (!containsId(parentState.administratorIds, signer.memberId)) {
+          throw new TypeError("Key Epoch Transition signer is not an Administrator");
+        }
+        if (parentState.invitationConflicts.length > 0) {
+          throw new TypeError("Key Epoch Transition cannot precede Invitation Conflict Resolution");
+        }
+        const transition = parseKeyEpochTransition(event);
+        const currentEpochs = parentState.keyEpochs.filter(({ current }) => current);
+        if (
+          !sameIdSet(
+            transition.parentKeyEpochIds,
+            currentEpochs.map(({ keyEpochId }) => keyEpochId),
+          )
+        ) {
+          throw new TypeError("Key Epoch Transition does not name every effective Epoch head");
+        }
+        if (
+          parentState.keyEpochs.some(({ keyEpochId }) =>
+            bytesEqual(keyEpochId, transition.keyEpochId),
+          )
+        ) {
+          throw new TypeError("Key Epoch Transition reuses a Key Epoch identity");
+        }
+        const expectedDisplayNumber =
+          currentEpochs.reduce(
+            (maximum, { displayNumber }) => Math.max(maximum, displayNumber),
+            -1,
+          ) + 1;
+        if (transition.displayNumber !== expectedDisplayNumber) {
+          throw new TypeError("Key Epoch display number does not follow its effective heads");
+        }
+        validateKeyEpochTransitionSlots(transition, parentState);
+        this.#keyEpochTransitions.set(key(event.recordId), transition);
       } else {
         throw new TypeError("This replay slice cannot yet reduce this Authority Event type");
       }
@@ -1234,6 +1389,26 @@ function parseEnvelopeSlots(
   );
 }
 
+function validateExactEnvelopeTargetSet(
+  slots: readonly InvitationEnvelopeSlot[],
+  expected: ReadonlySet<string>,
+  message: string,
+): void {
+  const actual = new Set(
+    slots.map(
+      (slot) =>
+        `${key(slot.keyEpochId)}:${slot.targetKind}:${key(slot.targetCredentialId)}:${slot.targetRevision === null ? "null" : slot.targetRevision}`,
+    ),
+  );
+  if (
+    slots.length !== expected.size ||
+    actual.size !== expected.size ||
+    [...expected].some((slot) => !actual.has(slot))
+  ) {
+    throw new TypeError(message);
+  }
+}
+
 function parseRecoveryCredentialReplacement(
   event: AuthenticatedVaultEvent,
 ): RecoveryCredentialReplacement {
@@ -1312,15 +1487,44 @@ function validateRecoveryCredentialReplacementSlots(
         `${key(keyEpochId)}:1:${key(replacement.recoveryCredential.recoveryCredentialId)}:${replacement.recoveryCredential.revision}`,
     ),
   );
-  const actual = new Set(
-    replacement.envelopeSlots.map(
-      (slot) =>
-        `${key(slot.keyEpochId)}:${slot.targetKind}:${key(slot.targetCredentialId)}:${slot.targetRevision === null ? "null" : slot.targetRevision}`,
-    ),
+  validateExactEnvelopeTargetSet(
+    replacement.envelopeSlots,
+    expected,
+    "Recovery Replacement Envelope slots are not the complete set",
   );
-  if (actual.size !== expected.size || [...expected].some((slot) => !actual.has(slot))) {
-    throw new TypeError("Recovery Replacement Envelope slots are not the complete set");
+}
+
+function parseKeyEpochTransition(event: AuthenticatedVaultEvent): KeyEpochTransition {
+  const body = exactMap(event.body, [0, 1, 2, 3], "Key Epoch Transition body");
+  return {
+    parentKeyEpochIds: idSetValue(mapValue(body, 0), "KeyEpoch", "Parent Key Epoch IDs", {
+      nonempty: true,
+    }),
+    keyEpochId: identifierValue(mapValue(body, 1), "KeyEpoch", "New Key Epoch ID"),
+    displayNumber: nonnegativeInteger(mapValue(body, 2), "Key Epoch display number"),
+    envelopeSlots: parseEnvelopeSlots(mapValue(body, 3), "Key Epoch Transition Envelope slots"),
+  };
+}
+
+function validateKeyEpochTransitionSlots(
+  transition: KeyEpochTransition,
+  authority: CanonicalAuthorityState,
+): void {
+  const expected = new Set<string>();
+  for (const recovery of authority.recoveryCredentials.filter(({ effective }) => effective)) {
+    expected.add(
+      `${key(transition.keyEpochId)}:1:${key(recovery.recoveryCredentialId)}:${recovery.revision}`,
+    );
   }
+  for (const client of authority.clientCredentials.values()) {
+    if (!client.active) continue;
+    expected.add(`${key(transition.keyEpochId)}:2:${key(client.clientCredentialId)}:null`);
+  }
+  validateExactEnvelopeTargetSet(
+    transition.envelopeSlots,
+    expected,
+    "Key Epoch Transition Envelope slots are not the exact eligible target set",
+  );
 }
 
 async function verifyClientCredentialEnrollmentPossession(
@@ -1381,15 +1585,11 @@ function validateClientCredentialEnrollmentSlots(
         `${key(keyEpochId)}:2:${key(enrollment.clientCredential.clientCredentialId)}:null`,
     ),
   );
-  const actual = new Set(
-    enrollment.envelopeSlots.map(
-      (slot) =>
-        `${key(slot.keyEpochId)}:${slot.targetKind}:${key(slot.targetCredentialId)}:${slot.targetRevision === null ? "null" : slot.targetRevision}`,
-    ),
+  validateExactEnvelopeTargetSet(
+    enrollment.envelopeSlots,
+    expected,
+    "Client Credential Enrollment Envelope slots are not the complete set",
   );
-  if (actual.size !== expected.size || [...expected].some((slot) => !actual.has(slot))) {
-    throw new TypeError("Client Credential Enrollment Envelope slots are not the complete set");
-  }
 }
 
 async function verifyInvitationCancellation(
@@ -1562,7 +1762,9 @@ export function canonicalAuthorityKeyEnvelopeRequirements(
         ? parseClientCredentialEnrollment(event).envelopeSlots
         : event.type === 11
           ? parseRecoveryCredentialReplacement(event).envelopeSlots
-          : [];
+          : event.type === 12
+            ? parseKeyEpochTransition(event).envelopeSlots
+            : [];
   return slots.map(({ keyEnvelopeId, keyEpochId }) => ({ keyEnvelopeId, keyEpochId }));
 }
 
@@ -1613,15 +1815,11 @@ function validateInvitationAcceptanceSlots(
       `${key(epoch.keyEpochId)}:2:${key(acceptance.clientCredential.clientCredentialId)}:null`,
     );
   }
-  const actual = new Set(
-    acceptance.envelopeSlots.map(
-      (slot) =>
-        `${key(slot.keyEpochId)}:${slot.targetKind}:${key(slot.targetCredentialId)}:${slot.targetRevision === null ? "null" : slot.targetRevision}`,
-    ),
+  validateExactEnvelopeTargetSet(
+    acceptance.envelopeSlots,
+    expected,
+    "Invitation Acceptance Envelope slots are not the complete target set",
   );
-  if (actual.size !== expected.size || [...expected].some((slot) => !actual.has(slot))) {
-    throw new TypeError("Invitation Acceptance Envelope slots are not the complete target set");
-  }
 }
 
 function canonicalNumericPrefix(

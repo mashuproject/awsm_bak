@@ -23,6 +23,7 @@ export function singleCredentialAuthority(input: {
     recoveryCredentials: [],
     recoveryConflicts: [],
     keyEpochs: [],
+    keyEpochConflicts: [],
     writeFences: [],
     clientCredentials: new Map([
       [
