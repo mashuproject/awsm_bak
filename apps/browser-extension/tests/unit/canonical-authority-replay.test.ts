@@ -15,6 +15,10 @@ import { signVaultEvent } from "../../src/domain/canonical/record";
 import { transcript } from "../../src/domain/canonical/transcript";
 import { canonicalMap, canonicalSet, encodeCanonicalValue } from "../../src/domain/canonical/value";
 import {
+  CanonicalAuthorityReplay,
+  type CanonicalAuthorityState,
+} from "../../src/runtime/projection/canonical-authority-replay";
+import {
   CanonicalReplayService,
   replayEventMemberId,
 } from "../../src/runtime/projection/canonical-replay";
@@ -881,10 +885,15 @@ describe("canonical Authority replay", () => {
     expect(replay.authority.recoveryConflicts).toEqual([
       expect.objectContaining({
         memberId: creation.ids.firstMemberId,
-        candidateRecordIds: expect.arrayContaining([left.event.recordId, right.event.recordId]),
-        recoveryCredentialIds: expect.arrayContaining([
-          left.recoveryCredentialId,
-          right.recoveryCredentialId,
+        candidates: expect.arrayContaining([
+          {
+            headRecordId: left.event.recordId,
+            recoveryCredentialId: left.recoveryCredentialId,
+          },
+          {
+            headRecordId: right.event.recordId,
+            recoveryCredentialId: right.recoveryCredentialId,
+          },
         ]),
       }),
     ]);
@@ -1160,8 +1169,10 @@ describe("canonical Authority replay", () => {
     );
     expect(replay.authority.keyEpochConflicts).toEqual([
       {
-        candidateRecordIds: expect.arrayContaining([left.event.recordId, right.event.recordId]),
-        keyEpochIds: expect.arrayContaining([left.keyEpochId, right.keyEpochId]),
+        candidates: expect.arrayContaining([
+          { headRecordId: left.event.recordId, keyEpochId: left.keyEpochId },
+          { headRecordId: right.event.recordId, keyEpochId: right.keyEpochId },
+        ]),
       },
     ]);
     expect(replay.authority.writeFences).toContainEqual(
@@ -3161,6 +3172,166 @@ describe("canonical Authority replay", () => {
           causeRecordIds: [removeInvitedMember.recordId],
         }),
       ]),
+    );
+  });
+
+  it("advances every checkpointed authority class from a successor anchor", async () => {
+    const creation = await prepareCanonicalVaultCreation({ label: "Anchor", assertedAt: 1 });
+    const opened = openedVaultAtFrontier(creation, [creation.genesis.recordId], []);
+    const initial = await new CanonicalReplayService({} as never).replayOpened(opened);
+    const memberId = randomIdentifier("Member");
+    const clientCredentialId = randomIdentifier("ClientCredential");
+    const recoveryCredentialId = randomIdentifier("RecoveryCredential");
+    const anchorRecordId = randomIdentifier("VaultRecord");
+    const conflictedMemberId = randomIdentifier("Member");
+    const administratorGrantHead = randomIdentifier("VaultRecord");
+    const administratorEndHead = randomIdentifier("VaultRecord");
+    const conflictedInvitationId = randomIdentifier("Invitation");
+    const consumedHead = randomIdentifier("VaultRecord");
+    const cancelledHead = randomIdentifier("VaultRecord");
+    const anchorState: CanonicalAuthorityState = {
+      ...initial.authority,
+      activeMemberIds: [...initial.authority.activeMemberIds, memberId, conflictedMemberId],
+      administratorIds: [...initial.authority.administratorIds, memberId],
+      administratorConflicts: [
+        {
+          memberId: conflictedMemberId,
+          candidates: [
+            { headRecordId: administratorGrantHead, administrator: true },
+            { headRecordId: administratorEndHead, administrator: false },
+          ],
+        },
+      ],
+      invitationConflicts: [
+        {
+          invitationId: conflictedInvitationId,
+          candidates: [
+            {
+              headRecordId: consumedHead,
+              outcome: 1,
+              authorityReceiptId: new Uint8Array(32).fill(87),
+              joinRequestId: new Uint8Array(32).fill(88),
+              memberId: conflictedMemberId,
+            },
+            {
+              headRecordId: cancelledHead,
+              outcome: 2,
+              authorityReceiptId: new Uint8Array(32).fill(89),
+              joinRequestId: null,
+              memberId: null,
+            },
+          ],
+        },
+      ],
+      recoveryCredentials: [
+        ...initial.authority.recoveryCredentials,
+        {
+          recoveryCredentialId,
+          memberId,
+          revision: 0,
+          signingPublicKey: new Uint8Array(32).fill(80),
+          wrappingPublicKey: new Uint8Array(32).fill(81),
+          effective: true,
+        },
+      ],
+      clientCredentials: new Map([
+        ...initial.authority.clientCredentials,
+        [
+          Buffer.from(clientCredentialId).toString("hex"),
+          {
+            clientCredentialId,
+            memberId,
+            signingPublicKey: creation.secrets.client.signingPublicKey,
+            wrappingPublicKey: new Uint8Array(32).fill(82),
+            active: true,
+          },
+        ],
+      ]),
+      writeFences: [
+        {
+          kind: "invitation-conflict",
+          subjectId: conflictedInvitationId,
+          causeRecordIds: [consumedHead],
+        },
+      ],
+    };
+    const invitationId = randomIdentifier("Invitation");
+    const invitation = await signVaultEvent(
+      {
+        vaultId: creation.ids.vaultId,
+        generationId: creation.ids.generationId,
+        parentRecordIds: [anchorRecordId],
+        authorityParentRecordIds: [anchorRecordId],
+        dependencies: [],
+        requiredFeatureSetId: anchorState.requiredFeatureSetId,
+        extensions: advisoryExtensions([]),
+        family: 1,
+        type: 5,
+        signerCredentialId: clientCredentialId,
+        assertedAt: 2,
+        body: canonicalMap([
+          [0, invitationId],
+          [
+            1,
+            canonicalSet([
+              canonicalMap([
+                [0, "awsm.vault"],
+                [1, memberId],
+                [2, creation.ids.vaultId],
+                [3, "awsm.vault.join"],
+                [4, new Uint8Array()],
+              ]),
+            ]),
+          ],
+          [2, new Uint8Array(32).fill(83)],
+          [3, new Uint8Array(32).fill(84)],
+          [4, new Uint8Array(32).fill(85)],
+          [5, new Uint8Array(32).fill(86)],
+        ]),
+      },
+      creation.secrets.client.signingSecretKey,
+    );
+    const replay = new CanonicalAuthorityReplay(creation.genesis, anchorRecordId, anchorState, []);
+
+    await replay.validateAndAccept(invitation);
+    const advanced = replay.stateAt([invitation.recordId]);
+
+    expect(advanced.activeMemberIds).toEqual(expect.arrayContaining([memberId]));
+    expect(advanced.administratorIds).toEqual(expect.arrayContaining([memberId]));
+    expect(advanced.clientCredentials.get(Buffer.from(clientCredentialId).toString("hex"))).toEqual(
+      expect.objectContaining({ memberId, active: true }),
+    );
+    expect(advanced.recoveryCredentials).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ recoveryCredentialId, memberId, effective: true }),
+      ]),
+    );
+    expect(advanced.keyEpochs).toEqual(anchorState.keyEpochs);
+    expect(advanced.keyEnvelopeSlots).toHaveLength(anchorState.keyEnvelopeSlots.length);
+    expect(advanced.keyEnvelopeSlots).toEqual(
+      expect.arrayContaining([...anchorState.keyEnvelopeSlots]),
+    );
+    expect(advanced.administratorConflicts).toHaveLength(1);
+    expect(advanced.administratorConflicts[0]).toEqual(
+      expect.objectContaining({
+        memberId: conflictedMemberId,
+        candidates: expect.arrayContaining([
+          ...(anchorState.administratorConflicts[0]?.candidates ?? []),
+        ]),
+      }),
+    );
+    expect(advanced.invitationConflicts).toHaveLength(1);
+    expect(advanced.invitationConflicts[0]).toEqual(
+      expect.objectContaining({
+        invitationId: conflictedInvitationId,
+        candidates: expect.arrayContaining([
+          ...(anchorState.invitationConflicts[0]?.candidates ?? []),
+        ]),
+      }),
+    );
+    expect(advanced.writeFences).toEqual(anchorState.writeFences);
+    expect(advanced.activeInvitations).toEqual(
+      expect.arrayContaining([expect.objectContaining({ invitationId })]),
     );
   });
 });

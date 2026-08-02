@@ -382,12 +382,11 @@ export class CanonicalVaultService {
     if (baselineVaultLabel(baseline) !== directory.label) {
       throw new TypeError("Vault Directory label does not match authoritative state");
     }
-    const vacuumEvents = continuityEvents.filter((event) => event.family === 3 && event.type === 1);
     await validateCurrentVaultAuthority({
       baseline,
       initialBaseline,
       genesis,
-      vacuumEvents,
+      continuityEvents,
       replicaState,
       clientSecret,
       epochSecret,

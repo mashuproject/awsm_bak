@@ -599,6 +599,20 @@ Self-resignation, same-member Client Credential retirement, Administrator-role c
 only Conflict, missing delivery for another target, and Host-local Grant loss do not globally fence
 protected writes.
 
+The portable Baseline `fenceKind` registry is:
+
+```text
+1 Member removal
+2 Client Credential removal
+3 Invitation Conflict
+4 Key Epoch Conflict
+```
+
+Kinds 1 through 4 use the removed Member ID, revoked Client Credential ID, conflicted Invitation
+ID, and Vault ID respectively as `subjectId`. A Required Feature Set incompatibility is a semantic
+runtime fence, not a portable kind in this base registry: it must be resolved before Vacuum can
+create a continuing Baseline.
+
 # 24. Recovery discovery and completeness
 
 Recovery uses ordinary authorized opaque Compact inventory. A fresh client:

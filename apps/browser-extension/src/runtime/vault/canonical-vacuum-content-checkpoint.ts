@@ -43,6 +43,7 @@ import {
   selectCanonicalCollectionTail,
 } from "../library/canonical-projection";
 import { reduceCanonicalTags } from "../library/canonical-tag-projection";
+import { encodeCanonicalAuthorityCheckpoint } from "../projection/canonical-authority-checkpoint";
 import { type ReplayedCanonicalVault, replayEventMemberId } from "../projection/canonical-replay";
 import type { CanonicalReplicaState } from "./canonical-local-state";
 import { requireCanonicalClientSecret } from "./canonical-service";
@@ -1118,11 +1119,21 @@ export async function prepareVacuumSuccessorBaseline(input: {
     [0, 1, 2, 3, 4, 5],
     "Initial Baseline body",
   );
-  const authority = mapValue(predecessorBody, 3);
+  const authority = encodeCanonicalAuthorityCheckpoint({
+    vaultId: replay.vault.replicaState.vaultId,
+    authority: replay.authority,
+  });
   const lifecycle = mapValue(predecessorBody, 4);
-  const authorityDependencies = replay.vault.baseline.dependencies.filter(
-    ({ type }) => type === DEPENDENCY_TYPES.KeyEnvelope,
-  );
+  const authorityDependencies: readonly TypedDependency[] = [
+    ...replay.authority.keyEnvelopeSlots.map(({ keyEnvelopeId }) => ({
+      type: DEPENDENCY_TYPES.KeyEnvelope,
+      id: keyEnvelopeId,
+    })),
+    ...replay.authority.featureManifests.map(({ id }) => ({
+      type: DEPENDENCY_TYPES.FeatureManifest,
+      id,
+    })),
+  ];
   const predecessorStateDigest = stateDigest(
     "awsm:vacuum-predecessor-state:v1",
     predecessorContent.checkpoint,

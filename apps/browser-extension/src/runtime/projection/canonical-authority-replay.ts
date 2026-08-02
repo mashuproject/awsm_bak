@@ -33,7 +33,6 @@ import {
   encodeCanonicalValue,
 } from "../../domain/canonical/value";
 import { bytesEqual } from "../../domain/hash";
-import { initialVaultClientAuthority } from "../vault/canonical-open";
 
 function key(value: Uint8Array): string {
   return [...value].map((byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -65,20 +64,27 @@ export interface CanonicalAuthorityState {
   readonly administratorIds: readonly Identifier<"Member">[];
   readonly administratorConflicts: readonly {
     readonly memberId: Identifier<"Member">;
-    readonly candidateRecordIds: readonly Identifier<"VaultRecord">[];
+    readonly candidates: readonly {
+      readonly headRecordId: Identifier<"VaultRecord">;
+      readonly administrator: boolean;
+    }[];
   }[];
   readonly activeInvitations: readonly CanonicalAuthorityInvitation[];
   readonly invitationConflicts: readonly CanonicalAuthorityInvitationConflict[];
   readonly recoveryCredentials: readonly CanonicalAuthorityRecoveryCredential[];
   readonly recoveryConflicts: readonly {
     readonly memberId: Identifier<"Member">;
-    readonly candidateRecordIds: readonly Identifier<"VaultRecord">[];
-    readonly recoveryCredentialIds: readonly Identifier<"RecoveryCredential">[];
+    readonly candidates: readonly {
+      readonly headRecordId: Identifier<"VaultRecord">;
+      readonly recoveryCredentialId: Identifier<"RecoveryCredential">;
+    }[];
   }[];
   readonly keyEpochs: readonly CanonicalAuthorityKeyEpoch[];
   readonly keyEpochConflicts: readonly {
-    readonly candidateRecordIds: readonly Identifier<"VaultRecord">[];
-    readonly keyEpochIds: readonly Identifier<"KeyEpoch">[];
+    readonly candidates: readonly {
+      readonly headRecordId: Identifier<"VaultRecord">;
+      readonly keyEpochId: Identifier<"KeyEpoch">;
+    }[];
   }[];
   readonly keyEnvelopeSlots: readonly CanonicalAuthorityKeyEnvelopeSlot[];
   readonly requiredFeatureSetId: Identifier<"RequiredFeatureSet">;
@@ -249,12 +255,10 @@ interface FeatureActivation {
 export class CanonicalAuthorityReplay {
   readonly #vaultId: Identifier<"Vault">;
   readonly #anchorRecordId: Identifier<"VaultRecord">;
-  readonly #firstMemberId: Identifier<"Member">;
-  readonly #initialCredential: CanonicalAuthorityClientCredential;
-  readonly #initialRecoveryCredential: CanonicalAuthorityRecoveryCredential;
-  readonly #initialKeyEpoch: CanonicalAuthorityKeyEpoch;
   readonly #anchorEnvelopeSlots: readonly InvitationEnvelopeSlot[];
   readonly #anchorFeatureManifests: readonly CanonicalAuthorityFeatureManifest[];
+  readonly #anchorState: CanonicalAuthorityState;
+  readonly #anchorCauseRecordIds: readonly Identifier<"VaultRecord">[];
   readonly #supportedFeatureManifestIds: ReadonlySet<string>;
   readonly #graph = new CausalGraph();
   readonly #events: AuthenticatedVaultEvent[] = [];
@@ -270,75 +274,66 @@ export class CanonicalAuthorityReplay {
   constructor(
     genesis: AuthenticatedVaultEvent,
     anchorRecordId: Identifier<"VaultRecord">,
-    anchorEnvelopeSlotsValue: CanonicalValue,
-    anchorRequiredFeatureSetId: Identifier<"RequiredFeatureSet">,
-    anchorFeatureManifestBytes: readonly Uint8Array[],
+    anchorState: CanonicalAuthorityState,
     supportedFeatureManifestIds: readonly Identifier<"FeatureManifest">[],
   ) {
-    const initial = initialVaultClientAuthority(genesis);
     this.#vaultId = genesis.vaultId;
     this.#anchorRecordId = anchorRecordId;
-    this.#firstMemberId = initial.memberId;
-    this.#initialCredential = {
-      clientCredentialId: initial.clientCredentialId,
-      memberId: initial.memberId,
-      signingPublicKey: initial.signingPublicKey,
-      wrappingPublicKey: initial.wrappingPublicKey,
-      active: true,
-    };
-    const genesisBody = exactMap(genesis.body, [0, 1, 2, 3, 4, 5, 6], "Genesis body");
-    const recovery = exactMap(
-      mapValue(genesisBody, 3),
-      [0, 1, 2, 3, 4],
-      "Genesis Recovery Credential",
-    );
-    this.#initialRecoveryCredential = {
-      recoveryCredentialId: identifierValue(
-        mapValue(recovery, 0),
-        "RecoveryCredential",
-        "Genesis Recovery Credential ID",
-      ),
-      memberId: identifierValue(mapValue(recovery, 1), "Member", "Genesis Recovery Member ID"),
-      revision: 0,
-      signingPublicKey: byteString(
-        mapValue(recovery, 3),
-        32,
-        "Genesis Recovery signing public key",
-      ),
-      wrappingPublicKey: byteString(
-        mapValue(recovery, 4),
-        32,
-        "Genesis Recovery wrapping public key",
-      ),
-      effective: true,
-    };
-    this.#initialKeyEpoch = {
-      keyEpochId: identifierValue(mapValue(genesisBody, 4), "KeyEpoch", "Genesis Key Epoch ID"),
-      displayNumber: 0,
-      current: true,
-    };
-    this.#anchorEnvelopeSlots = parseEnvelopeSlots(
-      anchorEnvelopeSlotsValue,
-      "Accepted Baseline Key Envelope slots",
-    );
-    this.#anchorFeatureManifests = anchorFeatureManifestBytes.map(authorityFeatureManifest);
+    this.#anchorEnvelopeSlots = anchorState.keyEnvelopeSlots;
+    this.#anchorFeatureManifests = anchorState.featureManifests;
+    this.#anchorState = anchorState;
     this.#supportedFeatureManifestIds = new Set(supportedFeatureManifestIds.map(key));
-    if (
-      !bytesEqual(
-        requiredFeatureSetId(this.#anchorFeatureManifests.map(({ manifest }) => manifest)),
-        anchorRequiredFeatureSetId,
-      )
-    ) {
-      throw new TypeError("Accepted Baseline Required Feature Set does not match its Manifests");
+    const anchorCauses = new Map<string, Identifier<"VaultRecord">>();
+    const retainAnchorCause = (recordId: Identifier<"VaultRecord">): void => {
+      if (!bytesEqual(recordId, anchorRecordId)) anchorCauses.set(key(recordId), recordId);
+    };
+    for (const invitation of anchorState.activeInvitations) {
+      retainAnchorCause(invitation.creationRecordId);
     }
-    this.#graph.add(anchorRecordId, []);
+    for (const conflict of anchorState.invitationConflicts) {
+      for (const candidate of conflict.candidates) retainAnchorCause(candidate.headRecordId);
+    }
+    for (const conflict of anchorState.recoveryConflicts) {
+      for (const candidate of conflict.candidates) retainAnchorCause(candidate.headRecordId);
+    }
+    for (const conflict of anchorState.keyEpochConflicts) {
+      for (const candidate of conflict.candidates) retainAnchorCause(candidate.headRecordId);
+    }
+    for (const conflict of anchorState.administratorConflicts) {
+      for (const candidate of conflict.candidates) retainAnchorCause(candidate.headRecordId);
+    }
+    for (const fence of anchorState.writeFences) {
+      for (const causeRecordId of fence.causeRecordIds) retainAnchorCause(causeRecordId);
+    }
+    this.#anchorCauseRecordIds = [...anchorCauses.values()].sort(compareIds);
+    for (const recordId of this.#anchorCauseRecordIds) this.#graph.add(recordId, []);
+    this.#graph.add(anchorRecordId, this.#anchorCauseRecordIds);
   }
 
   stateAt(frontier: readonly Identifier<"VaultRecord">[]): CanonicalAuthorityState {
     if (frontier.length === 0 || frontier.some((recordId) => !this.#graph.has(recordId))) {
       throw new TypeError("Authority Frontier references an unknown Record");
     }
+    if (
+      !this.#events.some(
+        (event) =>
+          (event.family === 1 || event.family === 3) && this.#isIncluded(event.recordId, frontier),
+      )
+    ) {
+      return this.#anchorState;
+    }
     const terminalFactsByInvitation = new Map<string, InvitationTerminalFact[]>();
+    for (const conflict of this.#anchorState.invitationConflicts) {
+      terminalFactsByInvitation.set(
+        key(conflict.invitationId),
+        conflict.candidates.map((candidate) => ({
+          ...candidate,
+          causeId: candidate.headRecordId,
+          invitationId: conflict.invitationId,
+          acceptance: null,
+        })),
+      );
+    }
     for (const event of this.#events) {
       if (event.family !== 1 || !this.#isIncluded(event.recordId, frontier)) continue;
       let fact: InvitationTerminalFact | undefined;
@@ -472,16 +467,27 @@ export class CanonicalAuthorityReplay {
     }
     invitationConflicts.sort((left, right) => compareIds(left.invitationId, right.invitationId));
 
-    const activeMembers = new Map([[key(this.#firstMemberId), this.#firstMemberId]]);
-    const permanentMemberRequests = new Map([[key(this.#firstMemberId), "genesis"]]);
+    const activeMembers = new Map(
+      this.#anchorState.activeMemberIds.map((memberId) => [key(memberId), memberId]),
+    );
+    const permanentMemberRequests = new Map(
+      this.#anchorState.activeMemberIds.map((memberId) => [key(memberId), "anchor"]),
+    );
     const administratorFacts: AdministratorFact[] = [
-      {
-        memberId: this.#firstMemberId,
+      ...this.#anchorState.administratorIds.map((memberId) => ({
+        memberId,
         causeId: this.#anchorRecordId,
         administrator: true,
-      },
+      })),
+      ...this.#anchorState.administratorConflicts.flatMap(({ memberId, candidates }) =>
+        candidates.map(({ headRecordId, administrator }) => ({
+          memberId,
+          causeId: headRecordId,
+          administrator,
+        })),
+      ),
     ];
-    let explicitlyClosed = false;
+    let explicitlyClosed = this.#anchorState.lifecycle === 2;
     for (const event of this.#events) {
       if (!this.#isIncluded(event.recordId, frontier)) continue;
       if (event.family === 1 && event.type === 6) {
@@ -536,7 +542,12 @@ export class CanonicalAuthorityReplay {
       ) {
         administratorConflicts.push({
           memberId,
-          candidateRecordIds: heads.map(({ causeId }) => causeId).sort(compareIds),
+          candidates: heads
+            .map(({ causeId, administrator }) => ({
+              headRecordId: causeId,
+              administrator,
+            }))
+            .sort((left, right) => compareIds(left.headRecordId, right.headRecordId)),
         });
       } else if (heads[0]?.administrator === true) {
         administratorIds.push(memberId);
@@ -544,7 +555,12 @@ export class CanonicalAuthorityReplay {
     }
     administratorIds.sort(compareIds);
     administratorConflicts.sort((left, right) => compareIds(left.memberId, right.memberId));
-    const activeInvitations = new Map<string, CanonicalAuthorityInvitation>();
+    const activeInvitations = new Map<string, CanonicalAuthorityInvitation>(
+      this.#anchorState.activeInvitations.map((invitation) => [
+        key(invitation.invitationId),
+        invitation,
+      ]),
+    );
     const invitationBodies = new Map<string, Uint8Array>();
     for (const event of this.#events) {
       if (event.family !== 1 || event.type !== 5 || !this.#isIncluded(event.recordId, frontier)) {
@@ -665,7 +681,14 @@ export class CanonicalAuthorityReplay {
         active,
       });
     };
-    addClientCredential(this.#initialCredential);
+    for (const credential of this.#anchorState.clientCredentials.values()) {
+      addClientCredential({
+        clientCredentialId: credential.clientCredentialId,
+        memberId: credential.memberId,
+        signingPublicKey: credential.signingPublicKey,
+        wrappingPublicKey: credential.wrappingPublicKey,
+      });
+    }
     const recoveryCredentialCandidates = new Map<
       string,
       Omit<CanonicalAuthorityRecoveryCredential, "effective">
@@ -690,16 +713,23 @@ export class CanonicalAuthorityReplay {
       recoveryCredentialCandidates.set(key(credential.recoveryCredentialId), credential);
       recoveryCredentialCauseIds.set(key(credential.recoveryCredentialId), causeId);
     };
-    addRecoveryCredential(
-      {
-        recoveryCredentialId: this.#initialRecoveryCredential.recoveryCredentialId,
-        memberId: this.#initialRecoveryCredential.memberId,
-        revision: this.#initialRecoveryCredential.revision,
-        signingPublicKey: this.#initialRecoveryCredential.signingPublicKey,
-        wrappingPublicKey: this.#initialRecoveryCredential.wrappingPublicKey,
-      },
-      this.#anchorRecordId,
-    );
+    for (const credential of this.#anchorState.recoveryCredentials) {
+      const conflictCause = this.#anchorState.recoveryConflicts
+        .flatMap(({ candidates }) => candidates)
+        .find(({ recoveryCredentialId }) =>
+          bytesEqual(recoveryCredentialId, credential.recoveryCredentialId),
+        )?.headRecordId;
+      addRecoveryCredential(
+        {
+          recoveryCredentialId: credential.recoveryCredentialId,
+          memberId: credential.memberId,
+          revision: credential.revision,
+          signingPublicKey: credential.signingPublicKey,
+          wrappingPublicKey: credential.wrappingPublicKey,
+        },
+        conflictCause ?? this.#anchorRecordId,
+      );
+    }
     const replacedRecoveryCredentialIds = new Set<string>();
     for (const event of this.#events) {
       if (event.family !== 1 || !this.#isIncluded(event.recordId, frontier)) {
@@ -754,18 +784,15 @@ export class CanonicalAuthorityReplay {
         if (memberId === undefined) throw new TypeError("Recovery Conflict has no Member");
         return {
           memberId,
-          candidateRecordIds: credentials
+          candidates: credentials
             .map(({ recoveryCredentialId }) => {
               const causeId = recoveryCredentialCauseIds.get(key(recoveryCredentialId));
               if (causeId === undefined) {
                 throw new TypeError("Recovery Conflict candidate has no authority Cause");
               }
-              return causeId;
+              return { headRecordId: causeId, recoveryCredentialId };
             })
-            .sort(compareIds),
-          recoveryCredentialIds: credentials
-            .map(({ recoveryCredentialId }) => recoveryCredentialId)
-            .sort(compareIds),
+            .sort((left, right) => compareIds(left.headRecordId, right.headRecordId)),
         };
       })
       .sort((left, right) => compareIds(left.memberId, right.memberId));
@@ -775,19 +802,28 @@ export class CanonicalAuthorityReplay {
         readonly keyEpoch: Omit<CanonicalAuthorityKeyEpoch, "current">;
         readonly causeId: Identifier<"VaultRecord">;
       }
-    >([
-      [
-        key(this.#initialKeyEpoch.keyEpochId),
-        {
-          keyEpoch: {
-            keyEpochId: this.#initialKeyEpoch.keyEpochId,
-            displayNumber: this.#initialKeyEpoch.displayNumber,
+    >(
+      this.#anchorState.keyEpochs.map((keyEpoch) => {
+        const conflictCause = this.#anchorState.keyEpochConflicts
+          .flatMap(({ candidates }) => candidates)
+          .find(({ keyEpochId }) => bytesEqual(keyEpochId, keyEpoch.keyEpochId))?.headRecordId;
+        return [
+          key(keyEpoch.keyEpochId),
+          {
+            keyEpoch: {
+              keyEpochId: keyEpoch.keyEpochId,
+              displayNumber: keyEpoch.displayNumber,
+            },
+            causeId: conflictCause ?? this.#anchorRecordId,
           },
-          causeId: this.#anchorRecordId,
-        },
-      ],
-    ]);
-    const replacedKeyEpochIds = new Set<string>();
+        ];
+      }),
+    );
+    const replacedKeyEpochIds = new Set(
+      this.#anchorState.keyEpochs
+        .filter(({ current }) => !current)
+        .map(({ keyEpochId }) => key(keyEpochId)),
+    );
     for (const event of this.#events) {
       if (event.family !== 1 || event.type !== 12 || !this.#isIncluded(event.recordId, frontier)) {
         continue;
@@ -824,12 +860,12 @@ export class CanonicalAuthorityReplay {
       currentKeyEpochCandidates.length > 1
         ? [
             {
-              candidateRecordIds: currentKeyEpochCandidates
-                .map(({ causeId }) => causeId)
-                .sort(compareIds),
-              keyEpochIds: currentKeyEpochCandidates
-                .map(({ keyEpoch }) => keyEpoch.keyEpochId)
-                .sort(compareIds),
+              candidates: currentKeyEpochCandidates
+                .map(({ causeId, keyEpoch }) => ({
+                  headRecordId: causeId,
+                  keyEpochId: keyEpoch.keyEpochId,
+                }))
+                .sort((left, right) => compareIds(left.headRecordId, right.headRecordId)),
             },
           ]
         : [];
@@ -941,7 +977,12 @@ export class CanonicalAuthorityReplay {
             this.#graph.isAncestor(cutoffRecordId, event.recordId),
           ),
       );
-    const writeFences = new Map<string, CanonicalAuthorityWriteFence>();
+    const writeFences = new Map<string, CanonicalAuthorityWriteFence>(
+      this.#anchorState.writeFences.map((fence) => [
+        `${fence.kind}:${key(fence.subjectId)}`,
+        fence,
+      ]),
+    );
     if (featureSetConflict !== null) {
       writeFences.set(`feature-set-incompatibility:${key(this.#vaultId)}`, {
         kind: "feature-set-incompatibility",
@@ -953,7 +994,7 @@ export class CanonicalAuthorityReplay {
       writeFences.set(`key-epoch-conflict:${key(this.#vaultId)}`, {
         kind: "key-epoch-conflict",
         subjectId: this.#vaultId,
-        causeRecordIds: conflict.candidateRecordIds,
+        causeRecordIds: conflict.candidates.map(({ headRecordId }) => headRecordId),
       });
     }
     for (const conflict of invitationConflicts) {
@@ -1136,7 +1177,12 @@ export class CanonicalAuthorityReplay {
           if ((event.type === 3) === targetIsAdministrator) {
             throw new TypeError("Administrator role change does not change the target state");
           }
-        } else if (!sameIdSet(resolvedRecordIds, conflict.candidateRecordIds)) {
+        } else if (
+          !sameIdSet(
+            resolvedRecordIds,
+            conflict.candidates.map(({ headRecordId }) => headRecordId),
+          )
+        ) {
           throw new TypeError("Administrator role resolution does not name every candidate");
         }
       } else if (event.type === 10) {
@@ -1386,11 +1432,15 @@ export class CanonicalAuthorityReplay {
       return;
     }
     if (event.family === 3) {
-      if (event.type !== 2) {
+      if (event.type !== 1 && event.type !== 2) {
         throw new TypeError("This replay slice cannot yet reduce this Lifecycle Event type");
       }
       if (!containsId(parentState.administratorIds, signer.memberId)) {
-        throw new TypeError("Explicit Closure signer is not an Administrator");
+        throw new TypeError(
+          event.type === 1
+            ? "Vacuum signer is not an Administrator"
+            : "Explicit Closure signer is not an Administrator",
+        );
       }
       this.#acceptAuthorityNode(event);
     }
@@ -1401,11 +1451,16 @@ export class CanonicalAuthorityReplay {
   ): readonly Identifier<"VaultRecord">[] {
     this.stateAt(frontier);
     return [
+      ...this.#anchorCauseRecordIds,
       this.#anchorRecordId,
       ...this.#events
         .filter((event) => this.#isIncluded(event.recordId, frontier))
         .map((event) => event.recordId),
     ].sort(compareIds);
+  }
+
+  hasRecord(recordId: Identifier<"VaultRecord">): boolean {
+    return this.#graph.has(recordId);
   }
 
   #acceptAuthorityNode(event: AuthenticatedVaultEvent): void {

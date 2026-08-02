@@ -23,6 +23,15 @@ import {
   encodeCanonicalValue,
 } from "../../domain/canonical/value";
 import { bytesEqual, sha256 } from "../../domain/hash";
+import {
+  decodeCanonicalAuthorityCheckpoint,
+  encodeCanonicalAuthorityCheckpoint,
+} from "../projection/canonical-authority-checkpoint";
+import {
+  CanonicalAuthorityReplay,
+  type CanonicalAuthorityState,
+  canonicalAuthorityFeatureManifestRequirements,
+} from "../projection/canonical-authority-replay";
 import type {
   CanonicalReplicaState,
   ClientSecretState,
@@ -31,6 +40,14 @@ import type {
 
 function same(left: Uint8Array, right: Uint8Array, field: string): void {
   if (!bytesEqual(left, right)) throw new TypeError(`${field} does not match`);
+}
+
+function compareBytes(left: Uint8Array, right: Uint8Array): number {
+  for (let index = 0; index < Math.min(left.byteLength, right.byteLength); index += 1) {
+    const difference = (left[index] ?? 0) - (right[index] ?? 0);
+    if (difference !== 0) return difference;
+  }
+  return left.byteLength - right.byteLength;
 }
 
 function sameCanonical(left: CanonicalValue, right: CanonicalValue, field: string): void {
@@ -83,6 +100,45 @@ export function initialVaultClientAuthority(
   };
 }
 
+export function validateLocalClientAuthority(input: {
+  readonly vaultId: Identifier<"Vault">;
+  readonly authority: CanonicalAuthorityState;
+  readonly replicaAuthority: Pick<
+    CanonicalReplicaState,
+    "authoringClientCredentialId" | "memberId"
+  >;
+  readonly clientSecret: ClientSecretState | null;
+}): void {
+  const { authoringClientCredentialId, memberId } = input.replicaAuthority;
+  if ((authoringClientCredentialId === null) !== (memberId === null)) {
+    throw new TypeError("Replica local Client authority is incomplete");
+  }
+  if (authoringClientCredentialId === null || memberId === null) return;
+  const clientSecret = input.clientSecret;
+  if (clientSecret === null) {
+    throw new TypeError("Authoring Replica has no local Client Secret");
+  }
+  for (const [field, left, right] of [
+    ["Client Secret Vault ID", clientSecret.vaultId, input.vaultId],
+    ["Stored Client Credential", clientSecret.clientCredentialId, authoringClientCredentialId],
+    ["Stored Client Member", clientSecret.memberId, memberId],
+  ] as const) {
+    same(left, right, field);
+  }
+  const credential = [...input.authority.clientCredentials.values()].find(
+    ({ clientCredentialId }) => bytesEqual(clientCredentialId, authoringClientCredentialId),
+  );
+  if (
+    credential === undefined ||
+    !credential.active ||
+    !bytesEqual(credential.memberId, memberId) ||
+    !bytesEqual(credential.signingPublicKey, clientSecret.signingPublicKey) ||
+    !bytesEqual(credential.wrappingPublicKey, clientSecret.wrappingPublicKey)
+  ) {
+    throw new TypeError("Local Client Secret does not match active Authority State");
+  }
+}
+
 function sameSet(left: readonly Uint8Array[], right: readonly Uint8Array[], field: string): void {
   if (
     left.length !== right.length ||
@@ -92,39 +148,83 @@ function sameSet(left: readonly Uint8Array[], right: readonly Uint8Array[], fiel
   }
 }
 
+async function replayContinuityProof(input: {
+  readonly vaultId: Identifier<"Vault">;
+  readonly initialBaseline: VaultBaseline;
+  readonly genesis: AuthenticatedVaultEvent;
+  readonly continuityEvents: readonly AuthenticatedVaultEvent[];
+}): Promise<CanonicalAuthorityReplay> {
+  const genesisEvents = input.continuityEvents.filter(
+    (event) => event.family === 1 && event.type === 1,
+  );
+  if (
+    genesisEvents.length !== 1 ||
+    !bytesEqual(genesisEvents[0]?.recordId ?? new Uint8Array(), input.genesis.recordId) ||
+    input.continuityEvents.some((event) => event.family === 2)
+  ) {
+    throw new TypeError("Continuity Proof must contain one Genesis and only authority semantics");
+  }
+  const initialBody = exactMap(
+    input.initialBaseline.body,
+    [0, 1, 2, 3, 4, 5],
+    "Initial Baseline body",
+  );
+  const initialAuthority = decodeCanonicalAuthorityCheckpoint({
+    vaultId: input.vaultId,
+    checkpoint: mapValue(initialBody, 3),
+    requiredFeatureSetId: input.initialBaseline.requiredFeatureSetId,
+    featureManifests: [],
+    lifecycle: 1,
+  });
+  const supportedFeatureManifestIds = input.continuityEvents.flatMap((event) =>
+    canonicalAuthorityFeatureManifestRequirements(event).map(({ id }) => id),
+  );
+  const authorityReplay = new CanonicalAuthorityReplay(
+    input.genesis,
+    input.genesis.recordId,
+    initialAuthority,
+    supportedFeatureManifestIds,
+  );
+  const pendingProofEvents = input.continuityEvents.filter(
+    (event) => !bytesEqual(event.recordId, input.genesis.recordId),
+  );
+  while (pendingProofEvents.length > 0) {
+    const ready = pendingProofEvents
+      .filter(
+        (event) =>
+          event.authorityParentRecordIds.length > 0 &&
+          event.authorityParentRecordIds.every((recordId) => authorityReplay.hasRecord(recordId)),
+      )
+      .sort((left, right) => compareBytes(left.recordId, right.recordId));
+    if (ready.length === 0) {
+      throw new TypeError("Continuity Proof has a missing or cyclic Authority Parent");
+    }
+    for (const event of ready) {
+      await authorityReplay.validateAndAccept(event);
+      pendingProofEvents.splice(pendingProofEvents.indexOf(event), 1);
+    }
+  }
+  return authorityReplay;
+}
+
 export async function validateCurrentVaultAuthority(input: {
   readonly baseline: VaultBaseline;
   readonly initialBaseline: VaultBaseline;
   readonly genesis: AuthenticatedVaultEvent;
-  readonly vacuumEvents: readonly AuthenticatedVaultEvent[];
+  readonly continuityEvents: readonly AuthenticatedVaultEvent[];
   readonly replicaState: CanonicalReplicaState;
   readonly clientSecret: ClientSecretState | null;
   readonly epochSecret: EpochSecretState;
 }): Promise<void> {
   const { baseline, initialBaseline, genesis, replicaState, clientSecret, epochSecret } = input;
-  const initialClient = initialVaultClientAuthority(genesis);
-  const adoption = replicaState.adoption;
-  if (adoption === null) {
-    if (
-      input.vacuumEvents.length !== 0 ||
-      !bytesEqual(baseline.recordId, initialBaseline.recordId)
-    ) {
-      throw new TypeError("Initial Vault authority has an unexpected Vacuum boundary");
-    }
-    await validateInitialVaultAuthority({
-      baseline,
-      genesis,
-      replicaState,
-      clientSecret,
-      epochSecret,
-      requireInitialReplicaState: false,
-    });
-    return;
-  }
-  if (input.vacuumEvents.length === 0) {
-    throw new TypeError("Vacuum Adoption has no authenticated boundary chain");
-  }
-
+  same(epochSecret.vaultId, replicaState.vaultId, "Epoch Secret Vault ID");
+  same(epochSecret.keyEpochId, replicaState.currentKeyEpochId, "Current Key Epoch ID");
+  const genesisBody = exactMap(genesis.body, [0, 1, 2, 3, 4, 5, 6], "Genesis body");
+  const initialKeyEpochId = identifierValue(
+    mapValue(genesisBody, 4),
+    "KeyEpoch",
+    "Genesis Key Epoch ID",
+  );
   await validateInitialVaultAuthority({
     baseline: initialBaseline,
     genesis,
@@ -132,17 +232,83 @@ export async function validateCurrentVaultAuthority(input: {
       ...replicaState,
       generationId: initialBaseline.generationId,
       baselineId: initialBaseline.recordId,
+      currentKeyEpochId: initialKeyEpochId,
+      requiredFeatureSetId: initialBaseline.requiredFeatureSetId,
+      authoringClientCredentialId: null,
+      memberId: null,
+      lifecycle: 1,
       adoption: null,
     },
-    clientSecret,
-    epochSecret,
+    clientSecret: null,
+    epochSecret: {
+      ...epochSecret,
+      keyEpochId: initialKeyEpochId,
+      displayNumber: 0,
+    },
     requireInitialReplicaState: false,
   });
+  const authorityReplay = await replayContinuityProof({
+    vaultId: replicaState.vaultId,
+    initialBaseline,
+    genesis,
+    continuityEvents: input.continuityEvents,
+  });
+  const currentAuthority = authorityReplay.stateAt(replicaState.authorityFrontier);
+  same(
+    currentAuthority.requiredFeatureSetId,
+    replicaState.requiredFeatureSetId,
+    "Replica Required Feature Set",
+  );
+  if (currentAuthority.lifecycle !== replicaState.lifecycle) {
+    throw new TypeError("Replica lifecycle does not match current Authority State");
+  }
+  if (
+    !currentAuthority.keyEpochs.some(
+      ({ keyEpochId, current }) =>
+        current && bytesEqual(keyEpochId, replicaState.currentKeyEpochId),
+    )
+  ) {
+    throw new TypeError("Replica current Key Epoch is not an accepted Authority head");
+  }
+  validateLocalClientAuthority({
+    vaultId: replicaState.vaultId,
+    authority: currentAuthority,
+    replicaAuthority: replicaState,
+    clientSecret,
+  });
+  const reachableProofRecordIds = authorityReplay.reachableRecordIds(
+    replicaState.authorityFrontier,
+  );
+  sameSet(
+    input.continuityEvents.map(({ recordId }) => recordId),
+    reachableProofRecordIds,
+    "Continuity Proof reachable Record set",
+  );
+  sameSet(
+    replicaState.continuityRecordIds,
+    input.continuityEvents.map(({ recordId }) => recordId),
+    "Continuity Proof Record set",
+  );
+
+  const adoption = replicaState.adoption;
+  if (adoption === null) {
+    if (
+      input.continuityEvents.some((event) => event.family === 3 && event.type === 1) ||
+      !bytesEqual(baseline.recordId, initialBaseline.recordId)
+    ) {
+      throw new TypeError("Initial Vault authority has an unexpected Vacuum boundary");
+    }
+    return;
+  }
+  const vacuumEvents = input.continuityEvents.filter(
+    (event) => event.family === 3 && event.type === 1,
+  );
+  if (vacuumEvents.length === 0) {
+    throw new TypeError("Vacuum Adoption has no authenticated boundary chain");
+  }
 
   let predecessorGenerationId = initialBaseline.generationId;
-  let authorityParent = genesis.recordId;
-  const remaining = [...input.vacuumEvents];
-  const acceptedBoundaryIds: Uint8Array[] = [];
+  const remaining = [...vacuumEvents];
   let latestBoundary:
     | {
         readonly event: AuthenticatedVaultEvent;
@@ -164,27 +330,9 @@ export async function validateCurrentVaultAuthority(input: {
     for (const [field, left, right] of [
       ["Vacuum Vault ID", vacuumEvent.vaultId, replicaState.vaultId],
       ["Vacuum predecessor Generation", vacuumEvent.generationId, predecessorGenerationId],
-      [
-        "Vacuum Required Feature Set",
-        vacuumEvent.requiredFeatureSetId,
-        replicaState.requiredFeatureSetId,
-      ],
-      [
-        "Vacuum signer Credential",
-        vacuumEvent.signerCredentialId,
-        initialClient.clientCredentialId,
-      ],
     ] as const) {
       same(left, right, field);
     }
-    if (
-      vacuumEvent.family !== 3 ||
-      vacuumEvent.type !== 1 ||
-      !(await verifyVaultEventSignature(vacuumEvent, initialClient.signingPublicKey))
-    ) {
-      throw new TypeError("Vacuum Event type or signature is invalid");
-    }
-    sameSet(vacuumEvent.authorityParentRecordIds, [authorityParent], "Vacuum Authority Parents");
     const eventBody = exactMap(vacuumEvent.body, [...Array(7).keys()], "Vacuum Event body");
     const signedPredecessorGenerationId = identifierValue(
       mapValue(eventBody, 0),
@@ -233,7 +381,6 @@ export async function validateCurrentVaultAuthority(input: {
     );
     byteString(mapValue(eventBody, 6), 32, "Vacuum omission digest");
 
-    acceptedBoundaryIds.push(vacuumEvent.recordId);
     latestBoundary = {
       event: vacuumEvent,
       predecessorFrontier,
@@ -242,14 +389,13 @@ export async function validateCurrentVaultAuthority(input: {
       successorBaselineId,
     };
     predecessorGenerationId = successorGenerationId;
-    authorityParent = vacuumEvent.recordId;
   }
   if (latestBoundary === undefined) {
     throw new TypeError("Vacuum Adoption has no latest authenticated boundary");
   }
   same(predecessorGenerationId, baseline.generationId, "Current successor Generation");
   same(baseline.recordId, replicaState.baselineId, "Active successor Baseline ID");
-  same(authorityParent, adoption.vacuumEventRecordId, "Latest adopted Vacuum Event");
+  same(latestBoundary.event.recordId, adoption.vacuumEventRecordId, "Latest adopted Vacuum Event");
   same(latestBoundary.successorBaselineId, baseline.recordId, "Current successor Baseline");
   same(baseline.vaultId, replicaState.vaultId, "Successor Baseline Vault ID");
   same(
@@ -258,11 +404,22 @@ export async function validateCurrentVaultAuthority(input: {
     "Successor Required Feature Set",
   );
 
-  const initialBody = exactMap(initialBaseline.body, [0, 1, 2, 3, 4, 5], "Initial Baseline body");
   const successorBody = exactMap(baseline.body, [0, 1, 2, 3, 4, 5], "Successor Baseline body");
   exactCode(mapValue(successorBody, 1), 2, "Successor Baseline kind");
-  sameCanonical(mapValue(successorBody, 3), mapValue(initialBody, 3), "Successor authority state");
-  sameCanonical(mapValue(successorBody, 4), mapValue(initialBody, 4), "Successor lifecycle state");
+  const boundaryAuthority = authorityReplay.stateAt([latestBoundary.event.recordId]);
+  sameCanonical(
+    mapValue(successorBody, 3),
+    encodeCanonicalAuthorityCheckpoint({
+      vaultId: replicaState.vaultId,
+      authority: boundaryAuthority,
+    }),
+    "Successor authority state",
+  );
+  sameCanonical(
+    mapValue(successorBody, 4),
+    canonicalMap([[0, boundaryAuthority.lifecycle]]),
+    "Successor lifecycle state",
+  );
   const predecessor = exactMap(
     mapValue(successorBody, 5),
     [0, 1, 2],
@@ -297,14 +454,16 @@ export async function validateCurrentVaultAuthority(input: {
     latestBoundary.successorStateDigest,
     "Vacuum successor state digest",
   );
-  sameSet(
-    replicaState.continuityRecordIds,
-    [
-      genesis.recordId,
-      ...acceptedBoundaryIds,
-      ...(replicaState.lifecycle === 2 ? replicaState.authorityFrontier : []),
-    ],
-    "Vacuum Continuity Proof Record set",
+  sameCanonical(
+    dependencySet(baseline.dependencies),
+    dependencySet([
+      ...vaultBaselineDependencyRequirements(baseline.body),
+      ...boundaryAuthority.featureManifests.map(({ id }) => ({
+        type: DEPENDENCY_TYPES.FeatureManifest,
+        id,
+      })),
+    ]),
+    "Successor Baseline dependency closure",
   );
 }
 
