@@ -189,7 +189,7 @@ describe("canonical Authority replay", () => {
     ]);
   });
 
-  it("accepts one Invitation into independent member, Credential, and Recovery authority", async () => {
+  it("replays the complete Invitation, conflict, and member-removal lifecycle", async () => {
     const sodium = await readySodium();
     const creation = await prepareCanonicalVaultCreation({ label: "Members", assertedAt: 1 });
     const invitationId = randomIdentifier("Invitation");
@@ -200,6 +200,7 @@ describe("canonical Authority replay", () => {
     const receipt = sodium.crypto_sign_seed_keypair(new Uint8Array(32).fill(22));
     const proposedClient = sodium.crypto_sign_seed_keypair(new Uint8Array(32).fill(23));
     const proposedRecovery = sodium.crypto_sign_seed_keypair(new Uint8Array(32).fill(24));
+    const cancellationCapability = sodium.crypto_sign_seed_keypair(new Uint8Array(32).fill(25));
     const capabilities = canonicalSet([
       canonicalMap([
         [0, "awsm.vault"],
@@ -233,7 +234,7 @@ describe("canonical Authority replay", () => {
           [0, invitationId],
           [1, capabilities],
           [2, redemption.publicKey],
-          [3, new Uint8Array(32).fill(25)],
+          [3, cancellationCapability.publicKey],
           [4, new Uint8Array(32).fill(26)],
           [5, receipt.publicKey],
         ]),
@@ -427,6 +428,493 @@ describe("canonical Authority replay", () => {
       expect.arrayContaining([recoveryEnvelopeId, clientEnvelopeId]),
     );
     expect(readResolvedOpaqueItem).toHaveBeenCalledTimes(2);
+
+    const duplicateAcceptance = await signVaultEvent(
+      {
+        vaultId: creation.ids.vaultId,
+        generationId: creation.ids.generationId,
+        parentRecordIds: [invitation.recordId],
+        authorityParentRecordIds: [invitation.recordId],
+        dependencies: [
+          { type: DEPENDENCY_TYPES.KeyEnvelope, id: recoveryEnvelopeId },
+          { type: DEPENDENCY_TYPES.KeyEnvelope, id: clientEnvelopeId },
+        ],
+        requiredFeatureSetId: creation.genesis.requiredFeatureSetId,
+        extensions: advisoryExtensions([]),
+        family: 1,
+        type: 6,
+        signerCredentialId: creation.ids.clientCredentialId,
+        assertedAt: 30,
+        body: acceptance.body,
+      },
+      creation.secrets.client.signingSecretKey,
+    );
+    byId.set(Buffer.from(duplicateAcceptance.recordId).toString("hex"), duplicateAcceptance);
+    const idempotentAcceptance = await new CanonicalReplayService({
+      openResolvedCompactItem: vi.fn(async ({ logicalId }: { logicalId: Uint8Array }) => ({
+        payloadBytes: byId.get(Buffer.from(logicalId).toString("hex"))?.bytes,
+      })),
+      readResolvedOpaqueItem,
+    } as never).replayOpened({
+      ...vault,
+      replicaState: {
+        ...vault.replicaState,
+        causalFrontier: [acceptance.recordId, duplicateAcceptance.recordId],
+        authorityFrontier: [acceptance.recordId, duplicateAcceptance.recordId],
+        continuityRecordIds: [
+          creation.genesis.recordId,
+          invitation.recordId,
+          acceptance.recordId,
+          duplicateAcceptance.recordId,
+        ],
+      },
+    });
+    expect(idempotentAcceptance.authority.invitationConflicts).toEqual([]);
+    expect(
+      idempotentAcceptance.authority.activeMemberIds.filter((memberId) =>
+        Buffer.from(memberId).equals(Buffer.from(proposedMemberId)),
+      ),
+    ).toHaveLength(1);
+
+    const cancellationChallenge = new Uint8Array(32).fill(40);
+    const cancellationRequest = canonicalMap([
+      [0, invitationId],
+      [1, cancellationChallenge],
+      [
+        2,
+        sodium.crypto_sign_detached(
+          transcript("awsm:invitation-cancel-request:v1", [invitationId, cancellationChallenge]),
+          cancellationCapability.privateKey,
+        ),
+      ],
+    ]);
+    const cancellationRequestId = sha256(
+      transcript("awsm:invitation-cancel-request-id:v1", [
+        encodeCanonicalValue(cancellationRequest),
+      ]),
+    );
+    const cancellationReceiptPrefix = canonicalMap([
+      [0, invitationId],
+      [1, 2],
+      [2, cancellationRequestId],
+      [3, null],
+      [4, new Uint8Array(32).fill(41)],
+    ]);
+    const cancellation = await signVaultEvent(
+      {
+        vaultId: creation.ids.vaultId,
+        generationId: creation.ids.generationId,
+        parentRecordIds: [invitation.recordId],
+        authorityParentRecordIds: [invitation.recordId],
+        dependencies: [],
+        requiredFeatureSetId: creation.genesis.requiredFeatureSetId,
+        extensions: advisoryExtensions([]),
+        family: 1,
+        type: 7,
+        signerCredentialId: creation.ids.clientCredentialId,
+        assertedAt: 4,
+        body: canonicalMap([
+          [0, cancellationRequest],
+          [
+            1,
+            canonicalMap([
+              ...cancellationReceiptPrefix,
+              [
+                5,
+                sodium.crypto_sign_detached(
+                  transcript("awsm:invitation-receipt:v1", [
+                    encodeCanonicalValue(cancellationReceiptPrefix),
+                  ]),
+                  receipt.privateKey,
+                ),
+              ],
+            ]),
+          ],
+        ]),
+      },
+      creation.secrets.client.signingSecretKey,
+    );
+    byId.set(Buffer.from(cancellation.recordId).toString("hex"), cancellation);
+    const cancelled = await new CanonicalReplayService({
+      openResolvedCompactItem: vi.fn(async ({ logicalId }: { logicalId: Uint8Array }) => ({
+        payloadBytes: byId.get(Buffer.from(logicalId).toString("hex"))?.bytes,
+      })),
+      readResolvedOpaqueItem,
+    } as never).replayOpened({
+      ...vault,
+      replicaState: {
+        ...vault.replicaState,
+        causalFrontier: [cancellation.recordId],
+        authorityFrontier: [cancellation.recordId],
+        continuityRecordIds: [
+          creation.genesis.recordId,
+          invitation.recordId,
+          cancellation.recordId,
+        ],
+      },
+    });
+    expect(cancelled.authority.activeInvitations).toEqual([]);
+    expect(cancelled.authority.activeMemberIds).toEqual([creation.ids.firstMemberId]);
+    expect(cancelled.authority.writeFences).toEqual([]);
+
+    const invalidCancellationRequest = canonicalMap([
+      [0, invitationId],
+      [1, cancellationChallenge],
+      [2, new Uint8Array(64)],
+    ]);
+    const invalidCancellationRequestId = sha256(
+      transcript("awsm:invitation-cancel-request-id:v1", [
+        encodeCanonicalValue(invalidCancellationRequest),
+      ]),
+    );
+    const invalidCancellationReceiptPrefix = canonicalMap([
+      [0, invitationId],
+      [1, 2],
+      [2, invalidCancellationRequestId],
+      [3, null],
+      [4, new Uint8Array(32).fill(42)],
+    ]);
+    const invalidCancellation = await signVaultEvent(
+      {
+        vaultId: creation.ids.vaultId,
+        generationId: creation.ids.generationId,
+        parentRecordIds: [invitation.recordId],
+        authorityParentRecordIds: [invitation.recordId],
+        dependencies: [],
+        requiredFeatureSetId: creation.genesis.requiredFeatureSetId,
+        extensions: advisoryExtensions([]),
+        family: 1,
+        type: 7,
+        signerCredentialId: creation.ids.clientCredentialId,
+        assertedAt: 4,
+        body: canonicalMap([
+          [0, invalidCancellationRequest],
+          [
+            1,
+            canonicalMap([
+              ...invalidCancellationReceiptPrefix,
+              [
+                5,
+                sodium.crypto_sign_detached(
+                  transcript("awsm:invitation-receipt:v1", [
+                    encodeCanonicalValue(invalidCancellationReceiptPrefix),
+                  ]),
+                  receipt.privateKey,
+                ),
+              ],
+            ]),
+          ],
+        ]),
+      },
+      creation.secrets.client.signingSecretKey,
+    );
+    byId.set(Buffer.from(invalidCancellation.recordId).toString("hex"), invalidCancellation);
+    await expect(
+      new CanonicalReplayService({
+        openResolvedCompactItem: vi.fn(async ({ logicalId }: { logicalId: Uint8Array }) => ({
+          payloadBytes: byId.get(Buffer.from(logicalId).toString("hex"))?.bytes,
+        })),
+        readResolvedOpaqueItem,
+      } as never).replayOpened({
+        ...vault,
+        replicaState: {
+          ...vault.replicaState,
+          causalFrontier: [invalidCancellation.recordId],
+          authorityFrontier: [invalidCancellation.recordId],
+          continuityRecordIds: [
+            creation.genesis.recordId,
+            invitation.recordId,
+            invalidCancellation.recordId,
+          ],
+        },
+      }),
+    ).rejects.toThrow("Invitation Cancellation request or receipt signature is invalid");
+
+    const conflicted = await new CanonicalReplayService({
+      openResolvedCompactItem: vi.fn(async ({ logicalId }: { logicalId: Uint8Array }) => ({
+        payloadBytes: byId.get(Buffer.from(logicalId).toString("hex"))?.bytes,
+      })),
+      readResolvedOpaqueItem,
+    } as never).replayOpened({
+      ...vault,
+      replicaState: {
+        ...vault.replicaState,
+        causalFrontier: [acceptance.recordId, cancellation.recordId],
+        authorityFrontier: [acceptance.recordId, cancellation.recordId],
+        continuityRecordIds: [
+          creation.genesis.recordId,
+          invitation.recordId,
+          acceptance.recordId,
+          cancellation.recordId,
+        ],
+      },
+    });
+    expect(conflicted.authority.invitationConflicts).toEqual([
+      expect.objectContaining({
+        invitationId,
+        candidates: expect.arrayContaining([
+          expect.objectContaining({
+            headRecordId: acceptance.recordId,
+            outcome: 1,
+            authorityReceiptId: new Uint8Array(32).fill(29),
+            joinRequestId,
+            memberId: proposedMemberId,
+          }),
+          expect.objectContaining({
+            headRecordId: cancellation.recordId,
+            outcome: 2,
+            authorityReceiptId: new Uint8Array(32).fill(41),
+            joinRequestId: null,
+            memberId: null,
+          }),
+        ]),
+      }),
+    ]);
+    expect(conflicted.authority.activeMemberIds).toEqual([creation.ids.firstMemberId]);
+    expect(
+      conflicted.authority.clientCredentials.get(
+        Buffer.from(proposedClientCredentialId).toString("hex"),
+      )?.active,
+    ).toBe(false);
+    expect(conflicted.authority.writeFences).toContainEqual({
+      kind: "invitation-conflict",
+      subjectId: invitationId,
+      causeRecordIds: [acceptance.recordId],
+    });
+
+    const candidateContent = await signVaultEvent(
+      {
+        vaultId: creation.ids.vaultId,
+        generationId: creation.ids.generationId,
+        parentRecordIds: [acceptance.recordId],
+        authorityParentRecordIds: [acceptance.recordId],
+        dependencies: [],
+        requiredFeatureSetId: creation.genesis.requiredFeatureSetId,
+        extensions: advisoryExtensions([]),
+        family: 2,
+        type: 12,
+        signerCredentialId: proposedClientCredentialId,
+        assertedAt: 5,
+        body: canonicalMap([
+          [0, randomIdentifier("Folder")],
+          [1, "Candidate branch"],
+          [2, null],
+        ]),
+      },
+      proposedClient.privateKey,
+    );
+    byId.set(Buffer.from(candidateContent.recordId).toString("hex"), candidateContent);
+    const conflictWithPriorContent = await new CanonicalReplayService({
+      openResolvedCompactItem: vi.fn(async ({ logicalId }: { logicalId: Uint8Array }) => ({
+        payloadBytes: byId.get(Buffer.from(logicalId).toString("hex"))?.bytes,
+      })),
+      readResolvedOpaqueItem,
+    } as never).replayOpened({
+      ...vault,
+      replicaState: {
+        ...vault.replicaState,
+        causalFrontier: [candidateContent.recordId, cancellation.recordId],
+        authorityFrontier: [acceptance.recordId, cancellation.recordId],
+        continuityRecordIds: [
+          creation.genesis.recordId,
+          invitation.recordId,
+          acceptance.recordId,
+          cancellation.recordId,
+        ],
+      },
+    });
+    expect(conflictWithPriorContent.events).toContainEqual(candidateContent);
+    expect(replayEventMemberId(conflictWithPriorContent, candidateContent)).toEqual(
+      proposedMemberId,
+    );
+    expect(
+      conflictWithPriorContent.authority.clientCredentials.get(
+        Buffer.from(proposedClientCredentialId).toString("hex"),
+      )?.active,
+    ).toBe(false);
+
+    const conflictingReceiptIds = canonicalSet([
+      new Uint8Array(32).fill(29),
+      new Uint8Array(32).fill(41),
+    ]);
+    const conflictingRecordIds = canonicalSet([acceptance.recordId, cancellation.recordId]);
+    const selectConsumed = await signVaultEvent(
+      {
+        vaultId: creation.ids.vaultId,
+        generationId: creation.ids.generationId,
+        parentRecordIds: [acceptance.recordId, cancellation.recordId],
+        authorityParentRecordIds: [acceptance.recordId, cancellation.recordId],
+        dependencies: [],
+        requiredFeatureSetId: creation.genesis.requiredFeatureSetId,
+        extensions: advisoryExtensions([]),
+        family: 1,
+        type: 8,
+        signerCredentialId: creation.ids.clientCredentialId,
+        assertedAt: 5,
+        body: canonicalMap([
+          [0, invitationId],
+          [1, conflictingReceiptIds],
+          [2, conflictingRecordIds],
+          [3, 1],
+          [4, joinRequestId],
+        ]),
+      },
+      creation.secrets.client.signingSecretKey,
+    );
+    const cancelAll = await signVaultEvent(
+      {
+        vaultId: creation.ids.vaultId,
+        generationId: creation.ids.generationId,
+        parentRecordIds: [acceptance.recordId, cancellation.recordId],
+        authorityParentRecordIds: [acceptance.recordId, cancellation.recordId],
+        dependencies: [],
+        requiredFeatureSetId: creation.genesis.requiredFeatureSetId,
+        extensions: advisoryExtensions([]),
+        family: 1,
+        type: 8,
+        signerCredentialId: creation.ids.clientCredentialId,
+        assertedAt: 6,
+        body: canonicalMap([
+          [0, invitationId],
+          [1, conflictingReceiptIds],
+          [2, conflictingRecordIds],
+          [3, 2],
+          [4, null],
+        ]),
+      },
+      creation.secrets.client.signingSecretKey,
+    );
+    byId.set(Buffer.from(selectConsumed.recordId).toString("hex"), selectConsumed);
+    byId.set(Buffer.from(cancelAll.recordId).toString("hex"), cancelAll);
+    const resolvedConsumed = await new CanonicalReplayService({
+      openResolvedCompactItem: vi.fn(async ({ logicalId }: { logicalId: Uint8Array }) => ({
+        payloadBytes: byId.get(Buffer.from(logicalId).toString("hex"))?.bytes,
+      })),
+      readResolvedOpaqueItem,
+    } as never).replayOpened({
+      ...vault,
+      replicaState: {
+        ...vault.replicaState,
+        causalFrontier: [selectConsumed.recordId],
+        authorityFrontier: [selectConsumed.recordId],
+        continuityRecordIds: [
+          creation.genesis.recordId,
+          invitation.recordId,
+          acceptance.recordId,
+          cancellation.recordId,
+          selectConsumed.recordId,
+        ],
+      },
+    });
+    expect(resolvedConsumed.authority.invitationConflicts).toEqual([]);
+    expect(resolvedConsumed.authority.activeMemberIds).toEqual(
+      expect.arrayContaining([creation.ids.firstMemberId, proposedMemberId]),
+    );
+    expect(resolvedConsumed.authority.administratorIds).toEqual(
+      expect.arrayContaining([creation.ids.firstMemberId, proposedMemberId]),
+    );
+    expect(resolvedConsumed.authority.writeFences).toEqual([]);
+
+    const selectedCandidateContent = await signVaultEvent(
+      {
+        vaultId: creation.ids.vaultId,
+        generationId: creation.ids.generationId,
+        parentRecordIds: [selectConsumed.recordId],
+        authorityParentRecordIds: [selectConsumed.recordId],
+        dependencies: [],
+        requiredFeatureSetId: creation.genesis.requiredFeatureSetId,
+        extensions: advisoryExtensions([]),
+        family: 2,
+        type: 12,
+        signerCredentialId: proposedClientCredentialId,
+        assertedAt: 6,
+        body: canonicalMap([
+          [0, randomIdentifier("Folder")],
+          [1, "Selected candidate"],
+          [2, null],
+        ]),
+      },
+      proposedClient.privateKey,
+    );
+    byId.set(
+      Buffer.from(selectedCandidateContent.recordId).toString("hex"),
+      selectedCandidateContent,
+    );
+    await expect(
+      new CanonicalReplayService({
+        openResolvedCompactItem: vi.fn(async ({ logicalId }: { logicalId: Uint8Array }) => ({
+          payloadBytes: byId.get(Buffer.from(logicalId).toString("hex"))?.bytes,
+        })),
+        readResolvedOpaqueItem,
+      } as never).replayOpened({
+        ...vault,
+        replicaState: {
+          ...vault.replicaState,
+          causalFrontier: [selectedCandidateContent.recordId],
+          authorityFrontier: [selectConsumed.recordId],
+          continuityRecordIds: [
+            creation.genesis.recordId,
+            invitation.recordId,
+            acceptance.recordId,
+            cancellation.recordId,
+            selectConsumed.recordId,
+          ],
+        },
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({ events: expect.arrayContaining([selectedCandidateContent]) }),
+    );
+
+    const resolvedCancelled = await new CanonicalReplayService({
+      openResolvedCompactItem: vi.fn(async ({ logicalId }: { logicalId: Uint8Array }) => ({
+        payloadBytes: byId.get(Buffer.from(logicalId).toString("hex"))?.bytes,
+      })),
+      readResolvedOpaqueItem,
+    } as never).replayOpened({
+      ...vault,
+      replicaState: {
+        ...vault.replicaState,
+        causalFrontier: [cancelAll.recordId],
+        authorityFrontier: [cancelAll.recordId],
+        continuityRecordIds: [
+          creation.genesis.recordId,
+          invitation.recordId,
+          acceptance.recordId,
+          cancellation.recordId,
+          cancelAll.recordId,
+        ],
+      },
+    });
+    expect(resolvedCancelled.authority.invitationConflicts).toEqual([]);
+    expect(resolvedCancelled.authority.activeMemberIds).toEqual([creation.ids.firstMemberId]);
+    expect(resolvedCancelled.authority.writeFences).toContainEqual({
+      kind: "invitation-conflict",
+      subjectId: invitationId,
+      causeRecordIds: [acceptance.recordId],
+    });
+    await expect(
+      new CanonicalReplayService({
+        openResolvedCompactItem: vi.fn(async ({ logicalId }: { logicalId: Uint8Array }) => ({
+          payloadBytes: byId.get(Buffer.from(logicalId).toString("hex"))?.bytes,
+        })),
+        readResolvedOpaqueItem,
+      } as never).replayOpened({
+        ...vault,
+        replicaState: {
+          ...vault.replicaState,
+          causalFrontier: [selectConsumed.recordId, cancelAll.recordId],
+          authorityFrontier: [selectConsumed.recordId, cancelAll.recordId],
+          continuityRecordIds: [
+            creation.genesis.recordId,
+            invitation.recordId,
+            acceptance.recordId,
+            cancellation.recordId,
+            selectConsumed.recordId,
+            cancelAll.recordId,
+          ],
+        },
+      }),
+    ).rejects.toThrow("Concurrent Invitation Conflict Resolutions cannot yet be reduced");
 
     const invalidReceiptAcceptance = await signVaultEvent(
       {

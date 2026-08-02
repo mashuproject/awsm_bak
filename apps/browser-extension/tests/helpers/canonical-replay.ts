@@ -19,6 +19,7 @@ export function singleCredentialAuthority(input: {
     administratorIds: lifecycle === 1 ? [input.memberId] : [],
     administratorConflicts: [],
     activeInvitations: [],
+    invitationConflicts: [],
     recoveryCredentials: [],
     keyEpochs: [],
     writeFences: [],

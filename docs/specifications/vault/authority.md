@@ -411,6 +411,13 @@ current Record IDs, and the Authority Parents MUST descend from every candidate 
 Invitation state to ordinary Consumed or Cancelled. Rejected consumed candidates require a later
 excluding Key Epoch.
 
+At a conflicted frontier, no disputed candidate supplies active membership, Client Credential
+eligibility, effective Recovery, or Administrator authority. An Event the candidate validly
+authored on an acceptance-only branch remains valid at those exact Authority Parents; after the
+conflict is visible, that candidate cannot authorize another Event until selected. Selecting one
+consumed candidate activates only that candidate. Cancelling all activates none. Every candidate
+Credential remains available for Historical Attribution without becoming eligible authority.
+
 # 15. Client Credential Enrollment Proposal
 
 ```text

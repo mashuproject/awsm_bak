@@ -293,7 +293,9 @@ equivocation and create an Invitation Conflict.
 
 The invitation-scoped Authority Conflict caused by incompatible terminal receipts from one
 Invitation Redemption Authority. Any consumed candidate may already have keys, so protected writes
-fence pending resolution.
+fence pending resolution. At the merged conflict frontier, disputed membership, Client Credential,
+Recovery, and Administrator authority is conditional and cannot authorize a new Event. Events
+validly authored on an acceptance-only branch remain valid at their exact Authority Parents.
 
 ## Invitation Conflict Resolution Event
 

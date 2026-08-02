@@ -59,6 +59,7 @@ export interface CanonicalAuthorityState {
     readonly candidateRecordIds: readonly Identifier<"VaultRecord">[];
   }[];
   readonly activeInvitations: readonly CanonicalAuthorityInvitation[];
+  readonly invitationConflicts: readonly CanonicalAuthorityInvitationConflict[];
   readonly recoveryCredentials: readonly CanonicalAuthorityRecoveryCredential[];
   readonly keyEpochs: readonly CanonicalAuthorityKeyEpoch[];
   readonly writeFences: readonly CanonicalAuthorityWriteFence[];
@@ -67,9 +68,22 @@ export interface CanonicalAuthorityState {
 }
 
 export interface CanonicalAuthorityWriteFence {
-  readonly kind: "member-removal" | "client-credential-removal";
+  readonly kind: "member-removal" | "client-credential-removal" | "invitation-conflict";
   readonly subjectId: Uint8Array;
   readonly causeRecordIds: readonly Identifier<"VaultRecord">[];
+}
+
+export interface CanonicalAuthorityInvitationConflictCandidate {
+  readonly headRecordId: Identifier<"VaultRecord">;
+  readonly outcome: 1 | 2;
+  readonly authorityReceiptId: Uint8Array;
+  readonly joinRequestId: Uint8Array | null;
+  readonly memberId: Identifier<"Member"> | null;
+}
+
+export interface CanonicalAuthorityInvitationConflict {
+  readonly invitationId: Identifier<"Invitation">;
+  readonly candidates: readonly CanonicalAuthorityInvitationConflictCandidate[];
 }
 
 export interface CanonicalAuthorityRecoveryCredential {
@@ -110,6 +124,8 @@ interface AcceptedInvitation {
   readonly clientCredential: Omit<CanonicalAuthorityClientCredential, "active">;
   readonly recoveryCredential: Omit<CanonicalAuthorityRecoveryCredential, "effective">;
   readonly administrator: boolean;
+  readonly joinRequestId: Uint8Array;
+  readonly authorityReceiptId: Uint8Array;
   readonly capabilitiesBytes: Uint8Array;
   readonly joinRequestPrefixBytes: Uint8Array;
   readonly clientPossessionSignature: Uint8Array;
@@ -120,12 +136,37 @@ interface AcceptedInvitation {
   readonly envelopeSlots: readonly InvitationEnvelopeSlot[];
 }
 
+interface InvitationTerminalFact extends CanonicalAuthorityInvitationConflictCandidate {
+  readonly causeId: Identifier<"VaultRecord">;
+  readonly invitationId: Identifier<"Invitation">;
+  readonly acceptance: AcceptedInvitation | null;
+}
+
 interface InvitationEnvelopeSlot {
   readonly keyEpochId: Identifier<"KeyEpoch">;
   readonly targetKind: 1 | 2;
   readonly targetCredentialId: Uint8Array;
   readonly targetRevision: number | null;
   readonly keyEnvelopeId: Identifier<"KeyEnvelope">;
+}
+
+interface CancelledInvitation {
+  readonly invitationId: Identifier<"Invitation">;
+  readonly cancellationRequestId: Uint8Array;
+  readonly authorityReceiptId: Uint8Array;
+  readonly authorityChallenge: Uint8Array;
+  readonly cancellationSignature: Uint8Array;
+  readonly receiptPrefixBytes: Uint8Array;
+  readonly receiptSignature: Uint8Array;
+}
+
+interface ResolvedInvitation {
+  readonly invitationId: Identifier<"Invitation">;
+  readonly conflictingReceiptIds: readonly Uint8Array[];
+  readonly conflictingRecordIds: readonly Identifier<"VaultRecord">[];
+  readonly outcome: 1 | 2;
+  readonly selectedJoinRequestId: Uint8Array | null;
+  readonly rejectedConsumedRecordIds: readonly Identifier<"VaultRecord">[];
 }
 
 export class CanonicalAuthorityReplay {
@@ -137,6 +178,8 @@ export class CanonicalAuthorityReplay {
   readonly #graph = new CausalGraph();
   readonly #events: AuthenticatedVaultEvent[] = [];
   readonly #acceptedInvitations = new Map<string, AcceptedInvitation>();
+  readonly #cancelledInvitations = new Map<string, CancelledInvitation>();
+  readonly #resolvedInvitations = new Map<string, ResolvedInvitation>();
 
   constructor(
     genesis: AuthenticatedVaultEvent,
@@ -190,8 +233,140 @@ export class CanonicalAuthorityReplay {
     if (frontier.length === 0 || frontier.some((recordId) => !this.#graph.has(recordId))) {
       throw new TypeError("Authority Frontier references an unknown Record");
     }
+    const terminalFactsByInvitation = new Map<string, InvitationTerminalFact[]>();
+    for (const event of this.#events) {
+      if (event.family !== 1 || !this.#isIncluded(event.recordId, frontier)) continue;
+      let fact: InvitationTerminalFact | undefined;
+      if (event.type === 6) {
+        const acceptance = this.#acceptedInvitations.get(key(event.recordId));
+        if (acceptance === undefined) throw new TypeError("Invitation Acceptance state is missing");
+        fact = {
+          causeId: event.recordId,
+          headRecordId: event.recordId,
+          invitationId: acceptance.invitationId,
+          outcome: 1,
+          authorityReceiptId: acceptance.authorityReceiptId,
+          joinRequestId: acceptance.joinRequestId,
+          memberId: acceptance.memberId,
+          acceptance,
+        };
+      } else if (event.type === 7) {
+        const cancellation = this.#cancelledInvitations.get(key(event.recordId));
+        if (cancellation === undefined) {
+          throw new TypeError("Invitation Cancellation state is missing");
+        }
+        fact = {
+          causeId: event.recordId,
+          headRecordId: event.recordId,
+          invitationId: cancellation.invitationId,
+          outcome: 2,
+          authorityReceiptId: cancellation.authorityReceiptId,
+          joinRequestId: null,
+          memberId: null,
+          acceptance: null,
+        };
+      }
+      if (fact === undefined) continue;
+      const facts = terminalFactsByInvitation.get(key(fact.invitationId)) ?? [];
+      facts.push(fact);
+      terminalFactsByInvitation.set(key(fact.invitationId), facts);
+    }
+    const effectiveAcceptanceRecordIds = new Set<string>();
+    const invitationConflicts: CanonicalAuthorityInvitationConflict[] = [];
+    const resolutionsByInvitation = new Map<
+      string,
+      { readonly causeId: Identifier<"VaultRecord">; readonly resolution: ResolvedInvitation }[]
+    >();
+    for (const event of this.#events) {
+      if (event.family !== 1 || event.type !== 8 || !this.#isIncluded(event.recordId, frontier)) {
+        continue;
+      }
+      const resolution = this.#resolvedInvitations.get(key(event.recordId));
+      if (resolution === undefined) throw new TypeError("Invitation Resolution state is missing");
+      const resolutions = resolutionsByInvitation.get(key(resolution.invitationId)) ?? [];
+      resolutions.push({ causeId: event.recordId, resolution });
+      resolutionsByInvitation.set(key(resolution.invitationId), resolutions);
+    }
+    const effectiveResolutions = new Map<
+      string,
+      { readonly causeId: Identifier<"VaultRecord">; readonly resolution: ResolvedInvitation }
+    >();
+    for (const [invitationKey, resolutions] of resolutionsByInvitation) {
+      const heads = causalMaxima(resolutions, this.#graph);
+      if (heads.length !== 1) {
+        throw new TypeError("Concurrent Invitation Conflict Resolutions cannot yet be reduced");
+      }
+      effectiveResolutions.set(invitationKey, heads[0] as (typeof heads)[number]);
+    }
+    const resolvedInvitationFences: {
+      readonly invitationId: Identifier<"Invitation">;
+      readonly causeRecordIds: readonly Identifier<"VaultRecord">[];
+    }[] = [];
+    for (const facts of terminalFactsByInvitation.values()) {
+      const heads = [...causalMaxima(facts, this.#graph)].sort((left, right) =>
+        compareIds(left.headRecordId, right.headRecordId),
+      );
+      const invitationId = heads[0]?.invitationId;
+      if (invitationId === undefined) throw new TypeError("Invitation terminal state is empty");
+      const resolved = effectiveResolutions.get(key(invitationId));
+      if (resolved !== undefined) {
+        if (
+          heads.some(({ headRecordId }) => !this.#graph.isAncestor(headRecordId, resolved.causeId))
+        ) {
+          throw new TypeError("Invitation Resolution is concurrent with a terminal candidate");
+        }
+        if (resolved.resolution.selectedJoinRequestId !== null) {
+          const selectedHeads = heads.filter(
+            ({ outcome, joinRequestId }) =>
+              outcome === 1 &&
+              joinRequestId !== null &&
+              bytesEqual(joinRequestId, resolved.resolution.selectedJoinRequestId as Uint8Array),
+          );
+          if (selectedHeads.length === 0) {
+            throw new TypeError("Invitation Resolution selected candidate is unavailable");
+          }
+          for (const selectedHead of selectedHeads) {
+            effectiveAcceptanceRecordIds.add(key(selectedHead.headRecordId));
+          }
+        }
+        if (resolved.resolution.rejectedConsumedRecordIds.length > 0) {
+          resolvedInvitationFences.push({
+            invitationId,
+            causeRecordIds: resolved.resolution.rejectedConsumedRecordIds,
+          });
+        }
+        continue;
+      }
+      const outcomes = new Set(
+        heads.map((candidate) =>
+          candidate.outcome === 1
+            ? `1:${key(candidate.joinRequestId as Uint8Array)}:${key(candidate.memberId as Uint8Array)}`
+            : "2",
+        ),
+      );
+      if (outcomes.size > 1) {
+        invitationConflicts.push({
+          invitationId,
+          candidates: heads.map(
+            ({ headRecordId, outcome, authorityReceiptId, joinRequestId, memberId }) => ({
+              headRecordId,
+              outcome,
+              authorityReceiptId,
+              joinRequestId,
+              memberId,
+            }),
+          ),
+        });
+      } else {
+        for (const accepted of heads.filter(({ outcome }) => outcome === 1)) {
+          effectiveAcceptanceRecordIds.add(key(accepted.headRecordId));
+        }
+      }
+    }
+    invitationConflicts.sort((left, right) => compareIds(left.invitationId, right.invitationId));
+
     const activeMembers = new Map([[key(this.#firstMemberId), this.#firstMemberId]]);
-    const permanentMemberIds = new Set([key(this.#firstMemberId)]);
+    const permanentMemberRequests = new Map([[key(this.#firstMemberId), "genesis"]]);
     const administratorFacts: AdministratorFact[] = [
       {
         memberId: this.#firstMemberId,
@@ -205,10 +380,13 @@ export class CanonicalAuthorityReplay {
       if (event.family === 1 && event.type === 6) {
         const acceptance = this.#acceptedInvitations.get(key(event.recordId));
         if (acceptance === undefined) throw new TypeError("Invitation Acceptance state is missing");
-        if (permanentMemberIds.has(key(acceptance.memberId))) {
+        const priorRequest = permanentMemberRequests.get(key(acceptance.memberId));
+        const requestKey = key(acceptance.joinRequestId);
+        if (priorRequest !== undefined && priorRequest !== requestKey) {
           throw new TypeError("Invitation Acceptance reuses a permanent Member identity");
         }
-        permanentMemberIds.add(key(acceptance.memberId));
+        permanentMemberRequests.set(key(acceptance.memberId), requestKey);
+        if (!effectiveAcceptanceRecordIds.has(key(event.recordId))) continue;
         activeMembers.set(key(acceptance.memberId), acceptance.memberId);
         if (acceptance.administrator) {
           administratorFacts.push({
@@ -276,10 +454,17 @@ export class CanonicalAuthorityReplay {
       activeInvitations.set(invitationKey, invitation);
     }
     for (const event of this.#events) {
-      if (event.family === 1 && event.type === 6 && this.#isIncluded(event.recordId, frontier)) {
+      if (event.family !== 1 || !this.#isIncluded(event.recordId, frontier)) continue;
+      if (event.type === 6) {
         const acceptance = this.#acceptedInvitations.get(key(event.recordId));
         if (acceptance === undefined) throw new TypeError("Invitation Acceptance state is missing");
         activeInvitations.delete(key(acceptance.invitationId));
+      } else if (event.type === 7) {
+        const cancellation = this.#cancelledInvitations.get(key(event.recordId));
+        if (cancellation === undefined) {
+          throw new TypeError("Invitation Cancellation state is missing");
+        }
+        activeInvitations.delete(key(cancellation.invitationId));
       }
     }
     const endedCredentialIds = new Set(
@@ -303,8 +488,16 @@ export class CanonicalAuthorityReplay {
     const addClientCredential = (
       credential: Omit<CanonicalAuthorityClientCredential, "active">,
     ): void => {
-      if (clientCredentials.has(key(credential.clientCredentialId))) {
-        throw new TypeError("Authority State reuses a Client Credential identity");
+      const existing = clientCredentials.get(key(credential.clientCredentialId));
+      if (existing !== undefined) {
+        if (
+          !bytesEqual(existing.memberId, credential.memberId) ||
+          !bytesEqual(existing.signingPublicKey, credential.signingPublicKey) ||
+          !bytesEqual(existing.wrappingPublicKey, credential.wrappingPublicKey)
+        ) {
+          throw new TypeError("Authority State reuses a Client Credential identity");
+        }
+        return;
       }
       clientCredentials.set(key(credential.clientCredentialId), {
         ...credential,
@@ -327,12 +520,25 @@ export class CanonicalAuthorityReplay {
       const acceptance = this.#acceptedInvitations.get(key(event.recordId));
       if (acceptance === undefined) throw new TypeError("Invitation Acceptance state is missing");
       addClientCredential(acceptance.clientCredential);
-      if (
-        recoveryCredentials.some(({ recoveryCredentialId }) =>
-          bytesEqual(recoveryCredentialId, acceptance.recoveryCredential.recoveryCredentialId),
-        )
-      ) {
-        throw new TypeError("Authority State reuses a Recovery Credential identity");
+      const existingRecovery = recoveryCredentials.find(({ recoveryCredentialId }) =>
+        bytesEqual(recoveryCredentialId, acceptance.recoveryCredential.recoveryCredentialId),
+      );
+      if (existingRecovery !== undefined) {
+        if (
+          !bytesEqual(existingRecovery.memberId, acceptance.recoveryCredential.memberId) ||
+          existingRecovery.revision !== acceptance.recoveryCredential.revision ||
+          !bytesEqual(
+            existingRecovery.signingPublicKey,
+            acceptance.recoveryCredential.signingPublicKey,
+          ) ||
+          !bytesEqual(
+            existingRecovery.wrappingPublicKey,
+            acceptance.recoveryCredential.wrappingPublicKey,
+          )
+        ) {
+          throw new TypeError("Authority State reuses a Recovery Credential identity");
+        }
+        continue;
       }
       recoveryCredentials.push({
         ...acceptance.recoveryCredential,
@@ -340,6 +546,25 @@ export class CanonicalAuthorityReplay {
       });
     }
     const writeFences = new Map<string, CanonicalAuthorityWriteFence>();
+    for (const conflict of invitationConflicts) {
+      const causeRecordIds = conflict.candidates
+        .filter(({ outcome }) => outcome === 1)
+        .map(({ headRecordId }) => headRecordId)
+        .sort(compareIds);
+      if (causeRecordIds.length === 0) continue;
+      writeFences.set(`invitation-conflict:${key(conflict.invitationId)}`, {
+        kind: "invitation-conflict",
+        subjectId: conflict.invitationId,
+        causeRecordIds,
+      });
+    }
+    for (const fence of resolvedInvitationFences) {
+      writeFences.set(`invitation-conflict:${key(fence.invitationId)}`, {
+        kind: "invitation-conflict",
+        subjectId: fence.invitationId,
+        causeRecordIds: [...fence.causeRecordIds].sort(compareIds),
+      });
+    }
     for (const event of this.#events) {
       if (event.family !== 1 || !this.#isIncluded(event.recordId, frontier)) {
         continue;
@@ -389,6 +614,7 @@ export class CanonicalAuthorityReplay {
       activeInvitations: [...activeInvitations.values()].sort((left, right) =>
         compareIds(left.invitationId, right.invitationId),
       ),
+      invitationConflicts,
       recoveryCredentials: recoveryCredentials.sort((left, right) =>
         compareIds(left.recoveryCredentialId, right.recoveryCredentialId),
       ),
@@ -522,6 +748,72 @@ export class CanonicalAuthorityReplay {
         await verifyInvitationAcceptance(acceptance, invitation);
         validateInvitationAcceptanceSlots(acceptance, parentState);
         this.#acceptedInvitations.set(key(event.recordId), acceptance);
+      } else if (event.type === 7) {
+        const cancellation = parseInvitationCancellation(event);
+        const invitation = parentState.activeInvitations.find(({ invitationId }) =>
+          bytesEqual(invitationId, cancellation.invitationId),
+        );
+        if (invitation === undefined) {
+          throw new TypeError("Invitation Cancellation does not name an Active Invitation");
+        }
+        await verifyInvitationCancellation(cancellation, invitation);
+        this.#cancelledInvitations.set(key(event.recordId), cancellation);
+      } else if (event.type === 8) {
+        if (!containsId(parentState.administratorIds, signer.memberId)) {
+          throw new TypeError("Invitation Conflict Resolution signer is not an Administrator");
+        }
+        const resolution = parseInvitationResolution(event);
+        const conflict = parentState.invitationConflicts.find(({ invitationId }) =>
+          bytesEqual(invitationId, resolution.invitationId),
+        );
+        if (conflict === undefined) {
+          throw new TypeError("Invitation Conflict Resolution has no current Conflict");
+        }
+        if (
+          !sameIdSet(
+            resolution.conflictingReceiptIds,
+            conflict.candidates.map(({ authorityReceiptId }) => authorityReceiptId),
+          ) ||
+          !sameIdSet(
+            resolution.conflictingRecordIds,
+            conflict.candidates.map(({ headRecordId }) => headRecordId),
+          )
+        ) {
+          throw new TypeError("Invitation Conflict Resolution does not name every candidate");
+        }
+        const selectedCandidates = conflict.candidates.filter(
+          ({ outcome, joinRequestId }) =>
+            outcome === 1 &&
+            resolution.selectedJoinRequestId !== null &&
+            joinRequestId !== null &&
+            bytesEqual(joinRequestId, resolution.selectedJoinRequestId),
+        );
+        if (
+          (resolution.outcome === 1 && selectedCandidates.length === 0) ||
+          (resolution.outcome === 2 && selectedCandidates.length !== 0)
+        ) {
+          throw new TypeError("Invitation Conflict Resolution selected candidate is invalid");
+        }
+        if (
+          resolution.outcome === 1 &&
+          !selectedCandidates.some(({ headRecordId }) =>
+            this.#acceptedInvitations.has(key(headRecordId)),
+          )
+        ) {
+          throw new TypeError("Invitation Conflict Resolution selected Acceptance is unavailable");
+        }
+        this.#resolvedInvitations.set(key(event.recordId), {
+          ...resolution,
+          rejectedConsumedRecordIds: conflict.candidates
+            .filter(
+              ({ outcome, joinRequestId }) =>
+                outcome === 1 &&
+                (resolution.selectedJoinRequestId === null ||
+                  joinRequestId === null ||
+                  !bytesEqual(joinRequestId, resolution.selectedJoinRequestId)),
+            )
+            .map(({ headRecordId }) => headRecordId),
+        });
       } else {
         throw new TypeError("This replay slice cannot yet reduce this Authority Event type");
       }
@@ -563,6 +855,87 @@ export class CanonicalAuthorityReplay {
     return frontier.some(
       (root) => bytesEqual(recordId, root) || this.#graph.isAncestor(recordId, root),
     );
+  }
+}
+
+function parseInvitationCancellation(event: AuthenticatedVaultEvent): CancelledInvitation {
+  const body = exactMap(event.body, [0, 1], "Invitation Cancellation Event body");
+  const request = exactMap(mapValue(body, 0), [0, 1, 2], "Invitation Cancellation Request");
+  const receipt = exactMap(mapValue(body, 1), [...Array(6).keys()], "Cancelled Invitation receipt");
+  return {
+    invitationId: identifierValue(mapValue(request, 0), "Invitation", "Cancelled Invitation ID"),
+    cancellationRequestId: byteString(mapValue(receipt, 2), 32, "Cancellation Request ID"),
+    authorityReceiptId: byteString(mapValue(receipt, 4), 32, "Cancellation Authority receipt ID"),
+    authorityChallenge: byteString(
+      mapValue(request, 1),
+      32,
+      "Invitation Cancellation authority challenge",
+    ),
+    cancellationSignature: byteString(
+      mapValue(request, 2),
+      64,
+      "Invitation Cancellation signature",
+    ),
+    receiptPrefixBytes: encodeCanonicalValue(canonicalNumericPrefix(receipt, 4)),
+    receiptSignature: byteString(
+      mapValue(receipt, 5),
+      64,
+      "Invitation Cancellation receipt signature",
+    ),
+  };
+}
+
+function parseInvitationResolution(
+  event: AuthenticatedVaultEvent,
+): Omit<ResolvedInvitation, "rejectedConsumedRecordIds"> {
+  const body = exactMap(event.body, [0, 1, 2, 3, 4], "Invitation Conflict Resolution body");
+  const outcome = oneOfCodes(mapValue(body, 3), [1, 2] as const, "Invitation resolution outcome");
+  const selectedJoinRequestId = nullable(mapValue(body, 4), (value) =>
+    byteString(value, 32, "Selected Invitation Join Request ID"),
+  );
+  if ((outcome === 1) !== (selectedJoinRequestId !== null)) {
+    throw new TypeError("Invitation Resolution outcome does not match its selected request");
+  }
+  return {
+    invitationId: identifierValue(mapValue(body, 0), "Invitation", "Resolved Invitation ID"),
+    conflictingReceiptIds: canonicalSetValue(
+      mapValue(body, 1),
+      "Conflicting Invitation receipt IDs",
+      (value) => byteString(value, 32, "Invitation receipt ID"),
+      { nonempty: true },
+    ),
+    conflictingRecordIds: idSetValue(
+      mapValue(body, 2),
+      "VaultRecord",
+      "Conflicting Invitation Record IDs",
+      { nonempty: true },
+    ),
+    outcome,
+    selectedJoinRequestId,
+  };
+}
+
+async function verifyInvitationCancellation(
+  cancellation: CancelledInvitation,
+  invitation: CanonicalAuthorityInvitation,
+): Promise<void> {
+  const sodium = await readySodium();
+  if (
+    !sodium.crypto_sign_verify_detached(
+      cancellation.cancellationSignature,
+      transcript("awsm:invitation-cancel-request:v1", [
+        cancellation.invitationId,
+        cancellation.authorityChallenge,
+      ]),
+      invitation.cancellationVerifier,
+    ) ||
+    !sodium.crypto_sign_verify_detached(
+      cancellation.receiptSignature,
+      transcript("awsm:invitation-receipt:v1", [cancellation.receiptPrefixBytes]),
+      invitation.receiptVerificationKey,
+    )
+  ) {
+    throw new TypeError("Invitation Cancellation request or receipt signature is invalid");
   }
 }
 
@@ -707,6 +1080,8 @@ function parseInvitationAcceptance(event: AuthenticatedVaultEvent): AcceptedInvi
       ),
     },
     administrator,
+    joinRequestId: byteString(mapValue(proposal, 1), 32, "Invitation Join Request ID"),
+    authorityReceiptId: byteString(mapValue(receipt, 4), 32, "Invitation Authority receipt ID"),
     capabilitiesBytes: encodeCanonicalValue(mapValue(join, 1)),
     joinRequestPrefixBytes: encodeCanonicalValue(canonicalNumericPrefix(join, 4)),
     clientPossessionSignature: byteString(

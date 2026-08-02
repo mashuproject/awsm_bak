@@ -185,6 +185,12 @@ resolves it by selecting one consumed candidate or cancelling all. A disputed ca
 its conditional Administrator grant to resolve itself. Any rejected consumed candidate requires
 an excluding Key Epoch before protected writes continue.
 
+At the merged conflicted frontier, every disputed candidate's membership, Client Credential,
+Recovery, and Administrator authority is conditional and therefore ineligible for new Events.
+This does not invalidate Events authored on an acceptance-only branch at their exact Authority
+Parents. Resolution activates only the selected consumed candidate, or none when all are
+cancelled; rejected Credential identities remain Historical Attribution.
+
 Invitation Acceptance concurrent with unrelated authority work remains valid at its own Authority
 Parents; Key Delivery repairs any target-specific envelope gap. Acceptance concurrent with Closure
 grants at most Historical Access to the resulting Closed Vault.
