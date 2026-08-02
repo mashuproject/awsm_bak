@@ -1,18 +1,18 @@
-export interface CanonicalPopupState {
-  readonly selectedVaultId?: string;
-  readonly vaults: readonly unknown[];
-}
+import type {
+  CanonicalClientLibraryItem,
+  CanonicalClientState,
+} from "../runtime/client/canonical-runtime";
+
+export type CanonicalPopupState = CanonicalClientState;
 
 export interface CanonicalPopupView {
   readonly state: CanonicalPopupState;
-  readonly library: readonly unknown[];
+  readonly library: readonly CanonicalClientLibraryItem[];
 }
 
 export interface CanonicalPopupClient {
-  request(request: {
-    readonly type: "GetState" | "ListLibrary";
-    readonly expectedVaultId?: string;
-  }): Promise<unknown>;
+  state(): Promise<CanonicalPopupState>;
+  listLibrary(expectedVaultId: string): Promise<readonly CanonicalClientLibraryItem[]>;
   subscribe(listener: () => void): () => void;
 }
 
@@ -59,15 +59,12 @@ export class CanonicalPopupController {
   private async reconcile(): Promise<void> {
     while (this.active) {
       const generation = this.generation;
-      const state = (await this.client.request({ type: "GetState" })) as CanonicalPopupState;
+      const state = await this.client.state();
       if (!this.active || generation !== this.generation) continue;
       const library =
         state.selectedVaultId === undefined
           ? []
-          : ((await this.client.request({
-              type: "ListLibrary",
-              expectedVaultId: state.selectedVaultId,
-            })) as readonly unknown[]);
+          : await this.client.listLibrary(state.selectedVaultId);
       if (!this.active || generation !== this.generation) continue;
       this.render({ state, library });
       this.renderedGeneration = generation;

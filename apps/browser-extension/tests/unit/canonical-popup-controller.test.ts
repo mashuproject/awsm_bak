@@ -6,14 +6,23 @@ describe("canonical popup controller", () => {
   it("subscribes before its initial fetch and renders the selected Vault Library", async () => {
     let changed: (() => void) | undefined;
     const client = {
-      request: vi.fn(async (request: { readonly type: string }) =>
-        request.type === "GetState"
-          ? {
-              selectedVaultId: "a".repeat(64),
-              vaults: [{ vaultId: "a".repeat(64), label: "Research", selected: true }],
-            }
-          : [{ bundleId: "b".repeat(64) }],
-      ),
+      state: vi.fn(async () => ({
+        selectedVaultId: "a".repeat(64),
+        vaults: [{ vaultId: "a".repeat(64), label: "Research", selected: true }],
+      })),
+      listLibrary: vi.fn(async () => [
+        {
+          bundleId: "b".repeat(64),
+          collectionId: "c".repeat(64),
+          artifactId: "d".repeat(64),
+          capturedAt: 1,
+          originalUrl: "https://example.com/original",
+          finalUrl: "https://example.com/final",
+          title: "Example",
+          availableLocally: true,
+          lifecycle: "Active" as const,
+        },
+      ]),
       subscribe: vi.fn((listener: () => void) => {
         changed = listener;
         return () => undefined;
@@ -25,14 +34,26 @@ describe("canonical popup controller", () => {
     await controller.start();
 
     expect(client.subscribe.mock.invocationCallOrder[0]).toBeLessThan(
-      client.request.mock.invocationCallOrder[0] ?? Infinity,
+      client.state.mock.invocationCallOrder[0] ?? Infinity,
     );
     expect(render).toHaveBeenCalledWith({
       state: {
         selectedVaultId: "a".repeat(64),
         vaults: [{ vaultId: "a".repeat(64), label: "Research", selected: true }],
       },
-      library: [{ bundleId: "b".repeat(64) }],
+      library: [
+        {
+          bundleId: "b".repeat(64),
+          collectionId: "c".repeat(64),
+          artifactId: "d".repeat(64),
+          capturedAt: 1,
+          originalUrl: "https://example.com/original",
+          finalUrl: "https://example.com/final",
+          title: "Example",
+          availableLocally: true,
+          lifecycle: "Active",
+        },
+      ],
     });
     expect(changed).toBeDefined();
   });
@@ -44,11 +65,26 @@ describe("canonical popup controller", () => {
       resolveFirstState = resolve;
     });
     const client = {
-      request: vi
+      state: vi
         .fn()
         .mockImplementationOnce(() => firstState)
-        .mockResolvedValueOnce({ selectedVaultId: "b".repeat(64), vaults: [] })
-        .mockResolvedValueOnce([{ bundleId: "c".repeat(64) }]),
+        .mockResolvedValueOnce({
+          selectedVaultId: "b".repeat(64),
+          vaults: [{ vaultId: "b".repeat(64), label: "Inbox", selected: true }],
+        }),
+      listLibrary: vi.fn().mockResolvedValueOnce([
+        {
+          bundleId: "c".repeat(64),
+          collectionId: "d".repeat(64),
+          artifactId: "e".repeat(64),
+          capturedAt: 1,
+          originalUrl: "https://example.com/original",
+          finalUrl: "https://example.com/final",
+          title: "Example",
+          availableLocally: true,
+          lifecycle: "Active" as const,
+        },
+      ]),
       subscribe: vi.fn((listener: () => void) => {
         changed = listener;
         return () => undefined;
@@ -64,8 +100,23 @@ describe("canonical popup controller", () => {
 
     expect(render).toHaveBeenCalledTimes(1);
     expect(render).toHaveBeenLastCalledWith({
-      state: { selectedVaultId: "b".repeat(64), vaults: [] },
-      library: [{ bundleId: "c".repeat(64) }],
+      state: {
+        selectedVaultId: "b".repeat(64),
+        vaults: [{ vaultId: "b".repeat(64), label: "Inbox", selected: true }],
+      },
+      library: [
+        {
+          bundleId: "c".repeat(64),
+          collectionId: "d".repeat(64),
+          artifactId: "e".repeat(64),
+          capturedAt: 1,
+          originalUrl: "https://example.com/original",
+          finalUrl: "https://example.com/final",
+          title: "Example",
+          availableLocally: true,
+          lifecycle: "Active",
+        },
+      ],
     });
   });
 });
