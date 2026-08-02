@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 
+import { sealCompactItem } from "../../src/crypto/compact";
+import { advisoryExtensions } from "../../src/domain/canonical/features";
+import { randomIdentifier } from "../../src/domain/canonical/identifiers";
+import { signVaultEvent } from "../../src/domain/canonical/record";
 import { canonicalMap, canonicalSet } from "../../src/domain/canonical/value";
 import { prepareCanonicalContentEvent } from "../../src/runtime/content/canonical-prepare";
 import { CanonicalHostedPullService } from "../../src/runtime/synchronization/canonical-hosted-pull-service";
@@ -15,7 +19,7 @@ const REMOTE_ID = "019fa62e-a653-7f63-b2bf-94e7ed5e46ca";
 const LOCATOR_SALT = new Uint8Array(32).fill(91);
 
 describe("canonical Hosted pull service", () => {
-  it("resumes validation, verifies one Content branch, and atomically promotes it", async () => {
+  it("promotes a valid Content branch while retaining an unrelated unverifiable branch", async () => {
     const creation = await prepareCanonicalVaultCreation({ label: "Sync", assertedAt: 1 });
     const replicaState: CanonicalReplicaState = {
       vaultId: creation.ids.vaultId,
@@ -77,6 +81,36 @@ describe("canonical Hosted pull service", () => {
       logicalNamespace: HOSTED_REPLICA_LOGICAL_NAMESPACE.VaultRecord,
       logicalId: prepared.event.recordId,
     });
+    const unverified = await signVaultEvent(
+      {
+        vaultId: creation.ids.vaultId,
+        generationId: creation.ids.generationId,
+        parentRecordIds: vault.replicaState.causalFrontier,
+        authorityParentRecordIds: vault.replicaState.authorityFrontier,
+        dependencies: [],
+        requiredFeatureSetId: randomIdentifier("RequiredFeatureSet"),
+        extensions: advisoryExtensions([]),
+        family: 2,
+        type: 4,
+        signerCredentialId: creation.ids.clientCredentialId,
+        assertedAt: 3,
+        body: canonicalMap([[0, canonicalSet([new Uint8Array(32).fill(7)])]]),
+      },
+      creation.secrets.client.signingSecretKey,
+    );
+    const unverifiedEnvelope = await sealCompactItem({
+      vaultId: creation.ids.vaultId,
+      keyEpochId: creation.secrets.keyEpoch.id,
+      keyEpochKey: creation.secrets.keyEpoch.key,
+      payloadType: 1,
+      payloadBytes: unverified.bytes,
+      protectionParameters: new Uint8Array(64).fill(10),
+    });
+    const unverifiedLocator = await deriveHostedReplicaOpaqueLocator({
+      locatorSalt: LOCATOR_SALT,
+      logicalNamespace: HOSTED_REPLICA_LOGICAL_NAMESPACE.VaultRecord,
+      logicalId: unverified.recordId,
+    });
     const job = {
       jobId: "019fa62e-a653-7f63-b2bf-94e7ed5e46cb",
       vaultId: creation.ids.vaultId,
@@ -88,10 +122,13 @@ describe("canonical Hosted pull service", () => {
       nextPosition: null,
       attempt: 0,
       retryAfterMs: null,
-      quarantineReferences: [{ storageItemId: prepared.eventEnvelope.storageItemId, locator }],
+      quarantineReferences: [
+        { storageItemId: prepared.eventEnvelope.storageItemId, locator },
+        { storageItemId: unverifiedEnvelope.storageItemId, locator: unverifiedLocator },
+      ],
       progress: {
-        discoveredItemCount: 1,
-        downloadedItemCount: 1,
+        discoveredItemCount: 2,
+        downloadedItemCount: 2,
         promotedItemCount: 0,
         rejectedItemCount: 0,
       },
@@ -158,7 +195,10 @@ describe("canonical Hosted pull service", () => {
         completeValidation: async () => {
           throw new TypeError("unexpected empty completion");
         },
-        readQuarantine: async () => prepared.eventEnvelope.bytes,
+        readQuarantine: async ({ storageItemId }) =>
+          storageItemId.toString() === prepared.eventEnvelope.storageItemId.toString()
+            ? prepared.eventEnvelope.bytes
+            : unverifiedEnvelope.bytes,
         promoteValidated: async (input) => {
           promoted.push(input);
         },
@@ -168,9 +208,11 @@ describe("canonical Hosted pull service", () => {
     await expect(
       service.pull({ vaultId: creation.ids.vaultId, remoteId: REMOTE_ID }),
     ).resolves.toMatchObject({
-      stage: 3,
-      state: 3,
-      quarantineReferences: [],
+      stage: 2,
+      state: 1,
+      quarantineReferences: [
+        { storageItemId: unverifiedEnvelope.storageItemId, locator: unverifiedLocator },
+      ],
     });
     expect(promoted).toHaveLength(1);
   });

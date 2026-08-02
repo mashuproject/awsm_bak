@@ -8,7 +8,10 @@ import type { CanonicalVaultService } from "../vault/canonical-service";
 import { CanonicalHostedReplicaHttp } from "./canonical-host-http";
 import type { CanonicalPulledCompactCandidate } from "./canonical-pull-candidate";
 import { CanonicalPullContentPromotionService } from "./canonical-pull-content-promotion";
-import { CanonicalPullContentValidationService } from "./canonical-pull-content-validation";
+import {
+  type CanonicalPullContentValidation,
+  CanonicalPullContentValidationService,
+} from "./canonical-pull-content-validation";
 import { CanonicalPullInventoryRunner } from "./canonical-pull-inventory-runner";
 import type { CanonicalPullSynchronizationJobService } from "./canonical-pull-synchronization-job-service";
 import { CanonicalPullValidationRunner } from "./canonical-pull-validation-runner";
@@ -105,8 +108,8 @@ export class CanonicalHostedPullService {
     }
     if (job.stage !== 2 || job.state !== 1) return job;
 
-    const vault = await this.dependencies.vaults.openVault(input.vaultId);
-    const epochSecrets = await this.dependencies.vaults.listEpochSecrets(vault);
+    const initialVault = await this.dependencies.vaults.openVault(input.vaultId);
+    const epochSecrets = await this.dependencies.vaults.listEpochSecrets(initialVault);
     try {
       const validated = await new CanonicalPullValidationRunner({
         readQuarantine: this.dependencies.jobs.readQuarantine.bind(this.dependencies.jobs),
@@ -117,22 +120,34 @@ export class CanonicalHostedPullService {
           ? this.dependencies.jobs.completeValidation(job)
           : job;
       }
-      const contentValidation = await new CanonicalPullContentValidationService(
-        new CanonicalReplayService(this.dependencies.vaults as never),
-        { readQuarantine: this.dependencies.jobs.readQuarantine.bind(this.dependencies.jobs) },
-      ).validate({
-        remoteId: remote.remoteId,
-        vault,
-        candidates: validated.candidates,
-        rootRecordIds,
-      });
-      if (contentValidation.acceptedCandidates.length === 0) return job;
-      return new CanonicalPullContentPromotionService(this.dependencies.jobs).promote({
-        vault,
-        previous: job,
-        validation: contentValidation,
-        readQuarantine: this.dependencies.jobs.readQuarantine.bind(this.dependencies.jobs),
-      });
+      let result = job;
+      for (const rootRecordId of rootRecordIds) {
+        const vault = await this.dependencies.vaults.openVault(input.vaultId);
+        let contentValidation: CanonicalPullContentValidation;
+        try {
+          contentValidation = await new CanonicalPullContentValidationService(
+            new CanonicalReplayService(this.dependencies.vaults as never),
+            { readQuarantine: this.dependencies.jobs.readQuarantine.bind(this.dependencies.jobs) },
+          ).validate({
+            remoteId: remote.remoteId,
+            vault,
+            candidates: validated.candidates,
+            rootRecordIds: [rootRecordId],
+          });
+        } catch (error) {
+          if (error instanceof TypeError) continue;
+          throw error;
+        }
+        if (contentValidation.acceptedCandidates.length === 0) continue;
+        result = await new CanonicalPullContentPromotionService(this.dependencies.jobs).promote({
+          vault,
+          previous: result,
+          validation: contentValidation,
+          readQuarantine: this.dependencies.jobs.readQuarantine.bind(this.dependencies.jobs),
+        });
+        if (result.stage !== 2 || result.state !== 1) break;
+      }
+      return result;
     } finally {
       await Promise.all(epochSecrets.map(({ key }) => wipe(key)));
     }
