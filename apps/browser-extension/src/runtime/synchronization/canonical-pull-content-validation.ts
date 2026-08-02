@@ -18,7 +18,7 @@ import type { CanonicalReplicaState } from "../vault/canonical-local-state";
 import type { PersistedOpenedCanonicalVault } from "../vault/canonical-service";
 import type { CanonicalPulledCompactCandidate } from "./canonical-pull-candidate";
 
-type PulledContentRecord = Extract<
+export type CanonicalPulledContentRecord = Extract<
   CanonicalPulledCompactCandidate,
   { readonly kind: "VaultRecord" }
 >;
@@ -54,9 +54,9 @@ function decodeRecord(bytes: Uint8Array): AuthenticatedVaultEvent | VaultBaselin
 }
 
 function candidateMaps(candidates: readonly CanonicalPulledCompactCandidate[]): {
-  readonly records: ReadonlyMap<string, PulledContentRecord>;
+  readonly records: ReadonlyMap<string, CanonicalPulledContentRecord>;
 } {
-  const records = new Map<string, PulledContentRecord>();
+  const records = new Map<string, CanonicalPulledContentRecord>();
   const storageItems = new Set<string>();
   for (const candidate of candidates) {
     if (candidate.kind !== "VaultRecord") continue;
@@ -88,7 +88,10 @@ function assertCurrentContentContext(
   }
 }
 
-function candidateOpened(candidate: PulledContentRecord, bytes: Uint8Array): OpenedCompactItem {
+function candidateOpened(
+  candidate: CanonicalPulledContentRecord,
+  bytes: Uint8Array,
+): OpenedCompactItem {
   const envelope = decodeOpaqueEnvelope(bytes);
   same(envelope.storageItemId, candidate.storageItemId, "Pulled Quarantine Storage Item ID");
   return {
@@ -97,6 +100,11 @@ function candidateOpened(candidate: PulledContentRecord, bytes: Uint8Array): Ope
     payloadBytes: candidate.record.bytes,
     envelope,
   };
+}
+
+export interface CanonicalPullContentValidation {
+  readonly nextReplicaState: CanonicalReplicaState;
+  readonly acceptedCandidates: readonly CanonicalPulledContentRecord[];
 }
 
 /**
@@ -115,10 +123,7 @@ export class CanonicalPullContentValidationService {
     readonly vault: PersistedOpenedCanonicalVault;
     readonly candidates: readonly CanonicalPulledCompactCandidate[];
     readonly rootRecordIds: readonly Identifier<"VaultRecord">[];
-  }): Promise<{
-    readonly nextReplicaState: CanonicalReplicaState;
-    readonly acceptedCandidates: readonly CanonicalPulledCompactCandidate[];
-  }> {
+  }): Promise<CanonicalPullContentValidation> {
     if (input.vault.replicaState.adoption !== null) {
       throw new TypeError("Pulled Content validation requires a non-adopted Generation");
     }
@@ -131,7 +136,7 @@ export class CanonicalPullContentValidationService {
     const current = await this.replays.replayOpened(input.vault);
     const candidates = candidateMaps(input.candidates);
     const graph = current.graph;
-    const selectedRecords: PulledContentRecord[] = [];
+    const selectedRecords: CanonicalPulledContentRecord[] = [];
     const visiting = new Set<string>();
     const selectRecord = (recordId: Identifier<"VaultRecord">): void => {
       const recordKey = key(recordId);
@@ -174,7 +179,7 @@ export class CanonicalPullContentValidationService {
       replicaState: nextReplicaState,
     };
     const bytesByStorageItem = new Map<string, Uint8Array>();
-    const readCandidate = async (candidate: PulledContentRecord): Promise<Uint8Array> => {
+    const readCandidate = async (candidate: CanonicalPulledContentRecord): Promise<Uint8Array> => {
       const candidateKey = key(candidate.storageItemId);
       const cached = bytesByStorageItem.get(candidateKey);
       if (cached !== undefined) return cached;
@@ -254,7 +259,7 @@ export class CanonicalPullContentValidationService {
     const acceptedRecordIds = new Set(reachability.recordIds.map(key));
     const selectedRecordIds = new Set(selectedRecords.map(({ logicalId }) => key(logicalId)));
     const acceptedCandidates = input.candidates.filter(
-      (candidate): candidate is PulledContentRecord =>
+      (candidate): candidate is CanonicalPulledContentRecord =>
         candidate.kind === "VaultRecord" && selectedRecordIds.has(key(candidate.logicalId)),
     );
     if (!selectedRecords.every(({ logicalId }) => acceptedRecordIds.has(key(logicalId)))) {
