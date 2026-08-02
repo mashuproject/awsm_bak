@@ -162,9 +162,11 @@ Search, export/import, synchronization, availability, member and invitation mana
 detail, and conflict-resolution surfaces still require canonical replacements. The obsolete
 synchronization-setup entrypoint is removed rather than left as a broken compatibility route. The
 retired direct application protocol, its Library-preferences and direct popup/Library view helpers,
-and their sole-contract tests are also removed. Remaining disconnected experimental source and
-browser journeys, including old Search, synchronization, and offscreen paths, require a separate
-audit and canonical replacement or deletion before v0.3 is complete.
+and their sole-contract tests are also removed. The offscreen entrypoint now contains only
+canonical screenshot stitching; its retired export and MHTML-download message protocols are
+removed. Remaining disconnected experimental source and browser journeys, including old Search and
+synchronization paths, require a separate audit and canonical replacement or deletion before v0.3
+is complete.
 
 # 4. Replica Host impact
 

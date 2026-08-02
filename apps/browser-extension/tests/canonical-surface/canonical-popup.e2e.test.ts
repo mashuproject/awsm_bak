@@ -120,6 +120,15 @@ test("runs the canonical local Vault ceremony through a packaged extension", asy
   test.setTimeout(90_000);
   expect(browserName).toBe("chromium");
   await expect(access(resolve(extensionBuildPath, "sync-setup.html"))).rejects.toThrow();
+  const offscreenHtml = await readFile(resolve(extensionBuildPath, "offscreen.html"), "utf8");
+  const offscreenScript = offscreenHtml.match(/<script[^>]+src="([^"?]+)"/u)?.[1];
+  if (offscreenScript === undefined) throw new Error("Packaged offscreen script is missing.");
+  const offscreenSource = await readFile(
+    resolve(extensionBuildPath, offscreenScript.replace(/^\//u, "")),
+    "utf8",
+  );
+  expect(offscreenSource).not.toContain("awsm:prepare-vault-export-download");
+  expect(offscreenSource).not.toContain("awsm:prepare-mhtml-download");
   const client = await packagedCanonicalExtension(testInfo);
   const fixture = await captureFixture();
   try {
