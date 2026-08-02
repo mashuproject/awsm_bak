@@ -114,7 +114,10 @@ authentication, or commit failure, and cleanup of Prepared Data and Key Epoch co
 bind the encrypted package length and digest to the Snapshot, reject Manifest substitution before
 Replica mutation, activate an unknown Vault as authoring-free, route a known Vault through ordinary
 Import collision rules, and prove restart in real browser storage. Retention tests trace every
-cross-Snapshot dependency before removing a Snapshot or shared entry.
+manifest-to-package dependency, reject missing, duplicate, foreign, or concurrently changed
+inventory, and remove only explicitly selected Snapshots plus package entries unreachable from the
+retained set. Exact package publication is idempotent at the same digest and Snapshot ID; the
+initial format does not claim independent inner-entry deduplication between different packages.
 
 Replica Garbage Collection tests authenticate the current Replica before tracing, retain active and
 explicitly preserved causal branches, retain only Authority Parents and typed dependencies for the

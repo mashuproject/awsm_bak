@@ -23,15 +23,17 @@ Snapshots. Each Snapshot binds one Vault ID, Generation ID, exact Frontier, Requ
 state digest, complete logical reachability, complete Continuity Proof, and exact stored-entry
 inventory.
 
-A Snapshot may reference earlier entries in the same verified Backup Set for deduplication. The
-dependency graph is explicit, content-addressed, and closed under retention. No Snapshot relies on
-an active Replica or Host after successful verification.
+The canonical initial Snapshot is self-contained and references one exact encrypted Complete Export
+package by byte length and SHA-256 digest. The digest is the package's content address inside the
+Backup Set, so repeated publication of the exact same package and Manifest is the same idempotent
+Snapshot rather than a second physical copy. Reusing that encrypted container does not make the
+Backup Set a live Replica or synchronization participant; the Backup Set adds destination
+verification, immutable Snapshot publication, and retention semantics.
 
-The base self-contained Snapshot stores one exact Complete Export package. Reusing that encrypted
-container and semantic Manifest does not make the Backup Set a live Replica or synchronization
-participant; the Backup Set adds destination verification, immutable Snapshot publication, and
-retention semantics. Cross-Snapshot entry references are an optional physical optimization and
-MUST NOT be required to restore a self-contained Snapshot.
+Independent inner-entry sharing between different Snapshot packages is not part of the canonical
+initial format. A future physical optimization may add explicit content-addressed cross-Snapshot
+dependencies, but it MUST preserve self-contained Restore and extend the retention trace before it
+can be used.
 
 ## 2.1 Snapshot Manifest
 
@@ -87,9 +89,18 @@ verification Prepared Data; a published Snapshot is not invalidated by later cle
 
 # 5. Retention
 
-Retention deletes only Snapshots explicitly selected by policy and only entries unreachable from
-every retained Snapshot. Vacuum does not inspect or rewrite Backup Sets. A predecessor Snapshot may
-remain available after the active Vault adopts a successor.
+Retention first validates one exact destination inventory: every immutable Snapshot Manifest must
+belong to the selected Backup Set, its stored Snapshot ID must match its canonical Manifest, every
+encrypted package digest is unique, and every Manifest must resolve to one package with the exact
+declared byte length. Unknown fields, duplicates, foreign Backup Set IDs, missing packages, and
+unknown deletion targets fail closed.
+
+Retention deletes only Snapshots explicitly selected by policy and only package entries unreachable
+from every retained Snapshot. Orphan package entries are also unreachable cleanup state. The
+destination applies the complete plan only if its Snapshot and package inventory still equals the
+validated inventory; a concurrent publication therefore forces a fresh trace instead of losing a
+new dependency. Vacuum does not inspect or rewrite Backup Sets. A predecessor Snapshot may remain
+available after the active Vault adopts a successor.
 
 # 6. Restore boundary
 

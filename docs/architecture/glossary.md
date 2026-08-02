@@ -1179,6 +1179,14 @@ An immutable logical view of a Vault at one authenticated state.
 A durable recovery copy derived from a Snapshot. Backup is recovery-oriented and is not a live
 Replica or interchange-oriented Complete Export.
 
+## Backup Set
+
+A destination-scoped collection of immutable Backup Snapshots and their content-addressed encrypted
+package entries under one local backup identity and protection profile. It is local recovery policy,
+not Vault authority, a Replica, a Remote, or a portable redundancy claim. The canonical initial
+Snapshot is self-contained; repeating its exact package and Manifest is idempotent rather than a
+second physical entry.
+
 ## Recovery Plan
 
 A validated execution plan describing how Restore reconstructs and verifies a Vault Replica from
