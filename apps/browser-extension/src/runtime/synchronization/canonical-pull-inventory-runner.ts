@@ -132,7 +132,9 @@ export class CanonicalPullInventoryRunner {
     }
 
     let job = input.job;
-    const knownStorageItems = new Set(job.quarantineStorageItemIds.map(identifierStorageKey));
+    const knownStorageItems = new Set(
+      job.quarantineReferences.map(({ storageItemId }) => identifierStorageKey(storageItemId)),
+    );
     for (;;) {
       const requestedPosition = job.nextPosition;
       const page = await this.dependencies.inventory({
@@ -180,7 +182,10 @@ export class CanonicalPullInventoryRunner {
             snapshotCursor: page.snapshotCursor,
             nextPosition: requestedPosition,
           }),
-          quarantineStorageItemIds: [...job.quarantineStorageItemIds, inventoryItem.storageItemId],
+          quarantineReferences: [
+            ...job.quarantineReferences,
+            { storageItemId: inventoryItem.storageItemId, locator: inventoryItem.locator },
+          ],
           progress: {
             ...job.progress,
             discoveredItemCount: job.progress.discoveredItemCount + 1,

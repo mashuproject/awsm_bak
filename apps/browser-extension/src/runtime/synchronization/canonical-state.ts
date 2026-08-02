@@ -47,6 +47,11 @@ export interface CanonicalRemoteCredential {
   readonly bearerToken: string;
 }
 
+export interface CanonicalQuarantineReference {
+  readonly storageItemId: Identifier<"StorageItem">;
+  readonly locator: Uint8Array;
+}
+
 export interface CanonicalPullSynchronizationJob {
   readonly jobId: string;
   readonly vaultId: Identifier<"Vault">;
@@ -58,7 +63,7 @@ export interface CanonicalPullSynchronizationJob {
   readonly nextPosition: Identifier<"StorageItem"> | null;
   readonly attempt: number;
   readonly retryAfterMs: number | null;
-  readonly quarantineStorageItemIds: readonly Identifier<"StorageItem">[];
+  readonly quarantineReferences: readonly CanonicalQuarantineReference[];
   readonly progress: {
     readonly discoveredItemCount: number;
     readonly downloadedItemCount: number;
@@ -144,12 +149,37 @@ function decodeRealm(value: CanonicalValue): StorageRealm {
   return realm;
 }
 
-function storageItemSet(
-  values: readonly Identifier<"StorageItem">[],
-): readonly Identifier<"StorageItem">[] {
-  return canonicalSet(
-    values.map((value) => identifierValue(value, "StorageItem", "Quarantine Storage Item ID")),
-  );
+function quarantineReferenceValue(
+  value: CanonicalQuarantineReference,
+): ReadonlyMap<number, CanonicalValue> {
+  return canonicalMap([
+    [0, identifierValue(value.storageItemId, "StorageItem", "Quarantine Storage Item ID")],
+    [1, byteString(value.locator, 32, "Quarantine opaque locator")],
+  ]);
+}
+
+function decodeQuarantineReference(value: CanonicalValue): CanonicalQuarantineReference {
+  const map = exactMap(value, [0, 1], "Synchronization Job Quarantine reference");
+  return {
+    storageItemId: identifierValue(mapValue(map, 0), "StorageItem", "Quarantine Storage Item ID"),
+    locator: byteString(mapValue(map, 1), 32, "Quarantine opaque locator"),
+  };
+}
+
+function quarantineReferences(
+  values: readonly CanonicalQuarantineReference[],
+): readonly CanonicalQuarantineReference[] {
+  const storageItemIds: Identifier<"StorageItem">[] = [];
+  for (const value of values) {
+    const reference = decodeQuarantineReference(quarantineReferenceValue(value));
+    if (
+      storageItemIds.some((storageItemId) => bytesEqual(storageItemId, reference.storageItemId))
+    ) {
+      throw new TypeError("Synchronization Job Quarantine repeats an opaque Storage Item");
+    }
+    storageItemIds.push(reference.storageItemId);
+  }
+  return canonicalSet(values.map(quarantineReferenceValue)).map(decodeQuarantineReference);
 }
 
 function progressValue(
@@ -199,7 +229,7 @@ function validatePullJob(job: CanonicalPullSynchronizationJob): CanonicalPullSyn
   if (job.state === 2 && (job.attempt < 1 || job.retryAfterMs === null)) {
     throw new TypeError("A retryable Synchronization Job requires a retry attempt and time");
   }
-  const quarantine = storageItemSet(job.quarantineStorageItemIds);
+  const quarantine = quarantineReferences(job.quarantineReferences);
   const progress = progressValue(job.progress);
   if (
     job.progress.downloadedItemCount > job.progress.discoveredItemCount ||
@@ -227,7 +257,7 @@ function validatePullJob(job: CanonicalPullSynchronizationJob): CanonicalPullSyn
   }
   return {
     ...job,
-    quarantineStorageItemIds: quarantine,
+    quarantineReferences: quarantine,
     progress: decodeProgress(progress),
   };
 }
@@ -329,7 +359,10 @@ export function encodeCanonicalPullSynchronizationJob(
       [8, job.nextPosition],
       [9, job.attempt],
       [10, job.retryAfterMs],
-      [11, canonicalSet(storageItemSet(job.quarantineStorageItemIds))],
+      [
+        11,
+        canonicalSet(quarantineReferences(job.quarantineReferences).map(quarantineReferenceValue)),
+      ],
       [12, progressValue(job.progress)],
     ]),
   );
@@ -360,9 +393,7 @@ export function decodeCanonicalPullSynchronizationJob(
     retryAfterMs: nullable(mapValue(map, 10), (value) =>
       nonnegativeInteger(value, "Synchronization retry time"),
     ),
-    quarantineStorageItemIds: quarantine.map((value) =>
-      identifierValue(value, "StorageItem", "Quarantine Storage Item ID"),
-    ),
+    quarantineReferences: quarantineReferences(quarantine.map(decodeQuarantineReference)),
     progress: decodeProgress(mapValue(map, 12)),
   };
   const validated = validatePullJob(value);

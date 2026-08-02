@@ -1,4 +1,3 @@
-import type { Identifier } from "../../domain/canonical/identifiers";
 import { bytesEqual } from "../../domain/hash";
 import {
   type CanonicalIndexedDb,
@@ -9,6 +8,7 @@ import { NAMESPACES, type StorageRealm } from "../../drivers/indexeddb/canonical
 import { decodeOpaqueEnvelope } from "../../storage/opaque-envelope";
 import {
   type CanonicalPullSynchronizationJob,
+  type CanonicalQuarantineReference,
   decodeCanonicalPullSynchronizationJob,
   encodeCanonicalPullSynchronizationJob,
 } from "./canonical-state";
@@ -42,22 +42,34 @@ function assertSameJobContext(
   }
 }
 
-function key(value: Identifier<"StorageItem">): string {
-  return identifierStorageKey(value);
+function key(value: CanonicalQuarantineReference): string {
+  return identifierStorageKey(value.storageItemId);
 }
 
 function newlyAddedQuarantine(
   previous: CanonicalPullSynchronizationJob,
   next: CanonicalPullSynchronizationJob,
-): Identifier<"StorageItem"> {
-  const previousIds = new Set(previous.quarantineStorageItemIds.map(key));
-  const nextIds = new Set(next.quarantineStorageItemIds.map(key));
-  if (![...previousIds].every((storageItemId) => nextIds.has(storageItemId))) {
-    throw new TypeError(
-      "Synchronization download checkpoints must retain prior Quarantine references",
-    );
+): CanonicalQuarantineReference {
+  const previousByStorageItem = new Map(
+    previous.quarantineReferences.map((reference) => [key(reference), reference]),
+  );
+  const nextByStorageItem = new Map(
+    next.quarantineReferences.map((reference) => [key(reference), reference]),
+  );
+  for (const [storageItemId, previousReference] of previousByStorageItem) {
+    const nextReference = nextByStorageItem.get(storageItemId);
+    if (
+      nextReference === undefined ||
+      !bytesEqual(previousReference.locator, nextReference.locator)
+    ) {
+      throw new TypeError(
+        "Synchronization download checkpoints must retain prior Quarantine references",
+      );
+    }
   }
-  const added = next.quarantineStorageItemIds.filter((item) => !previousIds.has(key(item)));
+  const added = next.quarantineReferences.filter(
+    (reference) => !previousByStorageItem.has(key(reference)),
+  );
   if (added.length !== 1 || added[0] === undefined) {
     throw new TypeError(
       "Synchronization Job must add exactly one Quarantine identity per download",
@@ -70,13 +82,18 @@ function sameQuarantine(
   previous: CanonicalPullSynchronizationJob,
   next: CanonicalPullSynchronizationJob,
 ): boolean {
-  if (previous.quarantineStorageItemIds.length !== next.quarantineStorageItemIds.length) {
+  if (previous.quarantineReferences.length !== next.quarantineReferences.length) {
     return false;
   }
-  const previousIds = new Set(previous.quarantineStorageItemIds.map(key));
-  return next.quarantineStorageItemIds.every((storageItemId) =>
-    previousIds.has(key(storageItemId)),
+  const previousByStorageItem = new Map(
+    previous.quarantineReferences.map((reference) => [key(reference), reference]),
   );
+  return next.quarantineReferences.every((reference) => {
+    const previousReference = previousByStorageItem.get(key(reference));
+    return (
+      previousReference !== undefined && bytesEqual(previousReference.locator, reference.locator)
+    );
+  });
 }
 
 export class CanonicalPullSynchronizationJobService {
@@ -101,7 +118,7 @@ export class CanonicalPullSynchronizationJobService {
       nextPosition: null,
       attempt: 0,
       retryAfterMs: null,
-      quarantineStorageItemIds: [],
+      quarantineReferences: [],
       progress: {
         discoveredItemCount: 0,
         downloadedItemCount: 0,
@@ -156,15 +173,15 @@ export class CanonicalPullSynchronizationJobService {
     assertSameJobContext(input.previous, input.next, this.realm);
     const previousBytes = encodeCanonicalPullSynchronizationJob(input.previous);
     const nextBytes = encodeCanonicalPullSynchronizationJob(input.next);
-    const storageItemId = newlyAddedQuarantine(input.previous, input.next);
+    const quarantineReference = newlyAddedQuarantine(input.previous, input.next);
     const envelope = decodeOpaqueEnvelope(input.bytes);
-    if (!bytesEqual(envelope.storageItemId, storageItemId)) {
+    if (!bytesEqual(envelope.storageItemId, quarantineReference.storageItemId)) {
       throw new TypeError("Quarantine identity does not match its outer envelope bytes");
     }
     const quarantine: NamespaceBytes = {
       namespace: NAMESPACES.incomingQuarantine.key,
       scopeKey: input.next.remoteId,
-      itemKey: identifierStorageKey(storageItemId),
+      itemKey: identifierStorageKey(quarantineReference.storageItemId),
       bytes: Uint8Array.from(input.bytes),
     };
     await this.storage.commitExecutionMutation({

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { identifier } from "../../src/domain/canonical/identifiers";
+import { type Identifier, identifier } from "../../src/domain/canonical/identifiers";
 import { identifierStorageKey } from "../../src/drivers/indexeddb/canonical-database";
 import { NAMESPACES, NORMAL_STORAGE_REALM } from "../../src/drivers/indexeddb/canonical-schema";
 import { CanonicalPullSynchronizationJobService } from "../../src/runtime/synchronization/canonical-pull-synchronization-job-service";
@@ -11,6 +11,10 @@ const JOB_ID = "019fa62e-a653-7f63-b2bf-94e7ed5e46cb";
 
 function filled<Kind extends Parameters<typeof identifier>[0]>(kind: Kind, byte: number) {
   return identifier(kind, new Uint8Array(32).fill(byte));
+}
+
+function reference(storageItemId: Identifier<"StorageItem">, locatorByte: number) {
+  return { storageItemId, locator: new Uint8Array(32).fill(locatorByte) };
 }
 
 describe("canonical pull-synchronization Job service", () => {
@@ -34,7 +38,7 @@ describe("canonical pull-synchronization Job service", () => {
       state: 1,
       snapshotCursor: null,
       nextPosition: null,
-      quarantineStorageItemIds: [],
+      quarantineReferences: [],
     });
     expect(commits).toHaveLength(1);
     expect(commits[0]).toEqual(
@@ -76,7 +80,7 @@ describe("canonical pull-synchronization Job service", () => {
         promotedItemCount: 0,
         rejectedItemCount: 0,
       },
-      quarantineStorageItemIds: [envelope.storageItemId],
+      quarantineReferences: [reference(envelope.storageItemId, 6)],
     };
 
     await service.recordQuarantine({ previous: job, next, bytes: envelope.bytes });
@@ -128,7 +132,7 @@ describe("canonical pull-synchronization Job service", () => {
         promotedItemCount: 0,
         rejectedItemCount: 0,
       },
-      quarantineStorageItemIds: [filled("StorageItem", 7)],
+      quarantineReferences: [reference(filled("StorageItem", 7), 6)],
     };
 
     await expect(
@@ -161,7 +165,7 @@ describe("canonical pull-synchronization Job service", () => {
       ...job,
       stage: 2 as const,
       snapshotCursor: 3,
-      quarantineStorageItemIds: [first.storageItemId],
+      quarantineReferences: [reference(first.storageItemId, 6)],
       progress: {
         discoveredItemCount: 2,
         downloadedItemCount: 1,
@@ -171,7 +175,7 @@ describe("canonical pull-synchronization Job service", () => {
     };
     const next = {
       ...previous,
-      quarantineStorageItemIds: [second.storageItemId],
+      quarantineReferences: [reference(second.storageItemId, 7)],
       progress: { ...previous.progress, downloadedItemCount: 2 },
     };
 
@@ -201,6 +205,32 @@ describe("canonical pull-synchronization Job service", () => {
     };
     expect(commit.expectedMutableItems).toHaveLength(1);
     expect(commit.mutableItems).toHaveLength(1);
+  });
+
+  it("rejects an ordinary checkpoint that changes the retained Host locator", async () => {
+    const commits: unknown[] = [];
+    const service = new CanonicalPullSynchronizationJobService(
+      {
+        commitExecutionMutation: async (commit: unknown) => commits.push(commit),
+      } as unknown as ConstructorParameters<typeof CanonicalPullSynchronizationJobService>[0],
+      NORMAL_STORAGE_REALM,
+      () => JOB_ID,
+    );
+    const storageItemId = filled("StorageItem", 7);
+    const previous = {
+      ...(await service.create({ vaultId: filled("Vault", 1), remoteId: REMOTE_ID })),
+      quarantineReferences: [reference(storageItemId, 8)],
+      progress: {
+        discoveredItemCount: 1,
+        downloadedItemCount: 1,
+        promotedItemCount: 0,
+        rejectedItemCount: 0,
+      },
+    };
+    const next = { ...previous, quarantineReferences: [reference(storageItemId, 9)] };
+
+    await expect(service.checkpoint({ previous, next })).rejects.toThrow(/Quarantine state/u);
+    expect(commits).toHaveLength(1);
   });
 
   it("reopens one persisted Job only when its Vault, Realm, and local identity agree", async () => {

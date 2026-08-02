@@ -49,7 +49,12 @@ function job(): CanonicalPullSynchronizationJob {
     nextPosition: filled("StorageItem", 2),
     attempt: 0,
     retryAfterMs: null,
-    quarantineStorageItemIds: [filled("StorageItem", 3)],
+    quarantineReferences: [
+      {
+        storageItemId: filled("StorageItem", 3),
+        locator: new Uint8Array(32).fill(4),
+      },
+    ],
     progress: {
       discoveredItemCount: 4,
       downloadedItemCount: 1,

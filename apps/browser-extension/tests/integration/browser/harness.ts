@@ -469,7 +469,9 @@ async function canonicalPullJobScenario(): Promise<unknown> {
       ...created,
       snapshotCursor: 9,
       nextPosition: resumedPosition,
-      quarantineStorageItemIds: [envelope.storageItemId],
+      quarantineReferences: [
+        { storageItemId: envelope.storageItemId, locator: new Uint8Array(32).fill(6) },
+      ],
       progress: {
         discoveredItemCount: 1,
         downloadedItemCount: 1,
@@ -494,6 +496,12 @@ async function canonicalPullJobScenario(): Promise<unknown> {
       return {
         snapshotCursor: resumed.snapshotCursor,
         quarantineCount: quarantined.length,
+        locatorRetained:
+          resumed.quarantineReferences.length === 1 &&
+          bytesEqual(
+            resumed.quarantineReferences[0]?.locator ?? new Uint8Array(),
+            new Uint8Array(32).fill(6),
+          ),
         resumedInventoryStage:
           resumed.stage === 1 && resumed.nextPosition !== null && resumed.snapshotCursor === 9,
       };

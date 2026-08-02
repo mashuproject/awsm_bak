@@ -25,7 +25,7 @@ function job(): CanonicalPullSynchronizationJob {
     nextPosition: null,
     attempt: 0,
     retryAfterMs: null,
-    quarantineStorageItemIds: [],
+    quarantineReferences: [],
     progress: {
       discoveredItemCount: 0,
       downloadedItemCount: 0,
@@ -118,7 +118,16 @@ describe("canonical pull inventory runner", () => {
       snapshotCursor: 9,
       nextPosition: null,
       stage: 2,
-      quarantineStorageItemIds: [first.storageItemId, second.storageItemId],
+      quarantineReferences: [
+        {
+          storageItemId: first.storageItemId,
+          locator: new Uint8Array(32).fill(first.storageItemId[0] ?? 0),
+        },
+        {
+          storageItemId: second.storageItemId,
+          locator: new Uint8Array(32).fill(second.storageItemId[0] ?? 0),
+        },
+      ],
       progress: {
         discoveredItemCount: 2,
         downloadedItemCount: 2,

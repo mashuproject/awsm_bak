@@ -85,6 +85,13 @@ initial canonical local database is created only from an empty database at schem
 another local schema is discarded and recreated by the owning Client rather than upgraded or
 interpreted through compatibility readers.
 
+A pull Synchronization Job retains one canonical Quarantine reference for every downloaded opaque
+item: its Opaque Storage Item ID and the exact 32-byte locator supplied by that Remote's inventory.
+The outer bytes stay in Remote-scoped Quarantine under the same Storage Item ID. A checkpoint may
+add one such reference only with the matching downloaded outer bytes; it never rewrites or drops a
+retained locator. When trusted opening later establishes an item's protected logical identity, the
+Client recomputes that Remote's locator before it can accept or promote the representation.
+
 The Vault directory's selected Client Credential and Replica Safety State's local authoring
 Credential and local member binding are optional. Complete Import installs all three as absent and
 stores no Client Secret. Key Epoch Secrets required to read the validated Replica remain Trusted

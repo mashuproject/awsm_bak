@@ -65,6 +65,7 @@ test("reopens a canonical pull Job after an IndexedDB restart", async ({ page })
     snapshotCursor: 9,
     quarantineCount: 1,
     resumedInventoryStage: true,
+    locatorRetained: true,
   });
 });
 
