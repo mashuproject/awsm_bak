@@ -123,6 +123,7 @@ import {
   deriveHostedReplicaOpaqueLocator,
   HOSTED_REPLICA_LOGICAL_NAMESPACE,
 } from "../../../src/runtime/synchronization/canonical-hosted-replica-locator";
+import { nextCanonicalPullRetry } from "../../../src/runtime/synchronization/canonical-pull-retry";
 import { CanonicalPullSynchronizationJobService } from "../../../src/runtime/synchronization/canonical-pull-synchronization-job-service";
 import { InterruptedStaleDiscardReconciler } from "../../../src/runtime/synchronization/recovery-reconciliation";
 import { serverSwitchStartupDecision } from "../../../src/runtime/synchronization/server-switch-startup";
@@ -488,6 +489,13 @@ async function canonicalPullJobScenario(): Promise<unknown> {
       },
     };
     await jobs.recordQuarantine({ previous: created, next: checkpoint, bytes: envelope.bytes });
+    const waiting = nextCanonicalPullRetry({
+      previous: checkpoint,
+      nowMs: 10_000,
+      random: () => 0,
+      hostRetryAfterMs: 2_000,
+    });
+    await jobs.checkpoint({ previous: checkpoint, next: waiting });
     await storage.close();
 
     const restarted = new CanonicalIndexedDb(databaseName);
@@ -510,8 +518,13 @@ async function canonicalPullJobScenario(): Promise<unknown> {
             resumed.quarantineReferences[0]?.locator ?? new Uint8Array(),
             new Uint8Array(32).fill(6),
           ),
-        resumedInventoryStage:
-          resumed.stage === 1 && resumed.nextPosition !== null && resumed.snapshotCursor === 9,
+        waitingRetry:
+          resumed.stage === 1 &&
+          resumed.state === 2 &&
+          resumed.attempt === 1 &&
+          resumed.retryAfterMs === 12_000 &&
+          resumed.nextPosition !== null &&
+          resumed.snapshotCursor === 9,
       };
     } finally {
       await restarted.close();

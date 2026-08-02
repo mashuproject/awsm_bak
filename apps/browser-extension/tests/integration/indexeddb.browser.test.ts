@@ -64,7 +64,7 @@ test("reopens a canonical pull Job after an IndexedDB restart", async ({ page })
   await expect(scenario(page, "canonical-pull-job")).resolves.toEqual({
     snapshotCursor: 9,
     quarantineCount: 1,
-    resumedInventoryStage: true,
+    waitingRetry: true,
     locatorRetained: true,
   });
 });
