@@ -1,6 +1,12 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 
 import { readySodium } from "../../crypto/sodium";
+import {
+  decodeFeatureManifest,
+  type FeatureManifest,
+  featureManifestId,
+  requiredFeatureSetId,
+} from "../../domain/canonical/features";
 import type { Identifier } from "../../domain/canonical/identifiers";
 import {
   type AuthenticatedVaultEvent,
@@ -75,6 +81,12 @@ export interface CanonicalAuthorityState {
     readonly keyEpochIds: readonly Identifier<"KeyEpoch">[];
   }[];
   readonly keyEnvelopeSlots: readonly CanonicalAuthorityKeyEnvelopeSlot[];
+  readonly requiredFeatureSetId: Identifier<"RequiredFeatureSet">;
+  readonly featureManifests: readonly CanonicalAuthorityFeatureManifest[];
+  readonly featureSetConflict: {
+    readonly candidateRecordIds: readonly Identifier<"VaultRecord">[];
+    readonly manifestIds: readonly Identifier<"FeatureManifest">[];
+  } | null;
   readonly writeFences: readonly CanonicalAuthorityWriteFence[];
   readonly clientCredentials: ReadonlyMap<string, CanonicalAuthorityClientCredential>;
   readonly lifecycle: 1 | 2;
@@ -85,7 +97,8 @@ export interface CanonicalAuthorityWriteFence {
     | "member-removal"
     | "client-credential-removal"
     | "invitation-conflict"
-    | "key-epoch-conflict";
+    | "key-epoch-conflict"
+    | "feature-set-incompatibility";
   readonly subjectId: Uint8Array;
   readonly causeRecordIds: readonly Identifier<"VaultRecord">[];
 }
@@ -124,6 +137,12 @@ export interface CanonicalAuthorityKeyEnvelopeSlot {
   readonly targetCredentialId: Uint8Array;
   readonly targetRevision: number | null;
   readonly keyEnvelopeId: Identifier<"KeyEnvelope">;
+}
+
+export interface CanonicalAuthorityFeatureManifest {
+  readonly id: Identifier<"FeatureManifest">;
+  readonly bytes: Uint8Array;
+  readonly manifest: FeatureManifest;
 }
 
 export interface CanonicalAuthorityInvitation {
@@ -221,6 +240,12 @@ interface KeyDelivery {
   readonly envelopeSlots: readonly InvitationEnvelopeSlot[];
 }
 
+interface FeatureActivation {
+  readonly previousFeatureSetId: Identifier<"RequiredFeatureSet">;
+  readonly addedManifests: readonly CanonicalAuthorityFeatureManifest[];
+  readonly resultingFeatureSetId: Identifier<"RequiredFeatureSet">;
+}
+
 export class CanonicalAuthorityReplay {
   readonly #vaultId: Identifier<"Vault">;
   readonly #anchorRecordId: Identifier<"VaultRecord">;
@@ -229,6 +254,8 @@ export class CanonicalAuthorityReplay {
   readonly #initialRecoveryCredential: CanonicalAuthorityRecoveryCredential;
   readonly #initialKeyEpoch: CanonicalAuthorityKeyEpoch;
   readonly #anchorEnvelopeSlots: readonly InvitationEnvelopeSlot[];
+  readonly #anchorFeatureManifests: readonly CanonicalAuthorityFeatureManifest[];
+  readonly #supportedFeatureManifestIds: ReadonlySet<string>;
   readonly #graph = new CausalGraph();
   readonly #events: AuthenticatedVaultEvent[] = [];
   readonly #acceptedInvitations = new Map<string, AcceptedInvitation>();
@@ -238,11 +265,15 @@ export class CanonicalAuthorityReplay {
   readonly #recoveryReplacements = new Map<string, RecoveryCredentialReplacement>();
   readonly #keyEpochTransitions = new Map<string, KeyEpochTransition>();
   readonly #keyDeliveries = new Map<string, KeyDelivery>();
+  readonly #featureActivations = new Map<string, FeatureActivation>();
 
   constructor(
     genesis: AuthenticatedVaultEvent,
     anchorRecordId: Identifier<"VaultRecord">,
     anchorEnvelopeSlotsValue: CanonicalValue,
+    anchorRequiredFeatureSetId: Identifier<"RequiredFeatureSet">,
+    anchorFeatureManifestBytes: readonly Uint8Array[],
+    supportedFeatureManifestIds: readonly Identifier<"FeatureManifest">[],
   ) {
     const initial = initialVaultClientAuthority(genesis);
     this.#vaultId = genesis.vaultId;
@@ -290,6 +321,16 @@ export class CanonicalAuthorityReplay {
       anchorEnvelopeSlotsValue,
       "Accepted Baseline Key Envelope slots",
     );
+    this.#anchorFeatureManifests = anchorFeatureManifestBytes.map(authorityFeatureManifest);
+    this.#supportedFeatureManifestIds = new Set(supportedFeatureManifestIds.map(key));
+    if (
+      !bytesEqual(
+        requiredFeatureSetId(this.#anchorFeatureManifests.map(({ manifest }) => manifest)),
+        anchorRequiredFeatureSetId,
+      )
+    ) {
+      throw new TypeError("Accepted Baseline Required Feature Set does not match its Manifests");
+    }
     this.#graph.add(anchorRecordId, []);
   }
 
@@ -826,6 +867,68 @@ export class CanonicalAuthorityReplay {
     const keyEnvelopeSlots = [...keyEnvelopeSlotsById.values()].sort((left, right) =>
       compareIds(left.keyEnvelopeId, right.keyEnvelopeId),
     );
+    let featureManifestsById = new Map(
+      this.#anchorFeatureManifests.map((manifest) => [key(manifest.id), manifest]),
+    );
+    const featureEvents = this.#events.filter(
+      (event) =>
+        event.family === 1 && event.type === 14 && this.#isIncluded(event.recordId, frontier),
+    );
+    for (const event of featureEvents) {
+      const activation = this.#featureActivations.get(key(event.recordId));
+      if (activation === undefined) throw new TypeError("Feature Activation state is missing");
+      for (const manifest of activation.addedManifests) {
+        featureManifestsById.set(key(manifest.id), manifest);
+      }
+    }
+    let featureManifests = [...featureManifestsById.values()].sort((left, right) =>
+      compareIds(left.id, right.id),
+    );
+    let featureSetConflict: CanonicalAuthorityState["featureSetConflict"] = null;
+    let effectiveRequiredFeatureSetId: Identifier<"RequiredFeatureSet">;
+    try {
+      effectiveRequiredFeatureSetId = requiredFeatureSetId(
+        featureManifests.map(({ manifest }) => manifest),
+      );
+    } catch (error) {
+      if (!(error instanceof TypeError) || featureEvents.length < 2) throw error;
+      const heads = causalMaxima(
+        featureEvents.map((event) => ({ causeId: event.recordId, event })),
+        this.#graph,
+      )
+        .map(({ event }) => event)
+        .sort((left, right) => compareIds(left.recordId, right.recordId));
+      const commonEvents = featureEvents.filter((event) =>
+        heads.every(
+          (head) =>
+            bytesEqual(event.recordId, head.recordId) ||
+            this.#graph.isAncestor(event.recordId, head.recordId),
+        ),
+      );
+      featureManifestsById = new Map(
+        this.#anchorFeatureManifests.map((manifest) => [key(manifest.id), manifest]),
+      );
+      for (const event of commonEvents) {
+        const activation = this.#featureActivations.get(key(event.recordId));
+        if (activation === undefined) throw new TypeError("Feature Activation state is missing");
+        for (const manifest of activation.addedManifests) {
+          featureManifestsById.set(key(manifest.id), manifest);
+        }
+      }
+      const effectiveManifestIds = new Set(featureManifestsById.keys());
+      featureSetConflict = {
+        candidateRecordIds: heads.map(({ recordId }) => recordId),
+        manifestIds: featureManifests
+          .filter(({ id }) => !effectiveManifestIds.has(key(id)))
+          .map(({ id }) => id),
+      };
+      featureManifests = [...featureManifestsById.values()].sort((left, right) =>
+        compareIds(left.id, right.id),
+      );
+      effectiveRequiredFeatureSetId = requiredFeatureSetId(
+        featureManifests.map(({ manifest }) => manifest),
+      );
+    }
     const hasDescendantKeyEpochTransition = (
       cutoffRecordIds: readonly Identifier<"VaultRecord">[],
     ): boolean =>
@@ -839,6 +942,13 @@ export class CanonicalAuthorityReplay {
           ),
       );
     const writeFences = new Map<string, CanonicalAuthorityWriteFence>();
+    if (featureSetConflict !== null) {
+      writeFences.set(`feature-set-incompatibility:${key(this.#vaultId)}`, {
+        kind: "feature-set-incompatibility",
+        subjectId: this.#vaultId,
+        causeRecordIds: featureSetConflict.candidateRecordIds,
+      });
+    }
     for (const conflict of keyEpochConflicts) {
       writeFences.set(`key-epoch-conflict:${key(this.#vaultId)}`, {
         kind: "key-epoch-conflict",
@@ -939,6 +1049,9 @@ export class CanonicalAuthorityReplay {
       keyEpochs,
       keyEpochConflicts,
       keyEnvelopeSlots,
+      requiredFeatureSetId: effectiveRequiredFeatureSetId,
+      featureManifests,
+      featureSetConflict,
       writeFences: [...writeFences.values()].sort((left, right) =>
         compareIds(left.subjectId, right.subjectId),
       ),
@@ -954,6 +1067,17 @@ export class CanonicalAuthorityReplay {
     const parentState = this.stateAt(event.authorityParentRecordIds);
     if (parentState.lifecycle === 2) {
       throw new TypeError("An Event cannot descend from Closed Authority State");
+    }
+    if (parentState.featureSetConflict !== null) {
+      throw new TypeError("An Event cannot descend from an incompatible Required Feature Set");
+    }
+    if (
+      parentState.featureManifests.some(({ id }) => !this.#supportedFeatureManifestIds.has(key(id)))
+    ) {
+      throw new TypeError("Runtime does not support the complete Required Feature Set");
+    }
+    if (!bytesEqual(event.requiredFeatureSetId, parentState.requiredFeatureSetId)) {
+      throw new TypeError("Vault Event Required Feature Set does not match its Authority Parents");
     }
     const enrollment =
       event.family === 1 && event.type === 9 ? parseClientCredentialEnrollment(event) : null;
@@ -1237,6 +1361,24 @@ export class CanonicalAuthorityReplay {
         const delivery = parseKeyDelivery(event);
         validateKeyDelivery(delivery, parentState);
         this.#keyDeliveries.set(key(event.recordId), delivery);
+      } else if (event.type === 14) {
+        if (!containsId(parentState.administratorIds, signer.memberId)) {
+          throw new TypeError("Feature Activation signer is not an Administrator");
+        }
+        const activation = parseFeatureActivation(event);
+        if (!bytesEqual(activation.previousFeatureSetId, parentState.requiredFeatureSetId)) {
+          throw new TypeError(
+            "Feature Activation previous set does not match its Authority Parents",
+          );
+        }
+        const resultingFeatureSetId = requiredFeatureSetId([
+          ...parentState.featureManifests.map(({ manifest }) => manifest),
+          ...activation.addedManifests.map(({ manifest }) => manifest),
+        ]);
+        if (!bytesEqual(activation.resultingFeatureSetId, resultingFeatureSetId)) {
+          throw new TypeError("Feature Activation resulting set is invalid");
+        }
+        this.#featureActivations.set(key(event.recordId), activation);
       } else {
         throw new TypeError("This replay slice cannot yet reduce this Authority Event type");
       }
@@ -1659,6 +1801,42 @@ function validateKeyDelivery(delivery: KeyDelivery, authority: CanonicalAuthorit
   validateEnvelopeIdentityBindings(delivery.envelopeSlots, authority, "Key Delivery");
 }
 
+function authorityFeatureManifest(bytes: Uint8Array): CanonicalAuthorityFeatureManifest {
+  const copiedBytes = Uint8Array.from(bytes);
+  return {
+    id: featureManifestId(copiedBytes),
+    bytes: copiedBytes,
+    manifest: decodeFeatureManifest(copiedBytes),
+  };
+}
+
+function parseFeatureActivation(event: AuthenticatedVaultEvent): FeatureActivation {
+  const body = exactMap(event.body, [0, 1, 2], "Feature Activation body");
+  return {
+    previousFeatureSetId: identifierValue(
+      mapValue(body, 0),
+      "RequiredFeatureSet",
+      "Previous Required Feature Set ID",
+    ),
+    addedManifests: canonicalSetValue(
+      mapValue(body, 1),
+      "Added Feature Manifests",
+      (value) => {
+        if (!(value instanceof Uint8Array)) {
+          throw new TypeError("Added Feature Manifest must be complete bytes");
+        }
+        return Uint8Array.from(value);
+      },
+      { nonempty: true },
+    ).map(authorityFeatureManifest),
+    resultingFeatureSetId: identifierValue(
+      mapValue(body, 2),
+      "RequiredFeatureSet",
+      "Resulting Required Feature Set ID",
+    ),
+  };
+}
+
 async function verifyClientCredentialEnrollmentPossession(
   enrollment: ClientCredentialEnrollment,
 ): Promise<void> {
@@ -1901,6 +2079,14 @@ export function canonicalAuthorityKeyEnvelopeRequirements(
               ? parseKeyDelivery(event).envelopeSlots
               : [];
   return slots.map(({ keyEnvelopeId, keyEpochId }) => ({ keyEnvelopeId, keyEpochId }));
+}
+
+export function canonicalAuthorityFeatureManifestRequirements(
+  event: AuthenticatedVaultEvent,
+): readonly CanonicalAuthorityFeatureManifest[] {
+  return event.family === 1 && event.type === 14
+    ? parseFeatureActivation(event).addedManifests
+    : [];
 }
 
 async function verifyInvitationAcceptance(

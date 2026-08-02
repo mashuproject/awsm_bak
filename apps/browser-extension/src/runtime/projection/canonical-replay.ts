@@ -1,4 +1,6 @@
 import { contentCheckpointCauseIds } from "../../domain/canonical/baseline-body";
+import { DEPENDENCY_TYPES } from "../../domain/canonical/dependencies";
+import { featureManifestId } from "../../domain/canonical/features";
 import type { Identifier } from "../../domain/canonical/identifiers";
 import {
   type AuthenticatedVaultEvent,
@@ -17,6 +19,7 @@ import type {
 import {
   CanonicalAuthorityReplay,
   type CanonicalAuthorityState,
+  canonicalAuthorityFeatureManifestRequirements,
   canonicalAuthorityKeyEnvelopeRequirements,
 } from "./canonical-authority-replay";
 
@@ -43,6 +46,10 @@ export interface ReplayedCanonicalVault {
   readonly authority: CanonicalAuthorityState;
 }
 
+export interface CanonicalReplayOptions {
+  readonly supportedFeatureManifestIds?: readonly Identifier<"FeatureManifest">[];
+}
+
 export function replayEventMemberId(
   replay: ReplayedCanonicalVault,
   event: AuthenticatedVaultEvent,
@@ -53,7 +60,10 @@ export function replayEventMemberId(
 }
 
 export class CanonicalReplayService {
-  constructor(readonly vaults: CanonicalVaultService) {}
+  constructor(
+    readonly vaults: CanonicalVaultService,
+    readonly options: CanonicalReplayOptions = {},
+  ) {}
 
   async replay(vaultId: Identifier<"Vault">): Promise<ReplayedCanonicalVault> {
     return this.replayOpened(await this.vaults.openVault(vaultId));
@@ -74,10 +84,28 @@ export class CanonicalReplayService {
       [...Array(10).keys()],
       "Accepted Baseline authority checkpoint",
     );
+    const anchorFeatureManifestBytes: Uint8Array[] = [];
+    for (const dependency of vault.baseline.dependencies) {
+      if (dependency.type !== DEPENDENCY_TYPES.FeatureManifest) continue;
+      const opened = await this.vaults.openResolvedCompactItem({
+        vault,
+        kind: 4,
+        logicalId: dependency.id,
+        namespace: NAMESPACES.featureManifest.key,
+        payloadType: 3,
+      });
+      if (!bytesEqual(featureManifestId(opened.payloadBytes), dependency.id)) {
+        throw new TypeError("Accepted Baseline Feature Manifest does not match its dependency ID");
+      }
+      anchorFeatureManifestBytes.push(opened.payloadBytes);
+    }
     const authorityReplay = new CanonicalAuthorityReplay(
       vault.genesis,
       adoption === null ? vault.genesis.recordId : adoption.vacuumEventRecordId,
       mapValue(authorityCheckpoint, 7),
+      vault.baseline.requiredFeatureSetId,
+      anchorFeatureManifestBytes,
+      this.options.supportedFeatureManifestIds ?? [],
     );
     graph.addBaseline(vault.baseline.recordId, contentCheckpointCauseIds(mapValue(body, 2)));
 
@@ -107,8 +135,7 @@ export class CanonicalReplayService {
       }
       if (
         !bytesEqual(event.vaultId, vault.replicaState.vaultId) ||
-        !bytesEqual(event.generationId, vault.replicaState.generationId) ||
-        !bytesEqual(event.requiredFeatureSetId, vault.replicaState.requiredFeatureSetId)
+        !bytesEqual(event.generationId, vault.replicaState.generationId)
       ) {
         throw new TypeError("Vault Event belongs to another accepted context");
       }
@@ -123,6 +150,7 @@ export class CanonicalReplayService {
         }
       } else {
         const keyEnvelopeRequirements = canonicalAuthorityKeyEnvelopeRequirements(event);
+        const featureManifestRequirements = canonicalAuthorityFeatureManifestRequirements(event);
         await authorityReplay.validateAndAccept(event);
         for (const requirement of keyEnvelopeRequirements) {
           await this.vaults.readResolvedOpaqueItem({
@@ -132,6 +160,20 @@ export class CanonicalReplayService {
             expectedKeyEpochId: requirement.keyEpochId,
             namespace: NAMESPACES.keyEnvelope.key,
           });
+        }
+        for (const requirement of featureManifestRequirements) {
+          const opened = await this.vaults.openResolvedCompactItem({
+            vault,
+            kind: 4,
+            logicalId: requirement.id,
+            namespace: NAMESPACES.featureManifest.key,
+            payloadType: 3,
+          });
+          if (!bytesEqual(opened.payloadBytes, requirement.bytes)) {
+            throw new TypeError(
+              "Feature Activation Manifest dependency bytes differ from its body",
+            );
+          }
         }
       }
       graph.add(
@@ -151,6 +193,9 @@ export class CanonicalReplayService {
       throw new TypeError("The causal DAG does not reach Genesis");
     }
     const authority = authorityReplay.stateAt(vault.replicaState.authorityFrontier);
+    if (!bytesEqual(authority.requiredFeatureSetId, vault.replicaState.requiredFeatureSetId)) {
+      throw new TypeError("Replica Required Feature Set does not match accepted Authority State");
+    }
     if (authority.lifecycle !== vault.replicaState.lifecycle) {
       throw new TypeError("Replica lifecycle does not match accepted Authority State");
     }

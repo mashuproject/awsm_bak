@@ -2,7 +2,7 @@ import { sha256 } from "@noble/hashes/sha2.js";
 
 import { bytesEqual } from "../hash";
 import { DEPENDENCY_TYPES, type TypedDependency } from "./dependencies";
-import { decodeRequiredFeatureSet, encodeFeatureManifest, featureManifestId } from "./features";
+import { decodeFeatureManifest, featureManifestId } from "./features";
 import type { Identifier } from "./identifiers";
 import {
   byteString,
@@ -568,11 +568,19 @@ export function validateAuthorityEventBody(
         "Previous Feature Set ID",
       );
       const manifestValue = mapValue(body, 1);
-      const manifests = decodeRequiredFeatureSet(encodeCanonicalValue(manifestValue));
-      if (manifests.length === 0) throw new TypeError("Feature Activation must add a Manifest");
-      const manifestIds = manifests.map((manifest) =>
-        featureManifestId(encodeFeatureManifest(manifest)),
+      const manifestBytes = canonicalSetValue(
+        manifestValue,
+        "Added Feature Manifests",
+        (value) => {
+          if (!(value instanceof Uint8Array)) {
+            throw new TypeError("Added Feature Manifest must be complete bytes");
+          }
+          decodeFeatureManifest(value);
+          return value;
+        },
+        { nonempty: true },
       );
+      const manifestIds = manifestBytes.map(featureManifestId);
       identifierValue(mapValue(body, 2), "RequiredFeatureSet", "Resulting Feature Set ID");
       return manifestIds.map((id) => dependency(DEPENDENCY_TYPES.FeatureManifest, id));
     }

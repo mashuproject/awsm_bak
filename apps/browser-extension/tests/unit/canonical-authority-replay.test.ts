@@ -3,7 +3,13 @@ import { describe, expect, it, vi } from "vitest";
 
 import { readySodium } from "../../src/crypto/sodium";
 import { DEPENDENCY_TYPES } from "../../src/domain/canonical/dependencies";
-import { advisoryExtensions } from "../../src/domain/canonical/features";
+import {
+  advisoryExtensions,
+  encodeFeatureManifest,
+  type FeatureManifest,
+  featureManifestId,
+  requiredFeatureSetId,
+} from "../../src/domain/canonical/features";
 import { type Identifier, randomIdentifier } from "../../src/domain/canonical/identifiers";
 import { signVaultEvent } from "../../src/domain/canonical/record";
 import { transcript } from "../../src/domain/canonical/transcript";
@@ -102,6 +108,7 @@ function openedVaultAtFrontier(
   creation: Awaited<ReturnType<typeof prepareCanonicalVaultCreation>>,
   frontier: CanonicalReplicaState["causalFrontier"],
   continuityRecordIds: CanonicalReplicaState["continuityRecordIds"] = frontier,
+  requiredFeatureSetId: Identifier<"RequiredFeatureSet"> = creation.genesis.requiredFeatureSetId,
 ): PersistedOpenedCanonicalVault {
   return {
     directory: {
@@ -118,7 +125,7 @@ function openedVaultAtFrontier(
       continuityRecordIds: [creation.genesis.recordId, ...continuityRecordIds],
       baselineId: creation.baseline.recordId,
       currentKeyEpochId: creation.secrets.keyEpoch.id,
-      requiredFeatureSetId: creation.genesis.requiredFeatureSetId,
+      requiredFeatureSetId,
       authoringClientCredentialId: creation.ids.clientCredentialId,
       memberId: creation.ids.firstMemberId,
       lifecycle: 1,
@@ -437,6 +444,80 @@ async function keyDelivery(
     input.signingSecretKey,
   );
   return { event, keyEnvelopeIds };
+}
+
+async function featureActivation(
+  creation: Awaited<ReturnType<typeof prepareCanonicalVaultCreation>>,
+  input: {
+    readonly parentRecordIds: CanonicalReplicaState["authorityFrontier"];
+    readonly previousFeatureSetId: Identifier<"RequiredFeatureSet">;
+    readonly previousManifests: readonly FeatureManifest[];
+    readonly addedManifests: readonly FeatureManifest[];
+    readonly assertedAt: number;
+  },
+) {
+  const manifestBytes = input.addedManifests.map(encodeFeatureManifest);
+  const resultingFeatureSetId = requiredFeatureSetId([
+    ...input.previousManifests,
+    ...input.addedManifests,
+  ]);
+  const event = await signVaultEvent(
+    {
+      vaultId: creation.ids.vaultId,
+      generationId: creation.ids.generationId,
+      parentRecordIds: input.parentRecordIds,
+      authorityParentRecordIds: input.parentRecordIds,
+      dependencies: manifestBytes.map((bytes) => ({
+        type: DEPENDENCY_TYPES.FeatureManifest,
+        id: featureManifestId(bytes),
+      })),
+      requiredFeatureSetId: input.previousFeatureSetId,
+      extensions: advisoryExtensions([]),
+      family: 1,
+      type: 14,
+      signerCredentialId: creation.ids.clientCredentialId,
+      assertedAt: input.assertedAt,
+      body: canonicalMap([
+        [0, input.previousFeatureSetId],
+        [1, canonicalSet(manifestBytes)],
+        [2, resultingFeatureSetId],
+      ]),
+    },
+    creation.secrets.client.signingSecretKey,
+  );
+  return { event, manifestBytes, resultingFeatureSetId };
+}
+
+async function replayFeatureAuthority(
+  creation: Awaited<ReturnType<typeof prepareCanonicalVaultCreation>>,
+  activations: readonly Awaited<ReturnType<typeof featureActivation>>[],
+  frontier: CanonicalReplicaState["authorityFrontier"],
+  finalFeatureSetId: Identifier<"RequiredFeatureSet">,
+  supportedFeatureManifestIds: readonly Identifier<"FeatureManifest">[] = [],
+) {
+  const byId = new Map<string, Uint8Array>();
+  for (const activation of activations) {
+    byId.set(Buffer.from(activation.event.recordId).toString("hex"), activation.event.bytes);
+    for (const bytes of activation.manifestBytes) {
+      byId.set(Buffer.from(featureManifestId(bytes)).toString("hex"), bytes);
+    }
+  }
+  const openResolvedCompactItem = vi.fn(
+    async ({ logicalId }: { readonly logicalId: Uint8Array }) => ({
+      payloadBytes: byId.get(Buffer.from(logicalId).toString("hex")),
+    }),
+  );
+  const replay = await new CanonicalReplayService({ openResolvedCompactItem } as never, {
+    supportedFeatureManifestIds,
+  }).replayOpened(
+    openedVaultAtFrontier(
+      creation,
+      frontier,
+      activations.map(({ event }) => event.recordId),
+      finalFeatureSetId,
+    ),
+  );
+  return { replay, openResolvedCompactItem };
 }
 
 describe("canonical Authority replay", () => {
@@ -1508,6 +1589,347 @@ describe("canonical Authority replay", () => {
     ).toHaveLength(1);
     expect(convergedDuplicates.authority.keyEpochConflicts).toEqual([]);
     expect(convergedDuplicates.authority.writeFences).toEqual([]);
+  });
+
+  it("activates an exact Feature Manifest under the parent Required Feature Set", async () => {
+    const creation = await prepareCanonicalVaultCreation({ label: "Features", assertedAt: 1 });
+    const manifest = {
+      featureKey: "awsm.test-alpha",
+      revision: 1,
+      parameters: Uint8Array.of(7),
+      requiredManifestIds: [],
+      incompatibleKeys: [],
+    } as const satisfies FeatureManifest;
+    const activation = await featureActivation(creation, {
+      parentRecordIds: [creation.genesis.recordId],
+      previousFeatureSetId: creation.genesis.requiredFeatureSetId,
+      previousManifests: [],
+      addedManifests: [manifest],
+      assertedAt: 2,
+    });
+    const manifestBytes = activation.manifestBytes[0];
+    if (manifestBytes === undefined) throw new TypeError("Feature fixture omitted its Manifest");
+    const manifestId = featureManifestId(manifestBytes);
+    const { replay, openResolvedCompactItem } = await replayFeatureAuthority(
+      creation,
+      [activation],
+      [activation.event.recordId],
+      activation.resultingFeatureSetId,
+    );
+
+    expect(replay.authority.requiredFeatureSetId).toEqual(activation.resultingFeatureSetId);
+    expect(replay.authority.featureManifests).toEqual([
+      expect.objectContaining({ id: manifestId, manifest }),
+    ]);
+    expect(openResolvedCompactItem.mock.calls.map(([input]) => input.logicalId)).toContainEqual(
+      manifestId,
+    );
+
+    const invalidResultId = randomIdentifier("RequiredFeatureSet");
+    const invalid = await signVaultEvent(
+      {
+        vaultId: creation.ids.vaultId,
+        generationId: creation.ids.generationId,
+        parentRecordIds: [creation.genesis.recordId],
+        authorityParentRecordIds: [creation.genesis.recordId],
+        dependencies: [{ type: DEPENDENCY_TYPES.FeatureManifest, id: manifestId }],
+        requiredFeatureSetId: creation.genesis.requiredFeatureSetId,
+        extensions: advisoryExtensions([]),
+        family: 1,
+        type: 14,
+        signerCredentialId: creation.ids.clientCredentialId,
+        assertedAt: 3,
+        body: canonicalMap([
+          [0, creation.genesis.requiredFeatureSetId],
+          [1, canonicalSet(activation.manifestBytes)],
+          [2, invalidResultId],
+        ]),
+      },
+      creation.secrets.client.signingSecretKey,
+    );
+    const invalidOpen = vi.fn(async ({ logicalId }: { readonly logicalId: Uint8Array }) => ({
+      payloadBytes: Buffer.from(logicalId).equals(Buffer.from(invalid.recordId))
+        ? invalid.bytes
+        : activation.manifestBytes[0],
+    }));
+    await expect(
+      new CanonicalReplayService({ openResolvedCompactItem: invalidOpen } as never).replayOpened(
+        openedVaultAtFrontier(creation, [invalid.recordId], [invalid.recordId], invalidResultId),
+      ),
+    ).rejects.toThrow("Feature Activation resulting set is invalid");
+    expect(invalidOpen.mock.calls.map(([input]) => input.logicalId)).not.toContainEqual(manifestId);
+  });
+
+  it("allows a later Feature Manifest to require an already-active Manifest", async () => {
+    const creation = await prepareCanonicalVaultCreation({ label: "Features", assertedAt: 1 });
+    const foundation = {
+      featureKey: "awsm.test-foundation",
+      revision: 1,
+      parameters: new Uint8Array(),
+      requiredManifestIds: [],
+      incompatibleKeys: [],
+    } as const satisfies FeatureManifest;
+    const first = await featureActivation(creation, {
+      parentRecordIds: [creation.genesis.recordId],
+      previousFeatureSetId: creation.genesis.requiredFeatureSetId,
+      previousManifests: [],
+      addedManifests: [foundation],
+      assertedAt: 2,
+    });
+    const foundationBytes = first.manifestBytes[0];
+    if (foundationBytes === undefined) {
+      throw new TypeError("Feature fixture omitted its foundation Manifest");
+    }
+    const foundationId = featureManifestId(foundationBytes);
+    const dependent = {
+      featureKey: "awsm.test-dependent",
+      revision: 1,
+      parameters: new Uint8Array(),
+      requiredManifestIds: [foundationId],
+      incompatibleKeys: [],
+    } as const satisfies FeatureManifest;
+    const second = await featureActivation(creation, {
+      parentRecordIds: [first.event.recordId],
+      previousFeatureSetId: first.resultingFeatureSetId,
+      previousManifests: [foundation],
+      addedManifests: [dependent],
+      assertedAt: 3,
+    });
+
+    const { replay } = await replayFeatureAuthority(
+      creation,
+      [first, second],
+      [second.event.recordId],
+      second.resultingFeatureSetId,
+      [foundationId],
+    );
+    expect(replay.authority.requiredFeatureSetId).toEqual(second.resultingFeatureSetId);
+    expect(
+      replay.authority.featureManifests.map(({ manifest }) => manifest.featureKey).sort(),
+    ).toEqual(["awsm.test-dependent", "awsm.test-foundation"]);
+  });
+
+  it("stops semantic descendants until the Runtime supports every active Feature Manifest", async () => {
+    const creation = await prepareCanonicalVaultCreation({ label: "Features", assertedAt: 1 });
+    const manifest = {
+      featureKey: "awsm.test-gated",
+      revision: 1,
+      parameters: new Uint8Array(),
+      requiredManifestIds: [],
+      incompatibleKeys: [],
+    } as const satisfies FeatureManifest;
+    const activation = await featureActivation(creation, {
+      parentRecordIds: [creation.genesis.recordId],
+      previousFeatureSetId: creation.genesis.requiredFeatureSetId,
+      previousManifests: [],
+      addedManifests: [manifest],
+      assertedAt: 2,
+    });
+    const invitationId = randomIdentifier("Invitation");
+    const descendant = await signVaultEvent(
+      {
+        vaultId: creation.ids.vaultId,
+        generationId: creation.ids.generationId,
+        parentRecordIds: [activation.event.recordId],
+        authorityParentRecordIds: [activation.event.recordId],
+        dependencies: [],
+        requiredFeatureSetId: activation.resultingFeatureSetId,
+        extensions: advisoryExtensions([]),
+        family: 1,
+        type: 5,
+        signerCredentialId: creation.ids.clientCredentialId,
+        assertedAt: 3,
+        body: canonicalMap([
+          [0, invitationId],
+          [
+            1,
+            canonicalSet([
+              canonicalMap([
+                [0, "awsm.vault"],
+                [1, creation.ids.firstMemberId],
+                [2, creation.ids.vaultId],
+                [3, "awsm.vault.join"],
+                [4, new Uint8Array()],
+              ]),
+            ]),
+          ],
+          [2, new Uint8Array(32).fill(81)],
+          [3, new Uint8Array(32).fill(82)],
+          [4, new Uint8Array(32).fill(83)],
+          [5, new Uint8Array(32).fill(84)],
+        ]),
+      },
+      creation.secrets.client.signingSecretKey,
+    );
+    const manifestBytes = activation.manifestBytes[0];
+    if (manifestBytes === undefined) throw new TypeError("Feature fixture omitted its Manifest");
+    const manifestId = featureManifestId(manifestBytes);
+    const byId = new Map([
+      [Buffer.from(activation.event.recordId).toString("hex"), activation.event.bytes],
+      [Buffer.from(descendant.recordId).toString("hex"), descendant.bytes],
+      [Buffer.from(manifestId).toString("hex"), manifestBytes],
+    ]);
+    const vaults = {
+      openResolvedCompactItem: vi.fn(async ({ logicalId }: { readonly logicalId: Uint8Array }) => ({
+        payloadBytes: byId.get(Buffer.from(logicalId).toString("hex")),
+      })),
+    } as never;
+    const opened = openedVaultAtFrontier(
+      creation,
+      [descendant.recordId],
+      [activation.event.recordId, descendant.recordId],
+      activation.resultingFeatureSetId,
+    );
+
+    await expect(new CanonicalReplayService(vaults).replayOpened(opened)).rejects.toThrow(
+      "Runtime does not support the complete Required Feature Set",
+    );
+    const replay = await new CanonicalReplayService(vaults, {
+      supportedFeatureManifestIds: [manifestId],
+    }).replayOpened(opened);
+    expect(replay.authority.activeInvitations).toEqual([expect.objectContaining({ invitationId })]);
+  });
+
+  it("fences concurrent incompatible Feature Activations without choosing by time", async () => {
+    const creation = await prepareCanonicalVaultCreation({ label: "Features", assertedAt: 1 });
+    const revisionOne = {
+      featureKey: "awsm.test-revision",
+      revision: 1,
+      parameters: new Uint8Array(),
+      requiredManifestIds: [],
+      incompatibleKeys: [],
+    } as const satisfies FeatureManifest;
+    const revisionTwo = { ...revisionOne, revision: 2 } as const satisfies FeatureManifest;
+    const revisionThree = { ...revisionOne, revision: 3 } as const satisfies FeatureManifest;
+    const left = await featureActivation(creation, {
+      parentRecordIds: [creation.genesis.recordId],
+      previousFeatureSetId: creation.genesis.requiredFeatureSetId,
+      previousManifests: [],
+      addedManifests: [revisionOne],
+      assertedAt: 10_000,
+    });
+    const right = await featureActivation(creation, {
+      parentRecordIds: [creation.genesis.recordId],
+      previousFeatureSetId: creation.genesis.requiredFeatureSetId,
+      previousManifests: [],
+      addedManifests: [revisionTwo],
+      assertedAt: -10_000,
+    });
+    const third = await featureActivation(creation, {
+      parentRecordIds: [creation.genesis.recordId],
+      previousFeatureSetId: creation.genesis.requiredFeatureSetId,
+      previousManifests: [],
+      addedManifests: [revisionThree],
+      assertedAt: 5,
+    });
+
+    const { replay } = await replayFeatureAuthority(
+      creation,
+      [left, right, third],
+      [left.event.recordId, right.event.recordId, third.event.recordId],
+      creation.genesis.requiredFeatureSetId,
+    );
+    const candidateRecordIds = [
+      left.event.recordId,
+      right.event.recordId,
+      third.event.recordId,
+    ].sort((first, second) => Buffer.compare(Buffer.from(first), Buffer.from(second)));
+    const manifestIds = [...left.manifestBytes, ...right.manifestBytes, ...third.manifestBytes]
+      .map(featureManifestId)
+      .sort((first, second) => Buffer.compare(Buffer.from(first), Buffer.from(second)));
+    expect(replay.authority.requiredFeatureSetId).toEqual(creation.genesis.requiredFeatureSetId);
+    expect(replay.authority.featureManifests).toEqual([]);
+    expect(replay.authority.featureSetConflict).toEqual({ candidateRecordIds, manifestIds });
+    expect(replay.authority.writeFences).toContainEqual({
+      kind: "feature-set-incompatibility",
+      subjectId: creation.ids.vaultId,
+      causeRecordIds: candidateRecordIds,
+    });
+
+    const blocked = await featureActivation(creation, {
+      parentRecordIds: [left.event.recordId, right.event.recordId, third.event.recordId],
+      previousFeatureSetId: creation.genesis.requiredFeatureSetId,
+      previousManifests: [],
+      addedManifests: [
+        {
+          featureKey: "awsm.test-after-conflict",
+          revision: 1,
+          parameters: new Uint8Array(),
+          requiredManifestIds: [],
+          incompatibleKeys: [],
+        },
+      ],
+      assertedAt: 4,
+    });
+    const blockedManifestBytes = blocked.manifestBytes[0];
+    if (blockedManifestBytes === undefined) {
+      throw new TypeError("Feature fixture omitted its blocked Manifest");
+    }
+    const blockedManifestId = featureManifestId(blockedManifestBytes);
+    const byId = new Map<string, Uint8Array>();
+    for (const candidate of [left, right, third, blocked]) {
+      byId.set(Buffer.from(candidate.event.recordId).toString("hex"), candidate.event.bytes);
+      for (const bytes of candidate.manifestBytes) {
+        byId.set(Buffer.from(featureManifestId(bytes)).toString("hex"), bytes);
+      }
+    }
+    const openResolvedCompactItem = vi.fn(
+      async ({ logicalId }: { readonly logicalId: Uint8Array }) => ({
+        payloadBytes: byId.get(Buffer.from(logicalId).toString("hex")),
+      }),
+    );
+    await expect(
+      new CanonicalReplayService({ openResolvedCompactItem } as never).replayOpened(
+        openedVaultAtFrontier(
+          creation,
+          [blocked.event.recordId],
+          [left.event.recordId, right.event.recordId, third.event.recordId, blocked.event.recordId],
+          creation.genesis.requiredFeatureSetId,
+        ),
+      ),
+    ).rejects.toThrow("An Event cannot descend from an incompatible Required Feature Set");
+    expect(openResolvedCompactItem.mock.calls.map(([input]) => input.logicalId)).not.toContainEqual(
+      blockedManifestId,
+    );
+  });
+
+  it("unions compatible sibling Feature Activations and coalesces exact duplicates", async () => {
+    const creation = await prepareCanonicalVaultCreation({ label: "Features", assertedAt: 1 });
+    const alpha = {
+      featureKey: "awsm.test-alpha",
+      revision: 1,
+      parameters: new Uint8Array(),
+      requiredManifestIds: [],
+      incompatibleKeys: [],
+    } as const satisfies FeatureManifest;
+    const beta = { ...alpha, featureKey: "awsm.test-beta" } as const satisfies FeatureManifest;
+    const activation = async (manifest: FeatureManifest, assertedAt: number) =>
+      featureActivation(creation, {
+        parentRecordIds: [creation.genesis.recordId],
+        previousFeatureSetId: creation.genesis.requiredFeatureSetId,
+        previousManifests: [],
+        addedManifests: [manifest],
+        assertedAt,
+      });
+    const left = await activation(alpha, 10_000);
+    const right = await activation(beta, -10_000);
+    const duplicate = await activation(alpha, 3);
+    const combinedFeatureSetId = requiredFeatureSetId([alpha, beta]);
+
+    const { replay } = await replayFeatureAuthority(
+      creation,
+      [left, right, duplicate],
+      [left.event.recordId, right.event.recordId, duplicate.event.recordId],
+      combinedFeatureSetId,
+    );
+    expect(replay.authority.requiredFeatureSetId).toEqual(combinedFeatureSetId);
+    expect(
+      replay.authority.featureManifests.map(({ manifest }) => manifest.featureKey).sort(),
+    ).toEqual(["awsm.test-alpha", "awsm.test-beta"]);
+    expect(replay.authority.featureSetConflict).toBeNull();
+    expect(
+      replay.authority.writeFences.filter(({ kind }) => kind === "feature-set-incompatibility"),
+    ).toEqual([]);
   });
 
   it("replays the complete Invitation, conflict, and member-removal lifecycle", async () => {

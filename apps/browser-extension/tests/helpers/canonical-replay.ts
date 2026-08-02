@@ -1,3 +1,4 @@
+import { EMPTY_REQUIRED_FEATURE_SET_ID } from "../../src/domain/canonical/features";
 import { identifier } from "../../src/domain/canonical/identifiers";
 import { canonicalMap, canonicalSet } from "../../src/domain/canonical/value";
 import type { CanonicalAuthorityState } from "../../src/runtime/projection/canonical-authority-replay";
@@ -25,6 +26,9 @@ export function singleCredentialAuthority(input: {
     keyEpochs: [],
     keyEpochConflicts: [],
     keyEnvelopeSlots: [],
+    requiredFeatureSetId: EMPTY_REQUIRED_FEATURE_SET_ID,
+    featureManifests: [],
+    featureSetConflict: null,
     writeFences: [],
     clientCredentials: new Map([
       [
