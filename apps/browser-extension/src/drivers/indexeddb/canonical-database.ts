@@ -18,6 +18,7 @@ import {
 
 export type CanonicalStorageErrorId =
   | "IMMUTABLE_ITEM_CONFLICT"
+  | "STORAGE_CONTEXT_CHANGED"
   | "STORAGE_SCHEMA_INVALID"
   | "STORAGE_TRANSACTION_FAILED"
   | "VAULT_ALREADY_EXISTS"
@@ -60,6 +61,23 @@ export interface ReplicaMutationCommit {
   readonly expectedReplicaState: Uint8Array;
   readonly expectedMutableItems?: readonly NamespaceBytes[];
   readonly nextReplicaState: NamespaceBytes;
+  readonly immutableItems?: readonly NamespaceBytes[];
+  readonly mutableItems?: readonly NamespaceBytes[];
+  readonly deletedItems?: readonly Omit<NamespaceBytes, "bytes">[];
+}
+
+export interface InstallationMutationCommit {
+  readonly realm: StorageRealm;
+  readonly expectedAbsentItems?: readonly Omit<NamespaceBytes, "bytes">[];
+  readonly expectedMutableItems?: readonly NamespaceBytes[];
+  readonly mutableItems?: readonly NamespaceBytes[];
+  readonly deletedItems?: readonly Omit<NamespaceBytes, "bytes">[];
+}
+
+export interface ExecutionMutationCommit {
+  readonly realm: StorageRealm;
+  readonly expectedAbsentItems?: readonly Omit<NamespaceBytes, "bytes">[];
+  readonly expectedMutableItems?: readonly NamespaceBytes[];
   readonly immutableItems?: readonly NamespaceBytes[];
   readonly mutableItems?: readonly NamespaceBytes[];
   readonly deletedItems?: readonly Omit<NamespaceBytes, "bytes">[];
@@ -556,6 +574,187 @@ export class CanonicalIndexedDb {
           .delete(storageKey(input.realm, item));
       }
       replicaStore.put(Uint8Array.from(input.nextReplicaState.bytes), replicaKey);
+      await transactionDone(transaction);
+    } catch (error) {
+      abortTransaction(transaction);
+      throw storageError(error);
+    }
+  }
+
+  async commitInstallationMutation(input: InstallationMutationCommit): Promise<void> {
+    const expectedAbsentItems = input.expectedAbsentItems ?? [];
+    const expectedMutableItems = input.expectedMutableItems ?? [];
+    const mutableItems = input.mutableItems ?? [];
+    const deletedItems = input.deletedItems ?? [];
+    const allowedFamilies = new Set<StorageFamily>([
+      STORAGE_FAMILIES.InstallationState,
+      STORAGE_FAMILIES.TrustedSecrets,
+    ]);
+    const assertInstallationItem = (item: Omit<NamespaceBytes, "bytes">): void => {
+      const namespace = descriptor(item.namespace);
+      if (namespace.immutable || !allowedFamilies.has(namespace.family)) {
+        throw new TypeError(`${item.namespace} is not mutable Installation state`);
+      }
+    };
+    for (const item of expectedAbsentItems) assertInstallationItem(item);
+    for (const item of expectedMutableItems) {
+      assertBytes(item);
+      assertInstallationItem(item);
+    }
+    for (const item of mutableItems) {
+      assertBytes(item);
+      assertInstallationItem(item);
+    }
+    for (const item of deletedItems) assertInstallationItem(item);
+    assertUniqueItems(input.realm, expectedAbsentItems);
+    assertUniqueItems(input.realm, expectedMutableItems);
+    assertUniqueItems(input.realm, [...mutableItems, ...deletedItems]);
+
+    const families = [
+      ...familyNames(expectedMutableItems),
+      ...familyNames(mutableItems),
+      ...expectedAbsentItems.map((item) => descriptor(item.namespace).family),
+      ...deletedItems.map((item) => descriptor(item.namespace).family),
+    ];
+    if (families.length === 0) return;
+    const database = await this.databasePromise;
+    const transaction = database.transaction([...new Set(families)], "readwrite");
+    try {
+      for (const item of expectedAbsentItems) {
+        const stored = await requestValue(
+          transaction
+            .objectStore(descriptor(item.namespace).family)
+            .get(storageKey(input.realm, item)),
+        );
+        if (stored !== undefined) {
+          throw new CanonicalStorageError(
+            "STORAGE_CONTEXT_CHANGED",
+            "Installation state already contains the requested local identity.",
+          );
+        }
+      }
+      for (const item of expectedMutableItems) {
+        const stored = await requestValue(
+          transaction
+            .objectStore(descriptor(item.namespace).family)
+            .get(storageKey(input.realm, item)),
+        );
+        if (!(stored instanceof Uint8Array) || !bytesEqual(stored, item.bytes)) {
+          throw new CanonicalStorageError(
+            "STORAGE_CONTEXT_CHANGED",
+            "Installation state changed before the commit.",
+          );
+        }
+      }
+      for (const item of mutableItems) {
+        transaction
+          .objectStore(descriptor(item.namespace).family)
+          .put(Uint8Array.from(item.bytes), storageKey(input.realm, item));
+      }
+      for (const item of deletedItems) {
+        transaction
+          .objectStore(descriptor(item.namespace).family)
+          .delete(storageKey(input.realm, item));
+      }
+      await transactionDone(transaction);
+    } catch (error) {
+      abortTransaction(transaction);
+      throw storageError(error);
+    }
+  }
+
+  async commitExecutionMutation(input: ExecutionMutationCommit): Promise<void> {
+    const expectedAbsentItems = input.expectedAbsentItems ?? [];
+    const expectedMutableItems = input.expectedMutableItems ?? [];
+    const immutableItems = input.immutableItems ?? [];
+    const mutableItems = input.mutableItems ?? [];
+    const deletedItems = input.deletedItems ?? [];
+    const allowedFamilies = new Set<StorageFamily>([
+      STORAGE_FAMILIES.ExecutionState,
+      STORAGE_FAMILIES.Quarantine,
+    ]);
+    const assertExecutionItem = (item: Omit<NamespaceBytes, "bytes">): void => {
+      if (!allowedFamilies.has(descriptor(item.namespace).family)) {
+        throw new TypeError(`${item.namespace} is not Execution State or Quarantine`);
+      }
+    };
+    for (const item of expectedAbsentItems) assertExecutionItem(item);
+    for (const item of expectedMutableItems) {
+      assertBytes(item);
+      assertExecutionItem(item);
+      if (descriptor(item.namespace).immutable) {
+        throw new TypeError(`${item.namespace} cannot be a mutable compare-and-swap input`);
+      }
+    }
+    for (const item of immutableItems) {
+      assertBytes(item);
+      assertExecutionItem(item);
+      if (!descriptor(item.namespace).immutable) {
+        throw new TypeError(`${item.namespace} is not immutable Execution State or Quarantine`);
+      }
+    }
+    for (const item of mutableItems) {
+      assertBytes(item);
+      assertExecutionItem(item);
+      if (descriptor(item.namespace).immutable) {
+        throw new TypeError(`${item.namespace} cannot be replaced as mutable state`);
+      }
+    }
+    for (const item of deletedItems) assertExecutionItem(item);
+    assertUniqueItems(input.realm, expectedAbsentItems);
+    assertUniqueItems(input.realm, expectedMutableItems);
+    assertUniqueItems(input.realm, [...immutableItems, ...mutableItems, ...deletedItems]);
+
+    const families = [
+      ...familyNames(expectedMutableItems),
+      ...familyNames(immutableItems),
+      ...familyNames(mutableItems),
+      ...expectedAbsentItems.map((item) => descriptor(item.namespace).family),
+      ...deletedItems.map((item) => descriptor(item.namespace).family),
+    ];
+    if (families.length === 0) return;
+    const database = await this.databasePromise;
+    const transaction = database.transaction([...new Set(families)], "readwrite");
+    try {
+      for (const item of expectedAbsentItems) {
+        const stored = await requestValue(
+          transaction
+            .objectStore(descriptor(item.namespace).family)
+            .get(storageKey(input.realm, item)),
+        );
+        if (stored !== undefined) {
+          throw new CanonicalStorageError(
+            "STORAGE_CONTEXT_CHANGED",
+            "Execution State already contains the requested local identity.",
+          );
+        }
+      }
+      for (const item of expectedMutableItems) {
+        const stored = await requestValue(
+          transaction
+            .objectStore(descriptor(item.namespace).family)
+            .get(storageKey(input.realm, item)),
+        );
+        if (!(stored instanceof Uint8Array) || !bytesEqual(stored, item.bytes)) {
+          throw new CanonicalStorageError(
+            "STORAGE_CONTEXT_CHANGED",
+            "Execution State changed before the commit.",
+          );
+        }
+      }
+      for (const item of immutableItems) {
+        await this.putImmutableInTransaction(transaction, input.realm, item);
+      }
+      for (const item of mutableItems) {
+        transaction
+          .objectStore(descriptor(item.namespace).family)
+          .put(Uint8Array.from(item.bytes), storageKey(input.realm, item));
+      }
+      for (const item of deletedItems) {
+        transaction
+          .objectStore(descriptor(item.namespace).family)
+          .delete(storageKey(input.realm, item));
+      }
       await transactionDone(transaction);
     } catch (error) {
       abortTransaction(transaction);

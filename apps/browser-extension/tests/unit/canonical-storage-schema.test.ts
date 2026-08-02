@@ -72,4 +72,37 @@ describe("canonical storage schema", () => {
       immutable: false,
     });
   });
+
+  it("keeps Remote configuration, credentials, and pull Jobs local to the Installation", () => {
+    expect(NAMESPACES.replicaRemote).toMatchObject({
+      key: "awsm.storage.replica-remote",
+      family: STORAGE_FAMILIES.InstallationState,
+      scope: "Vault",
+      protection: "InstallationWrapped",
+      synchronization: "InstallationLocal",
+      exportTreatment: "Excluded",
+      backupTreatment: "Excluded",
+      immutable: false,
+    });
+    expect(NAMESPACES.remoteChannelCredential).toMatchObject({
+      key: "awsm.storage.remote-channel-credential",
+      family: STORAGE_FAMILIES.TrustedSecrets,
+      scope: "Remote",
+      protection: "InstallationWrapped",
+      synchronization: "Never",
+      exportTreatment: "Excluded",
+      backupTreatment: "Excluded",
+      immutable: false,
+    });
+    expect(NAMESPACES.pullSynchronizationJob).toMatchObject({
+      key: "awsm.storage.pull-synchronization-job",
+      family: STORAGE_FAMILIES.ExecutionState,
+      scope: "Vault",
+      protection: "LocalClear",
+      synchronization: "Never",
+      exportTreatment: "Excluded",
+      backupTreatment: "Excluded",
+      immutable: false,
+    });
+  });
 });

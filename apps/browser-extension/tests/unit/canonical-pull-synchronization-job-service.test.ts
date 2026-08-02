@@ -1,0 +1,183 @@
+import { describe, expect, it } from "vitest";
+
+import { identifier } from "../../src/domain/canonical/identifiers";
+import { identifierStorageKey } from "../../src/drivers/indexeddb/canonical-database";
+import { NAMESPACES, NORMAL_STORAGE_REALM } from "../../src/drivers/indexeddb/canonical-schema";
+import { CanonicalPullSynchronizationJobService } from "../../src/runtime/synchronization/canonical-pull-synchronization-job-service";
+import { encodeOpaqueEnvelope } from "../../src/storage/opaque-envelope";
+
+const REMOTE_ID = "019fa62e-a653-7f63-b2bf-94e7ed5e46ca";
+const JOB_ID = "019fa62e-a653-7f63-b2bf-94e7ed5e46cb";
+
+function filled<Kind extends Parameters<typeof identifier>[0]>(kind: Kind, byte: number) {
+  return identifier(kind, new Uint8Array(32).fill(byte));
+}
+
+describe("canonical pull-synchronization Job service", () => {
+  it("creates one local durable pull Job bound to the Vault, Remote, and Storage Realm", async () => {
+    const commits: unknown[] = [];
+    const service = new CanonicalPullSynchronizationJobService(
+      {
+        commitExecutionMutation: async (commit: unknown) => commits.push(commit),
+      } as unknown as ConstructorParameters<typeof CanonicalPullSynchronizationJobService>[0],
+      NORMAL_STORAGE_REALM,
+      () => JOB_ID,
+    );
+    const vaultId = filled("Vault", 1);
+
+    await expect(service.create({ vaultId, remoteId: REMOTE_ID })).resolves.toMatchObject({
+      jobId: JOB_ID,
+      vaultId,
+      remoteId: REMOTE_ID,
+      realm: NORMAL_STORAGE_REALM,
+      stage: 1,
+      state: 1,
+      snapshotCursor: null,
+      nextPosition: null,
+      quarantineStorageItemIds: [],
+    });
+    expect(commits).toHaveLength(1);
+    expect(commits[0]).toEqual(
+      expect.objectContaining({
+        expectedAbsentItems: [
+          {
+            namespace: NAMESPACES.pullSynchronizationJob.key,
+            scopeKey: identifierStorageKey(vaultId),
+            itemKey: JOB_ID,
+          },
+        ],
+      }),
+    );
+  });
+
+  it("atomically records an outer-verified opaque item in Remote Quarantine with its resumed Job", async () => {
+    const commits: unknown[] = [];
+    const service = new CanonicalPullSynchronizationJobService(
+      {
+        commitExecutionMutation: async (commit: unknown) => commits.push(commit),
+      } as unknown as ConstructorParameters<typeof CanonicalPullSynchronizationJobService>[0],
+      NORMAL_STORAGE_REALM,
+      () => JOB_ID,
+    );
+    const vaultId = filled("Vault", 1);
+    const job = await service.create({ vaultId, remoteId: REMOTE_ID });
+    const envelope = encodeOpaqueEnvelope({
+      storageClass: 1,
+      protectionParameters: new Uint8Array(64).fill(8),
+      payload: new Uint8Array(16).fill(9),
+    });
+    const next = {
+      ...job,
+      stage: 2 as const,
+      snapshotCursor: 3,
+      progress: {
+        discoveredItemCount: 1,
+        downloadedItemCount: 1,
+        promotedItemCount: 0,
+        rejectedItemCount: 0,
+      },
+      quarantineStorageItemIds: [envelope.storageItemId],
+    };
+
+    await service.recordQuarantine({ previous: job, next, bytes: envelope.bytes });
+
+    const commit = commits[1] as {
+      readonly immutableItems: readonly {
+        readonly namespace: string;
+        readonly scopeKey: string;
+        readonly itemKey: string;
+        readonly bytes: Uint8Array;
+      }[];
+      readonly expectedMutableItems: readonly { readonly bytes: Uint8Array }[];
+      readonly mutableItems: readonly { readonly bytes: Uint8Array }[];
+    };
+    expect(commit.immutableItems).toEqual([
+      {
+        namespace: NAMESPACES.incomingQuarantine.key,
+        scopeKey: REMOTE_ID,
+        itemKey: identifierStorageKey(envelope.storageItemId),
+        bytes: envelope.bytes,
+      },
+    ]);
+    expect(commit.expectedMutableItems).toHaveLength(1);
+    expect(commit.mutableItems).toHaveLength(1);
+  });
+
+  it("rejects a claimed Quarantine identity before any local transaction when outer bytes disagree", async () => {
+    const commits: unknown[] = [];
+    const service = new CanonicalPullSynchronizationJobService(
+      {
+        commitExecutionMutation: async (commit: unknown) => commits.push(commit),
+      } as unknown as ConstructorParameters<typeof CanonicalPullSynchronizationJobService>[0],
+      NORMAL_STORAGE_REALM,
+      () => JOB_ID,
+    );
+    const job = await service.create({ vaultId: filled("Vault", 1), remoteId: REMOTE_ID });
+    const envelope = encodeOpaqueEnvelope({
+      storageClass: 1,
+      protectionParameters: new Uint8Array(64).fill(8),
+      payload: new Uint8Array(16).fill(9),
+    });
+    const next = {
+      ...job,
+      stage: 2 as const,
+      snapshotCursor: 3,
+      progress: {
+        discoveredItemCount: 1,
+        downloadedItemCount: 1,
+        promotedItemCount: 0,
+        rejectedItemCount: 0,
+      },
+      quarantineStorageItemIds: [filled("StorageItem", 7)],
+    };
+
+    await expect(
+      service.recordQuarantine({ previous: job, next, bytes: envelope.bytes }),
+    ).rejects.toThrow(/Quarantine identity/u);
+    expect(commits).toHaveLength(1);
+  });
+
+  it("never lets one download checkpoint discard an earlier Quarantine reference", async () => {
+    const commits: unknown[] = [];
+    const service = new CanonicalPullSynchronizationJobService(
+      {
+        commitExecutionMutation: async (commit: unknown) => commits.push(commit),
+      } as unknown as ConstructorParameters<typeof CanonicalPullSynchronizationJobService>[0],
+      NORMAL_STORAGE_REALM,
+      () => JOB_ID,
+    );
+    const job = await service.create({ vaultId: filled("Vault", 1), remoteId: REMOTE_ID });
+    const first = encodeOpaqueEnvelope({
+      storageClass: 1,
+      protectionParameters: new Uint8Array(64).fill(8),
+      payload: new Uint8Array(16).fill(9),
+    });
+    const second = encodeOpaqueEnvelope({
+      storageClass: 1,
+      protectionParameters: new Uint8Array(64).fill(10),
+      payload: new Uint8Array(16).fill(11),
+    });
+    const previous = {
+      ...job,
+      stage: 2 as const,
+      snapshotCursor: 3,
+      quarantineStorageItemIds: [first.storageItemId],
+      progress: {
+        discoveredItemCount: 2,
+        downloadedItemCount: 1,
+        promotedItemCount: 0,
+        rejectedItemCount: 0,
+      },
+    };
+    const next = {
+      ...previous,
+      quarantineStorageItemIds: [second.storageItemId],
+      progress: { ...previous.progress, downloadedItemCount: 2 },
+    };
+
+    await expect(service.recordQuarantine({ previous, next, bytes: second.bytes })).rejects.toThrow(
+      /retain prior Quarantine/u,
+    );
+    expect(commits).toHaveLength(1);
+  });
+});

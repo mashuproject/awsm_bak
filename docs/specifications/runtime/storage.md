@@ -65,14 +65,18 @@ The canonical Client registry currently declares these revision-1 namespaces:
 | `awsm.storage.logical-resolution`             | Replica Safety State | Replica      | mutable resolution        |
 | `awsm.storage.vault-directory`                | Installation State   | Installation | mutable                   |
 | `awsm.storage.installation-selection`         | Installation State   | Installation | mutable                   |
+| `awsm.storage.replica-remote`                 | Installation State   | Vault        | mutable                   |
 | `awsm.storage.installation-wrapping-key`      | Trusted Secrets      | Installation | immutable                 |
 | `awsm.storage.client-secret`                  | Trusted Secrets      | Vault        | mutable lifecycle         |
 | `awsm.storage.epoch-secret`                   | Trusted Secrets      | Vault        | mutable lifecycle         |
+| `awsm.storage.remote-channel-credential`      | Trusted Secrets      | Remote       | mutable local credential  |
 | `awsm.storage.command-outcome`                | Execution State      | Vault        | immutable                 |
 | `awsm.storage.replica-garbage-collection-job` | Execution State      | Vault        | mutable conditional state |
+| `awsm.storage.pull-synchronization-job`       | Execution State      | Vault        | mutable resumable state   |
 | `awsm.storage.prepared-capture`               | Prepared Data        | Job          | immutable                 |
 | `awsm.storage.incoming-quarantine`            | Quarantine           | Remote       | immutable                 |
 | `awsm.storage.library-projection`             | Materializations     | Replica      | replaceable               |
+| `awsm.storage.search-materialization`         | Materializations     | Replica      | replaceable               |
 | `awsm.storage.managed-resource`               | Managed Resources    | Installation | immutable                 |
 
 Every stored key includes Storage Realm, namespace key, declared scope key, and item key. The
