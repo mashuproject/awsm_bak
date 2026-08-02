@@ -1476,6 +1476,12 @@ async function canonicalVaultCeremonyScenario(): Promise<unknown> {
         new CanonicalCaptureService(restartedService, artifacts),
         new CanonicalLibraryProjectionService(restartedService, artifacts),
       );
+      const resumableState = await restartedRuntime.state();
+      const resumableSetupId = resumableState.pendingVaultCreation?.setupId === setup.setupId;
+      const resumablePhraseAbsent = !Object.hasOwn(
+        resumableState.pendingVaultCreation ?? {},
+        "recoveryPhrase",
+      );
       const created = await restartedRuntime.confirmVaultCreation({
         setupId: setup.setupId,
         recoveryPhrase: setup.recoveryPhrase,
@@ -1512,6 +1518,8 @@ async function canonicalVaultCeremonyScenario(): Promise<unknown> {
         directoryCount: directories.length,
         selected: sameBytes(selection.vaultId, vaultId),
         opened: sameBytes(opened.directory.vaultId, vaultId),
+        resumableSetupId,
+        resumablePhraseAbsent,
         resumedAfterRestart: true,
         reused,
       };

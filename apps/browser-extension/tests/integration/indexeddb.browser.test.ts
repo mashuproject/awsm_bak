@@ -125,6 +125,8 @@ test("survives a client restart before Recovery Phrase confirmation and atomical
     directoryCount: 1,
     selected: true,
     opened: true,
+    resumableSetupId: true,
+    resumablePhraseAbsent: true,
     resumedAfterRestart: true,
     reused: "VAULT_CREATION_NOT_FOUND",
   });
