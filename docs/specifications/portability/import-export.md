@@ -158,8 +158,9 @@ part: the exact canonical Manifest map containing keys `0` through `6` and `8`, 
 omitted. The full encoded Manifest inserts the resulting digest at key `7`.
 
 Key Epoch entries are a sorted duplicate-free canonical set. The importer recomputes each Key Epoch
-ID from the Manifest Vault ID and its 32-byte Key Epoch Key. The inventory must contain at least one
-entry.
+ID from the Manifest Vault ID and its 32-byte Key Epoch Key. The inventory MUST contain exactly the
+duplicate-free Key Epoch ID set referenced by `opaqueItemInventory`; a missing or unreferenced entry
+is invalid.
 
 `continuityProofRoots` is the exact accepted Authority Frontier and is encoded at key `8`. Every Continuity
 Proof Record and authority-semantic dependency reachable from those roots is present in the opaque

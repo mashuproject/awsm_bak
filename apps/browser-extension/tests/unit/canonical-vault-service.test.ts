@@ -1,10 +1,19 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { randomIdentifier } from "../../src/domain/canonical/identifiers";
-import type { CanonicalIndexedDb } from "../../src/drivers/indexeddb/canonical-database";
+import { sealCompactItem } from "../../src/crypto/compact";
+import { keyEpochId, randomIdentifier } from "../../src/domain/canonical/identifiers";
+import {
+  type CanonicalIndexedDb,
+  identifierStorageKey,
+} from "../../src/drivers/indexeddb/canonical-database";
 import { NAMESPACES, NORMAL_STORAGE_REALM } from "../../src/drivers/indexeddb/canonical-schema";
 import { prepareCanonicalVaultCreation } from "../../src/runtime/vault/canonical-create";
-import { decodeInstallationSelection } from "../../src/runtime/vault/canonical-local-state";
+import {
+  canonicalLocalStorageContext,
+  decodeInstallationSelection,
+  encodeEpochSecretState,
+  prepareWrappedLocalStateItem,
+} from "../../src/runtime/vault/canonical-local-state";
 import {
   CanonicalVaultCreationCeremony,
   CanonicalVaultService,
@@ -155,5 +164,76 @@ describe("canonical opaque dependency resolution", () => {
         namespace: NAMESPACES.keyEnvelope.key,
       }),
     ).rejects.toThrow("Resolution Storage Item ID does not match");
+  });
+
+  it("opens a retained Compact item with its exact historical Epoch Secret", async () => {
+    const vaultId = randomIdentifier("Vault");
+    const logicalId = randomIdentifier("FeatureManifest");
+    const currentKey = new Uint8Array(32).fill(1);
+    const historicalKey = new Uint8Array(32).fill(2);
+    const currentEpochId = keyEpochId(vaultId, currentKey);
+    const historicalEpochId = keyEpochId(vaultId, historicalKey);
+    const wrappingKey = await crypto.subtle.generateKey({ name: "AES-KW", length: 256 }, false, [
+      "wrapKey",
+      "unwrapKey",
+    ]);
+    const payloadBytes = new Uint8Array([4, 3, 2, 1]);
+    const envelope = await sealCompactItem({
+      vaultId,
+      keyEpochId: historicalEpochId,
+      keyEpochKey: historicalKey,
+      payloadType: 3,
+      payloadBytes,
+    });
+    const wrappedHistoricalSecret = await prepareWrappedLocalStateItem({
+      namespace: NAMESPACES.epochSecret.key,
+      scopeKey: identifierStorageKey(vaultId),
+      itemKey: identifierStorageKey(historicalEpochId),
+      wrappingKey,
+      domain: "awsm.local.epoch-secret",
+      context: canonicalLocalStorageContext(vaultId, historicalEpochId),
+      bytes: encodeEpochSecretState({
+        vaultId,
+        keyEpochId: historicalEpochId,
+        displayNumber: 0,
+        key: historicalKey,
+      }),
+    });
+    const storage = {
+      getBytes: vi.fn(async (_realm, item: { readonly namespace: string }) =>
+        item.namespace === NAMESPACES.epochSecret.key
+          ? wrappedHistoricalSecret.bytes
+          : envelope.bytes,
+      ),
+    } as unknown as CanonicalIndexedDb;
+    const service = new CanonicalVaultService(storage, NORMAL_STORAGE_REALM);
+    vi.spyOn(service, "readLogicalResolution").mockResolvedValue({
+      vaultId,
+      kind: 4,
+      logicalId,
+      storageItemId: envelope.storageItemId,
+      keyEpochId: historicalEpochId,
+      availability: 1,
+    });
+    const vault = {
+      replicaState: { vaultId },
+      installationWrappingKey: wrappingKey,
+      epochSecret: {
+        vaultId,
+        keyEpochId: currentEpochId,
+        displayNumber: 1,
+        key: currentKey,
+      },
+    } as never;
+
+    await expect(
+      service.openResolvedCompactItem({
+        vault,
+        kind: 4,
+        logicalId,
+        namespace: NAMESPACES.featureManifest.key,
+        payloadType: 3,
+      }),
+    ).resolves.toMatchObject({ keyEpochId: historicalEpochId, payloadBytes });
   });
 });

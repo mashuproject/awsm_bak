@@ -1,3 +1,4 @@
+import { wipe } from "../../crypto/sodium";
 import type { Identifier } from "../../domain/canonical/identifiers";
 import {
   ARTIFACT_OBJECT,
@@ -18,7 +19,11 @@ import { NAMESPACES } from "../../drivers/indexeddb/canonical-schema";
 import { decodeOpaqueEnvelope } from "../../storage/opaque-envelope";
 import type { CanonicalArtifactStore } from "../artifact/canonical-store";
 import { verifyCanonicalArtifactRepresentation } from "../artifact/canonical-verify";
-import type { CanonicalReplayService } from "../projection/canonical-replay";
+import type {
+  CanonicalReplayService,
+  ReplayedCanonicalVault,
+} from "../projection/canonical-replay";
+import type { EpochSecretState } from "../vault/canonical-local-state";
 import type { PersistedOpenedCanonicalVault } from "../vault/canonical-service";
 import {
   type CompleteExportEntry,
@@ -51,6 +56,20 @@ interface ResolvedObject {
 interface PreparedOpaqueEntry {
   readonly inventory: CompleteExportOpaqueItem;
   readonly entry: CompleteExportEntry;
+}
+
+export interface CanonicalCompleteExportInput {
+  readonly vaultId: Identifier<"Vault">;
+  readonly passphrase: string;
+  readonly salt: Uint8Array;
+  readonly nonce: Uint8Array;
+  readonly write: (bytes: Uint8Array) => Promise<void>;
+}
+
+export interface CanonicalCompleteExportOutcome {
+  readonly manifest: CompleteExportManifest;
+  readonly opaqueItemCount: number;
+  readonly frameCount: number;
 }
 
 function key(value: Uint8Array): string {
@@ -126,20 +145,29 @@ export class CanonicalCompleteExportService {
     readonly artifacts: CanonicalArtifactStore,
   ) {}
 
-  async export(input: {
-    readonly vaultId: Identifier<"Vault">;
-    readonly passphrase: string;
-    readonly salt: Uint8Array;
-    readonly nonce: Uint8Array;
-    readonly write: (bytes: Uint8Array) => Promise<void>;
-  }): Promise<{
-    readonly manifest: CompleteExportManifest;
-    readonly opaqueItemCount: number;
-    readonly frameCount: number;
-  }> {
+  async export(input: CanonicalCompleteExportInput): Promise<CanonicalCompleteExportOutcome> {
     const replay = await this.replays.replay(input.vaultId);
+    const epochSecrets = await this.replays.vaults.listEpochSecrets(replay.vault);
+    try {
+      return await this.exportWithEpochSecrets(input, replay, epochSecrets);
+    } finally {
+      await Promise.all(epochSecrets.map(({ key }) => wipe(key)));
+    }
+  }
+
+  private async exportWithEpochSecrets(
+    input: CanonicalCompleteExportInput,
+    replay: ReplayedCanonicalVault,
+    epochSecrets: readonly EpochSecretState[],
+  ): Promise<CanonicalCompleteExportOutcome> {
     const vault = replay.vault;
     same(vault.replicaState.vaultId, input.vaultId, "Complete Export Vault ID");
+    const epochSecretsById = new Map(
+      epochSecrets.map((secret) => [key(secret.keyEpochId), secret]),
+    );
+    if (epochSecretsById.size !== epochSecrets.length) {
+      throw new TypeError("Complete Export local Key Epoch inventory contains duplicates");
+    }
     const recordCache = new Map<string, ResolvedRecord>();
     const objectCache = new Map<string, ResolvedObject>();
     const featureCache = new Map<
@@ -249,7 +277,9 @@ export class CanonicalCompleteExportService {
       if (sourceObject === undefined) {
         throw new TypeError("Reachable Artifact Object cache is incomplete");
       }
-      opaqueEntries.push(await this.prepareArtifact(vault, id, sourceObject.value));
+      opaqueEntries.push(
+        await this.prepareArtifact(vault, id, sourceObject.value, epochSecretsById),
+      );
     }
     opaqueEntries.sort((left, right) =>
       compareBytes(left.inventory.storageItemId, right.inventory.storageItemId),
@@ -271,17 +301,22 @@ export class CanonicalCompleteExportService {
     const manifestBytes = encodeCompleteExportManifest(preparedManifest);
     const manifest = decodeCompleteExportManifest(manifestBytes);
     const manifestEntry = prepareCompleteExportEntry(1, manifestBytes);
+    const requiredEpochIds = new Set(
+      opaqueEntries.map(({ inventory }) => key(inventory.keyEpochId)),
+    );
+    const requiredEpochSecrets = [...requiredEpochIds].map((epochId) => {
+      const secret = epochSecretsById.get(epochId);
+      if (secret === undefined) {
+        throw new TypeError("Complete Export lacks a required local Key Epoch Secret");
+      }
+      return { keyEpochId: secret.keyEpochId, keyEpochKey: secret.key };
+    });
     const keyInventoryEntry = prepareCompleteExportEntry(
       3,
       encodeCompleteExportKeyInventory({
         vaultId: vault.replicaState.vaultId,
         generationId: vault.replicaState.generationId,
-        entries: [
-          {
-            keyEpochId: vault.epochSecret.keyEpochId,
-            keyEpochKey: vault.epochSecret.key,
-          },
-        ],
+        entries: requiredEpochSecrets,
       }),
     );
     const encrypted = await sealCompleteExportStream({
@@ -314,7 +349,6 @@ export class CanonicalCompleteExportService {
     if (resolution.availability !== 1) {
       throw new TypeError("Complete Export Key Envelope is not verified locally");
     }
-    same(resolution.keyEpochId, vault.epochSecret.keyEpochId, "Key Envelope readable Epoch");
     const bytes = await this.replays.vaults.storage.getBytes(this.replays.vaults.realm, {
       namespace: NAMESPACES.keyEnvelope.key,
       scopeKey: identifierStorageKey(vault.replicaState.vaultId),
@@ -334,6 +368,7 @@ export class CanonicalCompleteExportService {
     vault: PersistedOpenedCanonicalVault,
     id: Identifier<"Artifact">,
     object: VaultObject,
+    epochSecretsById: ReadonlyMap<string, EpochSecretState>,
   ): Promise<PreparedOpaqueEntry> {
     const resolution = await this.replays.vaults.readLogicalResolution({
       vault,
@@ -343,13 +378,16 @@ export class CanonicalCompleteExportService {
     if (resolution.availability !== 1) {
       throw new TypeError("Complete Export Artifact wrapper is not verified locally");
     }
-    same(resolution.keyEpochId, vault.epochSecret.keyEpochId, "Artifact readable Epoch");
+    const epochSecret = epochSecretsById.get(key(resolution.keyEpochId));
+    if (epochSecret === undefined) {
+      throw new TypeError("Complete Export Artifact lacks its local Key Epoch Secret");
+    }
     const verified = await verifyCanonicalArtifactRepresentation({
       store: this.artifacts,
       storageItemId: resolution.storageItemId,
       object,
       keyEpochId: resolution.keyEpochId,
-      keyEpochKey: vault.epochSecret.key,
+      keyEpochKey: epochSecret.key,
       writePlaintext: async () => undefined,
     });
     const artifactStore = this.artifacts;

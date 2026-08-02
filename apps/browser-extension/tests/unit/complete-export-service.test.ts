@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { openCompactItem } from "../../src/crypto/compact";
+import { openCompactItem, sealCompactItem } from "../../src/crypto/compact";
+import { keyEpochId } from "../../src/domain/canonical/identifiers";
 import { CausalGraph } from "../../src/domain/canonical/reducers";
 import { concatBytes } from "../../src/domain/canonical/transcript";
 import { bytesEqual } from "../../src/domain/hash";
@@ -29,8 +30,30 @@ async function wrappingKey(): Promise<CryptoKey> {
 }
 
 describe("canonical Complete Export Service", () => {
-  it("exports one authenticated initial Vault without changing its source", async () => {
-    const creation = await prepareCanonicalVaultCreation({ label: "Research", assertedAt: 1 });
+  it("exports every required retained Epoch without changing its source", async () => {
+    const feature = {
+      featureKey: "awsm.test-export-epochs",
+      revision: 1,
+      parameters: new Uint8Array([1]),
+      requiredManifestIds: [],
+      incompatibleKeys: [],
+    } as const;
+    const creation = await prepareCanonicalVaultCreation({
+      label: "Research",
+      assertedAt: 1,
+      featureManifests: [feature],
+    });
+    const historicalKey = new Uint8Array(32).fill(9);
+    const historicalEpochId = keyEpochId(creation.ids.vaultId, historicalKey);
+    const preparedFeature = creation.featureManifests[0];
+    if (preparedFeature === undefined) throw new Error("missing fixture Feature Manifest");
+    const historicalFeatureEnvelope = await sealCompactItem({
+      vaultId: creation.ids.vaultId,
+      keyEpochId: historicalEpochId,
+      keyEpochKey: historicalKey,
+      payloadType: 3,
+      payloadBytes: preparedFeature.bytes,
+    });
     const local = await prepareCanonicalVaultStorage({
       creation,
       label: "Research",
@@ -77,6 +100,7 @@ describe("canonical Complete Export Service", () => {
         Buffer.from(creation.clientKeyEnvelope.id).toString("hex"),
         creation.clientKeyEnvelope.envelope.bytes,
       ],
+      [Buffer.from(preparedFeature.id).toString("hex"), historicalFeatureEnvelope.bytes],
     ]);
     const storage = {
       getBytes: async (_realm: unknown, item: { readonly itemKey: string }) =>
@@ -88,13 +112,28 @@ describe("canonical Complete Export Service", () => {
       openResolvedCompactItem: async (input: { readonly logicalId: Uint8Array }) => {
         const bytes = envelopes.get(Buffer.from(input.logicalId).toString("hex"));
         if (bytes === undefined) throw new Error("missing fixture envelope");
+        const usesHistoricalEpoch = bytesEqual(input.logicalId, preparedFeature.id);
         return openCompactItem({
           vaultId: creation.ids.vaultId,
-          keyEpochId: creation.secrets.keyEpoch.id,
-          keyEpochKey: creation.secrets.keyEpoch.key,
+          keyEpochId: usesHistoricalEpoch ? historicalEpochId : creation.secrets.keyEpoch.id,
+          keyEpochKey: usesHistoricalEpoch ? historicalKey : creation.secrets.keyEpoch.key,
           envelopeBytes: bytes,
         });
       },
+      listEpochSecrets: vi.fn(async () => [
+        {
+          vaultId: creation.ids.vaultId,
+          keyEpochId: creation.secrets.keyEpoch.id,
+          displayNumber: 1,
+          key: Uint8Array.from(creation.secrets.keyEpoch.key),
+        },
+        {
+          vaultId: creation.ids.vaultId,
+          keyEpochId: historicalEpochId,
+          displayNumber: 0,
+          key: Uint8Array.from(historicalKey),
+        },
+      ]),
       readLogicalResolution: async (input: { readonly logicalId: Uint8Array }) => {
         const bytes = envelopes.get(Buffer.from(input.logicalId).toString("hex"));
         if (bytes === undefined) throw new Error("missing fixture resolution");
@@ -165,18 +204,23 @@ describe("canonical Complete Export Service", () => {
       offset += header.byteLength;
     }
 
-    expect(entries.map(({ kind }) => kind)).toEqual([1, 2, 2, 2, 2, 3]);
+    expect(entries.map(({ kind }) => kind)).toEqual([1, 2, 2, 2, 2, 2, 3]);
     expect(decodeCompleteExportManifest(entries[0]?.bytes ?? new Uint8Array())).toEqual(
       result.manifest,
     );
     const inventory = decodeCompleteExportKeyInventory(entries.at(-1)?.bytes ?? new Uint8Array());
-    expect(inventory.entries).toEqual([
-      {
-        keyEpochId: creation.secrets.keyEpoch.id,
-        keyEpochKey: creation.secrets.keyEpoch.key,
-      },
-    ]);
-    expect(result.opaqueItemCount).toBe(4);
+    expect(inventory.entries).toHaveLength(2);
+    expect(inventory.entries).toEqual(
+      expect.arrayContaining([
+        {
+          keyEpochId: creation.secrets.keyEpoch.id,
+          keyEpochKey: creation.secrets.keyEpoch.key,
+        },
+        { keyEpochId: historicalEpochId, keyEpochKey: historicalKey },
+      ]),
+    );
+    expect(vaults.listEpochSecrets).toHaveBeenCalledWith(vault);
+    expect(result.opaqueItemCount).toBe(5);
     expect(local.commit.replicaState.bytes).toEqual(replicaBytes);
   }, 20_000);
 });

@@ -154,6 +154,15 @@ export async function validateCompleteExportSemantics(input: {
   const epochKeys = new Map(
     keyInventory.entries.map((entry) => [key(entry.keyEpochId), entry.keyEpochKey]),
   );
+  const referencedEpochIds = new Set(
+    manifest.opaqueItemInventory.map((item) => key(item.keyEpochId)),
+  );
+  if (
+    epochKeys.size !== referencedEpochIds.size ||
+    [...referencedEpochIds].some((epochId) => !epochKeys.has(epochId))
+  ) {
+    throw new TypeError("Complete Export Key Inventory is not the exact referenced Epoch set");
+  }
   const records = new Map<string, VaultRecord>();
   const objects = new Map<string, VaultObject>();
   const features = new Map<string, Uint8Array>();

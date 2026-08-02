@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { sealArtifactFrames } from "../../src/crypto/artifact-stream";
 import { DEPENDENCY_TYPES } from "../../src/domain/canonical/dependencies";
-import { type Identifier, identifier } from "../../src/domain/canonical/identifiers";
+import { type Identifier, identifier, keyEpochId } from "../../src/domain/canonical/identifiers";
 import { concatBytes } from "../../src/domain/canonical/transcript";
 import type {
   CanonicalArtifactStore,
@@ -322,6 +322,27 @@ describe("canonical Complete Import semantic validation", () => {
 
     await expect(validateCompleteExportSemantics({ ...fixture, manifest })).rejects.toThrow(
       /reachable inventory/u,
+    );
+  });
+
+  it("rejects an unreferenced Key Epoch Secret from the package inventory", async () => {
+    const fixture = await initialVaultPackage();
+    const extraKey = new Uint8Array(32).fill(77);
+    const keyInventory = decodeCompleteExportKeyInventory(
+      encodeCompleteExportKeyInventory({
+        ...fixture.keyInventory,
+        entries: [
+          ...fixture.keyInventory.entries,
+          {
+            keyEpochId: keyEpochId(fixture.creation.ids.vaultId, extraKey),
+            keyEpochKey: extraKey,
+          },
+        ],
+      }),
+    );
+
+    await expect(validateCompleteExportSemantics({ ...fixture, keyInventory })).rejects.toThrow(
+      "Complete Export Key Inventory is not the exact referenced Epoch set",
     );
   });
 

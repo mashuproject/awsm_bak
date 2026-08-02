@@ -434,21 +434,7 @@ export class CanonicalVaultService {
     try {
       for (const item of items) {
         const epochId = identifierFromStorageKey("KeyEpoch", item.itemKey);
-        const plaintext = await openWrappedLocalState({
-          wrappingKey: vault.installationWrappingKey,
-          domain: "awsm.local.epoch-secret",
-          vaultId: vault.replicaState.vaultId,
-          identity: epochId,
-          wrappedBytes: item.bytes,
-        });
-        try {
-          const secret = decodeEpochSecretState(plaintext);
-          sameBytes(secret.vaultId, vault.replicaState.vaultId, "Epoch Secret Vault ID");
-          sameBytes(secret.keyEpochId, epochId, "Epoch Secret storage identity");
-          secrets.push(secret);
-        } finally {
-          await wipe(plaintext);
-        }
+        secrets.push(await this.decodeEpochSecret(vault, epochId, item.bytes));
       }
       return secrets;
     } catch (error) {
@@ -498,7 +484,6 @@ export class CanonicalVaultService {
     if (resolution.availability !== 1) {
       throw new TypeError("The required Compact item is not verified locally");
     }
-    sameBytes(resolution.keyEpochId, input.vault.epochSecret.keyEpochId, "Resolution Key Epoch ID");
     const envelopeBytes = await this.requireBytes({
       namespace: input.namespace,
       scopeKey: identifierStorageKey(input.vault.replicaState.vaultId),
@@ -509,16 +494,24 @@ export class CanonicalVaultService {
       decodeOpaqueEnvelope(envelopeBytes).storageItemId,
       "Resolution Storage Item ID",
     );
-    const opened = await openCompactItem({
-      vaultId: input.vault.replicaState.vaultId,
-      keyEpochId: input.vault.epochSecret.keyEpochId,
-      keyEpochKey: input.vault.epochSecret.key,
-      envelopeBytes,
-    });
-    if (opened.payloadType !== input.payloadType) {
-      throw new TypeError("Compact item payload type does not match its logical namespace");
+    const usesOpenedEpoch = bytesEqual(resolution.keyEpochId, input.vault.epochSecret.keyEpochId);
+    const epochSecret = usesOpenedEpoch
+      ? input.vault.epochSecret
+      : await this.readEpochSecret(input.vault, resolution.keyEpochId);
+    try {
+      const opened = await openCompactItem({
+        vaultId: input.vault.replicaState.vaultId,
+        keyEpochId: epochSecret.keyEpochId,
+        keyEpochKey: epochSecret.key,
+        envelopeBytes,
+      });
+      if (opened.payloadType !== input.payloadType) {
+        throw new TypeError("Compact item payload type does not match its logical namespace");
+      }
+      return opened;
+    } finally {
+      if (!usesOpenedEpoch) await wipe(epochSecret.key);
     }
-    return opened;
   }
 
   async readResolvedOpaqueItem(input: {
@@ -555,6 +548,43 @@ export class CanonicalVaultService {
     if (bytes === undefined)
       throw new TypeError(`Required ${item.namespace} bytes are unavailable`);
     return bytes;
+  }
+
+  private async readEpochSecret(
+    vault: PersistedOpenedCanonicalVault,
+    epochId: Identifier<"KeyEpoch">,
+  ): Promise<EpochSecretState> {
+    return this.decodeEpochSecret(
+      vault,
+      epochId,
+      await this.requireBytes({
+        namespace: NAMESPACES.epochSecret.key,
+        scopeKey: identifierStorageKey(vault.replicaState.vaultId),
+        itemKey: identifierStorageKey(epochId),
+      }),
+    );
+  }
+
+  private async decodeEpochSecret(
+    vault: PersistedOpenedCanonicalVault,
+    epochId: Identifier<"KeyEpoch">,
+    wrappedBytes: Uint8Array,
+  ): Promise<EpochSecretState> {
+    const plaintext = await openWrappedLocalState({
+      wrappingKey: vault.installationWrappingKey,
+      domain: "awsm.local.epoch-secret",
+      vaultId: vault.replicaState.vaultId,
+      identity: epochId,
+      wrappedBytes,
+    });
+    try {
+      const decoded = decodeEpochSecretState(plaintext);
+      sameBytes(decoded.vaultId, vault.replicaState.vaultId, "Epoch Secret Vault ID");
+      sameBytes(decoded.keyEpochId, epochId, "Epoch Secret storage identity");
+      return { ...decoded, key: Uint8Array.from(decoded.key) };
+    } finally {
+      await wipe(plaintext);
+    }
   }
 
   private async validateResolution(input: {
