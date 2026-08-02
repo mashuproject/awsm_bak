@@ -188,6 +188,15 @@ The resulting local Replica has no selected Client Credential, authoring Credent
 member binding. It is readable with the imported Epoch keys; authoring becomes available only
 after ordinary Recovery or Invitation enrollment establishes current authority.
 
+Authority validation uses the same canonical proof rules as opening an existing Replica. It
+verifies the Genesis Client and Recovery possession proofs, authenticates the Initial or successor
+Baseline checkpoint and exact dependency closure, replays every selected descendant Event against
+the Authority State at its signed Authority Parents, and verifies the complete Continuity Proof and
+every Vacuum boundary through the selected Authority Frontier. The importer derives the read-only
+Replica Safety State—including Generation, causal and Authority Frontiers, Continuity Records,
+active Baseline, current Key Epoch, Required Feature Set, lifecycle, and Vacuum Adoption—from that
+validated state. It does not accept a separately asserted local-state snapshot from the package.
+
 If the installation already knows the Vault ID:
 
 - an ancestor package may be retained as a separate Transfer Artifact but does not rewind state;

@@ -2,7 +2,7 @@ import { sha256 } from "@noble/hashes/sha2.js";
 
 import { type CompactPayloadType, openCompactItem } from "../../crypto/compact";
 import { DEPENDENCY_TYPES, type TypedDependency } from "../../domain/canonical/dependencies";
-import { featureManifestId } from "../../domain/canonical/features";
+import { decodeFeatureManifest, featureManifestId } from "../../domain/canonical/features";
 import type { Identifier } from "../../domain/canonical/identifiers";
 import {
   ARTIFACT_OBJECT,
@@ -17,6 +17,7 @@ import {
   type VaultBaseline,
   verifyVaultEventSignature,
 } from "../../domain/canonical/record";
+import { exactMap, identifierValue, mapValue, oneOfCodes } from "../../domain/canonical/schema";
 import { decodeCanonicalValue } from "../../domain/canonical/value";
 import { bytesEqual } from "../../domain/hash";
 import {
@@ -39,7 +40,16 @@ import {
   type CompleteExportReachability,
   collectCompleteExportReachability,
 } from "../complete-export/reachability";
-import { initialVaultClientAuthority } from "../vault/canonical-open";
+import { decodeCanonicalAuthorityCheckpoint } from "../projection/canonical-authority-checkpoint";
+import {
+  type CanonicalAuthorityFeatureManifest,
+  CanonicalAuthorityReplay,
+} from "../projection/canonical-authority-replay";
+import type { CanonicalReplicaState } from "../vault/canonical-local-state";
+import {
+  initialVaultClientAuthority,
+  validateCurrentVaultAuthority,
+} from "../vault/canonical-open";
 
 const MAX_COMPACT_ENVELOPE_LENGTH = PORTABLE_COMPACT_CEILING + 4096 + 12;
 
@@ -53,6 +63,7 @@ export interface ValidatedCompleteExportSemantics {
   readonly manifest: CompleteExportManifest;
   readonly keyInventory: CompleteExportKeyInventory;
   readonly reachability: CompleteExportReachability;
+  readonly replicaState: CanonicalReplicaState;
 }
 
 function key(value: Uint8Array): string {
@@ -138,6 +149,197 @@ function reachableInventoryKeys(reachability: CompleteExportReachability): Set<s
   ]);
 }
 
+async function validateSelectedEventAuthority(input: {
+  readonly manifest: CompleteExportManifest;
+  readonly baseline: VaultBaseline;
+  readonly genesis: AuthenticatedVaultEvent;
+  readonly records: ReadonlyMap<string, VaultRecord>;
+  readonly features: ReadonlyMap<string, Uint8Array>;
+  readonly epochKeys: ReadonlyMap<string, Uint8Array>;
+  readonly keyEnvelopes: ReadonlyMap<
+    string,
+    { readonly item: CompleteExportOpaqueItem; readonly bytes: Uint8Array }
+  >;
+}): Promise<CanonicalReplicaState> {
+  const baselineBody = exactMap(
+    input.baseline.body,
+    [0, 1, 2, 3, 4, 5],
+    "Complete Import Baseline body",
+  );
+  const baselineKind = oneOfCodes(
+    mapValue(baselineBody, 1),
+    [1, 2] as const,
+    "Complete Import Baseline kind",
+  );
+  const lifecycleBody = exactMap(
+    mapValue(baselineBody, 4),
+    [0],
+    "Complete Import Baseline lifecycle checkpoint",
+  );
+  const lifecycle = oneOfCodes(
+    mapValue(lifecycleBody, 0),
+    [1, 2] as const,
+    "Complete Import Baseline lifecycle",
+  );
+  const featureManifests: CanonicalAuthorityFeatureManifest[] = input.baseline.dependencies
+    .filter(({ type }) => type === DEPENDENCY_TYPES.FeatureManifest)
+    .map(({ id }) => {
+      const bytes = input.features.get(key(id));
+      if (bytes === undefined) {
+        throw new TypeError("Complete Import Baseline Feature Manifest is unavailable");
+      }
+      return {
+        id: id as Identifier<"FeatureManifest">,
+        bytes,
+        manifest: decodeFeatureManifest(bytes),
+      };
+    });
+  const anchorAuthority = decodeCanonicalAuthorityCheckpoint({
+    vaultId: input.manifest.vaultId,
+    checkpoint: mapValue(baselineBody, 3),
+    requiredFeatureSetId: input.baseline.requiredFeatureSetId,
+    featureManifests,
+    lifecycle,
+  });
+  let anchorRecordId = input.genesis.recordId;
+  if (baselineKind === 2) {
+    const candidates = [...input.records.values()].filter(
+      (record): record is AuthenticatedVaultEvent => {
+        if (!("family" in record) || record.family !== 3 || record.type !== 1) return false;
+        const body = exactMap(record.body, [...Array(7).keys()], "Complete Import Vacuum body");
+        return bytesEqual(
+          identifierValue(
+            mapValue(body, 3),
+            "VaultRecord",
+            "Complete Import Vacuum successor Baseline ID",
+          ),
+          input.baseline.recordId,
+        );
+      },
+    );
+    if (candidates.length !== 1 || candidates[0] === undefined) {
+      throw new TypeError("Complete Import successor Baseline has no unique Vacuum anchor");
+    }
+    anchorRecordId = candidates[0].recordId;
+  }
+  const replay = new CanonicalAuthorityReplay(
+    input.genesis,
+    anchorRecordId,
+    anchorAuthority,
+    [...input.features.values()].map(featureManifestId),
+  );
+  const accepted = new Set([key(anchorRecordId)]);
+  if (baselineKind === 2) accepted.add(key(input.baseline.recordId));
+  const visiting = new Set<string>();
+  const visit = async (recordId: Identifier<"VaultRecord">): Promise<void> => {
+    const recordKey = key(recordId);
+    if (accepted.has(recordKey)) return;
+    if (visiting.has(recordKey)) throw new TypeError("Complete Import Event DAG contains a cycle");
+    const record = input.records.get(recordKey);
+    if (record === undefined || !("family" in record)) {
+      throw new TypeError("Complete Import Event DAG references a non-Event Record");
+    }
+    if (
+      !bytesEqual(record.vaultId, input.manifest.vaultId) ||
+      !bytesEqual(record.generationId, input.manifest.generationId)
+    ) {
+      throw new TypeError("Complete Import Event belongs to another selected context");
+    }
+    visiting.add(recordKey);
+    for (const parentId of record.parentRecordIds) await visit(parentId);
+    if (record.family === 1 && record.type === 1) {
+      if (!bytesEqual(record.recordId, input.genesis.recordId)) {
+        throw new TypeError("Complete Import Event DAG contains another Genesis");
+      }
+    } else {
+      await replay.validateAndAccept(record);
+    }
+    visiting.delete(recordKey);
+    accepted.add(recordKey);
+  };
+  for (const recordId of input.manifest.frontier) await visit(recordId);
+  for (const recordId of input.manifest.continuityProofRoots) await visit(recordId);
+  const authority = replay.stateAt(input.manifest.continuityProofRoots);
+  same(
+    authority.requiredFeatureSetId,
+    input.manifest.requiredFeatureSetId,
+    "Complete Import Required Feature Set",
+  );
+  const currentEpoch = authority.keyEpochs.find(({ current }) => current);
+  if (currentEpoch === undefined) {
+    throw new TypeError("Complete Import authority has no current Key Epoch");
+  }
+  const currentEpochKey = input.epochKeys.get(key(currentEpoch.keyEpochId));
+  if (currentEpochKey === undefined) {
+    throw new TypeError("Complete Import omits a current Key Epoch Key");
+  }
+  const continuityEvents = new Map<string, AuthenticatedVaultEvent>();
+  const continuityVisiting = new Set<string>();
+  const visitContinuity = (recordId: Identifier<"VaultRecord">): void => {
+    const recordKey = key(recordId);
+    if (continuityEvents.has(recordKey)) return;
+    if (continuityVisiting.has(recordKey)) {
+      throw new TypeError("Complete Import Continuity Proof contains a cycle");
+    }
+    const record = input.records.get(recordKey);
+    if (record === undefined || !("family" in record)) {
+      throw new TypeError("Complete Import Continuity Proof references a non-Event Record");
+    }
+    continuityVisiting.add(recordKey);
+    for (const parentId of record.authorityParentRecordIds) visitContinuity(parentId);
+    continuityVisiting.delete(recordKey);
+    continuityEvents.set(recordKey, record);
+  };
+  for (const recordId of input.manifest.continuityProofRoots) visitContinuity(recordId);
+  const replicaState: CanonicalReplicaState = {
+    vaultId: input.manifest.vaultId,
+    generationId: input.manifest.generationId,
+    causalFrontier: input.manifest.frontier,
+    authorityFrontier: input.manifest.continuityProofRoots,
+    continuityRecordIds: [...continuityEvents.values()].map(({ recordId }) => recordId),
+    baselineId: input.baseline.recordId,
+    currentKeyEpochId: currentEpoch.keyEpochId,
+    requiredFeatureSetId: authority.requiredFeatureSetId,
+    authoringClientCredentialId: null,
+    memberId: null,
+    lifecycle: authority.lifecycle,
+    preservationRoots: [],
+    garbageCollectionFences: [],
+    adoption: baselineKind === 1 ? null : { vacuumEventRecordId: anchorRecordId },
+  };
+  await validateCurrentVaultAuthority({
+    baseline: input.baseline,
+    genesis: input.genesis,
+    continuityEvents: [...continuityEvents.values()],
+    replicaState,
+    clientSecret: null,
+    epochSecret: {
+      vaultId: input.manifest.vaultId,
+      keyEpochId: currentEpoch.keyEpochId,
+      displayNumber: currentEpoch.displayNumber,
+      key: currentEpochKey,
+    },
+    dependencyResolver: {
+      resolveKeyEnvelope: async ({ keyEnvelopeId, keyEpochId }) => {
+        const resolved = input.keyEnvelopes.get(key(keyEnvelopeId));
+        if (resolved === undefined) {
+          throw new TypeError("Complete Import Key Envelope dependency is unavailable");
+        }
+        same(resolved.item.keyEpochId, keyEpochId, "Complete Import Key Envelope Epoch");
+        return resolved.bytes;
+      },
+      resolveFeatureManifest: async ({ featureManifestId: id }) => {
+        const bytes = input.features.get(key(id));
+        if (bytes === undefined) {
+          throw new TypeError("Complete Import Feature Manifest dependency is unavailable");
+        }
+        return bytes;
+      },
+    },
+  });
+  return replicaState;
+}
+
 export async function validateCompleteExportSemantics(input: {
   readonly manifest: CompleteExportManifest;
   readonly keyInventory: CompleteExportKeyInventory;
@@ -168,6 +370,10 @@ export async function validateCompleteExportSemantics(input: {
   const records = new Map<string, VaultRecord>();
   const objects = new Map<string, VaultObject>();
   const features = new Map<string, Uint8Array>();
+  const keyEnvelopes = new Map<
+    string,
+    { readonly item: CompleteExportOpaqueItem; readonly bytes: Uint8Array }
+  >();
   const itemsByStorageId = new Map(
     manifest.opaqueItemInventory.map((item) => [key(item.storageItemId), item]),
   );
@@ -185,7 +391,10 @@ export async function validateCompleteExportSemantics(input: {
     if (envelope.storageClass !== COMPACT_STORAGE_CLASS) {
       throw new TypeError("Complete Import compact inventory item is not Compact");
     }
-    if (item.namespace === 2) continue;
+    if (item.namespace === 2) {
+      keyEnvelopes.set(key(item.logicalId), { item, bytes });
+      continue;
+    }
     const opened = await openCompactItem({
       vaultId: manifest.vaultId,
       keyEpochId: item.keyEpochId,
@@ -263,6 +472,19 @@ export async function validateCompleteExportSemantics(input: {
   if (!(await verifyVaultEventSignature(genesis, initialClient.signingPublicKey))) {
     throw new TypeError("Vault Event signature is invalid");
   }
+  const baseline = records.get(key(baselineId));
+  if (baseline === undefined || "family" in baseline) {
+    throw new TypeError("Complete Export Baseline root is not a Baseline");
+  }
+  const replicaState = await validateSelectedEventAuthority({
+    manifest,
+    baseline,
+    genesis,
+    records,
+    features,
+    epochKeys,
+    keyEnvelopes,
+  });
 
   const artifactStore: CanonicalArtifactStore = {
     prepare: async () => {
@@ -303,5 +525,5 @@ export async function validateCompleteExportSemantics(input: {
     same(verified.byteDigest, item.byteDigest, "Complete Import Artifact wrapper digest");
   }
 
-  return { manifest, keyInventory, reachability };
+  return { manifest, keyInventory, reachability, replicaState };
 }
