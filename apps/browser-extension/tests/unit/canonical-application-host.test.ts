@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { installCanonicalApplicationMessageHandler } from "../../src/app/canonical-application-host";
+import {
+  CANONICAL_APPLICATION_STATE_CHANGED,
+  installCanonicalApplicationMessageHandler,
+} from "../../src/app/canonical-application-host";
 
 describe("canonical application message host", () => {
   it("returns only the canonical application result or a bounded current error", async () => {
@@ -59,5 +62,31 @@ describe("canonical application message host", () => {
         message: "The local application could not complete that action.",
       },
     });
+  });
+
+  it("does not treat a state invalidation as an application Command", async () => {
+    let listener: ((message: unknown) => Promise<unknown>) | undefined;
+    const application = { handle: vi.fn() };
+    installCanonicalApplicationMessageHandler(
+      {
+        onMessage: {
+          addListener(callback) {
+            listener = callback;
+          },
+        },
+      },
+      application,
+    );
+    if (listener === undefined) throw new Error("message listener was not installed");
+
+    await expect(listener(CANONICAL_APPLICATION_STATE_CHANGED)).resolves.toBeUndefined();
+    expect(application.handle).not.toHaveBeenCalled();
+
+    const malformedNotification = {
+      ...CANONICAL_APPLICATION_STATE_CHANGED,
+      unexpected: true,
+    };
+    await expect(listener(malformedNotification)).resolves.toEqual({ ok: true, value: undefined });
+    expect(application.handle).toHaveBeenCalledWith(malformedNotification);
   });
 });

@@ -147,7 +147,14 @@ export class CanonicalApplication {
     private readonly now: () => number = Date.now,
     private readonly pageCapture?: CanonicalApplicationPageCapture,
     private readonly createCaptureCommandId: () => string = () => crypto.randomUUID(),
+    private readonly notifyStateChanged: () => void | Promise<void> = () => undefined,
   ) {}
+
+  private async mutate<T>(operation: () => Promise<T>): Promise<T> {
+    const result = await operation();
+    await this.notifyStateChanged();
+    return result;
+  }
 
   async handle(value: unknown): Promise<unknown> {
     const request = decodeCanonicalApplicationRequest(value);
@@ -155,23 +162,29 @@ export class CanonicalApplication {
       case "GetState":
         return this.runtime.state();
       case "BeginVaultCreation":
-        return this.runtime.beginVaultCreation({
-          expectedVaultId: request.expectedVaultId,
-          label: request.label,
-          assertedAt: this.now(),
-        });
+        return this.mutate(() =>
+          this.runtime.beginVaultCreation({
+            expectedVaultId: request.expectedVaultId,
+            label: request.label,
+            assertedAt: this.now(),
+          }),
+        );
       case "ConfirmVaultCreation":
-        return this.runtime.confirmVaultCreation({
-          setupId: request.setupId,
-          recoveryPhrase: request.recoveryPhrase,
-        });
+        return this.mutate(() =>
+          this.runtime.confirmVaultCreation({
+            setupId: request.setupId,
+            recoveryPhrase: request.recoveryPhrase,
+          }),
+        );
       case "CancelVaultCreation":
-        return this.runtime.cancelVaultCreation(request.setupId);
+        return this.mutate(() => this.runtime.cancelVaultCreation(request.setupId));
       case "SelectVault":
-        return this.runtime.selectVault({
-          expectedVaultId: request.expectedVaultId,
-          vaultId: request.vaultId,
-        });
+        return this.mutate(() =>
+          this.runtime.selectVault({
+            expectedVaultId: request.expectedVaultId,
+            vaultId: request.vaultId,
+          }),
+        );
       case "CaptureActivePage": {
         if (this.pageCapture === undefined) {
           throw Object.assign(new Error("Browser page capture is unavailable."), {
@@ -179,11 +192,13 @@ export class CanonicalApplication {
           });
         }
         const captured = await this.pageCapture.captureActivePage(request.tabId);
-        return this.runtime.capture({
-          expectedVaultId: request.expectedVaultId,
-          commandId: this.createCaptureCommandId(),
-          ...captured,
-        });
+        return this.mutate(() =>
+          this.runtime.capture({
+            expectedVaultId: request.expectedVaultId,
+            commandId: this.createCaptureCommandId(),
+            ...captured,
+          }),
+        );
       }
       case "ListLibrary":
         return this.runtime.listLibrary(request.expectedVaultId);

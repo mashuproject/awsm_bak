@@ -118,4 +118,32 @@ describe("canonical application", () => {
       primary: { blob: expect.any(Blob) },
     });
   });
+
+  it("publishes one invalidation after a successful application mutation", async () => {
+    const runtime = {
+      state: vi.fn(),
+      beginVaultCreation: vi.fn(),
+      confirmVaultCreation: vi.fn(),
+      cancelVaultCreation: vi.fn(),
+      selectVault: vi.fn().mockResolvedValue({ selectedVaultId: "b".repeat(64), vaults: [] }),
+      listLibrary: vi.fn(),
+      capture: vi.fn(),
+    };
+    const invalidated = vi.fn();
+    const application = new CanonicalApplication(
+      runtime,
+      () => 1234,
+      undefined,
+      () => "command",
+      invalidated,
+    );
+
+    await application.handle({
+      type: "SelectVault",
+      expectedVaultId: "a".repeat(64),
+      vaultId: "b".repeat(64),
+    });
+
+    expect(invalidated).toHaveBeenCalledTimes(1);
+  });
 });

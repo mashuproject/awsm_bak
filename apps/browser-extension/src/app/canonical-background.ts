@@ -15,7 +15,10 @@ import { CanonicalClientRuntime } from "../runtime/client/canonical-runtime";
 import { CanonicalLibraryProjectionService } from "../runtime/library/canonical-projection";
 import { CanonicalVaultService } from "../runtime/vault/canonical-service";
 import { CanonicalApplication } from "./canonical-application";
-import { installCanonicalApplicationMessageHandler } from "./canonical-application-host";
+import {
+  CANONICAL_APPLICATION_STATE_CHANGED,
+  installCanonicalApplicationMessageHandler,
+} from "./canonical-application-host";
 
 export interface CanonicalBackgroundApplicationOptions {
   readonly vaults: CanonicalVaultService;
@@ -23,6 +26,7 @@ export interface CanonicalBackgroundApplicationOptions {
   readonly pageCapture: CanonicalBrowserPageCapturePort;
   readonly now?: () => number;
   readonly createCaptureCommandId?: () => string;
+  readonly notifyStateChanged?: () => void | Promise<void>;
 }
 
 export function createCanonicalBackgroundApplication(
@@ -36,6 +40,7 @@ export function createCanonicalBackgroundApplication(
     input.now,
     input.pageCapture,
     input.createCaptureCommandId,
+    input.notifyStateChanged,
   );
 }
 
@@ -54,6 +59,8 @@ export function startCanonicalBackground(): void {
     vaults,
     artifacts: new CanonicalOpfsArtifactStore(),
     pageCapture: browserPageCapture(),
+    notifyStateChanged: () =>
+      browser.runtime.sendMessage(CANONICAL_APPLICATION_STATE_CHANGED).catch(() => undefined),
   });
   installCanonicalApplicationMessageHandler(browser.runtime, application);
 }

@@ -7,13 +7,19 @@ export interface CanonicalApplicationMessageResponse {
   };
 }
 
+export const CANONICAL_APPLICATION_STATE_CHANGED = {
+  type: "CanonicalApplicationStateChanged",
+} as const;
+
 interface CanonicalApplicationPort {
   handle(message: unknown): Promise<unknown>;
 }
 
 interface RuntimeMessageHost {
   readonly onMessage: {
-    addListener(listener: (message: unknown) => Promise<CanonicalApplicationMessageResponse>): void;
+    addListener(
+      listener: (message: unknown) => Promise<CanonicalApplicationMessageResponse | undefined>,
+    ): void;
   };
 }
 
@@ -39,11 +45,28 @@ function knownFailure(error: unknown): CanonicalApplicationMessageResponse {
   };
 }
 
+function isStateChangedNotification(message: unknown): boolean {
+  if (
+    typeof message !== "object" ||
+    message === null ||
+    (Object.getPrototypeOf(message) !== Object.prototype && Object.getPrototypeOf(message) !== null)
+  ) {
+    return false;
+  }
+  const keys = Object.keys(message);
+  return (
+    keys.length === 1 &&
+    keys[0] === "type" &&
+    (message as { readonly type?: unknown }).type === CANONICAL_APPLICATION_STATE_CHANGED.type
+  );
+}
+
 export function installCanonicalApplicationMessageHandler(
   runtime: RuntimeMessageHost,
   application: CanonicalApplicationPort,
 ): void {
   runtime.onMessage.addListener(async (message) => {
+    if (isStateChangedNotification(message)) return undefined;
     try {
       return { ok: true, value: await application.handle(message) };
     } catch (error) {
