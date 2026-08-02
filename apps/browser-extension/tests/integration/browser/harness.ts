@@ -862,25 +862,52 @@ async function canonicalHostedArtifactHydrationScenario(): Promise<unknown> {
       logicalNamespace: HOSTED_REPLICA_LOGICAL_NAMESPACE.Artifact,
       logicalId: artifactId(object),
     });
-    const remotes = new CanonicalReplicaRemoteService(storage, NORMAL_STORAGE_REALM);
-    await remotes.configure({
-      remote: {
-        remoteId,
-        vaultId: created.vaultId,
-        name: "Fixture Artifact Host",
-        endpoint: "https://artifact-host.example/",
-        hostedReplicaHandle: "019fa62e-a653-7f63-b2bf-94e7ed5e46cb",
-        locatorSalt,
-        enabled: true,
-        inventoryPageSize: 100,
+    const remote = {
+      remoteId,
+      vaultId: created.vaultId,
+      name: "Fixture Artifact Host",
+      endpoint: "https://artifact-host.example/",
+      hostedReplicaHandle: "019fa62e-a653-7f63-b2bf-94e7ed5e46cb",
+      locatorSalt,
+      enabled: true,
+      inventoryPageSize: 100,
+    };
+    let sessionRefreshes = 0;
+    const remotes = new CanonicalReplicaRemoteService(storage, NORMAL_STORAGE_REALM, {
+      now: () => 1_000,
+      createSessionHttp: () => ({
+        refresh: async ({ refreshToken }) => {
+          sessionRefreshes += 1;
+          if (refreshToken !== "expired-fixture-refresh-token") {
+            throw new TypeError("Fixture refresh token did not remain installation-local");
+          }
+          return {
+            username: "archive_reader",
+            sessionId: "019fa62e-a653-7f63-b2bf-94e7ed5e46cd",
+            accessToken: "fresh-fixture-access-token",
+            accessExpiresAt: 2_000,
+            refreshToken: "fresh-fixture-refresh-token",
+            refreshExpiresAt: 3_000,
+          };
+        },
+      }),
+    });
+    await remotes.configureHostedSession({
+      remote,
+      session: {
+        username: "archive_reader",
+        sessionId: "019fa62e-a653-7f63-b2bf-94e7ed5e46cd",
+        accessToken: "expired-fixture-access-token",
+        accessExpiresAt: 999,
+        refreshToken: "expired-fixture-refresh-token",
+        refreshExpiresAt: 3_000,
       },
-      bearerToken: "fixture-artifact-channel-token",
     });
     const hydrated = await new CanonicalHostedArtifactHydrationService({
       remotes,
       vaults,
       artifacts,
-      createHttp: () => ({
+      createHttp: ({ bearerToken }) => ({
         inventory: async () => ({
           snapshotCursor: 1,
           nextPosition: null,
@@ -894,7 +921,12 @@ async function canonicalHostedArtifactHydrationScenario(): Promise<unknown> {
             },
           ],
         }),
-        item: async () => new Blob([remoteWrapper]).stream(),
+        item: async () => {
+          if (bearerToken !== "fresh-fixture-access-token") {
+            throw new TypeError("Hosted Artifact hydration did not use refreshed channel access");
+          }
+          return new Blob([remoteWrapper]).stream();
+        },
       }),
     }).hydrate({ vaultId: created.vaultId, artifactId: artifactId(object) });
     hydratedStorageItemId = hydrated.storageItemId;
@@ -915,6 +947,18 @@ async function canonicalHostedArtifactHydrationScenario(): Promise<unknown> {
         kind: 5,
         logicalId: artifactId(object),
       });
+      const restartedChannel = await new CanonicalReplicaRemoteService(
+        restartedStorage,
+        NORMAL_STORAGE_REALM,
+        {
+          now: () => 1_001,
+          createSessionHttp: () => ({
+            refresh: async () => {
+              throw new Error("Restart should use the persisted fresh access token");
+            },
+          }),
+        },
+      ).load({ vaultId: created.vaultId, remoteId });
       return {
         hydrated:
           hydrated.remoteId === remoteId &&
@@ -926,6 +970,8 @@ async function canonicalHostedArtifactHydrationScenario(): Promise<unknown> {
         reopened:
           reopenedResolution.availability === 1 &&
           bytesEqual(reopenedResolution.storageItemId, sourceWrapper.storageItemId),
+        refreshedChannelPersisted:
+          sessionRefreshes === 1 && restartedChannel.bearerToken === "fresh-fixture-access-token",
       };
     } finally {
       await restartedStorage.close();

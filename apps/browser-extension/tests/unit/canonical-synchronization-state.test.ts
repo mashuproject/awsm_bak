@@ -81,7 +81,28 @@ describe("canonical synchronization state", () => {
   });
 
   it("round-trips a Remote-scoped bearer credential independently of the Remote configuration", () => {
-    const credential = { remoteId: REMOTE_ID, bearerToken: "opaque-bearer-token" };
+    const credential = {
+      remoteId: REMOTE_ID,
+      kind: "Bearer" as const,
+      bearerToken: "opaque-bearer-token",
+    };
+
+    expect(decodeCanonicalRemoteCredential(encodeCanonicalRemoteCredential(credential))).toEqual(
+      credential,
+    );
+  });
+
+  it("round-trips a Host-local rotating Account session without storing its password", () => {
+    const credential = {
+      remoteId: REMOTE_ID,
+      kind: "HostedSession" as const,
+      username: "archive_reader",
+      sessionId: "019fa62e-a653-7f63-b2bf-94e7ed5e46cd",
+      accessToken: "access-token",
+      accessExpiresAt: Date.parse("2026-08-02T00:15:00.000Z"),
+      refreshToken: "refresh-token",
+      refreshExpiresAt: Date.parse("2026-09-01T00:00:00.000Z"),
+    };
 
     expect(decodeCanonicalRemoteCredential(encodeCanonicalRemoteCredential(credential))).toEqual(
       credential,
@@ -195,10 +216,14 @@ describe("canonical synchronization state", () => {
           wrappedBytes: credential.bytes,
         }),
       ),
-    ).toEqual({ remoteId: REMOTE_ID, bearerToken: "opaque-bearer-token" });
+    ).toEqual({
+      remoteId: REMOTE_ID,
+      kind: "Bearer",
+      bearerToken: "opaque-bearer-token",
+    });
   });
 
-  it("lists and opens only the selected Vault's protected Remote and credential", async () => {
+  it("lists only selected-Vault Remotes and rotates an expired Host session through credential CAS", async () => {
     const key = await crypto.subtle.generateKey({ name: "AES-KW", length: 256 }, false, [
       "wrapKey",
       "unwrapKey",
@@ -214,6 +239,12 @@ describe("canonical synchronization state", () => {
           readonly scopeKey: string;
           readonly itemKey: string;
         }[];
+        readonly expectedMutableItems?: readonly {
+          readonly namespace: string;
+          readonly scopeKey: string;
+          readonly itemKey: string;
+          readonly bytes: Uint8Array;
+        }[];
         readonly mutableItems?: readonly {
           readonly namespace: string;
           readonly scopeKey: string;
@@ -224,6 +255,15 @@ describe("canonical synchronization state", () => {
         for (const item of commit.expectedAbsentItems ?? []) {
           if (stored.has(storageKey(item.namespace, item.scopeKey, item.itemKey))) {
             throw new TypeError("duplicate local identity");
+          }
+        }
+        for (const item of commit.expectedMutableItems ?? []) {
+          const existing = stored.get(storageKey(item.namespace, item.scopeKey, item.itemKey));
+          if (
+            existing === undefined ||
+            existing.every((byte, index) => byte === item.bytes[index]) === false
+          ) {
+            throw new TypeError("stale local identity");
           }
         }
         for (const item of commit.mutableItems ?? []) {
@@ -252,9 +292,32 @@ describe("canonical synchronization state", () => {
         item: { readonly namespace: string; readonly scopeKey: string; readonly itemKey: string },
       ) => stored.get(storageKey(item.namespace, item.scopeKey, item.itemKey)),
     };
+    let refreshes = 0;
+    let releaseRefresh: (() => void) | undefined;
+    const refreshGate = new Promise<void>((resolve) => {
+      releaseRefresh = resolve;
+    });
     const service = new CanonicalReplicaRemoteService(
       storage as unknown as ConstructorParameters<typeof CanonicalReplicaRemoteService>[0],
       NORMAL_STORAGE_REALM,
+      {
+        now: () => 1_000,
+        createSessionHttp: () => ({
+          refresh: async ({ refreshToken }: { readonly refreshToken: string }) => {
+            refreshes += 1;
+            expect(refreshToken).toBe("expired-refresh-token");
+            await refreshGate;
+            return {
+              username: "archive_reader",
+              sessionId: "019fa62e-a653-7f63-b2bf-94e7ed5e46cd",
+              accessToken: "fresh-access-token",
+              accessExpiresAt: 2_000,
+              refreshToken: "fresh-refresh-token",
+              refreshExpiresAt: 4_000,
+            };
+          },
+        }),
+      },
     );
     const value = remote();
     await service.configure({ remote: value, bearerToken: "opaque-bearer-token" });
@@ -265,5 +328,38 @@ describe("canonical synchronization state", () => {
       bearerToken: "opaque-bearer-token",
     });
     await expect(service.list(filled("Vault", 9))).resolves.toEqual([]);
+
+    const sessionRemote = {
+      ...value,
+      remoteId: "019fa62e-a653-7f63-b2bf-94e7ed5e46ce",
+      hostedReplicaHandle: "019fa62e-a653-7f63-b2bf-94e7ed5e46cf",
+    };
+    await service.configureHostedSession({
+      remote: sessionRemote,
+      session: {
+        username: "archive_reader",
+        sessionId: "019fa62e-a653-7f63-b2bf-94e7ed5e46cd",
+        accessToken: "expired-access-token",
+        accessExpiresAt: 999,
+        refreshToken: "expired-refresh-token",
+        refreshExpiresAt: 3_000,
+      },
+    });
+
+    const concurrentLoads = Promise.all([
+      service.load({ vaultId: sessionRemote.vaultId, remoteId: sessionRemote.remoteId }),
+      service.load({ vaultId: sessionRemote.vaultId, remoteId: sessionRemote.remoteId }),
+    ]);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(refreshes).toBe(1);
+    releaseRefresh?.();
+    await expect(concurrentLoads).resolves.toEqual([
+      { remote: sessionRemote, bearerToken: "fresh-access-token" },
+      { remote: sessionRemote, bearerToken: "fresh-access-token" },
+    ]);
+    await expect(
+      service.load({ vaultId: sessionRemote.vaultId, remoteId: sessionRemote.remoteId }),
+    ).resolves.toEqual({ remote: sessionRemote, bearerToken: "fresh-access-token" });
+    expect(refreshes).toBe(1);
   });
 });

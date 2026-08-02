@@ -2,6 +2,7 @@ import { type Identifier, identifier } from "../../domain/canonical/identifiers"
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const BASE64_URL_32 = /^[A-Za-z0-9_-]{43}$/u;
+const USERNAME = /^[a-z0-9](?:[a-z0-9_-]{1,30}[a-z0-9])?$/u;
 const HOST_OUTCOMES = new Set([
   "authentication_required",
   "access_denied",
@@ -50,6 +51,51 @@ export class CanonicalHostedReplicaHttpError extends Error {
 function uuid(value: string, field: string): string {
   if (!UUID.test(value)) throw new TypeError(`${field} must be a lowercase UUID`);
   return value;
+}
+
+function username(value: unknown, field: string): string {
+  if (typeof value !== "string" || value.length < 3 || value.length > 32 || !USERNAME.test(value)) {
+    throw new TypeError(`${field} must be a canonical username`);
+  }
+  return value;
+}
+
+function secret(value: unknown, field: string): string {
+  if (typeof value !== "string" || value.length < 1 || value.length > 8_192) {
+    throw new TypeError(`${field} must be a bounded nonempty string`);
+  }
+  return value;
+}
+
+function accountCredential(value: unknown, field: string): string {
+  if (typeof value !== "string" || value.length < 1 || value.length > 1_024) {
+    throw new TypeError(`${field} must be a bounded nonempty string`);
+  }
+  return value;
+}
+
+function timestamp(value: unknown, field: string): number {
+  if (typeof value !== "string") throw new TypeError(`${field} must be an RFC 3339 timestamp`);
+  const milliseconds = Date.parse(value);
+  if (!Number.isSafeInteger(milliseconds) || new Date(milliseconds).toISOString() !== value) {
+    throw new TypeError(`${field} must be a canonical RFC 3339 timestamp`);
+  }
+  return milliseconds;
+}
+
+function endpoint(value: string): URL {
+  const parsed = new URL(value);
+  if (
+    parsed.protocol !== "https:" ||
+    parsed.username.length !== 0 ||
+    parsed.password.length !== 0 ||
+    parsed.search.length !== 0 ||
+    parsed.hash.length !== 0 ||
+    parsed.href !== value
+  ) {
+    throw new TypeError("Hosted Replica HTTP endpoint must be a canonical HTTPS URL");
+  }
+  return parsed;
 }
 
 function exactObject(
@@ -206,6 +252,105 @@ function parseInventoryPage(value: unknown, requestedLimit: number): CanonicalOp
   };
 }
 
+export interface CanonicalHostedReplicaSession {
+  readonly username: string;
+  readonly sessionId: string;
+  readonly accessToken: string;
+  readonly accessExpiresAt: number;
+  readonly refreshToken: string;
+  readonly refreshExpiresAt: number;
+}
+
+function parseSession(value: unknown): CanonicalHostedReplicaSession {
+  const session = exactObject(
+    value,
+    [
+      "account",
+      "session_id",
+      "access_token",
+      "access_expires_at",
+      "refresh_token",
+      "refresh_expires_at",
+    ],
+    "Replica Host authenticated session",
+  );
+  const account = exactObject(
+    session.account,
+    ["username", "inactive_deletion_at"],
+    "Replica Host session Account",
+  );
+  username(account.username, "Replica Host Account username");
+  timestamp(account.inactive_deletion_at, "Replica Host Account inactivity time");
+  return {
+    username: username(account.username, "Replica Host Account username"),
+    sessionId: uuid(String(session.session_id), "Replica Host session ID"),
+    accessToken: secret(session.access_token, "Replica Host access token"),
+    accessExpiresAt: timestamp(session.access_expires_at, "Replica Host access expiry"),
+    refreshToken: secret(session.refresh_token, "Replica Host refresh token"),
+    refreshExpiresAt: timestamp(session.refresh_expires_at, "Replica Host refresh expiry"),
+  };
+}
+
+export class CanonicalHostedReplicaSessionHttp {
+  private readonly endpoint: URL;
+
+  constructor(
+    private readonly configuration: {
+      readonly endpoint: string;
+      readonly fetcher?: typeof fetch;
+    },
+  ) {
+    this.endpoint = endpoint(configuration.endpoint);
+  }
+
+  async signIn(input: {
+    readonly username: string;
+    readonly password: string;
+  }): Promise<CanonicalHostedReplicaSession> {
+    return this.post("api/sessions", {
+      username: username(input.username, "Replica Host sign-in username"),
+      password: accountCredential(input.password, "Replica Host sign-in password"),
+    });
+  }
+
+  async refresh(input: { readonly refreshToken: string }): Promise<CanonicalHostedReplicaSession> {
+    return this.post("api/session/refresh", {
+      refresh_token: accountCredential(input.refreshToken, "Replica Host refresh token"),
+    });
+  }
+
+  private async post(
+    path: string,
+    body: Record<string, string>,
+  ): Promise<CanonicalHostedReplicaSession> {
+    let response: Response;
+    try {
+      response = await (this.configuration.fetcher ?? fetch)(new URL(path, this.endpoint), {
+        method: "POST",
+        redirect: "error",
+        credentials: "omit",
+        cache: "no-store",
+        referrerPolicy: "no-referrer",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "Awsm-Protocol-Version": "1",
+          "Awsm-Request-ID": crypto.randomUUID(),
+        },
+        body: JSON.stringify(body),
+      });
+    } catch (cause) {
+      throw Object.assign(new Error("Replica Host transport is unavailable", { cause }), {
+        id: "REMOTE_TRANSPORT_UNAVAILABLE",
+        retryable: true,
+      });
+    }
+    if (!response.ok) return hostFailure(response);
+    protocolHeader(response);
+    return parseSession(await decodeJson(response));
+  }
+}
+
 export class CanonicalHostedReplicaHttp {
   private readonly endpoint: URL;
 
@@ -216,17 +361,7 @@ export class CanonicalHostedReplicaHttp {
       readonly fetcher?: typeof fetch;
     },
   ) {
-    this.endpoint = new URL(configuration.endpoint);
-    if (
-      this.endpoint.protocol !== "https:" ||
-      this.endpoint.username.length !== 0 ||
-      this.endpoint.password.length !== 0 ||
-      this.endpoint.search.length !== 0 ||
-      this.endpoint.hash.length !== 0 ||
-      this.endpoint.href !== configuration.endpoint
-    ) {
-      throw new TypeError("Hosted Replica HTTP endpoint must be a canonical HTTPS URL");
-    }
+    this.endpoint = endpoint(configuration.endpoint);
     if (configuration.bearerToken.length === 0) {
       throw new TypeError("Hosted Replica HTTP bearer credential must not be empty");
     }

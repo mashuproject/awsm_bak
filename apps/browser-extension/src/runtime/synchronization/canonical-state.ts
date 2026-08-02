@@ -27,6 +27,8 @@ import {
 const SYNCHRONIZATION_STATE_FORMAT = 1 as const;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 
+const HOSTED_USERNAME = /^[a-z0-9](?:[a-z0-9_-]{1,30}[a-z0-9])?$/u;
+
 const REMOTE_TRANSPORT_HOSTED_HTTP = 1 as const;
 const PULL_STAGES = [1, 2, 3] as const;
 const PULL_STATES = [1, 2, 3, 4] as const;
@@ -44,10 +46,22 @@ export interface CanonicalReplicaRemote {
   readonly inventoryPageSize: number;
 }
 
-export interface CanonicalRemoteCredential {
-  readonly remoteId: string;
-  readonly bearerToken: string;
-}
+export type CanonicalRemoteCredential =
+  | {
+      readonly remoteId: string;
+      readonly kind: "Bearer";
+      readonly bearerToken: string;
+    }
+  | {
+      readonly remoteId: string;
+      readonly kind: "HostedSession";
+      readonly username: string;
+      readonly sessionId: string;
+      readonly accessToken: string;
+      readonly accessExpiresAt: number;
+      readonly refreshToken: string;
+      readonly refreshExpiresAt: number;
+    };
 
 export interface CanonicalQuarantineReference {
   readonly storageItemId: Identifier<"StorageItem">;
@@ -77,6 +91,14 @@ export interface CanonicalPullSynchronizationJob {
 function uuid(value: CanonicalValue, field: string): string {
   const parsed = textValue(value, field, { maxUtf8Bytes: 64 });
   if (!UUID.test(parsed)) throw new TypeError(`${field} must be a lowercase UUID`);
+  return parsed;
+}
+
+function hostedUsername(value: CanonicalValue, field: string): string {
+  const parsed = textValue(value, field, { maxUtf8Bytes: 32 });
+  if (parsed.length < 3 || !HOSTED_USERNAME.test(parsed)) {
+    throw new TypeError(`${field} must be a canonical username`);
+  }
   return parsed;
 }
 
@@ -329,12 +351,32 @@ export function decodeCanonicalReplicaRemote(bytes: Uint8Array): CanonicalReplic
 
 export function encodeCanonicalRemoteCredential(value: CanonicalRemoteCredential): Uint8Array {
   uuid(value.remoteId, "Replica Remote credential Remote ID");
-  textValue(value.bearerToken, "Replica Remote bearer token", { maxUtf8Bytes: 8192 });
+  if (value.kind === "HostedSession" && value.refreshExpiresAt < value.accessExpiresAt) {
+    throw new TypeError("Replica Remote refresh expiry precedes its access expiry");
+  }
+  const credential =
+    value.kind === "Bearer"
+      ? canonicalMap([
+          [0, 1],
+          [1, textValue(value.bearerToken, "Replica Remote bearer token", { maxUtf8Bytes: 8192 })],
+        ])
+      : canonicalMap([
+          [0, 2],
+          [1, hostedUsername(value.username, "Replica Remote session username")],
+          [2, uuid(value.sessionId, "Replica Remote session ID")],
+          [3, textValue(value.accessToken, "Replica Remote access token", { maxUtf8Bytes: 8192 })],
+          [4, nonnegativeInteger(value.accessExpiresAt, "Replica Remote access expiry")],
+          [
+            5,
+            textValue(value.refreshToken, "Replica Remote refresh token", { maxUtf8Bytes: 8192 }),
+          ],
+          [6, nonnegativeInteger(value.refreshExpiresAt, "Replica Remote refresh expiry")],
+        ]);
   return encodeCanonicalValue(
     canonicalMap([
       [0, SYNCHRONIZATION_STATE_FORMAT],
       [1, value.remoteId],
-      [2, value.bearerToken],
+      [2, credential],
     ]),
   );
 }
@@ -342,10 +384,63 @@ export function encodeCanonicalRemoteCredential(value: CanonicalRemoteCredential
 export function decodeCanonicalRemoteCredential(bytes: Uint8Array): CanonicalRemoteCredential {
   const map = exactMap(decodeCanonicalValue(bytes), [0, 1, 2], "Replica Remote credential");
   exactCode(mapValue(map, 0), SYNCHRONIZATION_STATE_FORMAT, "Replica Remote credential format");
-  const value = {
-    remoteId: uuid(mapValue(map, 1), "Replica Remote credential Remote ID"),
-    bearerToken: textValue(mapValue(map, 2), "Replica Remote bearer token", { maxUtf8Bytes: 8192 }),
-  };
+  const remoteId = uuid(mapValue(map, 1), "Replica Remote credential Remote ID");
+  const credentialValue = mapValue(map, 2);
+  if (!(credentialValue instanceof Map)) {
+    throw new TypeError("Replica Remote credential payload must be a map");
+  }
+  const kindValue = credentialValue.get(0);
+  if (kindValue === undefined) throw new TypeError("Replica Remote credential kind is missing");
+  const kind = oneOfCodes(kindValue, [1, 2] as const, "Replica Remote credential kind");
+  const value: CanonicalRemoteCredential =
+    kind === 1
+      ? (() => {
+          const bearer = exactMap(credentialValue, [0, 1], "Replica Remote bearer credential");
+          return {
+            remoteId,
+            kind: "Bearer" as const,
+            bearerToken: textValue(mapValue(bearer, 1), "Replica Remote bearer token", {
+              maxUtf8Bytes: 8192,
+            }),
+          };
+        })()
+      : (() => {
+          const session = exactMap(
+            credentialValue,
+            [0, 1, 2, 3, 4, 5, 6],
+            "Replica Remote hosted session credential",
+          );
+          if (
+            oneOfCodes(mapValue(session, 0), [2] as const, "Replica Remote credential kind") !== 2
+          ) {
+            throw new TypeError("Replica Remote hosted session kind is invalid");
+          }
+          const accessExpiresAt = nonnegativeInteger(
+            mapValue(session, 4),
+            "Replica Remote access expiry",
+          );
+          const refreshExpiresAt = nonnegativeInteger(
+            mapValue(session, 6),
+            "Replica Remote refresh expiry",
+          );
+          if (refreshExpiresAt < accessExpiresAt) {
+            throw new TypeError("Replica Remote refresh expiry precedes its access expiry");
+          }
+          return {
+            remoteId,
+            kind: "HostedSession" as const,
+            username: hostedUsername(mapValue(session, 1), "Replica Remote session username"),
+            sessionId: uuid(mapValue(session, 2), "Replica Remote session ID"),
+            accessToken: textValue(mapValue(session, 3), "Replica Remote access token", {
+              maxUtf8Bytes: 8192,
+            }),
+            accessExpiresAt,
+            refreshToken: textValue(mapValue(session, 5), "Replica Remote refresh token", {
+              maxUtf8Bytes: 8192,
+            }),
+            refreshExpiresAt,
+          };
+        })();
   if (!bytesEqual(encodeCanonicalRemoteCredential(value), bytes)) {
     throw new TypeError("Replica Remote credential bytes are not canonical");
   }

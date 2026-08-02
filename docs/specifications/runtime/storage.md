@@ -85,6 +85,15 @@ initial canonical local database is created only from an empty database at schem
 another local schema is discarded and recreated by the owning Client rather than upgraded or
 interpreted through compatibility readers.
 
+The `remote-channel-credential` namespace is an installation-wrapped Trusted Secret separate from
+the Remote's endpoint and opaque locator configuration. It may hold either a Host-defined static
+bearer credential or the reference Host's username, session ID, access token and expiry, and
+rotating refresh token and expiry. A password is transient sign-in input and MUST NOT be retained.
+Refreshing an expired access token conditionally replaces the exact prior sealed credential. The
+same Client coalesces concurrent refreshes for one Remote so that a single-use refresh credential is
+presented once. Local expiry is scheduling information, while the Host remains authoritative only
+for channel access.
+
 A pull Synchronization Job retains one canonical Quarantine reference for every downloaded opaque
 item: its Opaque Storage Item ID and the exact 32-byte locator supplied by that Remote's inventory.
 The outer bytes stay in Remote-scoped Quarantine under the same Storage Item ID. A checkpoint may

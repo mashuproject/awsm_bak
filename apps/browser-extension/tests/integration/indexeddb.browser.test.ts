@@ -82,6 +82,7 @@ test("hydrates one verified Artifact from a configured Hosted Replica through In
     hydrated: true,
     localResolutionPublished: true,
     reopened: true,
+    refreshedChannelPersisted: true,
   });
 });
 

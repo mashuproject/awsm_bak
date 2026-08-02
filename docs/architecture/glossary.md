@@ -707,9 +707,11 @@ A local or network interface exposed by a Replica Host for establishing Synchron
 
 ## Replica Remote
 
-One Replica's local configuration for reaching another Replica. Its name, endpoint, credentials,
-Hosted Replica locator salt, retry state, and policies are Installation State. Names such as `origin` and `upstream` have no
-Vault-wide meaning.
+One Replica's local configuration for reaching another Replica. Its name, endpoint, Hosted Replica
+locator salt, retry state, and policies are Installation State. Its Channel Authenticator is a
+separate installation-wrapped Trusted Secret; a reference-Host password is transient sign-in input,
+while a rotated session may be retained only for that Host's channel access. Names such as `origin`
+and `upstream` have no Vault-wide meaning.
 
 ## Channel Principal
 

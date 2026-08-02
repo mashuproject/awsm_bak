@@ -84,6 +84,12 @@ A Remote is Client Installation configuration describing how one local Replica c
 Replica through a Channel. A Vault may have zero or more Remotes. Remotes are local configuration,
 not Vault membership and not synchronized Vault state.
 
+The Remote's endpoint, name, Hosted Replica handle, locator salt, and local pull policy are
+Installation State. Its Channel Authenticator is a separate installation-wrapped Trusted Secret.
+For the reference Host, a username and password are transient sign-in input only; the Client may
+retain a rotated access/refresh session pair without retaining the password. Session expiry and
+refresh are Host-local channel policy, not Vault time, membership, or authority.
+
 Synchronization is initiated as a pull by the receiving Client. A Host may send an untrusted Wake
 Hint that causes a Client to pull, but does not push authoritative Vault state. Pull may occur on
 open, explicit refresh, a local schedule, network reconnection, or after a hint. No Remote is an
