@@ -44,6 +44,11 @@ For each configured source Remote, the Client:
    Required Features, and exact Event semantics;
 7. promotes valid items and advances accepted local Frontier and availability atomically.
 
+Ciphertext that has no locally usable Key Epoch remains Quarantine rather than becoming a rejected
+or accepted Vault item. A known signed dependency may still locate its matching retained physical
+representations through the Remote-specific opaque locator; recipient-only inner plaintext is not a
+condition of that lookup.
+
 A Replica becomes current by pulling and validating what it lacks. Separately, a Client may
 materialize randomized opaque representations at a writable Replica Host through immutable item
 admission. That destination-write workflow is not Synchronization, creates no origin, and does not
