@@ -1,4 +1,4 @@
-import { cp, readFile, writeFile } from "node:fs/promises";
+import { access, cp, readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { resolve } from "node:path";
 import { chromium, expect, type Page, type TestInfo, test } from "@playwright/test";
@@ -119,6 +119,7 @@ test("runs the canonical local Vault ceremony through a packaged extension", asy
 }, testInfo) => {
   test.setTimeout(90_000);
   expect(browserName).toBe("chromium");
+  await expect(access(resolve(extensionBuildPath, "sync-setup.html"))).rejects.toThrow();
   const client = await packagedCanonicalExtension(testInfo);
   const fixture = await captureFixture();
   try {

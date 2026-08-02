@@ -158,9 +158,10 @@ appearing in that already-open Library without reload, live second-popup reconci
 disclosures, and retained readable Capture after Closure.
 
 Search, export/import, synchronization, availability, member and invitation management, Capture
-detail, and conflict-resolution surfaces still require canonical replacements. The remaining old
-synchronization setup page is a dangling superseded surface, not a supported compatibility path;
-remove or replace it together with its old orchestration and tests before v0.3 is complete.
+detail, and conflict-resolution surfaces still require canonical replacements. The old
+synchronization-setup entrypoint is removed rather than left as a broken compatibility route. Its
+disconnected old orchestration source and tests still require deletion with their canonical
+replacement before v0.3 is complete.
 
 # 4. Replica Host impact
 
