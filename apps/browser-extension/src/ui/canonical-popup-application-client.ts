@@ -405,7 +405,7 @@ export function createCanonicalPopupApplicationClient(
     async cancelVaultCreation(setupId) {
       assertText(setupId, "setup ID");
       const value = await transport.request({ type: "CancelVaultCreation", setupId });
-      if (value !== undefined) throw protocolError();
+      if (value !== null) throw protocolError();
     },
     async beginVaultFork(expectedVaultId) {
       if (!identifier(expectedVaultId)) throw new TypeError("Popup Vault ID is invalid.");
@@ -427,7 +427,7 @@ export function createCanonicalPopupApplicationClient(
     async cancelVaultFork(setupId) {
       assertText(setupId, "setup ID");
       const value = await transport.request({ type: "CancelVaultFork", setupId });
-      if (value !== undefined) throw protocolError();
+      if (value !== null) throw protocolError();
     },
     async recoverMember(input) {
       if (!identifier(input.expectedVaultId)) throw new TypeError("Popup Vault ID is invalid.");
@@ -460,7 +460,7 @@ export function createCanonicalPopupApplicationClient(
     async cancelRecoveryPhraseReplacement(setupId) {
       assertText(setupId, "setup ID");
       const value = await transport.request({ type: "CancelRecoveryPhraseReplacement", setupId });
-      if (value !== undefined) throw protocolError();
+      if (value !== null) throw protocolError();
     },
     async selectVault(input) {
       assertNullableVaultId(input.expectedVaultId);

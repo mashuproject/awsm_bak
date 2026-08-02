@@ -1,11 +1,12 @@
-export interface CanonicalApplicationMessageResponse {
-  readonly ok: boolean;
-  readonly value?: unknown;
-  readonly error?: {
-    readonly id: string;
-    readonly message: string;
-  };
-}
+export type CanonicalApplicationMessageResponse =
+  | { readonly ok: true; readonly value: unknown }
+  | {
+      readonly ok: false;
+      readonly error: {
+        readonly id: string;
+        readonly message: string;
+      };
+    };
 
 export const CANONICAL_APPLICATION_STATE_CHANGED = {
   type: "CanonicalApplicationStateChanged",
@@ -68,7 +69,8 @@ export function installCanonicalApplicationMessageHandler(
   runtime.onMessage.addListener(async (message) => {
     if (isCanonicalApplicationStateChanged(message)) return undefined;
     try {
-      return { ok: true, value: await application.handle(message) };
+      const value = await application.handle(message);
+      return { ok: true, value: value === undefined ? null : value };
     } catch (error) {
       return knownFailure(error);
     }

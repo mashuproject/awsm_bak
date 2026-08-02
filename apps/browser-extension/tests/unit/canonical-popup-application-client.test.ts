@@ -99,7 +99,7 @@ describe("canonical popup application client", () => {
         .fn()
         .mockResolvedValueOnce({ setupId: "setup-1", recoveryPhrase: "alpha beta gamma" })
         .mockResolvedValueOnce({ vaultId: "a".repeat(64) })
-        .mockResolvedValueOnce(undefined)
+        .mockResolvedValueOnce(null)
         .mockResolvedValueOnce({
           selectedVaultId: "a".repeat(64),
           vaults: [{ vaultId: "a".repeat(64), label: null, selected: true }],
@@ -114,7 +114,7 @@ describe("canonical popup application client", () => {
         })
         .mockResolvedValueOnce({ setupId: "fork-setup", recoveryPhrase: "delta echo foxtrot" })
         .mockResolvedValueOnce({ vaultId: "1".repeat(64) })
-        .mockResolvedValueOnce(undefined)
+        .mockResolvedValueOnce(null)
         .mockResolvedValueOnce({
           memberId: "2".repeat(64),
           clientCredentialId: "3".repeat(64),
@@ -129,7 +129,7 @@ describe("canonical popup application client", () => {
           revision: 1,
           eventRecordId: "6".repeat(64),
         })
-        .mockResolvedValueOnce(undefined),
+        .mockResolvedValueOnce(null),
       subscribe: vi.fn(() => () => undefined),
     };
     const client = createCanonicalPopupApplicationClient(transport);

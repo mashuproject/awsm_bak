@@ -86,7 +86,27 @@ describe("canonical application message host", () => {
       ...CANONICAL_APPLICATION_STATE_CHANGED,
       unexpected: true,
     };
-    await expect(listener(malformedNotification)).resolves.toEqual({ ok: true, value: undefined });
+    await expect(listener(malformedNotification)).resolves.toEqual({ ok: true, value: null });
     expect(application.handle).toHaveBeenCalledWith(malformedNotification);
+  });
+
+  it("represents a successful void Command with an explicit null value", async () => {
+    let listener: ((message: unknown) => Promise<unknown>) | undefined;
+    installCanonicalApplicationMessageHandler(
+      {
+        onMessage: {
+          addListener(callback) {
+            listener = callback;
+          },
+        },
+      },
+      { handle: async () => undefined },
+    );
+    if (listener === undefined) throw new Error("message listener was not installed");
+
+    await expect(listener({ type: "CancelVaultCreation", setupId: "setup" })).resolves.toEqual({
+      ok: true,
+      value: null,
+    });
   });
 });
