@@ -1,5 +1,5 @@
-import { startBackground } from "../src/app/background";
+import { startCanonicalBackground } from "../src/app/canonical-background";
 
 export default defineBackground(() => {
-  startBackground();
+  startCanonicalBackground();
 });

@@ -147,12 +147,20 @@ mutation, protects the recovered local keyring, and immediately supports confirm
 all-head Recovery replacement. Unit crypto/replay proof and a real Chromium IndexedDB restart prove
 the retired phrase, one effective replacement head, fresh local Client authority, and subsequent
 authorship. Unscoped discovery from Host inventory, withholding/freshness proof across Remotes,
-multi-Client conflict journeys, and the management UI remain target work.
+multi-Client conflict journeys, and full multi-member management remain target work.
 
-The extension entrypoint, popup, Library, Search, export/import, synchronization, and management
-surfaces still use superseded orchestration. Canonical modules therefore remain implementation
-foundations rather than a shipped v0.3 Client until those entrypoints are switched and the old
-paths are deleted.
+The shipped background and popup now use only the canonical application boundary. They support
+local Vault creation and selection, Recovery Phrase confirmation and selected-replica recovery,
+page Capture, a current recent-Capture view, Recovery Phrase replacement, Fork, Vacuum, and
+Closure. A packaged Chromium journey builds those actual entrypoints and proves the local ceremony,
+Capture, live second-popup reconciliation, management disclosures, and retained readable Capture
+after Closure.
+
+Library, Search, export/import, synchronization, availability, member and invitation management,
+and conflict-resolution surfaces still require canonical replacements. The remaining old Library
+and synchronization setup pages are dangling superseded surfaces, not supported compatibility
+paths; remove or replace them together with their old orchestration and tests before v0.3 is
+complete.
 
 # 4. Replica Host impact
 
