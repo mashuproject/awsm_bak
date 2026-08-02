@@ -13,11 +13,13 @@
 
 # 1. Authority and implementation status
 
-This document defines the canonical target semantics for access to an opaque Hosted Replica. The
-checked-in generated `http-api.openapi.yaml` describes the currently implemented experimental API
-and does not yet implement this target. A later implementation change must replace the executable
-API and regenerate that artifact; this documentation reconciliation does not edit generated
-runtime contracts or pretend the target is live.
+This document defines the canonical semantics for access to an opaque Hosted Replica. The
+checked-in `http-api.openapi.yaml` is the executable initial HTTP adapter for this contract. The
+reference Rails Host implements Account sessions, Hosted Replicas and Grants, Compact admission,
+snapshot inventory, exact full and ranged reads, Wake Hints, resumable Streamable admission, and
+durable Hosted Replica reaping.
+That repository evidence does not by itself prove a deployed environment, a second Host
+implementation, or Client synchronization.
 
 # 2. Trust boundary
 
@@ -30,19 +32,24 @@ semantic validation after pull.
 
 An implementation exposes these operations under one strict wire contract:
 
-| Operation                       | Required capability           | Semantics                          |
-| ------------------------------- | ----------------------------- | ---------------------------------- |
-| Read service policy             | authenticated principal       | bounded transfer and paging limits |
-| List granted Replicas           | authenticated principal       | Host-local handles only            |
-| Create or manage Hosted Replica | `awsm.replica.manage`         | Host-local lifecycle               |
-| Enumerate opaque items          | `awsm.replica.inventory.read` | snapshot-bounded pages             |
-| Read opaque item or range       | `awsm.replica.item.read`      | exact immutable bytes              |
-| Admit opaque item               | `awsm.replica.item.write`     | immutable verified outer bytes     |
-| Read or wait for Wake Hint      | `awsm.replica.hint.read`      | advisory cursor only               |
-| Publish Wake Hint               | `awsm.replica.hint.write`     | advisory cursor advancement        |
+| Operation                     | Required capability           | Semantics                          |
+| ----------------------------- | ----------------------------- | ---------------------------------- |
+| Read service policy           | authenticated principal       | bounded transfer and paging limits |
+| List granted Replicas         | authenticated principal       | Host-local handles only            |
+| Create Hosted Replica         | authenticated principal       | new Host-local handle and Grant    |
+| Issue or revoke Replica Grant | `awsm.replica.manage`         | Host-local access lifecycle        |
+| Reap Hosted Replica           | `awsm.replica.manage`         | fence then delete opaque Host data |
+| Enumerate opaque items        | `awsm.replica.inventory.read` | snapshot-bounded pages             |
+| Read opaque item or range     | `awsm.replica.item.read`      | exact immutable bytes              |
+| Admit opaque item             | `awsm.replica.item.write`     | immutable verified outer bytes     |
+| Read or wait for Wake Hint    | `awsm.replica.hint.read`      | advisory cursor only               |
+| Publish Wake Hint             | `awsm.replica.hint.write`     | advisory cursor advancement        |
 
 Accounts, usernames, passwords, bearer tokens, sessions, quotas, and Grant management use the
-Host's owning API. No email field is part of the reference Account model.
+Host's owning API. No email field is part of the reference Account model. Revoking the final
+active Grant fences the Hosted Replica for reaping. An authorized explicit reap revokes every
+active Grant, fences the Hosted Replica, and returns a Host-local durable job identifier before
+opaque bytes are removed.
 
 # 4. Item admission
 
@@ -58,7 +65,10 @@ Admission is immutable:
 - an incomplete stream is invisible to inventory until final verification and atomic promotion.
 
 Resumable transfer uses Host-local opaque upload IDs and exact byte offsets. Tickets and upload IDs
-never enter Vault state. A Host may reject admission for quota, policy, or rate limits.
+never enter Vault state. Preparation creates independently expiring Prepared Data plus a shorter-
+lived bearer transfer capability. The same Account Channel Principal may rotate that capability
+while the upload remains staged; the old bearer becomes ineffective immediately. A Host may reject
+admission for quota, policy, or rate limits.
 
 # 5. Inventory
 

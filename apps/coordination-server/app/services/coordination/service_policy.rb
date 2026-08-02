@@ -2,14 +2,13 @@ module Coordination
   class ServicePolicy
     DEFAULTS = {
       inactive_account_retention_days: 365,
-      recovery_retention_days: 90,
       upload_staging_expiry_hours: 24,
-      transfer_ticket_lifetime_seconds: 900,
-      upload_part_size_bytes: 8_388_608,
+      upload_capability_lifetime_seconds: 900,
+      maximum_upload_part_bytes: 8_388_608,
       maximum_upload_parts: 10_000,
-      maximum_object_byte_length: 9_007_199_254_740_991,
-      maximum_changes_page_size: 500,
-      maximum_record_page_size: 500
+      maximum_compact_payload_bytes: 16_777_216,
+      maximum_streamable_payload_bytes: 9_007_199_254_736_883,
+      maximum_inventory_page_size: 500
     }.freeze
 
     def self.current
@@ -18,11 +17,28 @@ module Coordination
           "AWSM_INACTIVE_ACCOUNT_RETENTION_DAYS",
           1..36_500
         ),
-        recovery_retention_days: integer("AWSM_RECOVERY_RETENTION_DAYS", 0..36_500),
         upload_staging_expiry_hours: integer("AWSM_UPLOAD_STAGING_EXPIRY_HOURS", 1..8_760),
-        transfer_ticket_lifetime_seconds: integer("AWSM_TRANSFER_TICKET_LIFETIME_SECONDS", 1..86_400),
-        upload_part_size_bytes: integer("AWSM_UPLOAD_PART_SIZE_BYTES", 1..1_073_741_824),
-        maximum_upload_parts: integer("AWSM_MAX_UPLOAD_PARTS", 1..10_000, :maximum_upload_parts)
+        upload_capability_lifetime_seconds: integer(
+          "AWSM_UPLOAD_CAPABILITY_LIFETIME_SECONDS",
+          1..86_400
+        ),
+        maximum_upload_part_bytes: integer(
+          "AWSM_MAXIMUM_UPLOAD_PART_BYTES",
+          1..1_073_741_824
+        ),
+        maximum_upload_parts: integer("AWSM_MAXIMUM_UPLOAD_PARTS", 1..10_000),
+        maximum_compact_payload_bytes: integer(
+          "AWSM_MAXIMUM_COMPACT_PAYLOAD_BYTES",
+          16..16_777_216
+        ),
+        maximum_streamable_payload_bytes: integer(
+          "AWSM_MAXIMUM_STREAMABLE_PAYLOAD_BYTES",
+          16..9_007_199_254_736_883
+        ),
+        maximum_inventory_page_size: integer(
+          "AWSM_MAXIMUM_INVENTORY_PAGE_SIZE",
+          1..500
+        )
       )
     end
 
@@ -44,16 +60,17 @@ module Coordination
 
     def as_json(*)
       {
-        inactiveAccountRetentionDays: inactive_account_retention_days,
-        recoveryRetentionDays: recovery_retention_days,
-        uploadStagingExpiryHours: upload_staging_expiry_hours,
-        transferTicketLifetimeSeconds: transfer_ticket_lifetime_seconds,
-        uploadPartSizeBytes: upload_part_size_bytes,
-        maximumUploadParts: maximum_upload_parts,
-        maximumObjectByteLength: maximum_object_byte_length,
-        maximumChangesPageSize: maximum_changes_page_size,
-        maximumRecordPageSize: maximum_record_page_size,
-        notifications: { actionCable: true }
+        inactive_account_retention_days:,
+        upload_staging_expiry_hours:,
+        upload_capability_lifetime_seconds:,
+        maximum_upload_part_bytes:,
+        maximum_upload_parts:,
+        maximum_compact_payload_bytes:,
+        maximum_streamable_payload_bytes:,
+        maximum_inventory_page_size:,
+        range_reads: true,
+        resumable_uploads: true,
+        wake_hints: true
       }
     end
   end

@@ -44,15 +44,20 @@ Host-global Vault spinlock or Generation head is needed.
 
 A Host may reject writes, enforce quota, suspend access, and reap a Hosted Replica under disclosed
 local policy, including after no active Grant remains. These actions never change Vault membership
-or erase other Replicas. Exact responsibility for billing ownership, final manager loss, grace, and
-automatic reaping remains in the corresponding Roadmap initiative before server schema freeze.
+or erase other Replicas. The reference Host immediately fences a Replica when its final active
+Grant is revoked, or when a manager explicitly requests reaping; it records durable reaping work
+before deleting opaque bytes. A failed or undispatched standalone reaping job is periodically
+redriven. Billing ownership, grace policy, and any automatic policy beyond final-Grant reaping
+remain future Host concerns.
 
 # Current implementation status
 
-The existing Rails application implements an earlier Account, Device, Recovery Kit, and Generation-
-aware synchronization experiment. Its generated OpenAPI remains evidence of that current code.
-Converging it to this opaque target requires a destructive pre-release schema and API replacement,
-not a compatibility layer. Production remains outside any documentation-only change.
+The repository Rails application now uses the destructive canonical Host Policy and opaque-storage
+schema. It has no Device, Recovery Kit, Vault, Generation, Event, dependency, or semantic delivery
+tables or routes. Its executable OpenAPI and request proofs cover Account sessions, the dashboard,
+Hosted Replicas and Grant issue/revocation, opaque admission/inventory/read/range operations,
+resumable Prepared Data, Wake Hints, and fenced asynchronous reaping. Multi-Host Client
+synchronization and any named deployment require separate evidence.
 
 # References
 

@@ -3,16 +3,15 @@
 The Coordination Server is AWSM's Rails application for authenticated synchronization and opaque
 storage coordination. It must not receive or interpret plaintext Vault content.
 
-This guide describes the currently implemented v0.2.0 experimental service. The canonical target
-is the narrower opaque Replica Host in
-`docs/architecture/15-coordination-server.md` and `docs/specifications/protocol/protocol.md`.
-Current Device, Recovery, Generation, and one-Account/one-Vault behavior will be replaced during a
-separately approved implementation effort; this operational guide does not claim that target is
-already live.
+The application is the reference opaque Replica Host described by
+`docs/architecture/15-coordination-server.md` and
+`docs/specifications/protocol/protocol.md`. Host-local Accounts, Channel Principals, sessions,
+Replica Access Grants, quotas, and lifecycle policy are separate from protected Vault authority.
+The service stores and transfers only exact opaque envelope bytes and outer transport metadata.
 
 ## Development with Docker Compose
 
-From the repository root, build and start Rails, PostgreSQL, and Redis for the first time:
+From the repository root, build and start Rails and PostgreSQL for the first time:
 
 ```bash
 docker compose up --build
@@ -24,13 +23,11 @@ For normal development after the image has been built:
 docker compose up
 ```
 
-Rails is available at <http://localhost:3000>. PostgreSQL and Redis are reachable only by services
-on the Compose network and are not published to the host. Redis stores only short-lived Cable
-ticket entries and Action Cable Pub/Sub messages; it is memory-bounded, non-persistent, and
-deliberately disposable. The Rails source tree is bind-mounted into the container, and the
-application runs in the standard `development` environment, so changes to application constants,
-templates, and other watched files are reloaded without rebuilding the image or restarting the
-server.
+Rails is available at <http://localhost:3000>. PostgreSQL is reachable only by services on the
+Compose network and is not published to the host. The Rails source tree is bind-mounted into the
+container, and the application runs in the standard `development` environment, so changes to
+application constants, templates, and other watched files are reloaded without rebuilding the
+image or restarting the server.
 
 The Rails root renders the AWSM public-preview landing page on every deployment. `/privacy` and
 `/security` provide factual trust-boundary explanations, `/glossary` defines product terms, and
@@ -50,21 +47,17 @@ The landing, trust, installation, and Account pages use the repository-root `DES
 and the bind-mounted `apps/design-system` package; they load the display font and visual assets
 locally.
 
-The server exposes Rails signup, Account management, strict `/api` Account and VaultDevice sessions,
-and opaque synchronization endpoints. Account signup and password change happen on the Rails web
-surface. Rails receives passwords over TLS and stores only password digests. The extension only
-logs in; it never creates an Account. Recovery Phrases, recovery private material, Device secrets,
-and unwrapped Vault keys must never reach Rails.
+The server exposes Rails signup, Account management, strict Account Channel sessions, Hosted
+Replica and Grant policy, immutable Compact admission, snapshot inventory, exact reads and ranges,
+resumable Streamable admission, and advisory Wake Hints. Account signup and password change happen
+on the Rails web surface. Rails receives passwords over TLS and stores only password digests. A
+Client logs in but never sends Recovery Phrases, protected Vault identities, private Client
+Credential material, decrypted content, or unwrapped Vault keys.
 
 The server waits for PostgreSQL and runs `bin/rails db:prepare` each time it starts. PostgreSQL data
-is retained in a named Docker volume across container restarts. Redis is started in dependency
-order but Rails may boot while Redis is unavailable so authenticated HTTP polling remains usable in
-degraded mode.
-
-Production requires `AWSM_REDIS_URL` with a protected `redis://` or `rediss://` endpoint on private
-infrastructure. `AWSM_REDIS_NAMESPACE` may override the validated environment namespace when
-multiple logical Coordination Servers share a service. Never publish Redis directly, include it in
-backups, or rely on its contents for synchronization correctness.
+is retained in a named Docker volume across container restarts. Opaque bytes use the configured
+persistent storage path. Wake Hints are ordinary advisory HTTP cursors and require no second
+coordination datastore.
 
 Run Rails commands in the application container with:
 
@@ -79,13 +72,9 @@ From the repository root, run the isolated operational resilience proof with:
 corepack pnpm test:e2e:coordination
 ```
 
-This Coordination Server E2E suite starts two Rails processes, stops its disposable Redis service, verifies
-degraded readiness and authoritative HTTP polling, restarts Redis, and verifies that Cable-ticket
-issuance and cross-process hint delivery recover. It uses its own Compose project, loopback ports,
-temporary PostgreSQL storage, and disposable opaque-byte volume; its cleanup removes all of that
-state. Its first scenario covers outage and recovery independently from packaged-extension browser
-E2E and from the broader synchronization proof. It and `corepack pnpm test:sync-proof` are
-heavyweight local verification gates and do not run in hosted CI.
+The Coordination Server E2E and synchronization proofs are heavyweight local verification gates
+and do not run in hosted CI. They must exercise only the current opaque protocol and disposable
+isolated data; obsolete Device, Generation, or Cable fixtures are not valid evidence.
 
 Stop the services while retaining development data:
 
@@ -145,7 +134,7 @@ Inspect service state and recent logs first:
 
 ```bash
 docker compose ps
-docker compose logs --tail=100 coordination-server postgres redis
+docker compose logs --tail=100 coordination-server postgres
 ```
 
 Validate the resolved Compose configuration:
@@ -159,7 +148,7 @@ without rebuilding:
 
 ```bash
 docker compose exec coordination-server bin/rails runner 'puts Rails.env'
-docker compose restart coordination-server redis
+docker compose restart coordination-server
 ```
 
 After adding or updating a gem, rebuild instead of running `bundle install` only in the existing

@@ -173,10 +173,11 @@ a duplicate web Vault host.
 
 # Current-versus-target evidence
 
-Until implementation convergence, existing suites prove only the old code paths they execute. New
-target documents are not test evidence. The implementation effort begins with failing target
-vectors and black-box scenarios, removes superseded fixtures and compatibility expectations, then
-updates public claims only after real proof.
+Implemented suites prove only the exact code paths and boundaries they execute; target documents
+are never test evidence by themselves. Convergence work begins with failing target vectors and
+black-box scenarios, removes superseded fixtures and compatibility expectations, and updates public
+claims only after real proof. Current opaque-Host request proof is repository evidence, not proof of
+a named deployment, independent Host implementation, or end-to-end Client synchronization.
 
 # Invariants
 

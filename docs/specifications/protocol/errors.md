@@ -20,7 +20,7 @@ cryptographic or semantic validation. The Host never reports a guess about prote
 
 | Outcome                   | Retryable | Meaning                                            |
 | ------------------------- | --------- | -------------------------------------------------- |
-| `authentication_required` | no        | no valid Channel Principal session                 |
+| `authentication_required` | no        | no valid Channel or transfer capability            |
 | `access_denied`           | no        | no required Host-local Grant                       |
 | `replica_not_found`       | no        | absent or non-disclosed Hosted Replica             |
 | `item_not_found`          | no        | absent or non-disclosed opaque item                |
@@ -28,7 +28,7 @@ cryptographic or semantic validation. The Host never reports a guess about prote
 | `outer_envelope_invalid`  | no        | malformed or unverifiable outer storage envelope   |
 | `range_invalid`           | no        | range cannot be served under the stream contract   |
 | `upload_incomplete`       | yes       | resumable bytes are missing                        |
-| `upload_expired`          | no        | create a new resumable upload                      |
+| `upload_expired`          | no        | staged upload is absent or past Host expiry        |
 | `quota_exceeded`          | no        | Host policy rejected additional bytes              |
 | `rate_limited`            | yes       | retry after Host guidance                          |
 | `cursor_invalid`          | no        | cursor is unknown, expired, or outside the Replica |
@@ -44,6 +44,9 @@ own success response rather than an error wrapper.
 Retryable outcomes use exponential backoff with jitter and honor a bounded `retry_after_seconds`
 when present. Authentication refresh, changed credentials, new upload creation, quota action, or
 user choice are not automatic retries of the same failed request.
+
+An expired transfer capability may be rotated through its original Account Channel while the
+staged upload remains current. An expired upload cannot be renewed and requires new preparation.
 
 An ambiguous network failure after immutable admission is safely retried because identical bytes
 are idempotent. The Client recomputes and retains the exact item ID and bytes; it never reconstructs

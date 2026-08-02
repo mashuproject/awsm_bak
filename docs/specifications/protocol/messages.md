@@ -36,6 +36,19 @@ The handle is Host-local and opaque. Capabilities are the exact keys from
 `docs/specifications/vault/replica.md`. This resource contains no Vault ID, label, member, or
 Generation.
 
+An accepted explicit reaping request returns:
+
+```text
+{
+  "replica_handle": string,
+  "state": "reaping",
+  "reaping_job_id": string
+}
+```
+
+The job ID is Host-local operational state. It is not a Vault lifecycle record and does not imply
+that any other Replica has changed.
+
 # 4. Inventory page
 
 ```text
@@ -67,9 +80,27 @@ later pull obtains a new snapshot cursor; a cursor is never a Vault clock.
 }
 ```
 
-Resumable stream preparation additionally returns an opaque `upload_handle`, accepted byte offset,
-maximum part length, and short-lived transfer capability. Finalization returns the ordinary
-Admission result only after complete outer verification.
+Resumable stream preparation and Account-authenticated capability renewal return:
+
+```text
+{
+  "upload_handle": string,
+  "accepted_offset": integer,
+  "maximum_part_length": integer,
+  "transfer_capability": string
+}
+```
+
+The bearer transfer capability is Host-local, random, short-lived, and stored only as a digest.
+Renewal rotates it and returns the same upload handle and current accepted offset. An accepted part
+or exact part retry returns:
+
+```text
+{"accepted_offset": integer}
+```
+
+Finalization returns the ordinary Admission result only after complete outer verification and
+atomic promotion. Upload and transfer identifiers never enter Vault state.
 
 # 6. Read metadata
 

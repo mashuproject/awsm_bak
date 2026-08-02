@@ -1,8 +1,7 @@
 class ReadinessController < ActionController::API
   COMPONENTS = {
     "database" => :database_ready?,
-    "opaqueByteStorage" => :opaque_byte_storage_ready?,
-    "ephemeralCoordination" => :ephemeral_coordination_ready?
+    "opaqueByteStorage" => :opaque_byte_storage_ready?
   }.freeze
   private_constant :COMPONENTS
 
@@ -10,17 +9,10 @@ class ReadinessController < ActionController::API
     components = COMPONENTS.to_h do |name, probe|
       [ name, probe_component(name, probe) ? "ready" : "unavailable" ]
     end
-    critical_ready = components.values_at("database", "opaqueByteStorage").all?("ready")
-    status = if !critical_ready
-      "unavailable"
-    elsif components["ephemeralCoordination"] == "unavailable"
-      "degraded"
-    else
-      "ready"
-    end
+    ready = components.values.all?("ready")
 
-    render json: { status:, components: },
-      status: critical_ready ? :ok : :service_unavailable
+    render json: { status: ready ? "ready" : "unavailable", components: },
+      status: ready ? :ok : :service_unavailable
   end
 
   private
@@ -41,19 +33,10 @@ class ReadinessController < ActionController::API
     File.delete(probe) if defined?(probe) && probe && File.exist?(probe)
   end
 
-  def ephemeral_coordination_ready?
-    Coordination::EphemeralCoordination.ping == "PONG"
-  end
-
   def probe_component(name, probe)
     send(probe)
   rescue StandardError => error
-    reported_error = if name == "ephemeralCoordination"
-      Coordination::EphemeralCoordination.unavailable_error
-    else
-      error
-    end
-    Rails.error.report(reported_error, handled: true,
+    Rails.error.report(error, handled: true,
       context: { component: "readiness", probe: name })
     false
   end

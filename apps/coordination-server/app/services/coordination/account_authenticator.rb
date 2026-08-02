@@ -14,9 +14,11 @@ module Coordination
       end
 
       def authenticate_credential(credential)
-        raise OutcomeError.new("AUTHENTICATION_FAILED", status: :unauthorized) if credential.nil?
+        raise OutcomeError.new("authentication_required", status: :unauthorized) if credential.nil?
         session = SessionCredentials.authenticate(credential)
-        raise OutcomeError.new("AUTHENTICATION_FAILED", status: :unauthorized) unless session.account.active?
+        unless session.account.active?
+          raise OutcomeError.new("authentication_required", status: :unauthorized)
+        end
 
         AccountPrincipal.new(
           account: session.account,
@@ -36,7 +38,7 @@ module Coordination
           return account
         end
 
-        raise OutcomeError.new("AUTHENTICATION_FAILED", status: :unauthorized)
+        raise OutcomeError.new("authentication_required", status: :unauthorized)
       end
 
       private

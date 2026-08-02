@@ -20,11 +20,12 @@ RSpec.describe "canonical Account and Hosted Replica dashboard", type: :request 
   end
 
   def grant(replica:, principal:, capabilities: ReplicaAccessGrant::CAPABILITIES)
+    grantable_capabilities = capabilities.include?("awsm.replica.manage") ? capabilities : []
     ReplicaAccessGrant.create!(
       hosted_replica: replica,
       channel_principal: principal,
       capabilities:,
-      grantable_capabilities: capabilities
+      grantable_capabilities:
     )
   end
 

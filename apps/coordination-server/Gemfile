@@ -25,10 +25,6 @@ gem "bcrypt", "~> 3.1.7"
 # Strictly decode the canonical CBOR signed by recovery and Device keys.
 gem "cbor", "0.5.10.3"
 
-# Short-lived Cable credentials and cross-process Action Cable delivery.
-gem "connection_pool", "~> 3.0"
-gem "redis", "~> 5.4"
-
 # Windows does not include zoneinfo files, so bundle the tzinfo-data gem
 gem "tzinfo-data", platforms: %i[ windows jruby ]
 

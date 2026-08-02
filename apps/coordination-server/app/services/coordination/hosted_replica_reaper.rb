@@ -65,9 +65,7 @@ module Coordination
         parts = OpaqueUploadPart.joins(:opaque_upload)
           .where(opaque_uploads: { hosted_replica_id: replica_id }).order(:storage_key)
           .map { |record| [ record, record.byte_length ] }
-        uploads = OpaqueUpload.where(hosted_replica_id: replica_id).order(:storage_key)
-          .map { |record| [ record, record.byte_length ] }
-        (items + parts + uploads).sort_by { |record, _byte_length| record.storage_key }
+        (items + parts).sort_by { |record, _byte_length| record.storage_key }
       end
 
       def delete_policy!(job, replica_id, at:)

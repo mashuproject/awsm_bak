@@ -160,11 +160,7 @@ paths are deleted.
 
 The current Rails schema is generated from
 `apps/coordination-server/db/migrate/20260719000000_create_coordination_schema.rb` and
-`db/schema.rb`. It contains semantic `vault_replicas`, `vault_generations`, memberships,
-reachability pages, Event commits, dependencies, recovery generations, key epochs, Vault Devices,
-Device Key Envelopes, recovery and purge structures, semantic sessions, and delivery changes.
-
-Replace it with one clean Host Policy and opaque storage schema containing at least:
+`db/schema.rb`. It is the clean Host Policy and opaque-storage schema and contains:
 
 - username-only Accounts and separately typed Channel Principals/Authenticators;
 - sessions without a `VaultDevice` semantic scope;
@@ -173,7 +169,11 @@ Replace it with one clean Host Policy and opaque storage schema containing at le
 - opaque item metadata, compact/streamable admission, resumable upload and parts;
 - inventory and Wake Hint cursors with no Vault semantics;
 - quotas and exact Host-local lifecycle Jobs; and
-- independently modeled observability and disposable ephemeral coordination.
+- independently modeled lifecycle and recurring cleanup Jobs.
+
+The semantic `vault_replicas`, `vault_generations`, memberships, reachability pages, Event commits,
+dependencies, recovery generations, key epochs, Vault Devices, Device Key Envelopes, recovery,
+purge, and delivery structures are absent rather than migrated or retained.
 
 Retain Account fields only where they satisfy the target Host policy. Do not infer a one-Vault
 limit or add email. Account deletion reaps only Host-local resources and opaque bytes under clear
@@ -181,33 +181,30 @@ policy; it cannot describe deletion of the Vault elsewhere.
 
 ## 4.2 Models, services, Jobs, and Channels
 
-Remove semantic models and services such as `VaultDevice`, `RecoveryGeneration`,
-`DeviceKeyEnvelope`, `VaultKeyEpoch`, `VaultGeneration`, `EventCommit`, `RecordDependency`,
-`GenerationMembership`, `DeviceCertificate`, `DeviceEnrollmentProof`, and `RecoveryKit`.
-
-Replace `Coordination::DiskStore` behind the exact opaque item contract. Rework Account
-authentication, sessions, deletion, serializers, service policy, ticket issuance, and notification
-services around Channel Principals and Grants. Action Cable or another hint adapter publishes only
-a Host-local hint cursor; it is never required for correctness.
+The semantic models and services named by the superseded experiment are removed.
+`Coordination::DiskStore` now sits behind exact bounded opaque item and Prepared-Data operations;
+Account authentication, sessions, deletion, serializers, service policy, and notification cursors
+use Channel Principals and Grants. Wake Hints remain polling-safe advisory cursors and are never
+required for correctness. Disposable real-time delivery adapters remain optional future work.
 
 ## 4.3 Routes and generated API
 
-`apps/coordination-server/config/routes.rb` currently exposes Vault, Device, recovery, Event commit,
-Generation candidate, recovery, purge, and semantic record resources. Remove those routes and
-controllers. Implement only the opaque operations in `specifications/protocol/` plus Host-local
-Account, session, Grant, quota, and Hosted Replica management.
+`apps/coordination-server/config/routes.rb` exposes only the opaque operations in
+`specifications/protocol/` plus Host-local Account, session, Grant, quota, lifecycle, and Hosted
+Replica management. No Vault, Device, Recovery, Event, Generation, purge, or semantic Record route
+remains.
 
-The generated `docs/specifications/protocol/http-api.openapi.yaml`, its initializer, Committee
-validation, `spec/contracts/openapi_spec.rb`, Rails request specs, and browser `runtime/account/wire`
-and synchronization HTTP clients must change together. The generated file remains current-code
-evidence until then and must not be hand-edited ahead of executable routes.
+`docs/specifications/protocol/http-api.openapi.yaml`, its initializer, Committee validation,
+`spec/contracts/openapi_spec.rb`, and Rails request specs now form one executable contract. Browser
+synchronization HTTP clients have not yet switched to it and remain the next consumer to reconcile.
 
 ## 4.4 Account dashboard and public pages
 
-The current Rails dashboard under `app/views/accounts/` and related controllers/specs shows
-Devices and a one-Account Vault state. Rework it to manage Host-local Account identity,
-authenticators, browser/API sessions, Hosted Replica access, Grants, quota, and deletion. It must not
-render Vault content or imply Account membership.
+The current Rails dashboard under `app/views/accounts/` manages Host-local Account identity,
+authenticators, browser/API sessions, password replacement, and deletion; it displays Hosted
+Replica access, Grants, quota, and opaque storage facts. It renders no Device or Vault content and
+does not imply Vault membership. Remaining dashboard management mutations must continue through
+the same Host-local policy boundary already used by the executable Grant and reaping API.
 
 Keep username/password and no-email behavior. Update landing, privacy, security, layout, and
 dashboard copy only after shipped behavior changes. Replace `home/glossary.html.erb` with safe

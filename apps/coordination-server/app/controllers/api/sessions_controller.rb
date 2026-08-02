@@ -9,16 +9,16 @@ module Api
       Coordination::AccountActivity.touch!(account:)
       render json: Coordination::AccountPayload.response(account:, issued:)
     rescue ActionController::ParameterMissing
-      raise Coordination::OutcomeError.new("AUTHENTICATION_FAILED", status: :unauthorized)
+      raise Coordination::OutcomeError.new("authentication_required", status: :unauthorized)
     end
 
     def refresh
-      issued = Coordination::SessionCredentials.refresh(params.require(:refreshToken))
+      issued = Coordination::SessionCredentials.refresh(params.require(:refresh_token))
       account = issued.fetch(:session).account
       Coordination::AccountActivity.touch!(account:)
       render json: Coordination::AccountPayload.response(account:, issued:)
     rescue ActionController::ParameterMissing
-      raise Coordination::OutcomeError.new("AUTHENTICATION_FAILED", status: :unauthorized)
+      raise Coordination::OutcomeError.new("authentication_required", status: :unauthorized)
     end
   end
 end

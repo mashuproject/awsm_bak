@@ -26,8 +26,8 @@ module Coordination
       candidate
     end
 
-    def write_part(upload_id:, part_number:, io:)
-      key = "parts/#{upload_id}/#{part_number}"
+    def write_part(upload_id:, io:)
+      key = "parts/#{upload_id}/#{SecureRandom.hex(32)}"
       destination = path(key)
       FileUtils.mkdir_p(destination.dirname, mode: 0o700)
       temporary = Tempfile.new([ "part-", ".tmp" ], destination.dirname, binmode: true)
@@ -50,11 +50,11 @@ module Coordination
       temporary&.close!
     end
 
-    def install_object(record:, parts:)
+    def install_parts(parts:)
       key = "objects/#{SecureRandom.hex(1)}/#{SecureRandom.hex(32)}"
       destination = path(key)
       FileUtils.mkdir_p(destination.dirname, mode: 0o700)
-      temporary = Tempfile.new([ "object-", ".part" ], root, binmode: true)
+      temporary = Tempfile.new([ "object-", ".part" ], destination.dirname, binmode: true)
       temporary.chmod(0o600)
       digest = Digest::SHA256.new
       length = 0
@@ -69,13 +69,45 @@ module Coordination
       end
       temporary.flush
       temporary.fsync
-      yield length, digest.digest
+      temporary.rewind
+      yield temporary, length, digest.digest
       temporary.close
       File.rename(temporary.path, destination)
       fsync_directory(destination.dirname)
       key
     ensure
       temporary&.close!
+    end
+
+    def install_bytes(bytes)
+      key = "objects/#{SecureRandom.hex(1)}/#{SecureRandom.hex(32)}"
+      destination = path(key)
+      FileUtils.mkdir_p(destination.dirname, mode: 0o700)
+      temporary = Tempfile.new([ "object-", ".part" ], destination.dirname, binmode: true)
+      temporary.chmod(0o600)
+      temporary.write(bytes)
+      temporary.flush
+      temporary.fsync
+      temporary.close
+      File.rename(temporary.path, destination)
+      fsync_directory(destination.dirname)
+      key
+    ensure
+      temporary&.close!
+    end
+
+    def read_all(key, byte_length:)
+      bytes = read_range(key, offset: 0, length: byte_length).to_a.join.b
+      raise Errno::EIO unless bytes.bytesize == byte_length
+
+      bytes
+    end
+
+    def open_file(key)
+      source = path(key)
+      raise Errno::ENOENT unless File.file?(source)
+
+      File.open(source, "rb") { |file| yield file }
     end
 
     def read_range(key, offset:, length:)
@@ -92,6 +124,27 @@ module Coordination
             output << chunk
             remaining -= chunk.bytesize
           end
+        end
+      end
+    end
+
+    def same_bytes?(left_key, right_key, byte_length:)
+      left_path = path(left_key)
+      right_path = path(right_key)
+      return false unless File.file?(left_path) && File.file?(right_path)
+
+      File.open(left_path, "rb") do |left|
+        File.open(right_path, "rb") do |right|
+          remaining = byte_length
+          while remaining.positive?
+            length = [ remaining, 1024 * 1024 ].min
+            left_chunk = left.read(length)
+            right_chunk = right.read(length)
+            return false unless left_chunk && left_chunk == right_chunk
+
+            remaining -= left_chunk.bytesize
+          end
+          left.read(1).nil? && right.read(1).nil?
         end
       end
     end

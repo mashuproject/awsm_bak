@@ -31,17 +31,17 @@ RSpec.describe "Service policy", type: :request do
     Then { response.status == 200 }
     And { response.headers.fetch("Awsm-Protocol-Version") == "1" }
     And { response.headers.fetch("Awsm-Request-ID") == request_id }
-    And { response.parsed_body.fetch("inactiveAccountRetentionDays") == 365 }
-    And { response.parsed_body.fetch("recoveryRetentionDays") == 90 }
-    And { response.parsed_body.fetch("uploadPartSizeBytes") == 8_388_608 }
+    And { response.parsed_body.fetch("inactive_account_retention_days") == 365 }
+    And { response.parsed_body.fetch("maximum_compact_payload_bytes") == 16_777_216 }
+    And { response.parsed_body.fetch("maximum_upload_part_bytes") == 8_388_608 }
   end
 
   context "with an unsupported protocol" do
     When { get "/api/service-policy", headers: headers.merge("Awsm-Protocol-Version" => "2") }
 
     Then { response.status == 400 }
-    And { response.parsed_body.fetch("outcome") == "PROTOCOL_VERSION_UNSUPPORTED" }
-    And { response.parsed_body.fetch("requestId") == request_id }
+    And { response.parsed_body.fetch("outcome") == "protocol_invalid" }
+    And { response.parsed_body.fetch("request_id") == request_id }
   end
 
   it "accepts only a positive integer inactivity retention policy" do

@@ -35,7 +35,6 @@ Rails.application.configure do
   config.active_storage.service = :test
 
   config.active_job.queue_adapter = ENV.fetch("AWSM_JOB_QUEUE_ADAPTER", "test").to_sym
-  config.action_cable.disable_request_forgery_protection = ENV["AWSM_SYNC_PROOF"] == "true"
 
   # Print deprecation notices to the stderr.
   config.active_support.deprecation = :stderr

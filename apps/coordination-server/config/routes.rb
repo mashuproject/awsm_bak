@@ -1,12 +1,23 @@
 Rails.application.routes.draw do
-  mount ActionCable.server => "/cable"
-
   namespace :api do
     resource :server_information, only: :show, path: "server-information"
     resources :sessions, only: :create
     post "session/refresh", to: "sessions#refresh"
     delete "session", to: "session#destroy"
     resource :service_policy, only: :show, path: "service-policy"
+    resources :upload_transfers, only: :update, path: "uploads", param: :upload_handle do
+      post :finalize, on: :member
+    end
+    resources :hosted_replicas, only: %i[index create destroy], path: "replicas" do
+      resources :replica_access_grants, only: %i[create destroy], path: "grants"
+      resource :opaque_inventory, only: :show, path: "inventory"
+      get "hint", to: "opaque_hints#show"
+      post "hint", to: "opaque_hints#create"
+      resources :opaque_items, only: %i[show update], path: "items", param: :storage_item_id
+      resources :opaque_uploads, only: :create, path: "uploads", param: :upload_handle do
+        post :capability, on: :member
+      end
+    end
   end
 
   # Reveal health status on /up that returns 200 if the app boots with no exceptions, otherwise 500.

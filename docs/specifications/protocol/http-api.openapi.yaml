@@ -1,10 +1,10 @@
 openapi: 3.0.3
 info:
-  title: AWSM Coordination HTTP API
+  title: AWSM Replica Host HTTP API
   version: "1"
   description: >-
-    Canonical pre-release HTTPS adapter for the transport-independent AWSM synchronization
-    protocol. Opaque payload bytes are never described semantically by this contract.
+    Canonical pre-release HTTPS adapter for Host-local Accounts, Channel Principals, capability
+    Grants, and opaque Hosted Replica storage. This contract exposes no protected Vault semantics.
 servers:
   - url: /
 security:
@@ -19,7 +19,12 @@ paths:
         - $ref: "#/components/parameters/RequestId"
       responses:
         "200":
-          description: Coordination Server identity and supported pre-release capabilities
+          description: Replica Host identity and supported operations
+          headers:
+            Awsm-Protocol-Version:
+              $ref: "#/components/headers/ProtocolVersion"
+            Awsm-Request-ID:
+              $ref: "#/components/headers/RequestId"
           content:
             application/json:
               schema:
@@ -41,7 +46,12 @@ paths:
               $ref: "#/components/schemas/CreateSessionRequest"
       responses:
         "200":
-          description: Authenticated Account session
+          description: Authenticated Account Channel session
+          headers:
+            Awsm-Protocol-Version:
+              $ref: "#/components/headers/ProtocolVersion"
+            Awsm-Request-ID:
+              $ref: "#/components/headers/RequestId"
           content:
             application/json:
               schema:
@@ -63,7 +73,12 @@ paths:
               $ref: "#/components/schemas/RefreshSessionRequest"
       responses:
         "200":
-          description: Rotated authenticated Account session credentials
+          description: Rotated Account Channel credentials
+          headers:
+            Awsm-Protocol-Version:
+              $ref: "#/components/headers/ProtocolVersion"
+            Awsm-Request-ID:
+              $ref: "#/components/headers/RequestId"
           content:
             application/json:
               schema:
@@ -78,22 +93,12 @@ paths:
         - $ref: "#/components/parameters/RequestId"
       responses:
         "204":
-          description: Current Account session revoked
-        default:
-          $ref: "#/components/responses/Outcome"
-  /api/cable-tickets:
-    post:
-      operationId: createCableTicket
-      parameters:
-        - $ref: "#/components/parameters/ProtocolVersion"
-        - $ref: "#/components/parameters/RequestId"
-      responses:
-        "201":
-          description: One-use short-lived Action Cable connection ticket
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/CableTicket"
+          description: Current Account Channel session revoked
+          headers:
+            Awsm-Protocol-Version:
+              $ref: "#/components/headers/ProtocolVersion"
+            Awsm-Request-ID:
+              $ref: "#/components/headers/RequestId"
         default:
           $ref: "#/components/responses/Outcome"
   /api/service-policy:
@@ -104,7 +109,7 @@ paths:
         - $ref: "#/components/parameters/RequestId"
       responses:
         "200":
-          description: Effective Coordination Server policy
+          description: Effective bounded Host policy
           headers:
             Awsm-Protocol-Version:
               $ref: "#/components/headers/ProtocolVersion"
@@ -116,374 +121,213 @@ paths:
                 $ref: "#/components/schemas/ServicePolicy"
         default:
           $ref: "#/components/responses/Outcome"
-  /api/vaults:
+  /api/replicas:
     get:
-      operationId: listVaults
+      operationId: listHostedReplicas
       parameters:
         - $ref: "#/components/parameters/ProtocolVersion"
         - $ref: "#/components/parameters/RequestId"
       responses:
         "200":
-          description: Zero or one Account-owned Vault
+          description: Hosted Replicas currently granted to this Channel Principal
+          headers:
+            Awsm-Protocol-Version:
+              $ref: "#/components/headers/ProtocolVersion"
+            Awsm-Request-ID:
+              $ref: "#/components/headers/RequestId"
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/VaultList"
+                $ref: "#/components/schemas/HostedReplicaList"
         default:
           $ref: "#/components/responses/Outcome"
     post:
-      operationId: attachVault
+      operationId: createHostedReplica
       parameters:
         - $ref: "#/components/parameters/ProtocolVersion"
         - $ref: "#/components/parameters/RequestId"
-        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/AttachVaultRequest"
+              $ref: "#/components/schemas/EmptyObject"
       responses:
         "201":
-          description: Provisional Vault and current active Generation upload
+          description: New Host-local Replica and initial managing Grant
+          headers:
+            Awsm-Protocol-Version:
+              $ref: "#/components/headers/ProtocolVersion"
+            Awsm-Request-ID:
+              $ref: "#/components/headers/RequestId"
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AttachVaultResponse"
+                $ref: "#/components/schemas/HostedReplicaSummary"
         default:
           $ref: "#/components/responses/Outcome"
-  /api/account/vault-enrollment:
-    get:
-      operationId: getAccountVaultEnrollment
-      parameters:
-        - $ref: "#/components/parameters/ProtocolVersion"
-        - $ref: "#/components/parameters/RequestId"
-      responses:
-        "200":
-          description: Account enrollment state and active encrypted Recovery Kit
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AccountVaultEnrollment"
-        default:
-          $ref: "#/components/responses/Outcome"
-  /api/device-session-challenges:
-    post:
-      operationId: createDeviceSessionChallenge
-      parameters:
-        - $ref: "#/components/parameters/ProtocolVersion"
-        - $ref: "#/components/parameters/RequestId"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/DeviceSessionChallengeRequest"
-      responses:
-        "201":
-          description: One-use Device authentication challenge
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/DeviceSessionChallenge"
-        default:
-          $ref: "#/components/responses/Outcome"
-  /api/device-sessions:
-    post:
-      operationId: createDeviceSession
-      parameters:
-        - $ref: "#/components/parameters/ProtocolVersion"
-        - $ref: "#/components/parameters/RequestId"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreateDeviceSessionRequest"
-      responses:
-        "200":
-          description: VaultDevice-scoped API session
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AuthenticatedSession"
-        default:
-          $ref: "#/components/responses/Outcome"
-  /api/vaults/{vaultId}:
-    parameters:
-      - $ref: "#/components/parameters/VaultId"
-      - $ref: "#/components/parameters/ProtocolVersion"
-      - $ref: "#/components/parameters/RequestId"
-    get:
-      operationId: getVault
-      responses:
-        "200":
-          description: Account-owned Vault replica state
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Vault"
-        default:
-          $ref: "#/components/responses/Outcome"
-  /api/vaults/{vaultId}/complete:
-    parameters:
-      - $ref: "#/components/parameters/VaultId"
-      - $ref: "#/components/parameters/ProtocolVersion"
-      - $ref: "#/components/parameters/RequestId"
-      - $ref: "#/components/parameters/IdempotencyKey"
-    post:
-      operationId: completeVault
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CompleteVaultRequest"
-      responses:
-        "200":
-          description: Active Vault replica
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Vault"
-        default:
-          $ref: "#/components/responses/Outcome"
-  /api/vaults/{vaultId}/devices:
-    parameters:
-      - $ref: "#/components/parameters/VaultId"
-      - $ref: "#/components/parameters/ProtocolVersion"
-      - $ref: "#/components/parameters/RequestId"
-    get:
-      operationId: listVaultDevices
-      responses:
-        "200":
-          description: Public Device certificate facts for the bound Vault
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/VaultDeviceList"
-        default:
-          $ref: "#/components/responses/Outcome"
-    post:
-      operationId: enrollVaultDevice
-      parameters:
-        - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/EnrollVaultDeviceRequest"
-      responses:
-        "201":
-          description: Certified Device enrollment and VaultDevice-scoped API session
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AuthenticatedSession"
-        default:
-          $ref: "#/components/responses/Outcome"
-  /api/vaults/{vaultId}/devices/{deviceId}:
-    parameters:
-      - $ref: "#/components/parameters/VaultId"
-      - name: deviceId
-        in: path
-        required: true
-        schema:
-          $ref: "#/components/schemas/Uuid"
-      - $ref: "#/components/parameters/ProtocolVersion"
-      - $ref: "#/components/parameters/RequestId"
+  /api/replicas/{replica_handle}:
     delete:
-      operationId: removeVaultDevice
-      responses:
-        "204":
-          description: Device authority removed
-        default:
-          $ref: "#/components/responses/Outcome"
-  /api/vaults/{vaultId}/device-authority:
-    parameters:
-      - $ref: "#/components/parameters/VaultId"
-      - $ref: "#/components/parameters/ProtocolVersion"
-      - $ref: "#/components/parameters/RequestId"
-    get:
-      operationId: getCurrentVaultDeviceAuthority
-      responses:
-        "200":
-          description: Current certificate and active-epoch envelope for the authenticated Device
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/CurrentVaultDeviceAuthority"
-        default:
-          $ref: "#/components/responses/Outcome"
-  /api/vaults/{vaultId}/future-protections:
-    parameters:
-      - $ref: "#/components/parameters/VaultId"
-      - $ref: "#/components/parameters/ProtocolVersion"
-      - $ref: "#/components/parameters/RequestId"
-      - $ref: "#/components/parameters/IdempotencyKey"
-    post:
-      operationId: protectFutureVaultContent
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/FutureProtectionRequest"
-      responses:
-        "200":
-          description: Vault authority after atomic recovery-generation and key-epoch rotation
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Vault"
-        default:
-          $ref: "#/components/responses/Outcome"
-  /api/vaults/{vaultId}/replacement-candidates:
-    parameters:
-      - $ref: "#/components/parameters/VaultId"
-      - $ref: "#/components/parameters/ProtocolVersion"
-      - $ref: "#/components/parameters/RequestId"
-      - $ref: "#/components/parameters/IdempotencyKey"
-    post:
-      operationId: createVaultReplacementCandidate
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreateVaultReplacementRequest"
-      responses:
-        "201":
-          description: Provisional cryptographically independent replacement Vault
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AttachVaultResponse"
-        default:
-          $ref: "#/components/responses/Outcome"
-  /api/vaults/{vaultId}/replacement-candidates/{replacementVaultId}/activate:
-    parameters:
-      - $ref: "#/components/parameters/VaultId"
-      - name: replacementVaultId
-        in: path
-        required: true
-        schema:
-          $ref: "#/components/schemas/Uuid"
-      - $ref: "#/components/parameters/ProtocolVersion"
-      - $ref: "#/components/parameters/RequestId"
-      - $ref: "#/components/parameters/IdempotencyKey"
-    post:
-      operationId: activateVaultReplacement
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ActivateVaultReplacementRequest"
+      operationId: reapHostedReplica
+      parameters:
+        - $ref: "#/components/parameters/ProtocolVersion"
+        - $ref: "#/components/parameters/RequestId"
+        - $ref: "#/components/parameters/ReplicaHandle"
       responses:
         "202":
-          description: Replacement activated and source purge scheduled without a Recovery Snapshot
+          description: Hosted Replica fenced for asynchronous opaque-byte reaping
+          headers:
+            Awsm-Protocol-Version:
+              $ref: "#/components/headers/ProtocolVersion"
+            Awsm-Request-ID:
+              $ref: "#/components/headers/RequestId"
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/VaultReplacementActivation"
+                $ref: "#/components/schemas/ReapingResult"
         default:
           $ref: "#/components/responses/Outcome"
-  /api/vaults/{vaultId}/uploads:
-    parameters:
-      - $ref: "#/components/parameters/VaultId"
-      - $ref: "#/components/parameters/ProtocolVersion"
-      - $ref: "#/components/parameters/RequestId"
+  /api/replicas/{replica_handle}/grants:
     post:
-      operationId: createUpload
+      operationId: createReplicaAccessGrant
       parameters:
-        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/ProtocolVersion"
+        - $ref: "#/components/parameters/RequestId"
+        - $ref: "#/components/parameters/ReplicaHandle"
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/CreateUploadRequest"
+              $ref: "#/components/schemas/CreateReplicaAccessGrantRequest"
       responses:
         "201":
-          description: Upload and transfer ticket
+          description: New immutable Host-local Replica Access Grant
+          headers:
+            Awsm-Protocol-Version:
+              $ref: "#/components/headers/ProtocolVersion"
+            Awsm-Request-ID:
+              $ref: "#/components/headers/RequestId"
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/UploadWithTicket"
-        "200":
-          description: Existing matching durable Object
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/UploadWithTicket"
+                $ref: "#/components/schemas/ReplicaAccessGrant"
         default:
           $ref: "#/components/responses/Outcome"
-  /api/vaults/{vaultId}/uploads/{uploadId}:
-    parameters:
-      - $ref: "#/components/parameters/VaultId"
-      - $ref: "#/components/parameters/UploadId"
-      - $ref: "#/components/parameters/ProtocolVersion"
-      - $ref: "#/components/parameters/RequestId"
-    get:
-      operationId: getUpload
-      responses:
-        "200":
-          description: Resumable upload state
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Upload"
-        default:
-          $ref: "#/components/responses/Outcome"
-  /api/vaults/{vaultId}/uploads/{uploadId}/ticket:
-    parameters:
-      - $ref: "#/components/parameters/VaultId"
-      - $ref: "#/components/parameters/UploadId"
-      - $ref: "#/components/parameters/ProtocolVersion"
-      - $ref: "#/components/parameters/RequestId"
-      - $ref: "#/components/parameters/IdempotencyKey"
-    post:
-      operationId: renewUploadTicket
-      responses:
-        "200":
-          description: Fresh scoped upload ticket
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/TransferTicket"
-        default:
-          $ref: "#/components/responses/Outcome"
-  /api/vaults/{vaultId}/uploads/{uploadId}/complete:
-    parameters:
-      - $ref: "#/components/parameters/VaultId"
-      - $ref: "#/components/parameters/UploadId"
-      - $ref: "#/components/parameters/ProtocolVersion"
-      - $ref: "#/components/parameters/RequestId"
-      - $ref: "#/components/parameters/IdempotencyKey"
-    post:
-      operationId: completeUpload
-      responses:
-        "200":
-          description: Durable uncommitted Object
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/OpaqueRecord"
-        default:
-          $ref: "#/components/responses/Outcome"
-  /api/transfers/{ticket}/parts/{partNumber}:
-    parameters:
-      - $ref: "#/components/parameters/TransferToken"
-      - $ref: "#/components/parameters/PartNumber"
-      - $ref: "#/components/parameters/ProtocolVersion"
-      - $ref: "#/components/parameters/RequestId"
-    put:
-      operationId: putUploadPart
-      security: []
+  /api/replicas/{replica_handle}/grants/{grant_id}:
+    delete:
+      operationId: revokeReplicaAccessGrant
       parameters:
-        - $ref: "#/components/parameters/ContentSha256"
+        - $ref: "#/components/parameters/ProtocolVersion"
+        - $ref: "#/components/parameters/RequestId"
+        - $ref: "#/components/parameters/ReplicaHandle"
+        - $ref: "#/components/parameters/GrantId"
+      responses:
+        "204":
+          description: Exact Host-local Replica Access Grant revoked
+          headers:
+            Awsm-Protocol-Version:
+              $ref: "#/components/headers/ProtocolVersion"
+            Awsm-Request-ID:
+              $ref: "#/components/headers/RequestId"
+        default:
+          $ref: "#/components/responses/Outcome"
+  /api/replicas/{replica_handle}/inventory:
+    get:
+      operationId: listOpaqueInventory
+      parameters:
+        - $ref: "#/components/parameters/ProtocolVersion"
+        - $ref: "#/components/parameters/RequestId"
+        - $ref: "#/components/parameters/ReplicaHandle"
+        - in: query
+          name: snapshot_cursor
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 9007199254740991
+        - in: query
+          name: position
+          required: false
+          schema:
+            $ref: "#/components/schemas/Base64Url32"
+        - in: query
+          name: limit
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+      responses:
+        "200":
+          description: One immutable snapshot-bounded opaque inventory page
+          headers:
+            Awsm-Protocol-Version:
+              $ref: "#/components/headers/ProtocolVersion"
+            Awsm-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpaqueInventoryPage"
+        default:
+          $ref: "#/components/responses/Outcome"
+  /api/replicas/{replica_handle}/hint:
+    get:
+      operationId: readWakeHint
+      parameters:
+        - $ref: "#/components/parameters/ProtocolVersion"
+        - $ref: "#/components/parameters/RequestId"
+        - $ref: "#/components/parameters/ReplicaHandle"
+      responses:
+        "200":
+          description: Current advisory Hosted Replica Wake Hint cursor
+          headers:
+            Awsm-Protocol-Version:
+              $ref: "#/components/headers/ProtocolVersion"
+            Awsm-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WakeHint"
+        default:
+          $ref: "#/components/responses/Outcome"
+    post:
+      operationId: publishWakeHint
+      parameters:
+        - $ref: "#/components/parameters/ProtocolVersion"
+        - $ref: "#/components/parameters/RequestId"
+        - $ref: "#/components/parameters/ReplicaHandle"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmptyObject"
+      responses:
+        "200":
+          description: Advanced advisory Hosted Replica Wake Hint cursor
+          headers:
+            Awsm-Protocol-Version:
+              $ref: "#/components/headers/ProtocolVersion"
+            Awsm-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WakeHint"
+        default:
+          $ref: "#/components/responses/Outcome"
+  /api/replicas/{replica_handle}/items/{storage_item_id}:
+    put:
+      operationId: admitCompactOpaqueItem
+      parameters:
+        - $ref: "#/components/parameters/ProtocolVersion"
+        - $ref: "#/components/parameters/RequestId"
+        - $ref: "#/components/parameters/ReplicaHandle"
+        - $ref: "#/components/parameters/StorageItemId"
       requestBody:
         required: true
         content:
@@ -492,34 +336,114 @@ paths:
               type: string
               format: binary
       responses:
-        "204":
-          description: Part accepted idempotently
+        "200":
+          description: Exact item was already present
+          headers:
+            Awsm-Protocol-Version:
+              $ref: "#/components/headers/ProtocolVersion"
+            Awsm-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdmissionResult"
+        "201":
+          description: Exact Compact item was durably admitted
+          headers:
+            Awsm-Protocol-Version:
+              $ref: "#/components/headers/ProtocolVersion"
+            Awsm-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdmissionResult"
         default:
           $ref: "#/components/responses/Outcome"
-  /api/transfers/{ticket}:
-    parameters:
-      - $ref: "#/components/parameters/TransferToken"
-      - $ref: "#/components/parameters/ProtocolVersion"
-      - $ref: "#/components/parameters/RequestId"
     get:
-      operationId: downloadOpaqueRecord
-      security: []
+      operationId: readOpaqueItem
       parameters:
+        - $ref: "#/components/parameters/ProtocolVersion"
+        - $ref: "#/components/parameters/RequestId"
+        - $ref: "#/components/parameters/ReplicaHandle"
+        - $ref: "#/components/parameters/StorageItemId"
         - in: header
           name: Range
           required: false
           schema:
             type: string
+            minLength: 1
+            maxLength: 128
       responses:
         "200":
-          description: Complete opaque bytes
+          description: Exact complete opaque item bytes
+          headers:
+            Awsm-Protocol-Version:
+              $ref: "#/components/headers/ProtocolVersion"
+            Awsm-Request-ID:
+              $ref: "#/components/headers/RequestId"
+            Awsm-Storage-Item-ID:
+              required: true
+              schema:
+                $ref: "#/components/schemas/Base64Url32"
+            Awsm-Storage-Class:
+              required: true
+              schema:
+                $ref: "#/components/schemas/StorageClass"
+            Awsm-Byte-Length:
+              required: true
+              schema:
+                type: string
+                pattern: "^[1-9][0-9]*$"
+            Awsm-Ciphertext-Digest:
+              required: true
+              schema:
+                $ref: "#/components/schemas/Base64Url32"
+            Accept-Ranges:
+              required: false
+              schema:
+                type: string
+                enum: [bytes]
           content:
             application/octet-stream:
               schema:
                 type: string
                 format: binary
         "206":
-          description: One byte range
+          description: Exact stored Streamable byte range
+          headers:
+            Awsm-Protocol-Version:
+              $ref: "#/components/headers/ProtocolVersion"
+            Awsm-Request-ID:
+              $ref: "#/components/headers/RequestId"
+            Awsm-Storage-Item-ID:
+              required: true
+              schema:
+                $ref: "#/components/schemas/Base64Url32"
+            Awsm-Storage-Class:
+              required: true
+              schema:
+                type: string
+                enum: [streamable]
+            Awsm-Byte-Length:
+              required: true
+              schema:
+                type: string
+                pattern: "^[1-9][0-9]*$"
+            Awsm-Ciphertext-Digest:
+              required: true
+              schema:
+                $ref: "#/components/schemas/Base64Url32"
+            Accept-Ranges:
+              required: true
+              schema:
+                type: string
+                enum: [bytes]
+            Content-Range:
+              required: true
+              schema:
+                type: string
+                pattern: "^bytes (0|[1-9][0-9]*)-(0|[1-9][0-9]*)/[1-9][0-9]*$"
           content:
             application/octet-stream:
               schema:
@@ -527,302 +451,135 @@ paths:
                 format: binary
         default:
           $ref: "#/components/responses/Outcome"
-  /api/vaults/{vaultId}/commits:
-    parameters:
-      - $ref: "#/components/parameters/VaultId"
-      - $ref: "#/components/parameters/ProtocolVersion"
-      - $ref: "#/components/parameters/RequestId"
-      - $ref: "#/components/parameters/IdempotencyKey"
+  /api/replicas/{replica_handle}/uploads:
     post:
-      operationId: commitEventClosure
+      operationId: prepareStreamableUpload
+      parameters:
+        - $ref: "#/components/parameters/ProtocolVersion"
+        - $ref: "#/components/parameters/RequestId"
+        - $ref: "#/components/parameters/ReplicaHandle"
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/CommitRequest"
-      responses:
-        "200":
-          description: Durable Event closure publication or already-active closure acknowledgement
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/CommitResult"
-        default:
-          $ref: "#/components/responses/Outcome"
-  /api/vaults/{vaultId}/records:
-    parameters:
-      - $ref: "#/components/parameters/VaultId"
-      - $ref: "#/components/parameters/ProtocolVersion"
-      - $ref: "#/components/parameters/RequestId"
-    get:
-      operationId: listActiveRecords
-      parameters:
-        - $ref: "#/components/parameters/AfterObjectId"
-        - $ref: "#/components/parameters/Limit"
-      responses:
-        "200":
-          description: Active Generation record page
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/RecordPage"
-        default:
-          $ref: "#/components/responses/Outcome"
-  /api/vaults/{vaultId}/changes:
-    parameters:
-      - $ref: "#/components/parameters/VaultId"
-      - $ref: "#/components/parameters/ProtocolVersion"
-      - $ref: "#/components/parameters/RequestId"
-    get:
-      operationId: listChanges
-      parameters:
-        - in: query
-          name: after
-          required: true
-          schema:
-            $ref: "#/components/schemas/Counter"
-        - $ref: "#/components/parameters/Limit"
-        - in: query
-          name: generationId
-          required: false
-          schema:
-            $ref: "#/components/schemas/Uuid"
-        - in: query
-          name: snapshot
-          required: false
-          description: Cursor fence returned by the first page; repeat it on later pages.
-          schema:
-            $ref: "#/components/schemas/Counter"
-      responses:
-        "200":
-          description: Snapshot-bounded delivery changes
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ChangePage"
-        default:
-          $ref: "#/components/responses/Outcome"
-  /api/vaults/{vaultId}/records/{objectId}/downloads:
-    parameters:
-      - $ref: "#/components/parameters/VaultId"
-      - $ref: "#/components/parameters/ObjectId"
-      - $ref: "#/components/parameters/ProtocolVersion"
-      - $ref: "#/components/parameters/RequestId"
-      - $ref: "#/components/parameters/IdempotencyKey"
-    post:
-      operationId: createActiveDownload
-      responses:
-        "200":
-          description: Active-record download ticket
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/DownloadTicket"
-        default:
-          $ref: "#/components/responses/Outcome"
-  /api/vaults/{vaultId}/generation-candidates:
-    parameters:
-      - $ref: "#/components/parameters/VaultId"
-      - $ref: "#/components/parameters/ProtocolVersion"
-      - $ref: "#/components/parameters/RequestId"
-    post:
-      operationId: createGenerationCandidate
-      parameters:
-        - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreateGenerationCandidateRequest"
+              $ref: "#/components/schemas/PrepareUploadRequest"
       responses:
         "201":
-          description: Inactive Generation candidate
+          description: Independent resumable Streamable upload Prepared Data
+          headers:
+            Awsm-Protocol-Version:
+              $ref: "#/components/headers/ProtocolVersion"
+            Awsm-Request-ID:
+              $ref: "#/components/headers/RequestId"
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/GenerationCandidate"
+                $ref: "#/components/schemas/PreparedUpload"
         default:
           $ref: "#/components/responses/Outcome"
-  /api/vaults/{vaultId}/generation-candidates/{generationId}:
-    parameters:
-      - $ref: "#/components/parameters/VaultId"
-      - $ref: "#/components/parameters/GenerationId"
-      - $ref: "#/components/parameters/ProtocolVersion"
-      - $ref: "#/components/parameters/RequestId"
-      - $ref: "#/components/parameters/IdempotencyKey"
-    delete:
-      operationId: discardGenerationCandidate
+  /api/replicas/{replica_handle}/uploads/{upload_handle}/capability:
+    post:
+      operationId: renewUploadCapability
+      parameters:
+        - $ref: "#/components/parameters/ProtocolVersion"
+        - $ref: "#/components/parameters/RequestId"
+        - $ref: "#/components/parameters/ReplicaHandle"
+        - $ref: "#/components/parameters/UploadHandle"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmptyObject"
       responses:
-        "204":
-          description: Candidate discarded
+        "200":
+          description: Rotated short-lived transfer capability for existing Prepared Data
+          headers:
+            Awsm-Protocol-Version:
+              $ref: "#/components/headers/ProtocolVersion"
+            Awsm-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PreparedUpload"
         default:
           $ref: "#/components/responses/Outcome"
-  /api/vaults/{vaultId}/generation-candidates/{generationId}/retained-pages/{pageNumber}:
-    parameters:
-      - $ref: "#/components/parameters/VaultId"
-      - $ref: "#/components/parameters/GenerationId"
-      - $ref: "#/components/parameters/PageNumber"
-      - $ref: "#/components/parameters/ProtocolVersion"
-      - $ref: "#/components/parameters/RequestId"
-      - $ref: "#/components/parameters/IdempotencyKey"
+  /api/uploads/{upload_handle}:
     put:
-      operationId: putGenerationRetainedPage
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/RetainedPageRequest"
-      responses:
-        "204":
-          description: Retained page accepted idempotently
-        default:
-          $ref: "#/components/responses/Outcome"
-  /api/vaults/{vaultId}/generation-candidates/{generationId}/seal:
-    parameters:
-      - $ref: "#/components/parameters/VaultId"
-      - $ref: "#/components/parameters/GenerationId"
-      - $ref: "#/components/parameters/ProtocolVersion"
-      - $ref: "#/components/parameters/RequestId"
-      - $ref: "#/components/parameters/IdempotencyKey"
-    post:
-      operationId: sealGenerationCandidate
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/SealGenerationCandidateRequest"
-      responses:
-        "200":
-          description: Sealed Generation candidate
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/GenerationCandidate"
-        default:
-          $ref: "#/components/responses/Outcome"
-  /api/vaults/{vaultId}/generation-candidates/{generationId}/activate:
-    parameters:
-      - $ref: "#/components/parameters/VaultId"
-      - $ref: "#/components/parameters/GenerationId"
-      - $ref: "#/components/parameters/ProtocolVersion"
-      - $ref: "#/components/parameters/RequestId"
-      - $ref: "#/components/parameters/IdempotencyKey"
-    post:
-      operationId: activateGenerationCandidate
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ActivateGenerationRequest"
-      responses:
-        "200":
-          description: Activated successor Generation
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Vault"
-        default:
-          $ref: "#/components/responses/Outcome"
-  /api/vaults/{vaultId}/recoveries:
-    parameters:
-      - $ref: "#/components/parameters/VaultId"
-      - $ref: "#/components/parameters/ProtocolVersion"
-      - $ref: "#/components/parameters/RequestId"
-    get:
-      operationId: listRecoveries
-      responses:
-        "200":
-          description: Superseded Generation recovery snapshots
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: false
-                required: [recoveries]
-                properties:
-                  recoveries:
-                    type: array
-                    items:
-                      $ref: "#/components/schemas/Recovery"
-        default:
-          $ref: "#/components/responses/Outcome"
-  /api/vaults/{vaultId}/recoveries/{generationId}/records:
-    parameters:
-      - $ref: "#/components/parameters/VaultId"
-      - $ref: "#/components/parameters/GenerationId"
-      - $ref: "#/components/parameters/ProtocolVersion"
-      - $ref: "#/components/parameters/RequestId"
-    get:
-      operationId: listRecoveryRecords
+      operationId: appendUploadPart
+      security:
+        - uploadBearer: []
       parameters:
-        - $ref: "#/components/parameters/AfterObjectId"
-        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/ProtocolVersion"
+        - $ref: "#/components/parameters/RequestId"
+        - $ref: "#/components/parameters/UploadHandle"
+        - in: header
+          name: Awsm-Upload-Offset
+          required: true
+          schema:
+            type: string
+            pattern: "^(0|[1-9][0-9]*)$"
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
       responses:
         "200":
-          description: Exact superseded Generation record page
+          description: Part accepted or exact prior part replayed idempotently
+          headers:
+            Awsm-Protocol-Version:
+              $ref: "#/components/headers/ProtocolVersion"
+            Awsm-Request-ID:
+              $ref: "#/components/headers/RequestId"
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/RecordPage"
+                $ref: "#/components/schemas/UploadProgress"
         default:
           $ref: "#/components/responses/Outcome"
-  /api/vaults/{vaultId}/recoveries/{generationId}/records/{objectId}/downloads:
-    parameters:
-      - $ref: "#/components/parameters/VaultId"
-      - $ref: "#/components/parameters/GenerationId"
-      - $ref: "#/components/parameters/ObjectId"
-      - $ref: "#/components/parameters/ProtocolVersion"
-      - $ref: "#/components/parameters/RequestId"
-      - $ref: "#/components/parameters/IdempotencyKey"
+  /api/uploads/{upload_handle}/finalize:
     post:
-      operationId: createRecoveryDownload
-      responses:
-        "200":
-          description: Recovery-scoped download ticket
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/DownloadTicket"
-        default:
-          $ref: "#/components/responses/Outcome"
-  /api/vaults/{vaultId}/purges:
-    parameters:
-      - $ref: "#/components/parameters/VaultId"
-      - $ref: "#/components/parameters/ProtocolVersion"
-      - $ref: "#/components/parameters/RequestId"
-    post:
-      operationId: createPurge
+      operationId: finalizeStreamableUpload
+      security:
+        - uploadBearer: []
       parameters:
-        - $ref: "#/components/parameters/IdempotencyKey"
-      responses:
-        "202":
-          description: Durable purge Job
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Purge"
-        default:
-          $ref: "#/components/responses/Outcome"
-  /api/vaults/{vaultId}/purges/{purgeId}:
-    parameters:
-      - $ref: "#/components/parameters/VaultId"
-      - $ref: "#/components/parameters/PurgeId"
-      - $ref: "#/components/parameters/ProtocolVersion"
-      - $ref: "#/components/parameters/RequestId"
-    get:
-      operationId: getPurge
+        - $ref: "#/components/parameters/ProtocolVersion"
+        - $ref: "#/components/parameters/RequestId"
+        - $ref: "#/components/parameters/UploadHandle"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmptyObject"
       responses:
         "200":
-          description: Purge Job state
+          description: Exact item was already present
+          headers:
+            Awsm-Protocol-Version:
+              $ref: "#/components/headers/ProtocolVersion"
+            Awsm-Request-ID:
+              $ref: "#/components/headers/RequestId"
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Purge"
+                $ref: "#/components/schemas/AdmissionResult"
+        "201":
+          description: Complete Streamable item was verified and durably admitted
+          headers:
+            Awsm-Protocol-Version:
+              $ref: "#/components/headers/ProtocolVersion"
+            Awsm-Request-ID:
+              $ref: "#/components/headers/RequestId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdmissionResult"
         default:
           $ref: "#/components/responses/Outcome"
 components:
@@ -830,16 +587,11 @@ components:
     accountBearer:
       type: http
       scheme: bearer
-  headers:
-    ProtocolVersion:
-      required: true
-      schema:
-        type: string
-        enum: ["1"]
-    RequestId:
-      required: true
-      schema:
-        $ref: "#/components/schemas/Uuid"
+      bearerFormat: opaque
+    uploadBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque-upload-capability
   parameters:
     ProtocolVersion:
       in: header
@@ -854,89 +606,43 @@ components:
       required: true
       schema:
         $ref: "#/components/schemas/Uuid"
-    IdempotencyKey:
-      in: header
-      name: Idempotency-Key
+    ReplicaHandle:
+      in: path
+      name: replica_handle
       required: true
       schema:
         $ref: "#/components/schemas/Uuid"
-    VaultId:
+    GrantId:
       in: path
-      name: vaultId
+      name: grant_id
       required: true
       schema:
         $ref: "#/components/schemas/Uuid"
-    GenerationId:
+    StorageItemId:
       in: path
-      name: generationId
+      name: storage_item_id
+      required: true
+      schema:
+        $ref: "#/components/schemas/Base64Url32"
+    UploadHandle:
+      in: path
+      name: upload_handle
       required: true
       schema:
         $ref: "#/components/schemas/Uuid"
-    ObjectId:
-      in: path
-      name: objectId
-      required: true
-      schema:
-        $ref: "#/components/schemas/Uuid"
-    UploadId:
-      in: path
-      name: uploadId
-      required: true
-      schema:
-        $ref: "#/components/schemas/Uuid"
-    PurgeId:
-      in: path
-      name: purgeId
-      required: true
-      schema:
-        $ref: "#/components/schemas/Uuid"
-    TransferToken:
-      in: path
-      name: ticket
+  headers:
+    ProtocolVersion:
       required: true
       schema:
         type: string
-        minLength: 32
-        maxLength: 256
-    PartNumber:
-      in: path
-      name: partNumber
+        enum: ["1"]
+    RequestId:
       required: true
-      schema:
-        type: integer
-        minimum: 0
-        maximum: 9999
-    PageNumber:
-      in: path
-      name: pageNumber
-      required: true
-      schema:
-        type: integer
-        minimum: 0
-    ContentSha256:
-      in: header
-      name: Content-SHA256
-      required: true
-      schema:
-        $ref: "#/components/schemas/Sha256"
-    Limit:
-      in: query
-      name: limit
-      required: false
-      schema:
-        type: integer
-        minimum: 1
-        maximum: 500
-        default: 100
-    AfterObjectId:
-      in: query
-      name: afterObjectId
-      required: false
       schema:
         $ref: "#/components/schemas/Uuid"
   responses:
     Outcome:
-      description: Stable protocol outcome
+      description: Stable Host protocol outcome
       headers:
         Awsm-Protocol-Version:
           $ref: "#/components/headers/ProtocolVersion"
@@ -947,54 +653,65 @@ components:
           schema:
             $ref: "#/components/schemas/Outcome"
   schemas:
+    Uuid:
+      type: string
+      format: uuid
+    Username:
+      type: string
+      minLength: 3
+      maxLength: 32
+      pattern: "^[a-z0-9](?:[a-z0-9_-]{1,30}[a-z0-9])?$"
+    Base64Url32:
+      type: string
+      pattern: "^[A-Za-z0-9_-]{43}$"
+    StorageClass:
+      type: string
+      enum: [compact, streamable]
+    ReplicaCapability:
+      type: string
+      enum:
+        - awsm.replica.hint.read
+        - awsm.replica.hint.write
+        - awsm.replica.inventory.read
+        - awsm.replica.item.read
+        - awsm.replica.item.write
+        - awsm.replica.manage
+    EmptyObject:
+      type: object
+      additionalProperties: false
     ServerInformation:
       type: object
       additionalProperties: false
-      required: [service, protocolVersion, capabilities, registration, accountPolicy]
+      required:
+        - service
+        - protocol_version
+        - replica_capabilities
+        - registration
+        - account_policy
       properties:
         service:
           type: string
-          enum: [AWSM Coordination Server]
-        protocolVersion:
+          enum: [AWSM Replica Host]
+        protocol_version:
           type: string
           enum: ["1"]
-        capabilities:
-          type: object
-          additionalProperties: false
-          required:
-            [
-              accountPassword,
-              accountVaultLimit,
-              completeReplicaSynchronization,
-              deviceEnrollment,
-              deviceRevocation,
-            ]
-          properties:
-            accountPassword:
-              type: boolean
-              enum: [true]
-            accountVaultLimit:
-              type: integer
-              enum: [1]
-            completeReplicaSynchronization:
-              type: boolean
-              enum: [true]
-            deviceEnrollment:
-              type: string
-              enum: [RecoveryPhrase]
-            deviceRevocation:
-              type: boolean
-              enum: [true]
+        replica_capabilities:
+          type: array
+          minItems: 6
+          maxItems: 6
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/ReplicaCapability"
         registration:
           oneOf:
             - type: object
               additionalProperties: false
-              required: [enabled, signUpUrl]
+              required: [enabled, sign_up_url]
               properties:
                 enabled:
                   type: boolean
                   enum: [true]
-                signUpUrl:
+                sign_up_url:
                   type: string
                   format: uri
             - type: object
@@ -1004,62 +721,15 @@ components:
                 enabled:
                   type: boolean
                   enum: [false]
-        accountPolicy:
+        account_policy:
           type: object
           additionalProperties: false
-          required: [inactiveRetentionDays]
+          required: [inactive_retention_days]
           properties:
-            inactiveRetentionDays:
+            inactive_retention_days:
               type: integer
               minimum: 1
               maximum: 36500
-    Username:
-      type: string
-      minLength: 3
-      maxLength: 32
-      pattern: "^[a-z0-9](?:[a-z0-9_-]{1,30}[a-z0-9])?$"
-    Base64Url32:
-      type: string
-      pattern: "^[A-Za-z0-9_-]{43}$"
-    Base64Url16:
-      type: string
-      pattern: "^[A-Za-z0-9_-]{22}$"
-    Base64Url24:
-      type: string
-      pattern: "^[A-Za-z0-9_-]{32}$"
-    Base64Url48:
-      type: string
-      pattern: "^[A-Za-z0-9_-]{64}$"
-    Base64Url64:
-      type: string
-      pattern: "^[A-Za-z0-9_-]{86}$"
-    Base64UrlBytes:
-      type: string
-      minLength: 1
-      pattern: "^[A-Za-z0-9_-]+$"
-    AccountSummary:
-      type: object
-      additionalProperties: false
-      required: [accountId, username, inactiveDeletionAt]
-      properties:
-        accountId:
-          $ref: "#/components/schemas/Uuid"
-        username:
-          $ref: "#/components/schemas/Username"
-        inactiveDeletionAt:
-          type: string
-          format: date-time
-    CableTicket:
-      type: object
-      additionalProperties: false
-      required: [ticket, expiresAt]
-      properties:
-        ticket:
-          type: string
-          pattern: "^[A-Za-z0-9_-]{43}$"
-        expiresAt:
-          type: string
-          format: date-time
     CreateSessionRequest:
       type: object
       additionalProperties: false
@@ -1070,1034 +740,329 @@ components:
         password:
           type: string
           minLength: 1
-          maxLength: 72
+          maxLength: 1024
     RefreshSessionRequest:
       type: object
       additionalProperties: false
-      required: [refreshToken]
+      required: [refresh_token]
       properties:
-        refreshToken:
+        refresh_token:
           type: string
-          minLength: 80
-          maxLength: 96
+          minLength: 1
+          maxLength: 1024
+    AccountSummary:
+      type: object
+      additionalProperties: false
+      required: [username, inactive_deletion_at]
+      properties:
+        username:
+          $ref: "#/components/schemas/Username"
+        inactive_deletion_at:
+          type: string
+          format: date-time
     AuthenticatedSession:
       type: object
       additionalProperties: false
       required:
         - account
-        - sessionId
-        - scope
-        - accessToken
-        - accessExpiresAt
-        - refreshToken
-        - refreshExpiresAt
+        - session_id
+        - access_token
+        - access_expires_at
+        - refresh_token
+        - refresh_expires_at
       properties:
         account:
           $ref: "#/components/schemas/AccountSummary"
-        sessionId:
+        session_id:
           $ref: "#/components/schemas/Uuid"
-        scope:
-          type: string
-          enum: [Account, VaultDevice]
-        accessToken:
-          type: string
-          minLength: 80
-          maxLength: 96
-        accessExpiresAt:
-          type: string
-          format: date-time
-        refreshToken:
-          type: string
-          minLength: 80
-          maxLength: 96
-        refreshExpiresAt:
-          type: string
-          format: date-time
-    Uuid:
-      type: string
-      format: uuid
-      pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
-    Counter:
-      type: integer
-      minimum: 0
-      maximum: 9007199254740991
-    PositiveByteLength:
-      type: integer
-      minimum: 1
-      maximum: 9007199254740991
-    Sha256:
-      type: string
-      pattern: "^[A-Za-z0-9_-]{43}$"
-    ObjectType:
-      type: string
-      enum: [Event, BundleDescriptor, Artifact, VaultGeneration]
-    ObjectMetadata:
-      type: object
-      additionalProperties: false
-      required: [objectId, objectType, keyEpochId, byteLength, sha256]
-      properties:
-        objectId:
-          $ref: "#/components/schemas/Uuid"
-        objectType:
-          $ref: "#/components/schemas/ObjectType"
-        keyEpochId:
-          $ref: "#/components/schemas/Uuid"
-        byteLength:
-          $ref: "#/components/schemas/PositiveByteLength"
-        sha256:
-          $ref: "#/components/schemas/Sha256"
-    EventMetadata:
-      type: object
-      additionalProperties: false
-      required: [orderingTimestamp, dependencyObjectIds]
-      properties:
-        orderingTimestamp:
-          type: string
-          format: date-time
-        dependencyObjectIds:
-          type: array
-          uniqueItems: true
-          items:
-            $ref: "#/components/schemas/Uuid"
-    AttachVaultRequest:
-      type: object
-      additionalProperties: false
-      required:
-        [
-          vaultId,
-          generationId,
-          generationNumber,
-          generationObject,
-          recoveryGeneration,
-          keyEpochs,
-          activeKeyEpochId,
-          deviceCertificate,
-          deviceKeyEnvelopes,
-          deviceProofSignature,
-        ]
-      properties:
-        vaultId:
-          $ref: "#/components/schemas/Uuid"
-        generationId:
-          $ref: "#/components/schemas/Uuid"
-        generationNumber:
-          $ref: "#/components/schemas/Counter"
-        generationObject:
-          $ref: "#/components/schemas/ObjectMetadata"
-        recoveryGeneration:
-          $ref: "#/components/schemas/RecoveryKit"
-        keyEpochs:
-          type: array
-          minItems: 1
-          items:
-            $ref: "#/components/schemas/AttachmentKeyEpoch"
-        activeKeyEpochId:
-          $ref: "#/components/schemas/Uuid"
-        deviceCertificate:
-          $ref: "#/components/schemas/DeviceCertificate"
-        deviceKeyEnvelopes:
-          type: array
-          minItems: 1
-          items:
-            $ref: "#/components/schemas/DeviceKeyEnvelope"
-        deviceProofSignature:
-          $ref: "#/components/schemas/Base64Url64"
-    AccountVaultEnrollment:
-      oneOf:
-        - type: object
-          additionalProperties: false
-          required: [state]
-          properties:
-            state:
-              type: string
-              enum: [Empty]
-        - type: object
-          additionalProperties: false
-          required: [state, vaultId, recoveryKit]
-          properties:
-            state:
-              type: string
-              enum: [Attached]
-            vaultId:
-              $ref: "#/components/schemas/Uuid"
-            recoveryKit:
-              $ref: "#/components/schemas/RecoveryKit"
-    DeviceSessionChallengeRequest:
-      type: object
-      additionalProperties: false
-      required: [vaultId, deviceId]
-      properties:
-        vaultId:
-          $ref: "#/components/schemas/Uuid"
-        deviceId:
-          $ref: "#/components/schemas/Uuid"
-    DeviceSessionChallenge:
-      type: object
-      additionalProperties: false
-      required: [challenge, expiresAt]
-      properties:
-        challenge:
-          $ref: "#/components/schemas/Base64Url32"
-        expiresAt:
-          type: string
-          format: date-time
-    CreateDeviceSessionRequest:
-      type: object
-      additionalProperties: false
-      required: [vaultId, deviceId, challenge, signature]
-      properties:
-        vaultId:
-          $ref: "#/components/schemas/Uuid"
-        deviceId:
-          $ref: "#/components/schemas/Uuid"
-        challenge:
-          $ref: "#/components/schemas/Base64Url32"
-        signature:
-          $ref: "#/components/schemas/Base64Url64"
-    AttachVaultResponse:
-      type: object
-      additionalProperties: false
-      required: [vault, upload, ticket, session]
-      properties:
-        vault:
-          $ref: "#/components/schemas/Vault"
-        upload:
-          $ref: "#/components/schemas/Upload"
-        ticket:
-          $ref: "#/components/schemas/TransferTicket"
-        session:
-          $ref: "#/components/schemas/AuthenticatedSession"
-    CreateVaultReplacementRequest:
-      type: object
-      additionalProperties: false
-      required:
-        [
-          accountSessionId,
-          expectedSourceGenerationId,
-          expectedSourceGenerationNumber,
-          expectedSourceHeadCursor,
-          replacement,
-        ]
-      properties:
-        accountSessionId:
-          $ref: "#/components/schemas/Uuid"
-        expectedSourceGenerationId:
-          $ref: "#/components/schemas/Uuid"
-        expectedSourceGenerationNumber:
-          $ref: "#/components/schemas/Counter"
-        expectedSourceHeadCursor:
-          $ref: "#/components/schemas/Counter"
-        replacement:
-          $ref: "#/components/schemas/AttachVaultRequest"
-    ActivateVaultReplacementRequest:
-      type: object
-      additionalProperties: false
-      required:
-        [
-          expectedSourceGenerationId,
-          expectedSourceGenerationNumber,
-          expectedSourceHeadCursor,
-          replacementGenerationId,
-          replacementGenerationNumber,
-        ]
-      properties:
-        expectedSourceGenerationId:
-          $ref: "#/components/schemas/Uuid"
-        expectedSourceGenerationNumber:
-          $ref: "#/components/schemas/Counter"
-        expectedSourceHeadCursor:
-          $ref: "#/components/schemas/Counter"
-        replacementGenerationId:
-          $ref: "#/components/schemas/Uuid"
-        replacementGenerationNumber:
-          $ref: "#/components/schemas/Counter"
-    VaultReplacementPurge:
-      type: object
-      additionalProperties: false
-      required: [purgeId, state, stage, processedBytes, totalBytes]
-      properties:
-        purgeId:
-          $ref: "#/components/schemas/Uuid"
-        state:
-          type: string
-          enum: [Pending, Running, Succeeded, FailedRetryable]
-        stage:
-          type: string
-          enum: [Detach, Analyze, DeleteBytes, Tombstone, Complete]
-        processedBytes:
-          $ref: "#/components/schemas/Counter"
-        totalBytes:
-          $ref: "#/components/schemas/Counter"
-    VaultReplacementActivation:
-      type: object
-      additionalProperties: false
-      required: [sourceVaultId, sourceState, vault, purge]
-      properties:
-        sourceVaultId:
-          $ref: "#/components/schemas/Uuid"
-        sourceState:
-          type: string
-          enum: [Replaced]
-        vault:
-          $ref: "#/components/schemas/Vault"
-        purge:
-          $ref: "#/components/schemas/VaultReplacementPurge"
-    CompleteVaultRequest:
-      type: object
-      additionalProperties: false
-      required: [generationId]
-      properties:
-        generationId:
-          $ref: "#/components/schemas/Uuid"
-    Vault:
-      type: object
-      additionalProperties: false
-      required:
-        [
-          vaultId,
-          state,
-          generationId,
-          generationNumber,
-          headCursor,
-          activeKeyEpochId,
-        ]
-      properties:
-        vaultId:
-          $ref: "#/components/schemas/Uuid"
-        state:
-          type: string
-          enum: [Provisional, Active, Replaced]
-        generationId:
-          $ref: "#/components/schemas/Uuid"
-        generationNumber:
-          $ref: "#/components/schemas/Counter"
-        predecessorGenerationId:
-          $ref: "#/components/schemas/Uuid"
-        headCursor:
-          $ref: "#/components/schemas/Counter"
-        activeKeyEpochId:
-          $ref: "#/components/schemas/Uuid"
-    VaultList:
-      type: object
-      additionalProperties: false
-      required: [vaults]
-      properties:
-        vaults:
-          type: array
-          maxItems: 1
-          items:
-            $ref: "#/components/schemas/Vault"
-    RecoveryKit:
-      type: object
-      additionalProperties: false
-      required:
-        [
-          version,
-          vaultId,
-          recoveryGenerationId,
-          derivationAlgorithm,
-          wrappingAlgorithm,
-          administratorSigningAlgorithm,
-          administratorPublicKey,
-          nonce,
-          ciphertextLength,
-          ciphertextSha256,
-          ciphertext,
-        ]
-      properties:
-        version:
-          type: integer
-          enum: [1]
-        vaultId:
-          $ref: "#/components/schemas/Uuid"
-        recoveryGenerationId:
-          $ref: "#/components/schemas/Uuid"
-        derivationAlgorithm:
-          type: string
-          enum: ["kdf:hkdf-sha256:recovery-entropy:v1"]
-        wrappingAlgorithm:
-          type: string
-          enum: ["wrap:xchacha20poly1305:recovery-kit:v1"]
-        administratorSigningAlgorithm:
-          type: string
-          enum: ["sign:ed25519:recovery-administrator:v1"]
-        administratorPublicKey:
-          $ref: "#/components/schemas/Base64Url32"
-        nonce:
-          $ref: "#/components/schemas/Base64Url24"
-        ciphertextLength:
-          $ref: "#/components/schemas/PositiveByteLength"
-        ciphertextSha256:
-          $ref: "#/components/schemas/Sha256"
-        ciphertext:
-          $ref: "#/components/schemas/Base64UrlBytes"
-    AttachmentKeyEpoch:
-      type: object
-      additionalProperties: false
-      required: [keyEpochId, ordinal, activatedAt]
-      properties:
-        keyEpochId:
-          $ref: "#/components/schemas/Uuid"
-        ordinal:
-          type: integer
-          minimum: 0
-        activatedAt:
-          type: string
-          format: date-time
-    NextKeyEpoch:
-      type: object
-      additionalProperties: false
-      required: [keyEpochId, ordinal]
-      properties:
-        keyEpochId:
-          $ref: "#/components/schemas/Uuid"
-        ordinal:
-          type: integer
-          minimum: 1
-    DeviceCertificate:
-      type: object
-      additionalProperties: false
-      required: [content, recoveryAdministratorPublicKey, signature]
-      properties:
-        content:
-          $ref: "#/components/schemas/Base64UrlBytes"
-        recoveryAdministratorPublicKey:
-          $ref: "#/components/schemas/Base64Url32"
-        signature:
-          $ref: "#/components/schemas/Base64Url64"
-    DeviceKeyEnvelope:
-      type: object
-      additionalProperties: false
-      required: [metadata, ciphertext, ciphertextSha256, administratorSignature]
-      properties:
-        metadata:
-          $ref: "#/components/schemas/Base64UrlBytes"
-        ciphertext:
-          $ref: "#/components/schemas/Base64Url48"
-        ciphertextSha256:
-          $ref: "#/components/schemas/Sha256"
-        administratorSignature:
-          $ref: "#/components/schemas/Base64Url64"
-    EnrollVaultDeviceRequest:
-      type: object
-      additionalProperties: false
-      required: [deviceCertificate, deviceKeyEnvelopes, deviceProofSignature]
-      properties:
-        deviceCertificate:
-          $ref: "#/components/schemas/DeviceCertificate"
-        deviceKeyEnvelopes:
-          type: array
-          minItems: 1
-          items:
-            $ref: "#/components/schemas/DeviceKeyEnvelope"
-        deviceProofSignature:
-          $ref: "#/components/schemas/Base64Url64"
-    FutureProtectionDevice:
-      type: object
-      additionalProperties: false
-      required: [deviceCertificate, deviceKeyEnvelope]
-      properties:
-        deviceCertificate:
-          $ref: "#/components/schemas/DeviceCertificate"
-        deviceKeyEnvelope:
-          $ref: "#/components/schemas/DeviceKeyEnvelope"
-    FutureProtectionRequest:
-      type: object
-      additionalProperties: false
-      required:
-        [
-          expectedRecoveryGenerationId,
-          expectedKeyEpochId,
-          targetDeviceId,
-          recoveryGeneration,
-          keyEpoch,
-          remainingDevices,
-        ]
-      properties:
-        expectedRecoveryGenerationId:
-          $ref: "#/components/schemas/Uuid"
-        expectedKeyEpochId:
-          $ref: "#/components/schemas/Uuid"
-        targetDeviceId:
-          $ref: "#/components/schemas/Uuid"
-        recoveryGeneration:
-          $ref: "#/components/schemas/RecoveryKit"
-        keyEpoch:
-          $ref: "#/components/schemas/NextKeyEpoch"
-        remainingDevices:
-          type: array
-          minItems: 1
-          items:
-            $ref: "#/components/schemas/FutureProtectionDevice"
-    CurrentVaultDeviceAuthority:
-      type: object
-      additionalProperties: false
-      required:
-        [
-          vaultId,
-          activeRecoveryGenerationId,
-          activeKeyEpochId,
-          keyEpochOrdinal,
-          deviceCertificate,
-          deviceKeyEnvelope,
-        ]
-      properties:
-        vaultId:
-          $ref: "#/components/schemas/Uuid"
-        activeRecoveryGenerationId:
-          $ref: "#/components/schemas/Uuid"
-        activeKeyEpochId:
-          $ref: "#/components/schemas/Uuid"
-        keyEpochOrdinal:
-          type: integer
-          minimum: 0
-        deviceCertificate:
-          $ref: "#/components/schemas/DeviceCertificate"
-        deviceKeyEnvelope:
-          $ref: "#/components/schemas/DeviceKeyEnvelope"
-    VaultDeviceList:
-      type: object
-      additionalProperties: false
-      required: [devices]
-      properties:
-        devices:
-          type: array
-          items:
-            $ref: "#/components/schemas/VaultDevice"
-    VaultDevice:
-      type: object
-      additionalProperties: false
-      required:
-        [
-          deviceId,
-          certificateId,
-          displayName,
-          clientKind,
-          recoveryGenerationId,
-          deviceCertificate,
-          enrolledAt,
-          current,
-        ]
-      properties:
-        deviceId:
-          $ref: "#/components/schemas/Uuid"
-        certificateId:
-          $ref: "#/components/schemas/Uuid"
-        displayName:
+        access_token:
           type: string
           minLength: 1
-          maxLength: 64
-        clientKind:
-          type: string
-          enum: [ChromeExtension, FirefoxExtension]
-        recoveryGenerationId:
-          $ref: "#/components/schemas/Uuid"
-        deviceCertificate:
-          $ref: "#/components/schemas/DeviceCertificate"
-        enrolledAt:
+        access_expires_at:
           type: string
           format: date-time
-        revokedAt:
+        refresh_token:
+          type: string
+          minLength: 1
+        refresh_expires_at:
           type: string
           format: date-time
-        revocationReason:
-          type: string
-          enum: [Removed, FutureProtection, VaultReencrypted]
-        current:
-          type: boolean
-    CreateUploadRequest:
-      allOf:
-        - $ref: "#/components/schemas/ObjectMetadata"
-        - type: object
-          additionalProperties: false
-          required:
-            [objectId, objectType, byteLength, sha256, targetGenerationId]
-          properties:
-            objectId:
-              $ref: "#/components/schemas/Uuid"
-            objectType:
-              $ref: "#/components/schemas/ObjectType"
-            byteLength:
-              $ref: "#/components/schemas/PositiveByteLength"
-            sha256:
-              $ref: "#/components/schemas/Sha256"
-            targetGenerationId:
-              $ref: "#/components/schemas/Uuid"
-            eventMetadata:
-              $ref: "#/components/schemas/EventMetadata"
-    Upload:
-      type: object
-      additionalProperties: false
-      required:
-        [
-          uploadId,
-          objectId,
-          state,
-          partSizeBytes,
-          partCount,
-          receivedParts,
-          expiresAt,
-        ]
-      properties:
-        uploadId:
-          $ref: "#/components/schemas/Uuid"
-        objectId:
-          $ref: "#/components/schemas/Uuid"
-        state:
-          type: string
-          enum: [Open, Assembling, Completed, Expired, AlreadyDurable]
-        partSizeBytes:
-          $ref: "#/components/schemas/PositiveByteLength"
-        partCount:
-          type: integer
-          minimum: 1
-          maximum: 10000
-        receivedParts:
-          type: array
-          uniqueItems: true
-          items:
-            type: integer
-            minimum: 0
-        expiresAt:
-          type: string
-          format: date-time
-    UploadWithTicket:
-      type: object
-      additionalProperties: false
-      required: [upload, ticket]
-      properties:
-        upload:
-          $ref: "#/components/schemas/Upload"
-        ticket:
-          $ref: "#/components/schemas/TransferTicket"
-    TransferTicket:
-      type: object
-      additionalProperties: false
-      required: [method, url, expiresAt, requiredHeaders]
-      properties:
-        method:
-          type: string
-          enum: [GET, PUT]
-        url:
-          type: string
-        urlTemplate:
-          type: string
-        expiresAt:
-          type: string
-          format: date-time
-        requiredHeaders:
-          type: object
-          additionalProperties:
-            type: string
-    OpaqueRecord:
-      allOf:
-        - $ref: "#/components/schemas/ObjectMetadata"
-        - type: object
-          additionalProperties: false
-          required: [objectId, objectType, byteLength, sha256, state]
-          properties:
-            objectId:
-              $ref: "#/components/schemas/Uuid"
-            objectType:
-              $ref: "#/components/schemas/ObjectType"
-            byteLength:
-              $ref: "#/components/schemas/PositiveByteLength"
-            sha256:
-              $ref: "#/components/schemas/Sha256"
-            state:
-              type: string
-              enum: [DurableUncommitted, Committed]
-            orderingTimestamp:
-              type: string
-              format: date-time
-            dependencyObjectIds:
-              type: array
-              uniqueItems: true
-              items:
-                $ref: "#/components/schemas/Uuid"
-    CommitRequest:
-      type: object
-      additionalProperties: false
-      required:
-        [generationId, generationNumber, eventObjectId, dependencyObjectIds]
-      properties:
-        generationId:
-          $ref: "#/components/schemas/Uuid"
-        generationNumber:
-          $ref: "#/components/schemas/Counter"
-        eventObjectId:
-          $ref: "#/components/schemas/Uuid"
-        dependencyObjectIds:
-          type: array
-          uniqueItems: true
-          items:
-            $ref: "#/components/schemas/Uuid"
-    CommitResult:
-      type: object
-      additionalProperties: false
-      required:
-        [
-          eventObjectId,
-          generationId,
-          generationNumber,
-          dependencyObjectIds,
-          cursor,
-          durabilityAcknowledged,
-        ]
-      properties:
-        eventObjectId:
-          $ref: "#/components/schemas/Uuid"
-        generationId:
-          $ref: "#/components/schemas/Uuid"
-        generationNumber:
-          $ref: "#/components/schemas/Counter"
-        dependencyObjectIds:
-          type: array
-          items:
-            $ref: "#/components/schemas/Uuid"
-        cursor:
-          $ref: "#/components/schemas/Counter"
-        durabilityAcknowledged:
-          type: boolean
-          enum: [true]
-    RecordPage:
-      type: object
-      additionalProperties: false
-      required: [generationId, generationNumber, records, hasMore]
-      properties:
-        generationId:
-          $ref: "#/components/schemas/Uuid"
-        generationNumber:
-          $ref: "#/components/schemas/Counter"
-        records:
-          type: array
-          items:
-            $ref: "#/components/schemas/OpaqueRecord"
-        nextObjectId:
-          $ref: "#/components/schemas/Uuid"
-        hasMore:
-          type: boolean
-    Change:
-      type: object
-      additionalProperties: false
-      required: [cursor, kind, generationId, acceptedAt]
-      properties:
-        cursor:
-          $ref: "#/components/schemas/Counter"
-        kind:
-          type: string
-          enum: [EventCommitted, GenerationActivated]
-        generationId:
-          $ref: "#/components/schemas/Uuid"
-        event:
-          $ref: "#/components/schemas/OpaqueRecord"
-        acceptedAt:
-          type: string
-          format: date-time
-    ChangePage:
-      type: object
-      additionalProperties: false
-      required:
-        [
-          generationId,
-          generationNumber,
-          changes,
-          nextCursor,
-          snapshotCursor,
-          hasMore,
-        ]
-      properties:
-        generationId:
-          $ref: "#/components/schemas/Uuid"
-        generationNumber:
-          $ref: "#/components/schemas/Counter"
-        changes:
-          type: array
-          items:
-            $ref: "#/components/schemas/Change"
-        nextCursor:
-          $ref: "#/components/schemas/Counter"
-        snapshotCursor:
-          $ref: "#/components/schemas/Counter"
-        hasMore:
-          type: boolean
-    DownloadTicket:
-      type: object
-      additionalProperties: false
-      required: [record, ticket]
-      properties:
-        record:
-          $ref: "#/components/schemas/OpaqueRecord"
-        ticket:
-          $ref: "#/components/schemas/TransferTicket"
-    CreateGenerationCandidateRequest:
-      type: object
-      additionalProperties: false
-      required:
-        [
-          generationId,
-          generationNumber,
-          predecessorGenerationId,
-          headCursor,
-          generationObject,
-        ]
-      properties:
-        generationId:
-          $ref: "#/components/schemas/Uuid"
-        generationNumber:
-          $ref: "#/components/schemas/Counter"
-        predecessorGenerationId:
-          $ref: "#/components/schemas/Uuid"
-        headCursor:
-          $ref: "#/components/schemas/Counter"
-        generationObject:
-          $ref: "#/components/schemas/ObjectMetadata"
-    GenerationCandidate:
-      type: object
-      additionalProperties: false
-      required:
-        [
-          generationId,
-          generationNumber,
-          predecessorGenerationId,
-          baselineCursor,
-          state,
-        ]
-      properties:
-        generationId:
-          $ref: "#/components/schemas/Uuid"
-        generationNumber:
-          $ref: "#/components/schemas/Counter"
-        predecessorGenerationId:
-          $ref: "#/components/schemas/Uuid"
-        baselineCursor:
-          $ref: "#/components/schemas/Counter"
-        state:
-          type: string
-          enum: [Candidate, Sealed]
-        upload:
-          $ref: "#/components/schemas/Upload"
-        ticket:
-          $ref: "#/components/schemas/TransferTicket"
-    RetainedPageRequest:
-      type: object
-      additionalProperties: false
-      required: [recordIds]
-      properties:
-        recordIds:
-          type: array
-          maxItems: 1000
-          uniqueItems: true
-          items:
-            $ref: "#/components/schemas/Uuid"
-    SealGenerationCandidateRequest:
-      type: object
-      additionalProperties: false
-      required: [pageCount, recordCount, sha256]
-      properties:
-        pageCount:
-          type: integer
-          minimum: 0
-        recordCount:
-          $ref: "#/components/schemas/Counter"
-        sha256:
-          $ref: "#/components/schemas/Sha256"
-    ActivateGenerationRequest:
-      type: object
-      additionalProperties: false
-      required:
-        [predecessorGenerationId, predecessorGenerationNumber, headCursor]
-      properties:
-        predecessorGenerationId:
-          $ref: "#/components/schemas/Uuid"
-        predecessorGenerationNumber:
-          $ref: "#/components/schemas/Counter"
-        headCursor:
-          $ref: "#/components/schemas/Counter"
-    Recovery:
-      type: object
-      additionalProperties: false
-      required:
-        [
-          generationId,
-          generationNumber,
-          supersededAt,
-          purgeAfter,
-          state,
-          recordCount,
-          byteLength,
-        ]
-      properties:
-        generationId:
-          $ref: "#/components/schemas/Uuid"
-        generationNumber:
-          $ref: "#/components/schemas/Counter"
-        supersededAt:
-          type: string
-          format: date-time
-        purgeAfter:
-          type: string
-          format: date-time
-        state:
-          type: string
-          enum: [Superseded, Purging]
-        recordCount:
-          $ref: "#/components/schemas/Counter"
-        byteLength:
-          $ref: "#/components/schemas/Counter"
-    Purge:
-      type: object
-      additionalProperties: false
-      required:
-        [
-          purgeId,
-          state,
-          stage,
-          generationCount,
-          recordCount,
-          processedBytes,
-          totalBytes,
-          retryCount,
-        ]
-      properties:
-        purgeId:
-          $ref: "#/components/schemas/Uuid"
-        state:
-          type: string
-          enum: [Pending, Running, Succeeded, FailedRetryable]
-        stage:
-          type: string
-          enum: [Snapshot, Detach, Analyze, DeleteBytes, Tombstone, Complete]
-        generationCount:
-          $ref: "#/components/schemas/Counter"
-        recordCount:
-          $ref: "#/components/schemas/Counter"
-        processedBytes:
-          $ref: "#/components/schemas/Counter"
-        totalBytes:
-          $ref: "#/components/schemas/Counter"
-        retryCount:
-          $ref: "#/components/schemas/Counter"
-        outcome:
-          type: string
-    Outcome:
-      type: object
-      additionalProperties: false
-      required: [outcome, retryable, requestId]
-      properties:
-        outcome:
-          type: string
-          enum:
-            - AUTHENTICATION_FAILED
-            - AUTHENTICATION_UNAVAILABLE
-            - ACCOUNT_UNAVAILABLE
-            - ACCOUNT_INPUT_INVALID
-            - RECENT_AUTHENTICATION_REQUIRED
-            - AUTHORIZATION_FAILED
-            - PROTOCOL_VERSION_UNSUPPORTED
-            - REQUEST_INVALID
-            - IDEMPOTENCY_CONFLICT
-            - ACCOUNT_VAULT_LIMIT
-            - VAULT_ID_UNAVAILABLE
-            - VAULT_NOT_FOUND
-            - VAULT_NOT_READY
-            - RECOVERY_GENERATION_CHANGED
-            - KEY_EPOCH_CHANGED
-            - DEVICE_REVOKED
-            - DEVICE_ENROLLMENT_INVALID
-            - VAULT_REPLACEMENT_CONFLICT
-            - OBJECT_ID_CONFLICT
-            - OBJECT_NOT_DURABLE
-            - OBJECT_NOT_ACTIVE
-            - OBJECT_CHECKSUM_MISMATCH
-            - OBJECT_LENGTH_MISMATCH
-            - UPLOAD_EXPIRED
-            - UPLOAD_PART_CONFLICT
-            - TRANSFER_TICKET_INVALID
-            - DEPENDENCY_INVALID
-            - VAULT_GENERATION_SUPERSEDED
-            - VAULT_HEAD_CHANGED
-            - GENERATION_CANDIDATE_CONFLICT
-            - GENERATION_REACHABILITY_INVALID
-            - RECOVERY_NOT_FOUND
-            - RECOVERY_EXPIRED
-            - PURGE_IN_PROGRESS
-            - SERVER_BUSY
-            - STORAGE_UNAVAILABLE
-        retryable:
-          type: boolean
-        requestId:
-          $ref: "#/components/schemas/Uuid"
-        retryAfterSeconds:
-          type: integer
-          minimum: 0
-        relatedObjectId:
-          $ref: "#/components/schemas/Uuid"
-        currentGenerationId:
-          $ref: "#/components/schemas/Uuid"
-        currentGenerationNumber:
-          $ref: "#/components/schemas/Counter"
-        headCursor:
-          $ref: "#/components/schemas/Counter"
     ServicePolicy:
       type: object
       additionalProperties: false
       required:
-        - inactiveAccountRetentionDays
-        - recoveryRetentionDays
-        - uploadStagingExpiryHours
-        - transferTicketLifetimeSeconds
-        - uploadPartSizeBytes
-        - maximumUploadParts
-        - maximumObjectByteLength
-        - maximumChangesPageSize
-        - maximumRecordPageSize
-        - notifications
+        - inactive_account_retention_days
+        - upload_staging_expiry_hours
+        - upload_capability_lifetime_seconds
+        - maximum_upload_part_bytes
+        - maximum_upload_parts
+        - maximum_compact_payload_bytes
+        - maximum_streamable_payload_bytes
+        - maximum_inventory_page_size
+        - range_reads
+        - resumable_uploads
+        - wake_hints
       properties:
-        inactiveAccountRetentionDays:
+        inactive_account_retention_days:
           type: integer
           minimum: 1
           maximum: 36500
-        recoveryRetentionDays:
-          type: integer
-          minimum: 0
-          maximum: 36500
-        uploadStagingExpiryHours:
+        upload_staging_expiry_hours:
           type: integer
           minimum: 1
-        transferTicketLifetimeSeconds:
+        upload_capability_lifetime_seconds:
           type: integer
           minimum: 1
-        uploadPartSizeBytes:
+        maximum_upload_part_bytes:
           type: integer
           minimum: 1
-        maximumUploadParts:
+        maximum_upload_parts:
           type: integer
           minimum: 1
-          maximum: 10000
-        maximumObjectByteLength:
-          $ref: "#/components/schemas/PositiveByteLength"
-        maximumChangesPageSize:
+        maximum_compact_payload_bytes:
           type: integer
-          minimum: 1
-          maximum: 500
-        maximumRecordPageSize:
+          minimum: 16
+          maximum: 16777216
+        maximum_streamable_payload_bytes:
+          type: integer
+          minimum: 16
+          maximum: 9007199254736883
+        maximum_inventory_page_size:
           type: integer
           minimum: 1
           maximum: 500
-        notifications:
-          type: object
-          additionalProperties: false
-          required: [actionCable]
-          properties:
-            actionCable:
-              type: boolean
-    VaultChangeHint:
+        range_reads:
+          type: boolean
+          enum: [true]
+        resumable_uploads:
+          type: boolean
+          enum: [true]
+        wake_hints:
+          type: boolean
+          enum: [true]
+    HostedReplicaSummary:
       type: object
       additionalProperties: false
-      required: [vaultId, latestCursor]
+      required: [replica_handle, capabilities, quota_bytes, stored_bytes]
       properties:
-        vaultId:
+        replica_handle:
           $ref: "#/components/schemas/Uuid"
-        latestCursor:
-          $ref: "#/components/schemas/Counter"
+        capabilities:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/ReplicaCapability"
+        quota_bytes:
+          type: integer
+          minimum: 1
+          nullable: true
+        stored_bytes:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+    HostedReplicaList:
+      type: object
+      additionalProperties: false
+      required: [replicas]
+      properties:
+        replicas:
+          type: array
+          items:
+            $ref: "#/components/schemas/HostedReplicaSummary"
+    CreateReplicaAccessGrantRequest:
+      type: object
+      additionalProperties: false
+      required: [username, capabilities, grantable_capabilities]
+      properties:
+        username:
+          $ref: "#/components/schemas/Username"
+        capabilities:
+          type: array
+          minItems: 1
+          maxItems: 6
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/ReplicaCapability"
+        grantable_capabilities:
+          type: array
+          maxItems: 6
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/ReplicaCapability"
+    ReplicaAccessGrant:
+      type: object
+      additionalProperties: false
+      required:
+        - grant_id
+        - replica_handle
+        - username
+        - capabilities
+        - grantable_capabilities
+      properties:
+        grant_id:
+          $ref: "#/components/schemas/Uuid"
+        replica_handle:
+          $ref: "#/components/schemas/Uuid"
+        username:
+          $ref: "#/components/schemas/Username"
+        capabilities:
+          type: array
+          minItems: 1
+          maxItems: 6
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/ReplicaCapability"
+        grantable_capabilities:
+          type: array
+          maxItems: 6
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/ReplicaCapability"
+    ReapingResult:
+      type: object
+      additionalProperties: false
+      required: [replica_handle, state, reaping_job_id]
+      properties:
+        replica_handle:
+          $ref: "#/components/schemas/Uuid"
+        state:
+          type: string
+          enum: [reaping]
+        reaping_job_id:
+          $ref: "#/components/schemas/Uuid"
+    OpaqueInventoryItem:
+      type: object
+      additionalProperties: false
+      required: [storage_item_id, storage_class, byte_length, ciphertext_digest]
+      properties:
+        storage_item_id:
+          $ref: "#/components/schemas/Base64Url32"
+        storage_class:
+          $ref: "#/components/schemas/StorageClass"
+        byte_length:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        ciphertext_digest:
+          $ref: "#/components/schemas/Base64Url32"
+    OpaqueInventoryPage:
+      type: object
+      additionalProperties: false
+      required: [snapshot_cursor, next_position, items]
+      properties:
+        snapshot_cursor:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        next_position:
+          allOf:
+            - $ref: "#/components/schemas/Base64Url32"
+          nullable: true
+        items:
+          type: array
+          maxItems: 500
+          items:
+            $ref: "#/components/schemas/OpaqueInventoryItem"
+    AdmissionResult:
+      type: object
+      additionalProperties: false
+      required: [storage_item_id, byte_length, admission, hint_cursor]
+      properties:
+        storage_item_id:
+          $ref: "#/components/schemas/Base64Url32"
+        byte_length:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        admission:
+          type: string
+          enum: [stored, already_present]
+        hint_cursor:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+    WakeHint:
+      type: object
+      additionalProperties: false
+      required: [hint_cursor]
+      properties:
+        hint_cursor:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+    PrepareUploadRequest:
+      type: object
+      additionalProperties: false
+      required: [storage_item_id, byte_length, ciphertext_digest]
+      properties:
+        storage_item_id:
+          $ref: "#/components/schemas/Base64Url32"
+        byte_length:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        ciphertext_digest:
+          $ref: "#/components/schemas/Base64Url32"
+    PreparedUpload:
+      type: object
+      additionalProperties: false
+      required:
+        - upload_handle
+        - accepted_offset
+        - maximum_part_length
+        - transfer_capability
+      properties:
+        upload_handle:
+          $ref: "#/components/schemas/Uuid"
+        accepted_offset:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        maximum_part_length:
+          type: integer
+          minimum: 1
+          maximum: 1073741824
+        transfer_capability:
+          type: string
+          pattern: "^[A-Za-z0-9_-]{43}$"
+    UploadProgress:
+      type: object
+      additionalProperties: false
+      required: [accepted_offset]
+      properties:
+        accepted_offset:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+    Outcome:
+      type: object
+      additionalProperties: false
+      required: [outcome, retryable, request_id, retry_after_seconds]
+      properties:
+        outcome:
+          type: string
+          enum:
+            - authentication_required
+            - access_denied
+            - replica_not_found
+            - item_not_found
+            - item_integrity_conflict
+            - outer_envelope_invalid
+            - range_invalid
+            - upload_incomplete
+            - upload_expired
+            - quota_exceeded
+            - rate_limited
+            - cursor_invalid
+            - request_conflict
+            - service_unavailable
+            - protocol_invalid
+        retryable:
+          type: boolean
+        request_id:
+          $ref: "#/components/schemas/Uuid"
+        retry_after_seconds:
+          type: integer
+          minimum: 0
+          nullable: true

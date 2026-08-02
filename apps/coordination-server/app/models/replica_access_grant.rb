@@ -42,9 +42,12 @@ class ReplicaAccessGrant < ApplicationRecord
 
   def capability_sets_are_valid
     errors.add(:capabilities, :invalid) unless capabilities.all? { |value| CAPABILITIES.include?(value) }
-    return if grantable_capabilities.all? { |value| capabilities.include?(value) }
+    unless grantable_capabilities.all? { |value| capabilities.include?(value) }
+      errors.add(:grantable_capabilities, :invalid)
+    end
+    return if grantable_capabilities.empty? || capabilities.include?("awsm.replica.manage")
 
-    errors.add(:grantable_capabilities, :invalid)
+    errors.add(:grantable_capabilities, "requires awsm.replica.manage")
   end
 
   def portable_fields_are_immutable

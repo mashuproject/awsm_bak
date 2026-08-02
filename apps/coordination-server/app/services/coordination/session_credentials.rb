@@ -29,13 +29,13 @@ module Coordination
           credential.lock!
           unless credential.usable?(at: now) && secure_equal?(credential.secret_digest, digest(secret))
             credential.api_session.revoke!(at: now) if credential.consumed_at.present?
-            raise OutcomeError.new("AUTHENTICATION_FAILED", status: :unauthorized)
+            raise OutcomeError.new("authentication_required", status: :unauthorized)
           end
           credential.update!(consumed_at: now)
           tokens_for(credential.api_session, now:)
         end
       rescue ActiveRecord::RecordNotFound
-        raise OutcomeError.new("AUTHENTICATION_FAILED", status: :unauthorized)
+        raise OutcomeError.new("authentication_required", status: :unauthorized)
       end
 
       def authenticate(token)
@@ -85,7 +85,7 @@ module Coordination
       end
 
       def authentication_failed!
-        raise OutcomeError.new("AUTHENTICATION_FAILED", status: :unauthorized)
+        raise OutcomeError.new("authentication_required", status: :unauthorized)
       end
     end
   end

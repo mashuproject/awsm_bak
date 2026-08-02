@@ -12,11 +12,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_started
     environment:
-      AWSM_REDIS_NAMESPACE: awsm:development
-      AWSM_REDIS_URL: redis://redis:6379/0
       AWSM_SYNTHETIC_ACCOUNT_SECRET: development-only-synthetic-account-parameter-secret
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/coordination_server_development
       TEST_DATABASE_URL: postgresql://postgres:postgres@postgres:5432/coordination_server_test
@@ -49,26 +45,6 @@ services:
       retries: 10
     volumes:
       - postgres-data:/var/lib/postgresql/data
-
-  redis:
-    image: redis:8.2.8-alpine
-    command:
-      - redis-server
-      - --save
-      - ""
-      - --appendonly
-      - "no"
-      - --maxmemory
-      - 64mb
-      - --maxmemory-policy
-      - noeviction
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 2s
-      timeout: 5s
-      retries: 10
-    tmpfs:
-      - /data
 
 volumes:
   coordination-server-tmp:

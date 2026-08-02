@@ -203,15 +203,15 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_19_000000) do
     t.uuid "replica_access_grant_id", null: false
     t.string "state", default: "Preparing", null: false
     t.binary "storage_item_id", null: false
-    t.string "storage_key", null: false
+    t.binary "transfer_capability_digest", null: false
+    t.datetime "transfer_capability_expires_at", null: false
     t.datetime "updated_at", null: false
-    t.index ["hosted_replica_id", "storage_item_id"], name: "index_one_preparing_upload_per_item", unique: true, where: "((state)::text = 'Preparing'::text)"
     t.index ["hosted_replica_id"], name: "index_opaque_uploads_on_hosted_replica_id"
     t.index ["replica_access_grant_id"], name: "index_opaque_uploads_on_replica_access_grant_id"
-    t.index ["storage_key"], name: "index_opaque_uploads_on_storage_key", unique: true
     t.check_constraint "byte_length > 0 AND accepted_offset >= 0 AND accepted_offset <= byte_length", name: "opaque_uploads_bounds"
     t.check_constraint "octet_length(ciphertext_digest) = 32", name: "opaque_uploads_digest"
     t.check_constraint "octet_length(storage_item_id) = 32", name: "opaque_uploads_identity"
+    t.check_constraint "octet_length(transfer_capability_digest) = 32", name: "opaque_uploads_capability_digest"
     t.check_constraint "state::text = ANY (ARRAY['Preparing'::character varying, 'Promoting'::character varying]::text[])", name: "opaque_uploads_state"
   end
 
@@ -228,6 +228,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_19_000000) do
     t.index ["hosted_replica_id", "channel_principal_id"], name: "index_one_active_grant_per_principal_and_replica", unique: true, where: "(revoked_at IS NULL)"
     t.index ["hosted_replica_id"], name: "index_replica_access_grants_on_hosted_replica_id"
     t.check_constraint "cardinality(capabilities) > 0 AND capabilities <@ ARRAY['awsm.replica.hint.read'::character varying, 'awsm.replica.hint.write'::character varying, 'awsm.replica.inventory.read'::character varying, 'awsm.replica.item.read'::character varying, 'awsm.replica.item.write'::character varying, 'awsm.replica.manage'::character varying]", name: "replica_access_grants_capabilities"
+    t.check_constraint "cardinality(grantable_capabilities) = 0 OR ('awsm.replica.manage'::text = ANY (capabilities::text[]))", name: "replica_access_grants_delegation_requires_manage"
     t.check_constraint "grantable_capabilities <@ capabilities", name: "replica_access_grants_grantable_capabilities"
   end
 

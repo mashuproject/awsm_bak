@@ -60,9 +60,10 @@ response alone is not proof of served behavior.
 
 # Current reference status
 
-The current Rails and browser deployment still represents the pre-reconciliation implementation.
-This document does not authorize or perform a deployment. Reference staging and production facts
-must be freshly inspected before any future operational claim or mutation.
+The repository Rails Host has converged on the opaque schema and executable transport foundation;
+the packaged browser Client and synchronization consumers have not yet converged. This repository
+state proves nothing about a named deployment. Reference staging and production facts must be
+freshly inspected before every operational claim or mutation.
 
 # References
 

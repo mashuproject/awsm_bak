@@ -50,7 +50,7 @@ module Authentication
     Account.transaction do
       account.lock!
       unless account.active?
-        raise Coordination::OutcomeError.new("AUTHENTICATION_FAILED", status: :unauthorized)
+        raise Coordination::OutcomeError.new("authentication_required", status: :unauthorized)
       end
       Coordination::AccountActivity.touch!(account:, at: now)
       account.channel_principal.browser_sessions.create!(

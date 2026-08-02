@@ -29,17 +29,17 @@ RSpec.describe "Plan 20 Account activity", type: :request do
     expect {
       Coordination::SessionCredentials.issue(account:)
     }.to raise_error(Coordination::OutcomeError) { |error|
-      expect(error.outcome).to eq("AUTHENTICATION_FAILED")
+      expect(error.outcome).to eq("authentication_required")
     }
     expect {
       Coordination::SessionCredentials.authenticate(access_token)
     }.to raise_error(Coordination::OutcomeError) { |error|
-      expect(error.outcome).to eq("AUTHENTICATION_FAILED")
+      expect(error.outcome).to eq("authentication_required")
     }
     expect {
       Coordination::SessionCredentials.refresh(refresh_token)
     }.to raise_error(Coordination::OutcomeError) { |error|
-      expect(error.outcome).to eq("AUTHENTICATION_FAILED")
+      expect(error.outcome).to eq("authentication_required")
     }
   end
 

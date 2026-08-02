@@ -34,7 +34,7 @@ module Coordination
       @key ||= begin
         value = @request.headers["Idempotency-Key"]
         unless value&.match?(/\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\z/)
-          raise OutcomeError.new("REQUEST_INVALID", status: :bad_request)
+          raise OutcomeError.new("protocol_invalid", status: :bad_request)
         end
         value
       end
@@ -47,7 +47,7 @@ module Coordination
     end
 
     def conflict!
-      raise OutcomeError.new("IDEMPOTENCY_CONFLICT", status: :conflict)
+      raise OutcomeError.new("request_conflict", status: :conflict)
     end
   end
 end

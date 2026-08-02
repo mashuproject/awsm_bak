@@ -40,10 +40,12 @@ causal order.
 
 # Executable contract
 
-The generated OpenAPI currently describes the old experimental server and must not be hand-edited
-during documentation reconciliation. The implementation convergence effort will replace the Rails
-routes and schemas, regenerate OpenAPI, and prove black-box privacy and multi-Replica behavior
-against the formal target protocol.
+The checked-in OpenAPI is the canonical executable HTTP adapter and is validated on every matching
+Rails request and response. The reference Host now implements the opaque transport resources in
+this document; no semantic Vault route remains. Current focused proof covers Host opacity,
+capability isolation, immutable retries, bounded envelope verification, snapshot inventory, exact
+ranges, resumable promotion and cleanup, quota fencing, and Wake Hints. Multi-Replica Client pull
+and independent black-box Host implementations remain separate convergence work.
 
 # References
 

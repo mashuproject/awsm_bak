@@ -18,9 +18,10 @@ This is a repository-evidence conclusion about the target documents. It is not d
 evidence and does not claim that the browser extension, Rails application, staging, or production
 already implements the complete target. The repository now has a substantial canonical browser
 substrate, including authenticated Continuity replay and a selected-readable-Replica Member
-Recovery foundation. Shipped extension entrypoints, the generated Rails OpenAPI, Host behavior,
-and current public pages still expose the earlier pre-release experiment where their inspected
-code says so.
+Recovery foundation. Shipped extension entrypoints and current public pages still expose the
+earlier pre-release experiment where their inspected code says so. The Rails application has now
+replaced its semantic server experiment with the narrow opaque Host foundation described below;
+that repository evidence is not evidence of a live deployment or Client synchronization.
 
 # 2. Authority used
 
@@ -81,8 +82,8 @@ The core specifications now own one initial canonical substrate:
 - Complete Export, Backup, Restore, opaque Host, Runtime, Job, Capture, Search, and persistence
   boundaries.
 
-The generated HTTP OpenAPI remains owned by executable Rails routes and therefore remains current-
-implementation evidence until implementation convergence replaces and regenerates it.
+The executable HTTP OpenAPI is owned by Rails routes and request validation, and is current
+repository implementation evidence rather than evidence of deployment or Client synchronization.
 
 # 5. Contradictions closed during review
 
@@ -154,22 +155,25 @@ Current public pages remain current-implementation copy. The Roadmap retains det
 rendering of the tracked canonical glossary as implementation work, preventing a second editable
 definition source without pretending that behavior exists today.
 
-Subsequent repository work has implemented canonical browser foundations without changing this
-evidence boundary. In particular, selected readable-Replica Recovery now verifies the complete
+Subsequent repository work has implemented canonical browser and Replica Host foundations. In
+particular, selected readable-Replica Recovery now verifies the complete
 authenticated authority state, matches phrase-derived public keys before phrase-authorized opaque
 Envelope access, enrolls a fresh same-member Client atomically, and follows it with a
 confirmation-gated all-head Recovery replacement. Focused real-crypto tests and a real Chromium
-IndexedDB restart prove that narrow path. They do not yet prove phrase-only discovery without a
-known Vault, a packaged management surface, multi-Remote withholding behavior, Rails Host opacity,
-or any live deployment.
+IndexedDB restart prove that narrow path. The Rails Host now has a destructive opaque-only schema,
+Host-local Account/Grant dashboard, strict OpenAPI, immutable item and snapshot-inventory
+operations, bounded read/range verification, resumable Streamable promotion and cleanup, Wake
+Hints, Grant revocation, and durable reaping. These proofs do not yet establish phrase-only
+discovery without a known Vault, packaged Client management, multi-Remote withholding, an
+independent Host implementation, or any live deployment.
 
 # 8. Deliberately future work
 
 Foundational Vault semantics are no longer Roadmap questions. Genuine product or Host-policy work
 remains forward-looking, including:
 
-- implementation of the canonical Client and opaque Host substrate;
-- exact generated HTTP routes and transport adapters;
+- Client adoption of the canonical opaque Host transport and multi-Remote pull;
+- independent Host adapters and direct peer transport;
 - Host-local billing/resource responsibility, grace, suspension, and reaping policy;
 - optional former-member Recovery Snapshots;
 - direct peer and headless transports, thin and web Clients, and Runtime API Grants;

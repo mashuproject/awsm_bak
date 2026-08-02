@@ -30,7 +30,7 @@ RSpec.describe Coordination::AccountActivity do
     expect {
       described_class.touch!(account:, browser_session:, at: Time.utc(2026, 1, 3, 12))
     }.to raise_error(Coordination::OutcomeError) { |error|
-      expect(error.outcome).to eq("AUTHENTICATION_FAILED")
+      expect(error.outcome).to eq("authentication_required")
     }
 
     expect(account.reload.last_activity_at).to eq(Time.utc(2026, 1, 1, 12))

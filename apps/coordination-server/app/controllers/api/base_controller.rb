@@ -38,5 +38,17 @@ module Api
 
       raise Coordination::OutcomeError.new("access_denied", status: :forbidden)
     end
+
+    def current_replica_grant!(replica_handle, capability)
+      grant = current_principal.channel_principal.replica_access_grants
+        .includes(:hosted_replica)
+        .find_by(hosted_replica_id: replica_handle, revoked_at: nil)
+      unless grant&.hosted_replica&.active?
+        raise Coordination::OutcomeError.new("replica_not_found", status: :not_found)
+      end
+      return grant if grant.permits?(capability)
+
+      raise Coordination::OutcomeError.new("access_denied", status: :forbidden)
+    end
   end
 end

@@ -160,6 +160,10 @@ class CreateCoordinationSchema < ActiveRecord::Migration[8.1]
     add_check_constraint :replica_access_grants,
       "grantable_capabilities <@ capabilities",
       name: "replica_access_grants_grantable_capabilities"
+    add_check_constraint :replica_access_grants,
+      "cardinality(grantable_capabilities) = 0 OR " \
+      "'awsm.replica.manage' = ANY(capabilities)",
+      name: "replica_access_grants_delegation_requires_manage"
   end
 
   def create_opaque_storage
@@ -199,18 +203,18 @@ class CreateCoordinationSchema < ActiveRecord::Migration[8.1]
       table.bigint :byte_length, null: false
       table.binary :ciphertext_digest, null: false
       table.bigint :accepted_offset, null: false, default: 0
-      table.string :storage_key, null: false
+      table.binary :transfer_capability_digest, null: false
+      table.datetime :transfer_capability_expires_at, null: false
       table.string :state, null: false, default: "Preparing"
       table.datetime :expires_at, null: false
       table.timestamps
     end
-    add_index :opaque_uploads, [ :hosted_replica_id, :storage_item_id ], unique: true,
-      where: "state = 'Preparing'", name: "index_one_preparing_upload_per_item"
-    add_index :opaque_uploads, :storage_key, unique: true
     add_check_constraint :opaque_uploads, "octet_length(storage_item_id) = 32",
       name: "opaque_uploads_identity"
     add_check_constraint :opaque_uploads, "octet_length(ciphertext_digest) = 32",
       name: "opaque_uploads_digest"
+    add_check_constraint :opaque_uploads, "octet_length(transfer_capability_digest) = 32",
+      name: "opaque_uploads_capability_digest"
     add_check_constraint :opaque_uploads,
       "byte_length > 0 AND accepted_offset >= 0 AND accepted_offset <= byte_length",
       name: "opaque_uploads_bounds"

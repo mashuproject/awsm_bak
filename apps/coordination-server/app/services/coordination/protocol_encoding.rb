@@ -10,7 +10,7 @@ module Coordination
 
       raise ArgumentError
     rescue ArgumentError
-      raise OutcomeError.new("REQUEST_INVALID", status: :bad_request)
+      raise OutcomeError.new("protocol_invalid", status: :bad_request)
     end
 
     def encode_sha256(value)

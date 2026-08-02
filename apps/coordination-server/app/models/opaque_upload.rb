@@ -5,12 +5,11 @@ class OpaqueUpload < ApplicationRecord
   belongs_to :replica_access_grant
   has_many :opaque_upload_parts, dependent: :destroy
 
-  validates :storage_item_id, :ciphertext_digest, length: { is: 32 }
+  validates :storage_item_id, :ciphertext_digest, :transfer_capability_digest, length: { is: 32 }
   validates :byte_length, numericality: { only_integer: true, greater_than: 0 }
   validates :accepted_offset, numericality: { only_integer: true, greater_than_or_equal_to: 0 }
   validates :state, inclusion: { in: STATES }
-  validates :storage_key, presence: true, uniqueness: true
-  validates :expires_at, presence: true
+  validates :expires_at, :transfer_capability_expires_at, presence: true
   validate :accepted_offset_within_length
 
   private

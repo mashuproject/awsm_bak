@@ -28,7 +28,7 @@ module Coordination
       end
 
       def authentication_failed!
-        raise OutcomeError.new("AUTHENTICATION_FAILED", status: :unauthorized)
+        raise OutcomeError.new("authentication_required", status: :unauthorized)
       end
     end
   end
