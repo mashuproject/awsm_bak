@@ -218,8 +218,11 @@ branch and its newly required Vault Object closure, then atomically promotes onl
 accepted Compact items with the exact pull Job and Replica state. Authority, Key-Epoch,
 Required-Feature, Vacuum/adoption, unsupported Object/hydration, Remote-management UI, and
 shipped-background work remain Quarantined or unfinished. Retryable opaque-Host transport failures
-now checkpoint bounded local retries without changing Vault state; this foundation still does not
-claim general multi-Remote convergence.
+now checkpoint bounded local retries without changing Vault state. One local coordinator now pulls
+configured Remotes sequentially and isolates an individual Remote failure, while rejecting corrupt
+local Remote scope/identity before a channel call. Remote onboarding, materialization, Authority and
+Generation proof, hydration, shipped activation, and general multi-Remote convergence remain
+unfinished.
 
 ## 4.4 Account dashboard and public pages
 
