@@ -39,6 +39,13 @@ export interface CanonicalPopupApplicationClient extends CanonicalPopupClient {
     readonly expectedVaultId: string;
     readonly tabId?: number;
   }): Promise<{ readonly bundleId: string }>;
+  closeVault(expectedVaultId: string): Promise<{ readonly eventRecordId: string }>;
+  vacuumVault(expectedVaultId: string): Promise<{
+    readonly predecessorGenerationId: string;
+    readonly successorGenerationId: string;
+    readonly vacuumEventRecordId: string;
+    readonly successorBaselineId: string;
+  }>;
 }
 
 function plainRecord(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -236,6 +243,46 @@ function decodeVaultCreated(value: unknown): { readonly vaultId: string } {
   return { vaultId: value.vaultId };
 }
 
+function decodeVaultClosed(value: unknown): { readonly eventRecordId: string } {
+  if (
+    !plainRecord(value) ||
+    !exactKeys(value, ["eventRecordId"]) ||
+    !identifier(value.eventRecordId)
+  ) {
+    throw protocolError();
+  }
+  return { eventRecordId: value.eventRecordId };
+}
+
+function decodeVaultVacuumed(value: unknown): {
+  readonly predecessorGenerationId: string;
+  readonly successorGenerationId: string;
+  readonly vacuumEventRecordId: string;
+  readonly successorBaselineId: string;
+} {
+  if (
+    !plainRecord(value) ||
+    !exactKeys(value, [
+      "predecessorGenerationId",
+      "successorGenerationId",
+      "successorBaselineId",
+      "vacuumEventRecordId",
+    ]) ||
+    !identifier(value.predecessorGenerationId) ||
+    !identifier(value.successorGenerationId) ||
+    !identifier(value.vacuumEventRecordId) ||
+    !identifier(value.successorBaselineId)
+  ) {
+    throw protocolError();
+  }
+  return {
+    predecessorGenerationId: value.predecessorGenerationId,
+    successorGenerationId: value.successorGenerationId,
+    vacuumEventRecordId: value.vacuumEventRecordId,
+    successorBaselineId: value.successorBaselineId,
+  };
+}
+
 function assertNullableVaultId(value: string | null): void {
   if (value !== null && !identifier(value))
     throw new TypeError("Popup expected Vault ID is invalid.");
@@ -309,6 +356,14 @@ export function createCanonicalPopupApplicationClient(
           ...(input.tabId === undefined ? {} : { tabId: input.tabId }),
         }),
       );
+    },
+    async closeVault(expectedVaultId) {
+      if (!identifier(expectedVaultId)) throw new TypeError("Popup Vault ID is invalid.");
+      return decodeVaultClosed(await transport.request({ type: "CloseVault", expectedVaultId }));
+    },
+    async vacuumVault(expectedVaultId) {
+      if (!identifier(expectedVaultId)) throw new TypeError("Popup Vault ID is invalid.");
+      return decodeVaultVacuumed(await transport.request({ type: "VacuumVault", expectedVaultId }));
     },
   };
 }

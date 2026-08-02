@@ -104,7 +104,14 @@ describe("canonical popup application client", () => {
           selectedVaultId: "a".repeat(64),
           vaults: [{ vaultId: "a".repeat(64), label: null, selected: true }],
         })
-        .mockResolvedValueOnce({ bundleId: "b".repeat(64) }),
+        .mockResolvedValueOnce({ bundleId: "b".repeat(64) })
+        .mockResolvedValueOnce({ eventRecordId: "c".repeat(64) })
+        .mockResolvedValueOnce({
+          predecessorGenerationId: "d".repeat(64),
+          successorGenerationId: "e".repeat(64),
+          vacuumEventRecordId: "f".repeat(64),
+          successorBaselineId: "0".repeat(64),
+        }),
       subscribe: vi.fn(() => () => undefined),
     };
     const client = createCanonicalPopupApplicationClient(transport);
@@ -130,6 +137,15 @@ describe("canonical popup application client", () => {
     ).resolves.toEqual({
       bundleId: "b".repeat(64),
     });
+    await expect(client.closeVault("a".repeat(64))).resolves.toEqual({
+      eventRecordId: "c".repeat(64),
+    });
+    await expect(client.vacuumVault("a".repeat(64))).resolves.toEqual({
+      predecessorGenerationId: "d".repeat(64),
+      successorGenerationId: "e".repeat(64),
+      vacuumEventRecordId: "f".repeat(64),
+      successorBaselineId: "0".repeat(64),
+    });
 
     expect(transport.request.mock.calls).toEqual([
       [{ type: "BeginVaultCreation", expectedVaultId: null, label: "Research" }],
@@ -137,6 +153,8 @@ describe("canonical popup application client", () => {
       [{ type: "CancelVaultCreation", setupId: "setup-1" }],
       [{ type: "SelectVault", expectedVaultId: null, vaultId: "a".repeat(64) }],
       [{ type: "CaptureActivePage", expectedVaultId: "a".repeat(64), tabId: 4 }],
+      [{ type: "CloseVault", expectedVaultId: "a".repeat(64) }],
+      [{ type: "VacuumVault", expectedVaultId: "a".repeat(64) }],
     ]);
   });
 });
