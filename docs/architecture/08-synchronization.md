@@ -38,6 +38,12 @@ The durable pull Job binds each Quarantined outer item to the exact locator from
 That Host assertion remains untrusted until the Client opens the item, derives its authenticated
 logical identity, and recomputes the Remote-specific locator before promotion.
 
+A locator can find a Key Envelope encrypted for another recipient, but it cannot authenticate that
+recipient-only plaintext. Locator equality, a signed dependency reference, and outer-envelope
+integrity alone therefore do not authorize that Key Envelope's promotion. A Client retains such
+input in Quarantine until it has a recipient-verifiable proof. The current architecture does not
+yet define a recipient-independent proof for this case.
+
 A Client may separately materialize logical items at an authorized Remote by creating fresh
 destination-specific opaque representations. That transport write does not make Synchronization a
 semantic push or grant the Host authority.

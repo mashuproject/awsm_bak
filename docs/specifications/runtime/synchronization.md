@@ -49,6 +49,13 @@ or accepted Vault item. A known signed dependency may still locate its matching 
 representations through the Remote-specific opaque locator; recipient-only inner plaintext is not a
 condition of that lookup.
 
+For a Key Envelope that the receiving Client cannot open as its recipient, that lookup does not
+authenticate the envelope plaintext or its logical identity. A locator match, signed dependency
+reference, and valid outer envelope MUST NOT by themselves promote the representation. The Client
+MUST retain it in Quarantine until recipient-verifiable proof exists. The initial current Runtime
+does not define a recipient-independent proof, so it does not accept an Authority branch that
+depends on such an unverified representation.
+
 After complete semantic validation, promotion is one local conditional transaction: it compares the
 exact prior Replica Safety State and pull Job bytes; persists only the validated immutable Compact
 items and their protected local resolutions; replaces the Job checkpoint; and removes exactly the
