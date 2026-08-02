@@ -29,6 +29,7 @@ RSpec.describe "resumable Streamable admission", type: :request do
     item_id = storage_item_id(envelope)
     request_body = {
       storage_item_id: encode_id(item_id),
+      locator: encode_id(Digest::SHA256.digest("host-local-locator")),
       byte_length: envelope.bytesize,
       ciphertext_digest: encode_id(ciphertext_digest)
     }
@@ -54,6 +55,7 @@ RSpec.describe "resumable Streamable admission", type: :request do
       hosted_replica: replica,
       replica_access_grant: grant,
       storage_item_id: item_id,
+      locator: Digest::SHA256.digest("host-local-locator"),
       byte_length: envelope.bytesize,
       ciphertext_digest: ciphertext_digest,
       accepted_offset: 0,
@@ -373,6 +375,7 @@ RSpec.describe "resumable Streamable admission", type: :request do
   def prepare_upload(replica:, envelope:, ciphertext_digest:)
     post "/api/replicas/#{replica.id}/uploads", params: {
       storage_item_id: encode_id(storage_item_id(envelope)),
+      locator: encode_id(Digest::SHA256.digest("locator:#{storage_item_id(envelope)}")),
       byte_length: envelope.bytesize,
       ciphertext_digest: encode_id(ciphertext_digest)
     }, as: :json, headers: headers

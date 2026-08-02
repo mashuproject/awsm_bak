@@ -6,6 +6,7 @@ module Api
     def create
       grant = current_replica_grant!(params[:hosted_replica_id], "awsm.replica.item.write")
       storage_item_id = Coordination::ProtocolEncoding.decode_sha256(params[:storage_item_id])
+      locator = Coordination::ProtocolEncoding.decode_sha256(params[:locator])
       ciphertext_digest = Coordination::ProtocolEncoding.decode_sha256(params[:ciphertext_digest])
       byte_length = params[:byte_length]
       policy = Coordination::ServicePolicy.current
@@ -29,6 +30,7 @@ module Api
         replica.opaque_uploads.create!(
           replica_access_grant: grant,
           storage_item_id:,
+          locator:,
           byte_length:,
           ciphertext_digest:,
           transfer_capability_digest: Digest::SHA256.digest(transfer_capability),

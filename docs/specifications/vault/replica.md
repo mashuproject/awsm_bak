@@ -64,13 +64,19 @@ An opaque Replica Host may know:
 
 - its local Hosted Replica handle;
 - the Channel Principals and Grants permitted to use that handle;
-- Opaque Storage Item IDs, byte lengths, storage classes, admission state, and cursors;
+- Opaque Storage Item IDs, per-Hosted-Replica opaque locators, byte lengths, storage classes,
+  admission state, and cursors;
 - quota, billing, rate-limit, operational, and abuse-policy state; and
 - ephemeral Wake Hints without portable semantic meaning.
 
 It MUST NOT require plaintext Vault IDs, member IDs, Credential IDs, Record kinds, Event types,
 parent links, logical dependency IDs, labels, URLs, content, Key Epoch IDs, or search terms. A
 trusted Client privately reconstructs those relationships after retrieval and decryption.
+
+Each Hosted Replica also has one Host-local 32-byte locator salt that authorized Clients use to
+derive opaque item locators. It is Remote configuration, not portable Vault state or a credential.
+The salt differs between Hosted Replicas, so a Host-visible locator never correlates the same
+logical item across Hosts.
 
 # 6. Remotes and synchronization
 

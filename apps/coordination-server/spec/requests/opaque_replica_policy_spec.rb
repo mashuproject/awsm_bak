@@ -26,11 +26,15 @@ RSpec.describe "opaque Hosted Replica policy", type: :request do
     expect(response).to have_http_status(:created)
     expect(response.parsed_body).to match(
       "replica_handle" => String,
+      "locator_salt" => match(/\A[A-Za-z0-9_-]{43}\z/),
       "capabilities" => ReplicaAccessGrant::CAPABILITIES,
       "quota_bytes" => nil,
       "stored_bytes" => 0
     )
     replica = HostedReplica.find(response.parsed_body.fetch("replica_handle"))
+    expect(response.parsed_body.fetch("locator_salt")).to eq(
+      Base64.urlsafe_encode64(replica.locator_salt, padding: false)
+    )
     expect(replica.replica_access_grants.sole).to have_attributes(
       channel_principal: account.channel_principal,
       capabilities: ReplicaAccessGrant::CAPABILITIES,

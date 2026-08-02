@@ -29,6 +29,7 @@ RSpec.describe Coordination::AccountDeletionWorker do
       hosted_replica: replica,
       admitted_by_grant:,
       storage_item_id: Digest::SHA256.digest("item:#{contents}"),
+      locator: Digest::SHA256.digest("locator:#{contents}"),
       storage_class: "Compact",
       byte_length: contents.bytesize,
       ciphertext_digest: Digest::SHA256.digest(contents),

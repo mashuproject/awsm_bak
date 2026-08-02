@@ -32,7 +32,9 @@ a Vault Member.
 
 Host Policy State relates Account or another Channel Principal to one Host-local Hosted Replica
 handle through capability Grants. Stored Vault bytes are addressed only by randomized Opaque
-Storage Item IDs plus outer class and length. Portable IDs and semantic graph shape stay encrypted.
+Storage Item IDs, per-Hosted-Replica opaque locators, and outer class and length. Each Hosted
+Replica creates a random locator salt for authorized Clients; portable IDs and semantic graph shape
+stay encrypted.
 
 # Concurrency
 

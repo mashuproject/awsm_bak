@@ -41,6 +41,7 @@ module Api
     def serialize(item)
       {
         storage_item_id: encoded_id(item.storage_item_id),
+        locator: encoded_id(item.locator),
         storage_class: item.storage_class.downcase,
         byte_length: item.byte_length,
         ciphertext_digest: encoded_id(item.ciphertext_digest)

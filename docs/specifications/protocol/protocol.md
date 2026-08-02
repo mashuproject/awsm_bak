@@ -59,9 +59,9 @@ without interpreting protected semantics.
 
 Admission is immutable:
 
-- absent ID plus valid exact bytes stores one item;
-- existing ID plus identical bytes is idempotent success;
-- existing ID plus different bytes is an integrity conflict; and
+- absent ID plus valid exact bytes and one 32-byte opaque locator stores one item;
+- existing ID plus identical bytes and the same opaque locator is idempotent success;
+- existing ID plus different bytes, or a different opaque locator, is an integrity conflict; and
 - an incomplete stream is invisible to inventory until final verification and atomic promotion.
 
 Resumable transfer uses Host-local opaque upload IDs and exact byte offsets. Tickets and upload IDs
@@ -72,13 +72,16 @@ admission for quota, policy, or rate limits.
 
 # 5. Inventory
 
-Inventory pages contain only Opaque Storage Item ID, storage class, exact total byte length, and a
-Host-local immutable-item cursor. A request fixes a snapshot cursor. Following pages return items
-after the caller's position and no later than that snapshot. Ordering is bytewise Opaque Storage
-Item ID or another exact Host-documented stable opaque order and has no Vault meaning.
+Inventory pages contain only Opaque Storage Item ID, one fixed-length opaque locator, storage
+class, exact total byte length, and a Host-local immutable-item cursor. A request fixes a snapshot
+cursor. Following pages return items after the caller's position and no later than that snapshot.
+Ordering is bytewise Opaque Storage Item ID or another exact Host-documented stable opaque order
+and has no Vault meaning.
 
 The Host MUST NOT expose another Hosted Replica's inventory. The client treats the page as an
-untrusted availability claim and verifies every downloaded item.
+untrusted availability claim and verifies every downloaded item. Each inventory item includes its
+fixed-length Host-local opaque locator. The Host never receives the Client-only derivation inputs
+or interprets locator equality as Vault semantics.
 
 # 6. Reads and ranges
 

@@ -3,7 +3,7 @@ module Coordination
     Result = Data.define(:item, :admission, :hint_cursor)
 
     class << self
-      def admit!(grant:, claimed_storage_item_id:, bytes:)
+      def admit!(grant:, claimed_storage_item_id:, locator:, bytes:)
         parsed = OpaqueEnvelope.parse(
           bytes,
           compact_ceiling: ServicePolicy.current.maximum_compact_payload_bytes
@@ -23,7 +23,7 @@ module Coordination
           existing = replica.opaque_storage_items.find_by(storage_item_id: parsed.storage_item_id)
           if existing
             existing_bytes = DiskStore.read_all(existing.storage_key, byte_length: existing.byte_length)
-            unless existing_bytes == bytes
+            unless existing_bytes == bytes && existing.locator == locator
               raise OutcomeError.new("item_integrity_conflict", status: :conflict)
             end
 
@@ -40,6 +40,7 @@ module Coordination
           item = replica.opaque_storage_items.create!(
             admitted_by_grant: grant,
             storage_item_id: parsed.storage_item_id,
+            locator:,
             storage_class: parsed.storage_class,
             byte_length: parsed.byte_length,
             ciphertext_digest: parsed.ciphertext_digest,

@@ -25,9 +25,10 @@ untrusted Wake Hint. Hints contain no authoritative fact and merely cause anothe
 frequency is installation policy and may respect power, data, and privacy settings.
 
 Each bounded pull cycle runs as a durable pull-synchronization Job. Its Execution State owns the
-Remote, Realm, inventory snapshot and page position, retry state, Quarantine references, and safe
-aggregate progress. A Job checkpoint is local resumption state, never a delivery acknowledgement or
-portable Frontier.
+Remote, Realm, inventory snapshot and page position, retry state, Quarantine references and their
+opaque locators, and safe aggregate progress. A Hosted Replica Remote retains that Host's random
+locator salt in Installation State. A Job checkpoint is local resumption state, never a delivery
+acknowledgement or portable Frontier.
 
 # 3. Pull pipeline
 
@@ -37,7 +38,8 @@ For each configured source Remote, the Client:
 2. reads bounded opaque inventory or set-difference pages using a Host-local cursor;
 3. fetches unknown immutable outer items into Quarantine;
 4. verifies outer framing and Opaque Storage Item IDs;
-5. attempts authorized decryption without leaking semantic guesses to the Host;
+5. attempts authorized decryption without leaking semantic guesses to the Host, recomputes the
+   Remote-specific opaque locator from authenticated protected context, and rejects a mismatch;
 6. authenticates canonical inner IDs, signatures, causal and Authority Parents, dependencies,
    Required Features, and exact Event semantics;
 7. promotes valid items and advances accepted local Frontier and availability atomically.

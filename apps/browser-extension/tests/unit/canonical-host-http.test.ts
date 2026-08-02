@@ -30,6 +30,7 @@ describe("canonical Hosted Replica HTTP transport", () => {
   it("reads only a bounded opaque inventory page with the configured bearer channel", async () => {
     const storageItemId = identifier("StorageItem", new Uint8Array(32).fill(1));
     const digest = new Uint8Array(32).fill(2);
+    const locator = new Uint8Array(32).fill(3);
     let request: Request | undefined;
     const transport = new CanonicalHostedReplicaHttp({
       endpoint: "https://sync.example.test/",
@@ -45,6 +46,7 @@ describe("canonical Hosted Replica HTTP transport", () => {
               storage_class: "compact",
               byte_length: 64,
               ciphertext_digest: base64Url(digest),
+              locator: base64Url(locator),
             },
           ],
         });
@@ -62,6 +64,7 @@ describe("canonical Hosted Replica HTTP transport", () => {
           storageClass: 1,
           byteLength: 64,
           ciphertextDigest: digest,
+          locator,
         },
       ],
     });

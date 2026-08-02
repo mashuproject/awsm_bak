@@ -14,9 +14,12 @@ RSpec.describe "canonical Replica Host policy schema", type: :model do
     expect(connection.data_source_exists?("hosted_replica_reaping_jobs")).to be(true)
     upload_columns = connection.columns("opaque_uploads").map(&:name)
     expect(upload_columns).to include(
+      "locator",
       "transfer_capability_digest",
       "transfer_capability_expires_at"
     )
+    expect(connection.columns("hosted_replicas").map(&:name)).to include("locator_salt")
+    expect(connection.columns("opaque_storage_items").map(&:name)).to include("locator")
     expect(upload_columns).not_to include("storage_key")
     expect(connection.indexes("opaque_uploads").map(&:name)).not_to include(
       "index_one_preparing_upload_per_item"

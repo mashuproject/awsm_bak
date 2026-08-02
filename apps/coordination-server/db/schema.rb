@@ -124,12 +124,14 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_19_000000) do
     t.datetime "created_at", null: false
     t.bigint "hint_cursor", default: 0, null: false
     t.bigint "inventory_cursor", default: 0, null: false
+    t.binary "locator_salt", null: false
     t.string "management_label"
     t.bigint "quota_bytes"
     t.string "state", default: "Active", null: false
     t.bigint "stored_bytes", default: 0, null: false
     t.datetime "updated_at", null: false
     t.check_constraint "inventory_cursor >= 0 AND hint_cursor >= 0", name: "hosted_replicas_cursors"
+    t.check_constraint "octet_length(locator_salt) = 32", name: "hosted_replicas_locator_salt"
     t.check_constraint "management_label IS NULL OR char_length(management_label::text) >= 1 AND char_length(management_label::text) <= 80", name: "hosted_replicas_management_label"
     t.check_constraint "quota_bytes IS NULL OR quota_bytes > 0", name: "hosted_replicas_quota"
     t.check_constraint "state::text = ANY (ARRAY['Active'::character varying, 'Reaping'::character varying]::text[])", name: "hosted_replicas_state"
@@ -161,6 +163,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_19_000000) do
     t.datetime "created_at", null: false
     t.uuid "hosted_replica_id", null: false
     t.bigint "inventory_cursor", null: false
+    t.binary "locator", null: false
     t.string "storage_class", null: false
     t.binary "storage_item_id", null: false
     t.string "storage_key", null: false
@@ -172,6 +175,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_19_000000) do
     t.index ["storage_key"], name: "index_opaque_storage_items_on_storage_key", unique: true
     t.check_constraint "byte_length > 0 AND inventory_cursor > 0", name: "opaque_storage_items_bounds"
     t.check_constraint "octet_length(ciphertext_digest) = 32", name: "opaque_storage_items_digest"
+    t.check_constraint "octet_length(locator) = 32", name: "opaque_storage_items_locator"
     t.check_constraint "octet_length(storage_item_id) = 32", name: "opaque_storage_items_identity"
     t.check_constraint "storage_class::text = ANY (ARRAY['Compact'::character varying, 'Streamable'::character varying]::text[])", name: "opaque_storage_items_class"
   end
@@ -200,6 +204,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_19_000000) do
     t.datetime "created_at", null: false
     t.datetime "expires_at", null: false
     t.uuid "hosted_replica_id", null: false
+    t.binary "locator", null: false
     t.uuid "replica_access_grant_id", null: false
     t.string "state", default: "Preparing", null: false
     t.binary "storage_item_id", null: false
@@ -210,6 +215,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_07_19_000000) do
     t.index ["replica_access_grant_id"], name: "index_opaque_uploads_on_replica_access_grant_id"
     t.check_constraint "byte_length > 0 AND accepted_offset >= 0 AND accepted_offset <= byte_length", name: "opaque_uploads_bounds"
     t.check_constraint "octet_length(ciphertext_digest) = 32", name: "opaque_uploads_digest"
+    t.check_constraint "octet_length(locator) = 32", name: "opaque_uploads_locator"
     t.check_constraint "octet_length(storage_item_id) = 32", name: "opaque_uploads_identity"
     t.check_constraint "octet_length(transfer_capability_digest) = 32", name: "opaque_uploads_capability_digest"
     t.check_constraint "state::text = ANY (ARRAY['Preparing'::character varying, 'Promoting'::character varying]::text[])", name: "opaque_uploads_state"

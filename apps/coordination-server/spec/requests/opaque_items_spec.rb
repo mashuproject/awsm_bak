@@ -70,6 +70,31 @@ RSpec.describe "opaque Hosted Replica items", type: :request do
     )
   end
 
+  it "requires one opaque locator and inventories it without interpreting its protected identity" do
+    envelope = compact_envelope(payload: "\x08".b * 16)
+    item_id = storage_item_id(envelope)
+    locator = Digest::SHA256.digest("host-local-opaque-locator")
+
+    put_item(replica:, item_id:, bytes: envelope, locator:)
+
+    expect(response).to have_http_status(:created)
+    expect(replica.opaque_storage_items.sole.locator).to eq(locator)
+
+    get "/api/replicas/#{replica.id}/inventory", headers: headers
+
+    expect(response).to have_http_status(:ok)
+    expect(response.parsed_body.fetch("items")).to contain_exactly(
+      include(
+        "storage_item_id" => encode_id(item_id),
+        "locator" => encode_id(locator)
+      )
+    )
+
+    put_item(replica:, item_id:, bytes: envelope, locator: Digest::SHA256.digest("other-locator"))
+    expect(response).to have_http_status(:conflict)
+    expect(response.parsed_body.fetch("outcome")).to eq("item_integrity_conflict")
+  end
+
   it "paginates a fixed snapshot and excludes items admitted afterward" do
     first = compact_envelope(payload: "\x01".b * 16)
     second = compact_envelope(payload: "\x02".b * 16)
@@ -238,6 +263,7 @@ RSpec.describe "opaque Hosted Replica items", type: :request do
       item = replica.opaque_storage_items.create!(
         admitted_by_grant: grant,
         storage_item_id: parsed.storage_item_id,
+        locator: Digest::SHA256.digest("locator:#{parsed.storage_item_id}"),
         storage_class: parsed.storage_class,
         byte_length: parsed.byte_length,
         ciphertext_digest: parsed.ciphertext_digest,
@@ -263,9 +289,12 @@ RSpec.describe "opaque Hosted Replica items", type: :request do
     Base64.urlsafe_encode64(value, padding: false)
   end
 
-  def put_item(replica:, item_id:, bytes:)
+  def put_item(replica:, item_id:, bytes:, locator: Digest::SHA256.digest("locator:#{item_id}"))
     put "/api/replicas/#{replica.id}/items/#{encode_id(item_id)}",
       params: bytes,
-      headers: headers.merge("Content-Type" => "application/octet-stream")
+      headers: headers.merge(
+        "Content-Type" => "application/octet-stream",
+        "Awsm-Opaque-Locator" => encode_id(locator)
+      )
   end
 end

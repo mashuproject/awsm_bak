@@ -59,6 +59,7 @@ module Coordination
           existing = replica.opaque_storage_items.find_by(storage_item_id: parsed.storage_item_id)
           admission = if existing
             unless existing.byte_length == parsed.byte_length &&
+                existing.locator == locked_upload.locator &&
                 DiskStore.same_bytes?(existing.storage_key, installed_key, byte_length: parsed.byte_length)
               raise OutcomeError.new("item_integrity_conflict", status: :conflict)
             end
@@ -72,6 +73,7 @@ module Coordination
             existing = replica.opaque_storage_items.create!(
               admitted_by_grant: grant,
               storage_item_id: parsed.storage_item_id,
+              locator: locked_upload.locator,
               storage_class: parsed.storage_class,
               byte_length: parsed.byte_length,
               ciphertext_digest: parsed.ciphertext_digest,
@@ -99,6 +101,7 @@ module Coordination
       def promoting_result(upload)
         item = upload.hosted_replica.opaque_storage_items.find_by(storage_item_id: upload.storage_item_id)
         unless item && item.byte_length == upload.byte_length &&
+            item.locator == upload.locator &&
             item.ciphertext_digest == upload.ciphertext_digest
           raise OutcomeError.new("service_unavailable", status: :service_unavailable, retryable: true)
         end

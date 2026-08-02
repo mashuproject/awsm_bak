@@ -7,6 +7,7 @@ RSpec.describe ExpireOpaqueUploadsJob do
       hosted_replica: grant.hosted_replica,
       replica_access_grant: grant,
       storage_item_id: Digest::SHA256.digest("upload-item:#{SecureRandom.uuid}"),
+      locator: Digest::SHA256.digest("locator:#{SecureRandom.uuid}"),
       byte_length: bytes&.bytesize || 100,
       ciphertext_digest: Digest::SHA256.digest("ciphertext:#{SecureRandom.uuid}"),
       transfer_capability_digest: Digest::SHA256.digest(token),

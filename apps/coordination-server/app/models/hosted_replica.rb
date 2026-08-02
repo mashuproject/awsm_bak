@@ -8,7 +8,10 @@ class HostedReplica < ApplicationRecord
   has_many :opaque_uploads, dependent: :destroy
   has_many :hosted_replica_reaping_jobs, dependent: :nullify
 
+  before_validation :generate_locator_salt, on: :create
+
   validates :state, inclusion: { in: STATES }
+  validates :locator_salt, length: { is: 32 }
   validates :management_label, length: { in: 1..80 }, allow_nil: true
   validates :quota_bytes, numericality: { only_integer: true, greater_than: 0 }, allow_nil: true
   validates :stored_bytes, :inventory_cursor, :hint_cursor,
@@ -20,6 +23,10 @@ class HostedReplica < ApplicationRecord
   end
 
   private
+
+  def generate_locator_salt
+    self.locator_salt ||= SecureRandom.random_bytes(32)
+  end
 
   def stored_bytes_fit_quota
     return if quota_bytes.nil? || stored_bytes.nil? || stored_bytes <= quota_bytes

@@ -150,6 +150,33 @@ A Replica Host MAY admit an item only after it verifies:
 These checks establish Host Storage Admission only. The Host MUST NOT claim to validate the inner
 Record, signature, authority, dependencies, feature set, or plaintext.
 
+## 8.1 Hosted Replica opaque locator
+
+A Hosted Replica creates one random 32-byte **locator salt** when the Host creates that Hosted
+Replica. The salt is Host-local Remote metadata: every currently authorized Channel Principal may
+read it for that Hosted Replica, and a Client stores it only with that Remote configuration. It is
+not portable Vault state, an Account credential, or a Vault key.
+
+For every admitted item, the Client supplies one 32-byte opaque locator:
+
+```text
+SHA-256(Transcript(
+  "awsm:hosted-replica-item-locator:v1",
+  [locatorSalt, logicalNamespaceCode, protectedLogicalID]
+))
+```
+
+`logicalNamespaceCode` is a Client-only code for the protected logical identifier family. The
+Host receives neither that code nor the protected logical ID. It stores and inventories the locator
+as an opaque fixed-length value for **every** storage class, so its presence does not identify Key
+Envelopes or any other item kind. Several immutable physical representations may have the same
+locator.
+
+The Host does not verify this derivation. After opening an item, a trusted Client recomputes the
+locator from authenticated protected context before it accepts the representation. This lets a
+Client resolve a signed Key Envelope dependency to one or more opaque physical representations
+without attempting to decrypt an Envelope addressed to another recipient.
+
 # 9. Range and resumable transfer
 
 A Host MAY support byte ranges over a Streamable payload. A range response MUST identify the exact
@@ -172,6 +199,10 @@ Blind Host-to-Host copying of exact bytes is valid only as explicitly correlated
 preserves the Opaque Storage Item ID and therefore permits observers with both inventories to link
 the item.
 
+The locator salt differs for every Hosted Replica. Rewrapping the same protected logical item for
+two Hosted Replicas therefore yields unrelated outer IDs and unrelated opaque locators. A locator
+is linkable only within one Hosted Replica; it is not a global logical identifier.
+
 # 11. Unknown formats and limits
 
 An unknown `storageEnvelopeFormat`, storage class, header key, flag bit, or malformed length fails
@@ -181,6 +212,8 @@ multipart, and quota capabilities operationally; those statements do not change 
 # 12. Invariants
 
 - The outer envelope contains no protected logical identifier or semantic relationship.
+- The Host-local opaque locator is outside the envelope, is present for every item, and cannot
+  identify a logical namespace or protected logical ID without trusted Client context.
 - Compact Key Envelopes and ordinary compact items have the same Host-visible grammar.
 - Every stored representation is immutable and content-addressed by its exact outer bytes.
 - Stream frames are physical transfer structure, not independent authoritative items.

@@ -25,9 +25,14 @@ Wake Hint or local trigger
         -> read bounded opaque inventory
         -> fetch unknown items into Quarantine
         -> verify outer envelope and opaque ID
-        -> decrypt and verify logical IDs, signatures, DAG, dependencies
+        -> decrypt and verify logical IDs, Host-local opaque locators, signatures, DAG, dependencies
         -> promote and reduce locally
 ```
+
+Every Hosted Replica has its own non-portable locator salt. A Client derives one opaque locator per
+logical item for that Remote and receives locators for all inventory items. This maps a signed
+dependency, including a Key Envelope encrypted for another recipient, to physical candidates
+without exposing a global logical identifier or changing the pull-only relationship.
 
 A Client may separately materialize logical items at an authorized Remote by creating fresh
 destination-specific opaque representations. That transport write does not make Synchronization a

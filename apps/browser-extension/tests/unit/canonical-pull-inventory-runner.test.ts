@@ -49,6 +49,7 @@ function item(envelope: ReturnType<typeof encodeOpaqueEnvelope>) {
     storageClass: envelope.storageClass,
     byteLength: envelope.bytes.byteLength,
     ciphertextDigest: envelope.ciphertextDigest,
+    locator: new Uint8Array(32).fill(envelope.storageItemId[0] ?? 0),
   } as const;
 }
 

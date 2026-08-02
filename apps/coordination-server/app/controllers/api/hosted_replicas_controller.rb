@@ -37,6 +37,7 @@ module Api
       replica = grant.hosted_replica
       {
         replica_handle: replica.id,
+        locator_salt: Coordination::ProtocolEncoding.encode_sha256(replica.locator_salt),
         capabilities: grant.capabilities,
         quota_bytes: replica.quota_bytes,
         stored_bytes: replica.stored_bytes

@@ -180,7 +180,8 @@ The current Rails schema is generated from
 - sessions without a `VaultDevice` semantic scope;
 - Host-local Hosted Replica handles;
 - immutable capability-based Replica Access Grants;
-- opaque item metadata, compact/streamable admission, resumable upload and parts;
+- opaque item metadata, per-Hosted-Replica locator salt and opaque locators, compact/streamable
+  admission, resumable upload and parts;
 - inventory and Wake Hint cursors with no Vault semantics;
 - quotas and exact Host-local lifecycle Jobs; and
 - independently modeled lifecycle and recurring cleanup Jobs.
@@ -271,7 +272,8 @@ of scope.
 3. Complete content organization, search rebuilding, Vacuum, Fork, Closure, and portability.
 4. Multi-member authority, Recovery, Invitation, Credential, Key Epoch, and conflict ceremonies.
 5. Clean opaque Host schema, Account/Grant dashboard, strict protocol, and generated OpenAPI.
-6. Multi-Remote pull synchronization, On-demand hydration, Host switching, and adversarial proof.
+6. Multi-Remote pull synchronization, locator-derived dependency resolution, On-demand hydration,
+   Host switching, and adversarial proof.
 7. Packaged Chrome/Firefox journeys, public-copy reconciliation, destructive authorized staging
    establishment, and release proof.
 

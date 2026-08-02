@@ -25,6 +25,7 @@ export interface CanonicalOpaqueInventoryItem {
   readonly storageClass: 1 | 2;
   readonly byteLength: number;
   readonly ciphertextDigest: Uint8Array;
+  readonly locator: Uint8Array;
 }
 
 export interface CanonicalOpaqueInventoryPage {
@@ -152,7 +153,7 @@ async function hostFailure(response: Response): Promise<never> {
 function parseInventoryItem(value: unknown): CanonicalOpaqueInventoryItem {
   const item = exactObject(
     value,
-    ["storage_item_id", "storage_class", "byte_length", "ciphertext_digest"],
+    ["storage_item_id", "storage_class", "byte_length", "ciphertext_digest", "locator"],
     "Replica Host inventory item",
   );
   const storageClass =
@@ -174,6 +175,7 @@ function parseInventoryItem(value: unknown): CanonicalOpaqueInventoryItem {
       item.ciphertext_digest,
       "Replica Host inventory ciphertext digest",
     ),
+    locator: base64Url32(item.locator, "Replica Host inventory opaque locator"),
   };
 }
 

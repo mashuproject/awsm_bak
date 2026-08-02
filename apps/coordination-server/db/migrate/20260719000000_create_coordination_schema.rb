@@ -119,6 +119,7 @@ class CreateCoordinationSchema < ActiveRecord::Migration[8.1]
       table.bigint :stored_bytes, null: false, default: 0
       table.bigint :inventory_cursor, null: false, default: 0
       table.bigint :hint_cursor, null: false, default: 0
+      table.binary :locator_salt, null: false
       table.timestamps
     end
     add_check_constraint :hosted_replicas, "state IN ('Active', 'Reaping')",
@@ -135,6 +136,8 @@ class CreateCoordinationSchema < ActiveRecord::Migration[8.1]
     add_check_constraint :hosted_replicas,
       "inventory_cursor >= 0 AND hint_cursor >= 0",
       name: "hosted_replicas_cursors"
+    add_check_constraint :hosted_replicas, "octet_length(locator_salt) = 32",
+      name: "hosted_replicas_locator_salt"
   end
 
   def create_replica_access_grants
@@ -173,6 +176,7 @@ class CreateCoordinationSchema < ActiveRecord::Migration[8.1]
       table.references :admitted_by_grant, type: :uuid,
         foreign_key: { to_table: :replica_access_grants, on_delete: :nullify }
       table.binary :storage_item_id, null: false
+      table.binary :locator, null: false
       table.string :storage_class, null: false
       table.bigint :byte_length, null: false
       table.binary :ciphertext_digest, null: false
@@ -187,6 +191,8 @@ class CreateCoordinationSchema < ActiveRecord::Migration[8.1]
     add_index :opaque_storage_items, :storage_key, unique: true
     add_check_constraint :opaque_storage_items, "octet_length(storage_item_id) = 32",
       name: "opaque_storage_items_identity"
+    add_check_constraint :opaque_storage_items, "octet_length(locator) = 32",
+      name: "opaque_storage_items_locator"
     add_check_constraint :opaque_storage_items, "storage_class IN ('Compact', 'Streamable')",
       name: "opaque_storage_items_class"
     add_check_constraint :opaque_storage_items, "byte_length > 0 AND inventory_cursor > 0",
@@ -200,6 +206,7 @@ class CreateCoordinationSchema < ActiveRecord::Migration[8.1]
       table.references :replica_access_grant, null: false, type: :uuid,
         foreign_key: { on_delete: :cascade }
       table.binary :storage_item_id, null: false
+      table.binary :locator, null: false
       table.bigint :byte_length, null: false
       table.binary :ciphertext_digest, null: false
       table.bigint :accepted_offset, null: false, default: 0
@@ -211,6 +218,8 @@ class CreateCoordinationSchema < ActiveRecord::Migration[8.1]
     end
     add_check_constraint :opaque_uploads, "octet_length(storage_item_id) = 32",
       name: "opaque_uploads_identity"
+    add_check_constraint :opaque_uploads, "octet_length(locator) = 32",
+      name: "opaque_uploads_locator"
     add_check_constraint :opaque_uploads, "octet_length(ciphertext_digest) = 32",
       name: "opaque_uploads_digest"
     add_check_constraint :opaque_uploads, "octet_length(transfer_capability_digest) = 32",

@@ -3,6 +3,7 @@ module Api
     def update
       grant = current_replica_grant!(params[:hosted_replica_id], "awsm.replica.item.write")
       storage_item_id = Coordination::ProtocolEncoding.decode_sha256(params[:storage_item_id])
+      locator = Coordination::ProtocolEncoding.decode_sha256(request.headers["Awsm-Opaque-Locator"])
       maximum = Coordination::ServicePolicy.current.maximum_compact_payload_bytes + 4_108
       bytes = request.body.read(maximum + 1).b
       if bytes.bytesize > maximum
@@ -12,6 +13,7 @@ module Api
       result = Coordination::OpaqueItemAdmission.admit!(
         grant:,
         claimed_storage_item_id: storage_item_id,
+        locator:,
         bytes:
       )
       render json: {

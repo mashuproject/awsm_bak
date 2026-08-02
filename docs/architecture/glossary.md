@@ -708,7 +708,7 @@ A local or network interface exposed by a Replica Host for establishing Synchron
 ## Replica Remote
 
 One Replica's local configuration for reaching another Replica. Its name, endpoint, credentials,
-retry state, and policies are Installation State. Names such as `origin` and `upstream` have no
+Hosted Replica locator salt, retry state, and policies are Installation State. Names such as `origin` and `upstream` have no
 Vault-wide meaning.
 
 ## Channel Principal
@@ -743,9 +743,18 @@ decryption, semantic validation, or acceptance into a trusted Vault frontier.
 ## Opaque Host Metadata Boundary
 
 The maximum semantic visibility of a standalone opaque Replica Host. It may observe only its local
-Hosted Replica handle, randomized Opaque Storage Item ID, compact-or-streamable storage class,
-ciphertext length and digest, outer format and fixed randomized protection parameters, Host-local
-cursors and conditional state, and unavoidable traffic or operational metadata.
+Hosted Replica handle, randomized Opaque Storage Item ID, per-Hosted-Replica opaque locator,
+compact-or-streamable storage class, ciphertext length and digest, outer format and fixed randomized
+protection parameters, Host-local cursors and conditional state, and unavoidable traffic or
+operational metadata.
+
+## Hosted Replica Opaque Locator
+
+A fixed 32-byte Host-local discovery value for one logical item at one Hosted Replica. A trusted
+Client derives it from that Hosted Replica's random locator salt, a Client-only logical namespace
+code, and an authenticated protected logical ID. The Host stores and inventories the value without
+knowing or validating its inputs. It is outside the encrypted envelope, present for every item, and
+not a portable identifier or cross-Host correlation handle.
 
 Portable Vault, Generation, Record, Object, parent, dependency, Event, member, credential, Key
 Epoch, feature, content-type, URL, title, and Capture semantics remain protected.
