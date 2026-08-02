@@ -233,6 +233,98 @@ describe("canonical pull-synchronization Job service", () => {
     expect(commits).toHaveLength(1);
   });
 
+  it("atomically promotes only exact validated Quarantine references with the next Replica state", async () => {
+    const commits: unknown[] = [];
+    const service = new CanonicalPullSynchronizationJobService(
+      {
+        commitExecutionMutation: async (commit: unknown) => commits.push(commit),
+        commitReplicaMutation: async (commit: unknown) => commits.push(commit),
+      } as unknown as ConstructorParameters<typeof CanonicalPullSynchronizationJobService>[0],
+      NORMAL_STORAGE_REALM,
+      () => JOB_ID,
+    );
+    const vaultId = filled("Vault", 1);
+    const envelope = encodeOpaqueEnvelope({
+      storageClass: 1,
+      protectionParameters: new Uint8Array(64).fill(8),
+      payload: new Uint8Array(16).fill(9),
+    });
+    const storageItemId = envelope.storageItemId;
+    const previous = {
+      ...(await service.create({ vaultId, remoteId: REMOTE_ID })),
+      stage: 2 as const,
+      snapshotCursor: 3,
+      quarantineReferences: [reference(storageItemId, 4)],
+      progress: {
+        discoveredItemCount: 1,
+        downloadedItemCount: 1,
+        promotedItemCount: 0,
+        rejectedItemCount: 0,
+      },
+    };
+    const next = {
+      ...previous,
+      stage: 3 as const,
+      state: 3 as const,
+      quarantineReferences: [],
+      progress: { ...previous.progress, promotedItemCount: 1 },
+    };
+    const resolution = {
+      namespace: NAMESPACES.logicalResolution.key,
+      scopeKey: identifierStorageKey(vaultId),
+      itemKey: `1:${identifierStorageKey(filled("VaultRecord", 5))}`,
+      bytes: new Uint8Array([7]),
+    } as const;
+
+    await service.promoteValidated({
+      previous,
+      next,
+      promotedReferences: previous.quarantineReferences,
+      expectedReplicaState: new Uint8Array([1]),
+      nextReplicaState: {
+        namespace: NAMESPACES.replicaState.key,
+        scopeKey: identifierStorageKey(vaultId),
+        itemKey: "current",
+        bytes: new Uint8Array([2]),
+      },
+      immutableItems: [
+        {
+          namespace: NAMESPACES.vaultRecord.key,
+          scopeKey: identifierStorageKey(vaultId),
+          itemKey: identifierStorageKey(filled("VaultRecord", 5)),
+          bytes: envelope.bytes,
+        },
+      ],
+      resolutionItems: [resolution],
+    });
+
+    const commit = commits[1] as {
+      readonly expectedReplicaState: Uint8Array;
+      readonly nextReplicaState: { readonly bytes: Uint8Array };
+      readonly immutableItems: readonly { readonly bytes: Uint8Array }[];
+      readonly mutableItems: readonly { readonly namespace: string }[];
+      readonly deletedItems: readonly {
+        readonly namespace: string;
+        readonly scopeKey: string;
+        readonly itemKey: string;
+      }[];
+    };
+    expect(commit.expectedReplicaState).toEqual(new Uint8Array([1]));
+    expect(commit.nextReplicaState.bytes).toEqual(new Uint8Array([2]));
+    expect(commit.immutableItems).toEqual([expect.objectContaining({ bytes: envelope.bytes })]);
+    expect(commit.mutableItems).toEqual([
+      resolution,
+      expect.objectContaining({ namespace: NAMESPACES.pullSynchronizationJob.key }),
+    ]);
+    expect(commit.deletedItems).toEqual([
+      {
+        namespace: NAMESPACES.incomingQuarantine.key,
+        scopeKey: REMOTE_ID,
+        itemKey: identifierStorageKey(storageItemId),
+      },
+    ]);
+  });
+
   it("reopens one persisted Job only when its Vault, Realm, and local identity agree", async () => {
     const stored = new Map<string, Uint8Array>();
     const storage = {

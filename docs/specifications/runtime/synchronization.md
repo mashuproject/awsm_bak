@@ -49,6 +49,14 @@ or accepted Vault item. A known signed dependency may still locate its matching 
 representations through the Remote-specific opaque locator; recipient-only inner plaintext is not a
 condition of that lookup.
 
+After complete semantic validation, promotion is one local conditional transaction: it compares the
+exact prior Replica Safety State and pull Job bytes; persists only the validated immutable Compact
+items and their protected local resolutions; replaces the Job checkpoint; and removes exactly the
+Remote-scoped Quarantine entries consumed by that checkpoint. The transaction cannot add or rewrite
+Quarantine references, change the completed inventory snapshot, or remove unreadable ciphertext.
+The transport checkpoint is not semantic proof; Authority, dependency, DAG, Feature, and Event
+validation must finish before this transaction begins.
+
 A Replica becomes current by pulling and validating what it lacks. Separately, a Client may
 materialize randomized opaque representations at a writable Replica Host through immutable item
 admission. That destination-write workflow is not Synchronization, creates no origin, and does not

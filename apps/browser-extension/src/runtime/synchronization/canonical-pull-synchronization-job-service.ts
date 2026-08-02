@@ -96,6 +96,89 @@ function sameQuarantine(
   });
 }
 
+function exactPromotionReferences(
+  previous: CanonicalPullSynchronizationJob,
+  next: CanonicalPullSynchronizationJob,
+  promoted: readonly CanonicalQuarantineReference[],
+): void {
+  if (previous.stage !== 2 || previous.state !== 1) {
+    throw new TypeError("Synchronization promotion requires an active validation-stage Job");
+  }
+  if (
+    next.snapshotCursor !== previous.snapshotCursor ||
+    !(
+      next.nextPosition === previous.nextPosition ||
+      (next.nextPosition !== null &&
+        previous.nextPosition !== null &&
+        bytesEqual(next.nextPosition, previous.nextPosition))
+    )
+  ) {
+    throw new TypeError("Synchronization promotion cannot change the completed inventory snapshot");
+  }
+  if (next.stage !== 2 && next.stage !== 3) {
+    throw new TypeError("Synchronization promotion cannot return to inventory");
+  }
+  if (next.attempt !== previous.attempt || next.retryAfterMs !== null) {
+    throw new TypeError("Synchronization promotion cannot change retry state");
+  }
+  if (
+    next.progress.discoveredItemCount !== previous.progress.discoveredItemCount ||
+    next.progress.downloadedItemCount !== previous.progress.downloadedItemCount ||
+    next.progress.rejectedItemCount !== previous.progress.rejectedItemCount
+  ) {
+    throw new TypeError("Synchronization promotion cannot change inventory or rejection progress");
+  }
+
+  const previousByStorageItem = new Map(
+    previous.quarantineReferences.map((reference) => [key(reference), reference]),
+  );
+  const nextByStorageItem = new Map(
+    next.quarantineReferences.map((reference) => [key(reference), reference]),
+  );
+  for (const [storageItemId, reference] of nextByStorageItem) {
+    const prior = previousByStorageItem.get(storageItemId);
+    if (prior === undefined || !bytesEqual(prior.locator, reference.locator)) {
+      throw new TypeError("Synchronization promotion cannot add or rewrite Quarantine references");
+    }
+  }
+  const removed = previous.quarantineReferences.filter(
+    (reference) => !nextByStorageItem.has(key(reference)),
+  );
+  const promotedByStorageItem = new Map(promoted.map((reference) => [key(reference), reference]));
+  if (promotedByStorageItem.size !== promoted.length || promoted.length === 0) {
+    throw new TypeError("Synchronization promotion requires one or more distinct references");
+  }
+  if (
+    removed.length !== promotedByStorageItem.size ||
+    removed.some((reference) => {
+      const candidate = promotedByStorageItem.get(key(reference));
+      return candidate === undefined || !bytesEqual(candidate.locator, reference.locator);
+    })
+  ) {
+    throw new TypeError("Synchronization promotion must remove exactly its validated references");
+  }
+  if (next.progress.promotedItemCount !== previous.progress.promotedItemCount + removed.length) {
+    throw new TypeError("Synchronization promotion progress does not match removed Quarantine");
+  }
+}
+
+function assertPromotionItem(
+  item: NamespaceBytes,
+  vaultId: CanonicalPullSynchronizationJob["vaultId"],
+): void {
+  if (
+    ![
+      NAMESPACES.vaultRecord.key,
+      NAMESPACES.keyEnvelope.key,
+      NAMESPACES.vaultObject.key,
+      NAMESPACES.featureManifest.key,
+    ].includes(item.namespace as (typeof NAMESPACES)[keyof typeof NAMESPACES]["key"]) ||
+    item.scopeKey !== identifierStorageKey(vaultId)
+  ) {
+    throw new TypeError("Synchronization promotion item is outside the selected Vault");
+  }
+}
+
 export class CanonicalPullSynchronizationJobService {
   constructor(
     private readonly storage: CanonicalIndexedDb,
@@ -206,6 +289,75 @@ export class CanonicalPullSynchronizationJobService {
       realm: this.realm,
       expectedMutableItems: [item(input.previous, previousBytes)],
       mutableItems: [item(input.next, nextBytes)],
+    });
+  }
+
+  /**
+   * Commits a caller-validated Compact promotion with the exact local pull checkpoint it consumes.
+   * This transport boundary does not authenticate Vault semantics; callers must complete that proof
+   * before invoking it.
+   */
+  async promoteValidated(input: {
+    readonly previous: CanonicalPullSynchronizationJob;
+    readonly next: CanonicalPullSynchronizationJob;
+    readonly promotedReferences: readonly CanonicalQuarantineReference[];
+    readonly expectedReplicaState: Uint8Array;
+    readonly nextReplicaState: NamespaceBytes;
+    readonly immutableItems: readonly NamespaceBytes[];
+    readonly resolutionItems: readonly NamespaceBytes[];
+  }): Promise<void> {
+    assertSameJobContext(input.previous, input.next, this.realm);
+    encodeCanonicalPullSynchronizationJob(input.previous);
+    const nextBytes = encodeCanonicalPullSynchronizationJob(input.next);
+    exactPromotionReferences(input.previous, input.next, input.promotedReferences);
+
+    const vaultKey = identifierStorageKey(input.next.vaultId);
+    if (
+      input.nextReplicaState.namespace !== NAMESPACES.replicaState.key ||
+      input.nextReplicaState.scopeKey !== vaultKey ||
+      input.nextReplicaState.itemKey !== "current"
+    ) {
+      throw new TypeError("Synchronization promotion Replica State is outside the selected Vault");
+    }
+    const promotedStorageItems = new Set(
+      input.promotedReferences.map((reference) => identifierStorageKey(reference.storageItemId)),
+    );
+    if (input.immutableItems.length !== promotedStorageItems.size) {
+      throw new TypeError("Synchronization promotion must persist every consumed Quarantine item");
+    }
+    const itemStorageItems = new Set<string>();
+    for (const immutable of input.immutableItems) {
+      assertPromotionItem(immutable, input.next.vaultId);
+      const storageItemId = identifierStorageKey(
+        decodeOpaqueEnvelope(immutable.bytes).storageItemId,
+      );
+      if (!promotedStorageItems.has(storageItemId) || itemStorageItems.has(storageItemId)) {
+        throw new TypeError("Synchronization promotion bytes do not match consumed Quarantine");
+      }
+      itemStorageItems.add(storageItemId);
+    }
+    for (const resolution of input.resolutionItems) {
+      if (
+        resolution.namespace !== NAMESPACES.logicalResolution.key ||
+        resolution.scopeKey !== vaultKey
+      ) {
+        throw new TypeError("Synchronization promotion resolution is outside the selected Vault");
+      }
+    }
+
+    const previousBytes = encodeCanonicalPullSynchronizationJob(input.previous);
+    await this.storage.commitReplicaMutation({
+      realm: this.realm,
+      expectedReplicaState: input.expectedReplicaState,
+      nextReplicaState: input.nextReplicaState,
+      expectedMutableItems: [item(input.previous, previousBytes)],
+      immutableItems: input.immutableItems,
+      mutableItems: [...input.resolutionItems, item(input.next, nextBytes)],
+      deletedItems: input.promotedReferences.map((reference) => ({
+        namespace: NAMESPACES.incomingQuarantine.key,
+        scopeKey: input.next.remoteId,
+        itemKey: identifierStorageKey(reference.storageItemId),
+      })),
     });
   }
 }
