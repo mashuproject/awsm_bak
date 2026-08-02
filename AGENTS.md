@@ -223,6 +223,22 @@ Discover current build, test, lint, and development commands from repository man
 
 Invoke the repository-pinned pnpm through Corepack: use `corepack pnpm`, not a bare `pnpm` command.
 
+### Test-first workflow and test maintenance
+
+- For every new or changed production behavior, first run the smallest relevant test and record the
+  expected failure before changing production code. Make the smallest implementation change that
+  satisfies the canonical contract, rerun the focused proof, then refactor and run the broader
+  affected gates. A regression test added for behavior that is already implemented may start green;
+  report that honestly instead of inventing a RED result.
+- A failing test is evidence, not a target to silence. Never weaken, delete, skip, or broadly rewrite
+  a valid canonical assertion merely to obtain a green run. If the contract changed, replace it with
+  explicit proof of the sole current contract.
+- Delete tests that exist only for superseded pre-release behavior, compatibility, discarded wire
+  shapes, or obsolete implementation structure. Do not retain them as history.
+- Consolidate repetitive tests when one data-driven or end-to-end proof preserves every distinct
+  invariant and failure boundary. Keep separate tests where their failure would diagnose materially
+  different correctness, privacy, integrity, authorization, browser, storage, or lifecycle risks.
+
 Every new or revised implementation plan must include both heavyweight local Coordination Server
 proofs in its final verification matrix:
 
