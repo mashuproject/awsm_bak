@@ -10,13 +10,10 @@ class AccountPasswordsController < ApplicationController
       return render :edit, status: :unprocessable_content
     end
 
-    Account.transaction do
-      account.update!(
-        password: attributes.fetch(:password),
-        password_confirmation: attributes.fetch(:password_confirmation)
-      )
-      account.revoke_all_sessions!
-    end
+    account.replace_password!(
+      password: attributes.fetch(:password),
+      password_confirmation: attributes.fetch(:password_confirmation)
+    )
     Current.browser_session = nil
     clear_browser_session_cookies
     redirect_to new_session_path, notice: "Password changed. Log in again on every device."

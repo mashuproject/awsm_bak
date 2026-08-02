@@ -1,10 +1,31 @@
 class CreateCoordinationSchema < ActiveRecord::Migration[8.1]
+  REPLICA_CAPABILITIES = %w[
+    awsm.replica.hint.read
+    awsm.replica.hint.write
+    awsm.replica.inventory.read
+    awsm.replica.item.read
+    awsm.replica.item.write
+    awsm.replica.manage
+  ].freeze
+
   def change
     enable_extension "pgcrypto"
 
+    create_accounts
+    create_channel_identity
+    create_sessions
+    create_hosted_replicas
+    create_replica_access_grants
+    create_opaque_storage
+    create_idempotency_records
+    create_lifecycle_jobs
+  end
+
+  private
+
+  def create_accounts
     create_table :accounts, id: :uuid do |table|
       table.string :username, null: false
-      table.string :password_digest, null: false
       table.string :state, null: false, default: "Active"
       table.datetime :last_activity_at, null: false
       table.timestamps
@@ -19,75 +40,63 @@ class CreateCoordinationSchema < ActiveRecord::Migration[8.1]
       name: "accounts_username_shape"
     add_check_constraint :accounts, "state IN ('Active', 'Deleting')",
       name: "accounts_state"
+  end
 
+  def create_channel_identity
+    create_table :channel_principals, id: :uuid do |table|
+      table.string :principal_type, null: false
+      table.references :account, null: false, type: :uuid, index: false,
+        foreign_key: { on_delete: :cascade }
+      table.string :state, null: false, default: "Active"
+      table.timestamps
+    end
+    add_index :channel_principals, :account_id, unique: true
+    add_check_constraint :channel_principals, "principal_type = 'Account'",
+      name: "channel_principals_type"
+    add_check_constraint :channel_principals, "state IN ('Active', 'Revoked')",
+      name: "channel_principals_state"
+
+    create_table :channel_authenticators, id: :uuid do |table|
+      table.references :channel_principal, null: false, type: :uuid,
+        foreign_key: { on_delete: :cascade }
+      table.string :authenticator_type, null: false
+      table.string :password_digest, null: false
+      table.datetime :last_used_at
+      table.datetime :revoked_at
+      table.timestamps
+    end
+    add_index :channel_authenticators, :channel_principal_id, unique: true,
+      where: "authenticator_type = 'Password' AND revoked_at IS NULL",
+      name: "index_one_active_password_authenticator"
+    add_check_constraint :channel_authenticators, "authenticator_type = 'Password'",
+      name: "channel_authenticators_type"
+    add_check_constraint :channel_authenticators, "char_length(password_digest) > 0",
+      name: "channel_authenticators_password_digest"
+  end
+
+  def create_sessions
     create_table :browser_sessions, id: :uuid do |table|
-      table.references :account, null: false, type: :uuid, foreign_key: true
+      table.references :channel_principal, null: false, type: :uuid,
+        foreign_key: { on_delete: :cascade }
       table.string :client_family, null: false
       table.datetime :last_activity_at, null: false
       table.timestamps
     end
-    add_index :browser_sessions, [ :account_id, :last_activity_at ]
+    add_index :browser_sessions, [ :channel_principal_id, :last_activity_at ]
     add_check_constraint :browser_sessions, "client_family IN ('Chrome', 'Firefox', 'Other')",
       name: "browser_sessions_client_family"
 
-    create_table :account_deletion_jobs, id: :uuid do |table|
-      table.references :account, type: :uuid, foreign_key: { on_delete: :nullify }
-      table.string :reason, null: false
-      table.string :state, null: false
-      table.string :stage, null: false
-      table.bigint :total_bytes, null: false, default: 0
-      table.bigint :processed_bytes, null: false, default: 0
-      table.integer :retry_count, null: false, default: 0
-      table.string :error_outcome
-      table.binary :receipt_digest
-      table.datetime :started_at
-      table.datetime :completed_at
-      table.datetime :receipt_expires_at
-      table.timestamps
-    end
-    add_index :account_deletion_jobs, :account_id, unique: true,
-      where: "account_id IS NOT NULL AND state <> 'Succeeded'",
-      name: "index_one_active_account_deletion"
-    add_check_constraint :account_deletion_jobs, "reason IN ('Manual', 'Inactivity')",
-      name: "account_deletion_jobs_reason"
-    add_check_constraint :account_deletion_jobs,
-      "state IN ('Pending', 'Running', 'FailedRetryable', 'Succeeded')",
-      name: "account_deletion_jobs_state"
-    add_check_constraint :account_deletion_jobs,
-      "stage IN ('Freeze', 'DeleteOpaqueBytes', 'DeleteRelationalState', 'Complete')",
-      name: "account_deletion_jobs_stage"
-    add_check_constraint :account_deletion_jobs,
-      "total_bytes >= 0 AND processed_bytes >= 0 AND processed_bytes <= total_bytes " \
-      "AND retry_count >= 0",
-      name: "account_deletion_jobs_counters"
-    add_check_constraint :account_deletion_jobs,
-      "receipt_digest IS NULL OR octet_length(receipt_digest) = 32",
-      name: "account_deletion_jobs_receipt_digest"
-    add_check_constraint :account_deletion_jobs,
-      "reason = 'Manual' OR receipt_digest IS NULL",
-      name: "account_deletion_jobs_inactivity_receipt"
-    add_check_constraint :account_deletion_jobs,
-      "state <> 'Succeeded' OR " \
-      "(stage = 'Complete' AND completed_at IS NOT NULL AND account_id IS NULL)",
-      name: "account_deletion_jobs_completion"
-
     create_table :api_sessions, id: :uuid do |table|
-      table.references :account, null: false, type: :uuid, foreign_key: true
-      table.uuid :vault_device_id
-      table.string :scope, null: false
+      table.references :channel_principal, null: false, type: :uuid,
+        foreign_key: { on_delete: :cascade }
       table.datetime :confirmed_at, null: false
       table.datetime :revoked_at
       table.timestamps
     end
-    add_check_constraint :api_sessions,
-      "(scope = 'Account' AND vault_device_id IS NULL) OR " \
-      "(scope = 'VaultDevice' AND vault_device_id IS NOT NULL)",
-      name: "api_sessions_scope_binding"
-    add_check_constraint :api_sessions, "scope IN ('Account', 'VaultDevice')",
-      name: "api_sessions_scope"
 
     create_table :session_credentials, id: :uuid do |table|
-      table.references :api_session, null: false, type: :uuid, foreign_key: true
+      table.references :api_session, null: false, type: :uuid,
+        foreign_key: { on_delete: :cascade }
       table.string :kind, null: false
       table.binary :secret_digest, null: false
       table.datetime :expires_at, null: false
@@ -99,379 +108,141 @@ class CreateCoordinationSchema < ActiveRecord::Migration[8.1]
     add_check_constraint :session_credentials, "kind IN ('Access', 'Refresh')",
       name: "session_credentials_kind"
     add_check_constraint :session_credentials, "octet_length(secret_digest) = 32",
-      name: "session_credentials_digest"
+      name: "session_credentials_secret_digest"
+  end
 
-    create_table :vault_replicas, id: :uuid do |table|
-      table.references :account, null: false, type: :uuid, foreign_key: true
-      table.uuid :vault_id, null: false
-      table.string :state, null: false
-      table.uuid :active_generation_id
-      table.uuid :active_key_epoch_id
-      table.uuid :active_recovery_generation_id
-      table.bigint :active_generation_number
-      table.bigint :head_cursor, null: false, default: 0
-      table.datetime :provisional_expires_at
-      table.datetime :replaced_at
+  def create_hosted_replicas
+    create_table :hosted_replicas, id: :uuid do |table|
+      table.string :state, null: false, default: "Active"
+      table.string :management_label
+      table.bigint :quota_bytes
+      table.bigint :stored_bytes, null: false, default: 0
+      table.bigint :inventory_cursor, null: false, default: 0
+      table.bigint :hint_cursor, null: false, default: 0
       table.timestamps
     end
-    add_index :vault_replicas, :vault_id, unique: true
-    add_index :vault_replicas, :account_id, unique: true, where: "state = 'Active'",
-      name: "index_one_active_vault_per_account"
-    add_index :vault_replicas, :account_id, unique: true, where: "state = 'Provisional'",
-      name: "index_one_provisional_vault_per_account"
-    add_check_constraint :vault_replicas, "state IN ('Provisional', 'Active', 'Replaced')",
-      name: "vault_replicas_state"
-    add_check_constraint :vault_replicas, "head_cursor >= 0", name: "vault_replicas_head_cursor"
-    add_check_constraint :vault_replicas,
-      "active_generation_number IS NULL OR active_generation_number >= 0",
-      name: "vault_replicas_generation_number"
+    add_check_constraint :hosted_replicas, "state IN ('Active', 'Reaping')",
+      name: "hosted_replicas_state"
+    add_check_constraint :hosted_replicas,
+      "management_label IS NULL OR char_length(management_label) BETWEEN 1 AND 80",
+      name: "hosted_replicas_management_label"
+    add_check_constraint :hosted_replicas,
+      "quota_bytes IS NULL OR quota_bytes > 0",
+      name: "hosted_replicas_quota"
+    add_check_constraint :hosted_replicas,
+      "stored_bytes >= 0 AND (quota_bytes IS NULL OR stored_bytes <= quota_bytes)",
+      name: "hosted_replicas_stored_bytes"
+    add_check_constraint :hosted_replicas,
+      "inventory_cursor >= 0 AND hint_cursor >= 0",
+      name: "hosted_replicas_cursors"
+  end
 
-    create_table :recovery_generations, id: :uuid do |table|
-      table.references :vault_replica, null: false, type: :uuid, foreign_key: true
-      table.bigint :ordinal, null: false
-      table.string :derivation_algorithm, null: false
-      table.string :wrapping_algorithm, null: false
-      table.string :administrator_signing_algorithm, null: false
-      table.binary :administrator_public_key, null: false
-      table.binary :kit_nonce, null: false
-      table.binary :kit_ciphertext
-      table.bigint :kit_ciphertext_length, null: false
-      table.binary :kit_ciphertext_sha256, null: false
-      table.datetime :activated_at
-      table.datetime :retired_at
-      table.timestamps
-    end
-    add_index :recovery_generations, [ :vault_replica_id, :ordinal ], unique: true
-    add_index :recovery_generations, :vault_replica_id, unique: true,
-      where: "activated_at IS NOT NULL AND retired_at IS NULL",
-      name: "index_one_active_recovery_generation_per_vault"
-    add_check_constraint :recovery_generations, "ordinal >= 0",
-      name: "recovery_generations_ordinal"
-    add_check_constraint :recovery_generations,
-      "derivation_algorithm = 'kdf:hkdf-sha256:recovery-entropy:v1'",
-      name: "recovery_generations_derivation"
-    add_check_constraint :recovery_generations,
-      "wrapping_algorithm = 'wrap:xchacha20poly1305:recovery-kit:v1'",
-      name: "recovery_generations_wrapping"
-    add_check_constraint :recovery_generations,
-      "administrator_signing_algorithm = 'sign:ed25519:recovery-administrator:v1'",
-      name: "recovery_generations_signing"
-    add_check_constraint :recovery_generations, "octet_length(administrator_public_key) = 32",
-      name: "recovery_generations_public_key"
-    add_check_constraint :recovery_generations, "octet_length(kit_nonce) = 24",
-      name: "recovery_generations_nonce"
-    add_check_constraint :recovery_generations,
-      "kit_ciphertext IS NULL OR octet_length(kit_ciphertext) = kit_ciphertext_length",
-      name: "recovery_generations_ciphertext"
-    add_check_constraint :recovery_generations, "kit_ciphertext_length >= 16",
-      name: "recovery_generations_ciphertext_length"
-    add_check_constraint :recovery_generations, "octet_length(kit_ciphertext_sha256) = 32",
-      name: "recovery_generations_ciphertext_sha256"
-    add_check_constraint :recovery_generations,
-      "(retired_at IS NULL AND kit_ciphertext IS NOT NULL) OR retired_at IS NOT NULL",
-      name: "recovery_generations_retired_ciphertext"
-
-    create_table :vault_key_epochs, id: :uuid do |table|
-      table.references :vault_replica, null: false, type: :uuid, foreign_key: true
-      table.references :recovery_generation, null: false, type: :uuid, foreign_key: true
-      table.bigint :ordinal, null: false
-      table.datetime :activated_at, null: false
-      table.datetime :retired_at
-      table.timestamps
-    end
-    add_index :vault_key_epochs, [ :vault_replica_id, :ordinal ], unique: true
-    add_index :vault_key_epochs, :vault_replica_id, unique: true,
-      where: "retired_at IS NULL", name: "index_one_active_key_epoch_per_vault"
-    add_check_constraint :vault_key_epochs, "ordinal >= 0", name: "vault_key_epochs_ordinal"
-
-    create_table :vault_devices, id: :uuid, primary_key: :device_id do |table|
-      table.references :vault_replica, null: false, type: :uuid, foreign_key: true
-      table.references :recovery_generation, null: false, type: :uuid, foreign_key: true
-      table.uuid :certificate_id, null: false
-      table.string :display_name, null: false
-      table.string :client_kind, null: false
-      table.string :signing_algorithm, null: false
-      table.binary :signing_public_key, null: false
-      table.string :wrapping_algorithm, null: false
-      table.binary :wrapping_public_key, null: false
-      table.binary :certificate_cbor, null: false
-      table.binary :certificate_signature, null: false
-      table.datetime :enrolled_at, null: false
+  def create_replica_access_grants
+    create_table :replica_access_grants, id: :uuid do |table|
+      table.references :hosted_replica, null: false, type: :uuid,
+        foreign_key: { on_delete: :cascade }
+      table.references :channel_principal, null: false, type: :uuid,
+        foreign_key: { on_delete: :cascade }
+      table.string :capabilities, null: false, array: true, default: []
+      table.string :grantable_capabilities, null: false, array: true, default: []
+      table.uuid :created_by_grant_id
       table.datetime :revoked_at
-      table.string :revocation_reason
       table.timestamps
     end
-    add_index :vault_devices, :certificate_id, unique: true
-    add_index :vault_devices, [ :vault_replica_id, :device_id ], unique: true
-    add_check_constraint :vault_devices,
-      "client_kind IN ('ChromeExtension', 'FirefoxExtension')",
-      name: "vault_devices_client_kind"
-    add_check_constraint :vault_devices, "signing_algorithm = 'sign:ed25519:device:v1'",
-      name: "vault_devices_signing_algorithm"
-    add_check_constraint :vault_devices, "octet_length(signing_public_key) = 32",
-      name: "vault_devices_signing_public_key"
-    add_check_constraint :vault_devices,
-      "wrapping_algorithm = 'wrap:x25519-hkdf-sha256-xchacha20poly1305:device:v1'",
-      name: "vault_devices_wrapping_algorithm"
-    add_check_constraint :vault_devices, "octet_length(wrapping_public_key) = 32",
-      name: "vault_devices_wrapping_public_key"
-    add_check_constraint :vault_devices, "octet_length(certificate_signature) = 64",
-      name: "vault_devices_certificate_signature"
-    add_check_constraint :vault_devices,
-      "(revoked_at IS NULL AND revocation_reason IS NULL) OR " \
-      "(revoked_at IS NOT NULL AND revocation_reason IN ('Removed', 'FutureProtection', 'VaultReencrypted'))",
-      name: "vault_devices_revocation"
+    add_foreign_key :replica_access_grants, :replica_access_grants,
+      column: :created_by_grant_id, on_delete: :restrict
+    add_index :replica_access_grants, [ :hosted_replica_id, :channel_principal_id ], unique: true,
+      where: "revoked_at IS NULL", name: "index_one_active_grant_per_principal_and_replica"
+    allowed = "ARRAY[#{REPLICA_CAPABILITIES.map { |value| connection.quote(value) }.join(", ")}]::varchar[]"
+    add_check_constraint :replica_access_grants,
+      "cardinality(capabilities) > 0 AND capabilities <@ #{allowed}",
+      name: "replica_access_grants_capabilities"
+    add_check_constraint :replica_access_grants,
+      "grantable_capabilities <@ capabilities",
+      name: "replica_access_grants_grantable_capabilities"
+  end
 
-    create_table :device_key_envelopes, id: :uuid do |table|
-      table.references :vault_device, null: false, type: :uuid, foreign_key: {
-        to_table: :vault_devices, primary_key: :device_id
-      }
-      table.references :vault_key_epoch, null: false, type: :uuid,
-        foreign_key: { to_table: :vault_key_epochs }
-      table.references :recovery_generation, null: false, type: :uuid, foreign_key: true
-      table.string :algorithm, null: false
-      table.binary :ephemeral_public_key, null: false
-      table.binary :nonce, null: false
-      table.binary :ciphertext, null: false
-      table.binary :ciphertext_sha256, null: false
-      table.binary :signed_metadata, null: false
-      table.binary :administrator_signature, null: false
-      table.timestamps
-    end
-    add_index :device_key_envelopes, [ :vault_device_id, :vault_key_epoch_id ], unique: true,
-      name: "index_device_envelopes_on_device_and_epoch"
-    add_check_constraint :device_key_envelopes,
-      "algorithm = 'wrap:x25519-hkdf-sha256-xchacha20poly1305:device:v1'",
-      name: "device_key_envelopes_algorithm"
-    add_check_constraint :device_key_envelopes, "octet_length(ephemeral_public_key) = 32",
-      name: "device_key_envelopes_ephemeral_public_key"
-    add_check_constraint :device_key_envelopes, "octet_length(nonce) = 24",
-      name: "device_key_envelopes_nonce"
-    add_check_constraint :device_key_envelopes, "octet_length(ciphertext) = 48",
-      name: "device_key_envelopes_ciphertext"
-    add_check_constraint :device_key_envelopes, "octet_length(ciphertext_sha256) = 32",
-      name: "device_key_envelopes_ciphertext_sha256"
-    add_check_constraint :device_key_envelopes, "octet_length(administrator_signature) = 64",
-      name: "device_key_envelopes_administrator_signature"
-
-    add_foreign_key :api_sessions, :vault_devices, column: :vault_device_id,
-      primary_key: :device_id
-
-    create_table :opaque_records, id: :uuid do |table|
-      table.references :vault_replica, null: false, type: :uuid, foreign_key: true
-      table.references :vault_key_epoch, null: false, type: :uuid,
-        foreign_key: { to_table: :vault_key_epochs }
-      table.uuid :object_id, null: false
-      table.string :object_type, null: false
+  def create_opaque_storage
+    create_table :opaque_storage_items, id: :uuid do |table|
+      table.references :hosted_replica, null: false, type: :uuid,
+        foreign_key: { on_delete: :cascade }
+      table.references :admitted_by_grant, type: :uuid,
+        foreign_key: { to_table: :replica_access_grants, on_delete: :nullify }
+      table.binary :storage_item_id, null: false
+      table.string :storage_class, null: false
       table.bigint :byte_length, null: false
-      table.binary :sha256, null: false
-      table.string :storage_key
-      table.string :state, null: false
-      table.uuid :target_generation_id, null: false
-      table.datetime :event_ordering_timestamp
-      table.datetime :durable_at
-      table.datetime :committed_at
-      table.datetime :purged_at
+      table.binary :ciphertext_digest, null: false
+      table.string :storage_key, null: false
+      table.bigint :inventory_cursor, null: false
       table.timestamps
     end
-    add_index :opaque_records, :object_id, unique: true
-    add_index :opaque_records, [ :vault_replica_id, :state ]
-    add_index :opaque_records, [ :vault_replica_id, :target_generation_id ]
-    add_check_constraint :opaque_records,
-      "object_type IN ('Event', 'BundleDescriptor', 'Artifact', 'VaultGeneration')",
-      name: "opaque_records_type"
-    add_check_constraint :opaque_records,
-      "state IN ('Uploading', 'DurableUncommitted', 'Committed', 'Purged')",
-      name: "opaque_records_state"
-    add_check_constraint :opaque_records, "byte_length > 0", name: "opaque_records_byte_length"
-    add_check_constraint :opaque_records, "octet_length(sha256) = 32", name: "opaque_records_sha256"
-    add_check_constraint :opaque_records,
-      "(object_type = 'Event' AND event_ordering_timestamp IS NOT NULL) OR " \
-      "(object_type <> 'Event' AND event_ordering_timestamp IS NULL)",
-      name: "opaque_records_event_metadata"
+    add_index :opaque_storage_items, [ :hosted_replica_id, :storage_item_id ], unique: true,
+      name: "index_opaque_items_on_replica_and_item"
+    add_index :opaque_storage_items, [ :hosted_replica_id, :inventory_cursor ], unique: true,
+      name: "index_opaque_items_on_replica_and_cursor"
+    add_index :opaque_storage_items, :storage_key, unique: true
+    add_check_constraint :opaque_storage_items, "octet_length(storage_item_id) = 32",
+      name: "opaque_storage_items_identity"
+    add_check_constraint :opaque_storage_items, "storage_class IN ('Compact', 'Streamable')",
+      name: "opaque_storage_items_class"
+    add_check_constraint :opaque_storage_items, "byte_length > 0 AND inventory_cursor > 0",
+      name: "opaque_storage_items_bounds"
+    add_check_constraint :opaque_storage_items, "octet_length(ciphertext_digest) = 32",
+      name: "opaque_storage_items_digest"
 
-    create_table :record_dependencies, id: :uuid do |table|
-      table.references :event_record, null: false, type: :uuid,
-        foreign_key: { to_table: :opaque_records }
-      table.references :dependency_record, null: false, type: :uuid,
-        foreign_key: { to_table: :opaque_records }
-      table.integer :ordinal, null: false
-      table.timestamps
-    end
-    add_index :record_dependencies, [ :event_record_id, :ordinal ], unique: true
-    add_index :record_dependencies, [ :event_record_id, :dependency_record_id ], unique: true,
-      name: "index_record_dependencies_on_event_and_dependency"
-    add_check_constraint :record_dependencies, "ordinal >= 0", name: "record_dependencies_ordinal"
-
-    create_table :uploads, id: :uuid do |table|
-      table.references :opaque_record, null: false, type: :uuid, foreign_key: true,
-        index: { unique: true }
-      table.string :state, null: false
-      table.bigint :part_size, null: false
-      table.integer :part_count, null: false
+    create_table :opaque_uploads, id: :uuid do |table|
+      table.references :hosted_replica, null: false, type: :uuid,
+        foreign_key: { on_delete: :cascade }
+      table.references :replica_access_grant, null: false, type: :uuid,
+        foreign_key: { on_delete: :cascade }
+      table.binary :storage_item_id, null: false
+      table.bigint :byte_length, null: false
+      table.binary :ciphertext_digest, null: false
+      table.bigint :accepted_offset, null: false, default: 0
+      table.string :storage_key, null: false
+      table.string :state, null: false, default: "Preparing"
       table.datetime :expires_at, null: false
-      table.bigint :observed_byte_length
-      table.binary :observed_sha256
-      table.datetime :last_activity_at, null: false
-      table.datetime :completed_at
       table.timestamps
     end
-    add_check_constraint :uploads,
-      "state IN ('Open', 'Assembling', 'Completed', 'Expired')",
-      name: "uploads_state"
-    add_check_constraint :uploads, "part_size > 0", name: "uploads_part_size"
-    add_check_constraint :uploads, "part_count > 0", name: "uploads_part_count"
-    add_check_constraint :uploads,
-      "observed_sha256 IS NULL OR octet_length(observed_sha256) = 32",
-      name: "uploads_observed_sha256"
+    add_index :opaque_uploads, [ :hosted_replica_id, :storage_item_id ], unique: true,
+      where: "state = 'Preparing'", name: "index_one_preparing_upload_per_item"
+    add_index :opaque_uploads, :storage_key, unique: true
+    add_check_constraint :opaque_uploads, "octet_length(storage_item_id) = 32",
+      name: "opaque_uploads_identity"
+    add_check_constraint :opaque_uploads, "octet_length(ciphertext_digest) = 32",
+      name: "opaque_uploads_digest"
+    add_check_constraint :opaque_uploads,
+      "byte_length > 0 AND accepted_offset >= 0 AND accepted_offset <= byte_length",
+      name: "opaque_uploads_bounds"
+    add_check_constraint :opaque_uploads, "state IN ('Preparing', 'Promoting')",
+      name: "opaque_uploads_state"
 
-    create_table :upload_parts, id: :uuid do |table|
-      table.references :upload, null: false, type: :uuid, foreign_key: true
+    create_table :opaque_upload_parts, id: :uuid do |table|
+      table.references :opaque_upload, null: false, type: :uuid,
+        foreign_key: { on_delete: :cascade }
       table.integer :part_number, null: false
+      table.bigint :start_offset, null: false
       table.bigint :byte_length, null: false
       table.binary :sha256, null: false
-      table.string :storage_key
-      table.datetime :received_at, null: false
+      table.string :storage_key, null: false
       table.timestamps
     end
-    add_index :upload_parts, [ :upload_id, :part_number ], unique: true
-    add_check_constraint :upload_parts, "part_number >= 0", name: "upload_parts_number"
-    add_check_constraint :upload_parts, "byte_length > 0", name: "upload_parts_byte_length"
-    add_check_constraint :upload_parts, "octet_length(sha256) = 32", name: "upload_parts_sha256"
+    add_index :opaque_upload_parts, [ :opaque_upload_id, :part_number ], unique: true
+    add_index :opaque_upload_parts, [ :opaque_upload_id, :start_offset ], unique: true
+    add_index :opaque_upload_parts, :storage_key, unique: true
+    add_check_constraint :opaque_upload_parts,
+      "part_number >= 0 AND start_offset >= 0 AND byte_length > 0",
+      name: "opaque_upload_parts_bounds"
+    add_check_constraint :opaque_upload_parts, "octet_length(sha256) = 32",
+      name: "opaque_upload_parts_digest"
+  end
 
-    create_table :vault_generations, id: :uuid do |table|
-      table.references :vault_replica, null: false, type: :uuid, foreign_key: true
-      table.uuid :generation_id, null: false
-      table.bigint :generation_number, null: false
-      table.references :predecessor_generation, type: :uuid,
-        foreign_key: { to_table: :vault_generations }
-      table.references :generation_record, type: :uuid,
-        foreign_key: { to_table: :opaque_records }
-      table.string :state, null: false
-      table.bigint :baseline_cursor
-      table.integer :sealed_page_count
-      table.bigint :sealed_record_count
-      table.binary :reachability_sha256
-      table.datetime :activated_at
-      table.datetime :superseded_at
-      table.datetime :purge_after
-      table.datetime :purge_started_at
-      table.datetime :purged_at
-      table.timestamps
-    end
-    add_index :vault_generations, :generation_id, unique: true
-    add_index :vault_generations, [ :vault_replica_id, :generation_number ], unique: true,
-      name: "index_vault_generations_on_vault_and_number"
-    add_index :vault_generations, :vault_replica_id, unique: true,
-      where: "state = 'Active'", name: "index_one_active_generation_per_vault"
-    add_index :vault_generations, :vault_replica_id, unique: true,
-      where: "state = 'Candidate'", name: "index_one_candidate_generation_per_vault"
-    add_check_constraint :vault_generations,
-      "state IN ('Candidate', 'Active', 'Superseded', 'Purging', 'Purged')",
-      name: "vault_generations_state"
-    add_check_constraint :vault_generations, "generation_number >= 0", name: "vault_generations_number"
-    add_check_constraint :vault_generations,
-      "reachability_sha256 IS NULL OR octet_length(reachability_sha256) = 32",
-      name: "vault_generations_reachability_sha256"
-
-    add_foreign_key :vault_replicas, :vault_generations, column: :active_generation_id
-    add_foreign_key :opaque_records, :vault_generations, column: :target_generation_id,
-      primary_key: :generation_id
-
-    create_table :generation_reachability_pages, id: :uuid do |table|
-      table.references :vault_generation, null: false, type: :uuid, foreign_key: true
-      table.integer :page_number, null: false
-      table.integer :entry_count, null: false
-      table.binary :sha256, null: false
-      table.datetime :accepted_at, null: false
-      table.timestamps
-    end
-    add_index :generation_reachability_pages, [ :vault_generation_id, :page_number ], unique: true,
-      name: "index_reachability_pages_on_generation_and_number"
-    add_check_constraint :generation_reachability_pages, "page_number >= 0",
-      name: "generation_reachability_pages_number"
-    add_check_constraint :generation_reachability_pages, "entry_count >= 0",
-      name: "generation_reachability_pages_count"
-    add_check_constraint :generation_reachability_pages, "octet_length(sha256) = 32",
-      name: "generation_reachability_pages_sha256"
-
-    create_table :generation_reachability_entries, id: :uuid do |table|
-      table.references :vault_generation, null: false, type: :uuid, foreign_key: true
-      table.references :generation_reachability_page, null: false, type: :uuid, foreign_key: true
-      table.references :opaque_record, null: false, type: :uuid, foreign_key: true
-      table.integer :ordinal, null: false
-      table.timestamps
-    end
-    add_index :generation_reachability_entries,
-      [ :generation_reachability_page_id, :ordinal ], unique: true,
-      name: "index_reachability_entries_on_page_and_ordinal"
-    add_index :generation_reachability_entries,
-      [ :vault_generation_id, :opaque_record_id ], unique: true,
-      name: "index_reachability_entries_on_generation_and_record"
-    add_check_constraint :generation_reachability_entries, "ordinal >= 0",
-      name: "generation_reachability_entries_ordinal"
-
-    create_table :generation_memberships, id: :uuid do |table|
-      table.references :vault_generation, null: false, type: :uuid, foreign_key: true
-      table.references :opaque_record, null: false, type: :uuid, foreign_key: true
-      table.timestamps
-    end
-    add_index :generation_memberships, [ :vault_generation_id, :opaque_record_id ], unique: true,
-      name: "index_generation_memberships_on_generation_and_record"
-
-    create_table :event_commits, id: :uuid do |table|
-      table.references :vault_replica, null: false, type: :uuid, foreign_key: true
-      table.references :vault_generation, null: false, type: :uuid, foreign_key: true
-      table.references :event_record, null: false, type: :uuid,
-        foreign_key: { to_table: :opaque_records }, index: { unique: true }
-      table.bigint :cursor, null: false
-      table.binary :request_sha256, null: false
-      table.datetime :committed_at, null: false
-      table.timestamps
-    end
-    add_index :event_commits, [ :vault_replica_id, :cursor ], unique: true
-    add_check_constraint :event_commits, "cursor > 0", name: "event_commits_cursor"
-    add_check_constraint :event_commits, "octet_length(request_sha256) = 32",
-      name: "event_commits_request_sha256"
-
-    create_table :delivery_changes, id: :uuid do |table|
-      table.references :vault_replica, null: false, type: :uuid, foreign_key: true
-      table.references :vault_generation, null: false, type: :uuid, foreign_key: true
-      table.references :event_commit, type: :uuid, foreign_key: true
-      table.bigint :cursor, null: false
-      table.string :kind, null: false
-      table.datetime :accepted_at, null: false
-      table.timestamps
-    end
-    add_index :delivery_changes, [ :vault_replica_id, :cursor ], unique: true
-    add_check_constraint :delivery_changes,
-      "kind IN ('EventCommitted', 'GenerationActivated')",
-      name: "delivery_changes_kind"
-    add_check_constraint :delivery_changes, "cursor > 0", name: "delivery_changes_cursor"
-
-    create_table :transfer_tickets, id: :uuid do |table|
-      table.references :account, null: false, type: :uuid, foreign_key: true
-      table.references :vault_replica, null: false, type: :uuid, foreign_key: true
-      table.references :upload, type: :uuid, foreign_key: true
-      table.references :opaque_record, type: :uuid, foreign_key: true
-      table.references :vault_generation, type: :uuid, foreign_key: true
-      table.binary :token_sha256, null: false
-      table.string :purpose, null: false
-      table.datetime :expires_at, null: false
-      table.datetime :revoked_at
-      table.timestamps
-    end
-    add_index :transfer_tickets, :token_sha256, unique: true
-    add_check_constraint :transfer_tickets,
-      "purpose IN ('UploadPart', 'ActiveDownload', 'RecoveryDownload')",
-      name: "transfer_tickets_purpose"
-    add_check_constraint :transfer_tickets, "octet_length(token_sha256) = 32",
-      name: "transfer_tickets_token_sha256"
-
+  def create_idempotency_records
     create_table :idempotency_records, id: :uuid do |table|
-      table.references :account, null: false, type: :uuid, foreign_key: true
-      table.uuid :idempotency_key, null: false
+      table.references :channel_principal, null: false, type: :uuid,
+        foreign_key: { on_delete: :cascade }
       table.string :operation, null: false
+      table.uuid :idempotency_key, null: false
       table.string :http_method, null: false
       table.string :canonical_path, null: false
       table.binary :request_sha256, null: false
@@ -480,50 +251,77 @@ class CreateCoordinationSchema < ActiveRecord::Migration[8.1]
       table.uuid :resource_id
       table.timestamps
     end
-    add_index :idempotency_records, [ :account_id, :operation, :idempotency_key ], unique: true,
-      name: "index_idempotency_records_on_account_operation_key"
-    add_check_constraint :idempotency_records,
-      "status IN ('InProgress', 'Succeeded')", name: "idempotency_records_status"
+    add_index :idempotency_records,
+      [ :channel_principal_id, :operation, :idempotency_key ], unique: true,
+      name: "index_idempotency_on_principal_operation_key"
     add_check_constraint :idempotency_records, "octet_length(request_sha256) = 32",
       name: "idempotency_records_request_sha256"
+    add_check_constraint :idempotency_records, "status IN ('InProgress', 'Succeeded')",
+      name: "idempotency_records_status"
+  end
 
-    create_table :purge_jobs, id: :uuid do |table|
-      table.references :vault_replica, null: false, type: :uuid, foreign_key: true
+  def create_lifecycle_jobs
+    create_table :account_deletion_jobs, id: :uuid do |table|
+      table.references :account, type: :uuid, foreign_key: { on_delete: :nullify }
+      table.string :reason, null: false
       table.string :state, null: false
       table.string :stage, null: false
-      table.string :reason, null: false
-      table.bigint :generation_count, null: false, default: 0
-      table.bigint :record_count, null: false, default: 0
-      table.bigint :processed_bytes, null: false, default: 0
       table.bigint :total_bytes, null: false, default: 0
+      table.bigint :processed_bytes, null: false, default: 0
       table.integer :retry_count, null: false, default: 0
-      table.string :error_outcome
-      table.datetime :confirmed_at
+      table.binary :receipt_digest
+      table.datetime :receipt_expires_at
       table.datetime :started_at
       table.datetime :completed_at
+      table.string :error_outcome
       table.timestamps
     end
-    add_index :purge_jobs, :vault_replica_id, unique: true,
-      where: "state IN ('Pending', 'Running', 'FailedRetryable')",
-      name: "index_one_active_purge_per_vault"
-    add_check_constraint :purge_jobs,
-      "state IN ('Pending', 'Running', 'Succeeded', 'FailedRetryable')",
-      name: "purge_jobs_state"
-    add_check_constraint :purge_jobs,
-      "stage IN ('Snapshot', 'Detach', 'Analyze', 'DeleteBytes', 'Tombstone', 'Complete')",
-      name: "purge_jobs_stage"
-    add_check_constraint :purge_jobs,
-      "reason IN ('Automatic', 'Manual', 'VaultReplacement')", name: "purge_jobs_reason"
-    add_check_constraint :purge_jobs,
-      "generation_count >= 0 AND record_count >= 0 AND processed_bytes >= 0 AND " \
-      "total_bytes >= 0 AND retry_count >= 0", name: "purge_jobs_counters"
+    add_index :account_deletion_jobs, :account_id, unique: true,
+      where: "account_id IS NOT NULL AND state <> 'Succeeded'",
+      name: "index_one_active_account_deletion"
+    add_check_constraint :account_deletion_jobs,
+      "reason IN ('Manual', 'Inactivity')", name: "account_deletion_jobs_reason"
+    add_check_constraint :account_deletion_jobs,
+      "state IN ('Pending', 'Running', 'FailedRetryable', 'Succeeded')",
+      name: "account_deletion_jobs_state"
+    add_check_constraint :account_deletion_jobs,
+      "stage IN ('Freeze', 'RevokeAccess', 'ReapReplicas', 'DeleteIdentity', 'Complete')",
+      name: "account_deletion_jobs_stage"
+    add_check_constraint :account_deletion_jobs,
+      "total_bytes >= 0 AND processed_bytes >= 0 AND processed_bytes <= total_bytes AND retry_count >= 0",
+      name: "account_deletion_jobs_counters"
+    add_check_constraint :account_deletion_jobs,
+      "receipt_digest IS NULL OR octet_length(receipt_digest) = 32",
+      name: "account_deletion_jobs_receipt_digest"
 
-    create_table :purge_job_generations, id: :uuid do |table|
-      table.references :purge_job, null: false, type: :uuid, foreign_key: true
-      table.references :vault_generation, null: false, type: :uuid, foreign_key: true
+    create_table :hosted_replica_reaping_jobs, id: :uuid do |table|
+      table.references :hosted_replica, type: :uuid, foreign_key: { on_delete: :nullify }
+      table.references :account_deletion_job, type: :uuid, foreign_key: { on_delete: :cascade }
+      table.string :reason, null: false
+      table.string :state, null: false
+      table.string :stage, null: false
+      table.bigint :total_bytes, null: false, default: 0
+      table.bigint :processed_bytes, null: false, default: 0
+      table.integer :retry_count, null: false, default: 0
+      table.datetime :started_at
+      table.datetime :completed_at
+      table.string :error_outcome
       table.timestamps
     end
-    add_index :purge_job_generations, [ :purge_job_id, :vault_generation_id ], unique: true,
-      name: "index_purge_job_generations_on_job_and_generation"
+    add_index :hosted_replica_reaping_jobs, :hosted_replica_id, unique: true,
+      where: "hosted_replica_id IS NOT NULL AND state <> 'Succeeded'",
+      name: "index_one_active_hosted_replica_reaping"
+    add_check_constraint :hosted_replica_reaping_jobs,
+      "reason IN ('Manual', 'NoActiveGrants', 'AccountDeletion')",
+      name: "hosted_replica_reaping_jobs_reason"
+    add_check_constraint :hosted_replica_reaping_jobs,
+      "state IN ('Pending', 'Running', 'FailedRetryable', 'Succeeded')",
+      name: "hosted_replica_reaping_jobs_state"
+    add_check_constraint :hosted_replica_reaping_jobs,
+      "stage IN ('Freeze', 'DeleteOpaqueBytes', 'DeletePolicy', 'Complete')",
+      name: "hosted_replica_reaping_jobs_stage"
+    add_check_constraint :hosted_replica_reaping_jobs,
+      "total_bytes >= 0 AND processed_bytes >= 0 AND processed_bytes <= total_bytes AND retry_count >= 0",
+      name: "hosted_replica_reaping_jobs_counters"
   end
 end

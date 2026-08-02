@@ -3,14 +3,15 @@
 <%= render layout: "shared/account_shell",
            locals: {
              story_heading: "Account deletion is permanent.",
-             story_copy: "Confirm only when you intend to remove this server-side Account and its encrypted Replica."
+             story_copy: "Confirm only when you intend to revoke this Replica Host identity and its access."
            } do %>
   <p class="eyebrow">Delete Account</p>
   <h1>Permanently delete this Account</h1>
   <p>
-    Permanently deleting this Account removes its server-side Vault Replica, encrypted objects,
-    Recovery Kit ciphertext, Devices, and sessions. It does not delete data stored in your browser
-    or in Exports. There is no recovery period and AWSM cannot restore the Account.
+    Permanently deleting this Account revokes its sessions, authenticators, and Replica Access
+    Grants. A Hosted Replica with no remaining active Grant may be reaped with its opaque bytes.
+    Copies stored elsewhere are unaffected. There is no recovery period and AWSM cannot restore
+    this Host-local Account.
   </p>
 
   <%= form_with url: start_account_deletion_path,

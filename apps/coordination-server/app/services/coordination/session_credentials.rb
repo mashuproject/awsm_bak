@@ -8,12 +8,12 @@ module Coordination
     REFRESH_LIFETIME = 30.days
 
     class << self
-      def issue(account:, scope: "Account", vault_device_id: nil, confirmed_at: Time.current)
+      def issue(account:, confirmed_at: Time.current)
         ApiSession.transaction do
           account.lock!
           authentication_failed! unless account.active?
 
-          session = account.api_sessions.create!(scope:, vault_device_id:, confirmed_at:)
+          session = account.channel_principal.api_sessions.create!(confirmed_at:)
           tokens_for(session)
         end
       end

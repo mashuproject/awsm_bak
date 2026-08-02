@@ -1,7 +1,6 @@
 module Api
   class BaseController < ProtocolController
     before_action :authenticate_account
-    before_action :require_vault_device_scope
     around_action :fence_active_account_mutation
     after_action :record_account_activity
 
@@ -15,7 +14,7 @@ module Api
       ::Account.transaction do
         current_account.lock!
         unless current_account.active?
-          raise Coordination::OutcomeError.new("AUTHENTICATION_FAILED", status: :unauthorized)
+          raise Coordination::OutcomeError.new("authentication_required", status: :unauthorized)
         end
         yield
       end
@@ -32,29 +31,12 @@ module Api
       Coordination::AccountActivity.touch!(account: current_account)
     end
 
-    def require_account_scope
-      return if current_principal.scope == "Account"
+    def require_replica_capability!(replica, capability)
+      grant = current_principal.channel_principal.replica_access_grants
+        .find_by(hosted_replica: replica, revoked_at: nil)
+      return grant if grant&.permits?(capability)
 
-      raise Coordination::OutcomeError.new("AUTHORIZATION_FAILED", status: :forbidden)
-    end
-
-    def require_vault_device_scope
-      if current_principal.scope == "VaultDevice"
-        device = current_principal.session&.vault_device
-        return if device&.active? && device.vault_replica.account_id == current_account.id
-
-        raise Coordination::OutcomeError.new("DEVICE_REVOKED", status: :unauthorized)
-      end
-
-      raise Coordination::OutcomeError.new("AUTHORIZATION_FAILED", status: :forbidden)
-    end
-
-    def bound_vault!
-      vault = current_principal.session&.vault_device&.vault_replica
-      if vault.nil? || (params[:vault_id].present? && params[:vault_id] != vault.vault_id)
-        raise Coordination::OutcomeError.new("VAULT_NOT_FOUND", status: :not_found)
-      end
-      vault
+      raise Coordination::OutcomeError.new("access_denied", status: :forbidden)
     end
   end
 end

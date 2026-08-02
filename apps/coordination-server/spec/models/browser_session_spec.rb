@@ -12,7 +12,7 @@ RSpec.describe BrowserSession, type: :model do
 
   it "stores only a coarse client family and activity timestamps" do
     session = described_class.create!(
-      account:,
+      channel_principal: account.channel_principal,
       client_family: "Firefox",
       last_activity_at: Time.current
     )
@@ -25,18 +25,26 @@ RSpec.describe BrowserSession, type: :model do
   it "accepts only the canonical coarse client families" do
     %w[Chrome Firefox Other].each do |client_family|
       expect(
-        described_class.new(account:, client_family:, last_activity_at: Time.current)
+        described_class.new(
+          channel_principal: account.channel_principal,
+          client_family:,
+          last_activity_at: Time.current
+        )
       ).to be_valid
     end
 
     expect(
-      described_class.new(account:, client_family: "Safari", last_activity_at: Time.current)
+      described_class.new(
+        channel_principal: account.channel_principal,
+        client_family: "Safari",
+        last_activity_at: Time.current
+      )
     ).not_to be_valid
   end
 
   it "enforces the coarse client family in PostgreSQL" do
     attributes = {
-      account_id: account.id,
+      channel_principal_id: account.channel_principal.id,
       client_family: "Safari",
       last_activity_at: Time.current,
       created_at: Time.current,

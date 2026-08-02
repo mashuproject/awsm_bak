@@ -17,8 +17,11 @@ RSpec.describe DispatchAccountDeletionsJob do
     now = Time.zone.parse("2026-07-27 12:00:00")
     due = create_account(username: "due_account", last_activity_at: now - 31.days)
     current = create_account(username: "current_account", last_activity_at: now - 29.days)
-    due.browser_sessions.create!(client_family: "Firefox", last_activity_at: now - 31.days)
-    credentials = Coordination::SessionCredentials.issue(account: due, scope: "Account")
+    due.channel_principal.browser_sessions.create!(
+      client_family: "Firefox",
+      last_activity_at: now - 31.days
+    )
+    credentials = Coordination::SessionCredentials.issue(account: due)
 
     expect {
       described_class.perform_now(at: now)
@@ -52,10 +55,11 @@ RSpec.describe DispatchAccountDeletionsJob do
     now = Time.zone.parse("2026-07-27 12:00:00")
     stranded_account = create_account(username: "stranded_account")
     stranded_account.update!(state: "Deleting")
+    stranded_account.channel_principal.update!(state: "Revoked")
     stranded = stranded_account.account_deletion_jobs.create!(
       reason: "Manual",
       state: "FailedRetryable",
-      stage: "DeleteOpaqueBytes",
+      stage: "ReapReplicas",
       receipt_digest: Digest::SHA256.digest("receipt"),
       retry_count: 2
     )

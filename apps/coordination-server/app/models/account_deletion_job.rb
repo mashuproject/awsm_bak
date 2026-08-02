@@ -1,7 +1,7 @@
 class AccountDeletionJob < ApplicationRecord
   REASONS = %w[Manual Inactivity].freeze
   STATES = %w[Pending Running FailedRetryable Succeeded].freeze
-  STAGES = %w[Freeze DeleteOpaqueBytes DeleteRelationalState Complete].freeze
+  STAGES = %w[Freeze RevokeAccess ReapReplicas DeleteIdentity Complete].freeze
   ERROR_OUTCOMES = %w[
     STORAGE_UNAVAILABLE
     DELETE_VERIFICATION_FAILED
@@ -9,6 +9,7 @@ class AccountDeletionJob < ApplicationRecord
   ].freeze
 
   belongs_to :account, optional: true
+  has_many :hosted_replica_reaping_jobs, dependent: :destroy
 
   validates :reason, inclusion: { in: REASONS }
   validates :state, inclusion: { in: STATES }

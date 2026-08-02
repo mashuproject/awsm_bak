@@ -3,16 +3,19 @@
 <%= render layout: "shared/account_shell",
            locals: {
              card_class: "account-card--dashboard",
-             story_heading: "Manage the server identity connected to your Vault.",
-             story_copy: "This website shows Account, Device, and website-session facts. Vault content remains in trusted AWSM extension clients."
+             story_heading: "Manage this Replica Host account.",
+             story_copy: "This website manages server login, access, and opaque encrypted storage. It cannot read the protected content clients place here."
            } do %>
-  <p class="eyebrow">Coordination Server Account</p>
+  <p class="eyebrow">Replica Host Account</p>
   <h1>Your Account</h1>
 
   <nav class="account-section-nav" aria-label="Account sections">
     <%= link_to "Overview", "#overview" %>
-    <%= link_to "Devices", "#devices" %>
+    <%= link_to "Authenticators", "#authenticators" %>
+    <%= link_to "Hosted Replicas", "#hosted-replicas" %>
+    <%= link_to "Access Grants", "#access-grants" %>
     <%= link_to "Website sessions", "#website-sessions" %>
+    <%= link_to "API sessions", "#api-sessions" %>
     <%= link_to "Security", "#security" %>
     <%= link_to "Delete Account", "#delete-account" %>
   </nav>
@@ -23,20 +26,9 @@
     <dl class="account-facts">
       <div><dt>Username</dt><dd><%= @account.username %></dd></div>
       <div><dt>Created</dt><dd><%= time_tag @account.created_at %></dd></div>
-      <div><dt>Synchronization server</dt><dd><%= Coordination::Registration.public_origin %></dd></div>
-      <div>
-        <dt>Vault state</dt>
-        <dd>
-          <% if @vault&.state == "Active" %>
-            Synchronized Vault attached
-          <% elsif @vault&.state == "Provisional" %>
-            Synchronization setup in progress
-          <% else %>
-            No synchronized Vault
-          <% end %>
-        </dd>
-      </div>
-      <div><dt>Active Devices</dt><dd><%= @devices.count { |device| device.revoked_at.nil? } %></dd></div>
+      <div><dt>Replica Host</dt><dd><%= Coordination::Registration.public_origin %></dd></div>
+      <div><dt>Hosted Replicas</dt><dd><%= @hosted_replicas.size %></dd></div>
+      <div><dt>Active Access Grants</dt><dd><%= @current_grants.size %></dd></div>
       <div><dt>Website sessions</dt><dd><%= @browser_sessions.size %></dd></div>
       <div>
         <dt>Scheduled inactivity deletion</dt>
@@ -45,43 +37,93 @@
     </dl>
     <p>
       Successful Account use moves this date forward. Inactive Account deletion is permanent and
-      has no recovery period.
+      has no recovery period on this Host.
     </p>
   </section>
 
-  <section class="account-dashboard-section" id="devices">
-    <p class="eyebrow">Devices</p>
-    <h2>Synchronized Devices</h2>
-    <% if @devices.empty? %>
-      <p>No synchronized Devices are attached to this Account.</p>
+  <section class="account-dashboard-section" id="authenticators">
+    <p class="eyebrow">Authenticators</p>
+    <h2>Channel authenticators</h2>
+    <ul class="account-record-list">
+      <% @authenticators.each do |authenticator| %>
+        <li>
+          <div>
+            <strong><%= authenticator.authenticator_type %></strong>
+            <span><%= authenticator.active? ? "Active" : "Revoked" %></span>
+          </div>
+          <dl>
+            <div><dt>Added</dt><dd><%= time_tag authenticator.created_at, format: :long %></dd></div>
+            <div>
+              <dt>Last used</dt>
+              <dd>
+                <%= authenticator.last_used_at ? time_tag(authenticator.last_used_at, format: :long) : "Never" %>
+              </dd>
+            </div>
+          </dl>
+        </li>
+      <% end %>
+    </ul>
+  </section>
+
+  <section class="account-dashboard-section" id="hosted-replicas">
+    <p class="eyebrow">Hosted Replicas</p>
+    <h2>Opaque storage available to this Account</h2>
+    <% if @hosted_replicas.empty? %>
+      <p>No Hosted Replicas</p>
     <% else %>
       <ul class="account-record-list">
-        <% @devices.each do |device| %>
+        <% @current_grants.each do |grant| %>
+          <% replica = grant.hosted_replica %>
           <li>
             <div>
-              <strong><%= device.display_name %></strong>
-              <span><%= device.client_kind == "ChromeExtension" ? "Chrome" : "Firefox" %></span>
+              <strong><%= replica.management_label || "Hosted Replica" %></strong>
+              <span><%= replica.state %></span>
             </div>
             <dl>
-              <div><dt>Enrolled</dt><dd><%= time_tag device.enrolled_at, format: :long %></dd></div>
+              <div><dt>Host-local handle</dt><dd><%= replica.id %></dd></div>
               <div>
-                <dt>Status</dt>
+                <dt>Storage</dt>
                 <dd>
-                  <% if device.revoked_at %>
-                    Removed <%= time_tag device.revoked_at, format: :long %>
-                  <% else %>
-                    Active
-                  <% end %>
+                  <%= [
+                        number_to_human_size(replica.stored_bytes),
+                        replica.quota_bytes ? "of #{number_to_human_size(replica.quota_bytes)}" : nil
+                      ].compact.join(" ") %>
                 </dd>
+              </div>
+              <div>
+                <dt>Your capabilities</dt>
+                <dd><%= grant.capabilities.map { |value| capability_label(value) }.join(", ") %></dd>
               </div>
             </dl>
           </li>
         <% end %>
       </ul>
     <% end %>
-    <p>
-      Device removal changes Vault cryptographic authority. Manage Devices in the AWSM extension.
-    </p>
+  </section>
+
+  <section class="account-dashboard-section" id="access-grants">
+    <p class="eyebrow">Access Grants</p>
+    <h2>Host-local channel access</h2>
+    <% if @current_grants.empty? %>
+      <p>This Account has no active Replica Access Grants.</p>
+    <% else %>
+      <% @current_grants.each do |current_grant| %>
+        <h3><%= current_grant.hosted_replica.management_label || current_grant.hosted_replica.id %></h3>
+        <ul class="account-record-list">
+          <% @visible_grants_by_replica_id.fetch(current_grant.hosted_replica_id).each do |grant| %>
+            <li>
+              <div>
+                <strong><%= grant.channel_principal.account.username %></strong>
+                <% if grant.channel_principal == @principal %>
+                  <span class="awsm-badge">This Account</span>
+                <% end %>
+              </div>
+              <p><%= grant.capabilities.map { |value| capability_label(value) }.join(", ") %></p>
+            </li>
+          <% end %>
+        </ul>
+      <% end %>
+    <% end %>
   </section>
 
   <section class="account-dashboard-section" id="website-sessions">
@@ -118,28 +160,47 @@
                     method: :delete,
                     class: "awsm-button awsm-button--secondary" %>
     <% end %>
-    <p>
-      Extension sessions are managed by the extension. Changing your Account password or deleting
-      the Account revokes them.
-    </p>
+  </section>
+
+  <section class="account-dashboard-section" id="api-sessions">
+    <p class="eyebrow">API sessions</p>
+    <h2>Authenticated client channels</h2>
+    <% if @api_sessions.empty? %>
+      <p>No API sessions</p>
+    <% else %>
+      <ul class="account-record-list">
+        <% @api_sessions.each do |api_session| %>
+          <li>
+            <div>
+              <strong><%= api_session.id %></strong>
+              <span><%= api_session.active? ? "Active" : "Revoked" %></span>
+            </div>
+            <dl>
+              <div><dt>Created</dt><dd><%= time_tag api_session.created_at, format: :long %></dd></div>
+              <div><dt>Confirmed</dt><dd><%= time_tag api_session.confirmed_at, format: :long %></dd></div>
+            </dl>
+            <% if api_session.active? %>
+              <%= button_to "Revoke API session",
+                            account_api_session_path(api_session),
+                            method: :delete,
+                            class: "awsm-button awsm-button--quiet" %>
+            <% end %>
+          </li>
+        <% end %>
+      </ul>
+    <% end %>
   </section>
 
   <section class="account-dashboard-section" id="security">
     <p class="eyebrow">Security</p>
     <h2>Account security</h2>
     <p>
-      Your username is permanent. To use a different username, permanently delete this Account and
-      create a new one.
+      Your username is permanent and local to this Replica Host. The Account password authorizes
+      this Host channel; it cannot decrypt opaque stored items.
     </p>
     <p>
-      Your Account password proves who you are to this synchronization server. Your Recovery
-      Phrase protects access to your Vault on a trusted AWSM client. The Recovery Phrase cannot
-      reset or recover the Account password.
-    </p>
-    <p>
-      AWSM does not collect an email address and cannot send a reset link. If you forget the
-      Account password, you can keep using a complete local Vault or move it to another
-      synchronization server, but you cannot regain access to this Account.
+      AWSM does not collect an email address and cannot send a reset link. Losing this password
+      does not prevent separately authorized clients from using copies stored elsewhere.
     </p>
     <div class="button-row">
       <%= link_to "Change password", edit_account_password_path, class: "awsm-button awsm-button--secondary" %>
@@ -151,8 +212,9 @@
     <p class="eyebrow">Delete Account</p>
     <h2>Permanently delete this Account</h2>
     <p>
-      Deletion removes the server-side Account and encrypted Replica. It does not delete data in
-      this browser or in Exports. There is no recovery period.
+      Deletion revokes this Host identity, its sessions, and its Grants. Opaque storage with no
+      remaining active Grant may then be reaped under this Host's policy. Copies elsewhere are
+      unaffected.
     </p>
     <%= link_to "Delete Account", new_account_deletion_path, class: "awsm-button awsm-button--danger" %>
   </section>

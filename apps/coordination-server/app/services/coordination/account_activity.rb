@@ -10,7 +10,7 @@ module Coordination
 
           touch_record!(account, at:)
           if browser_session
-            authentication_failed! unless browser_session.account_id == account.id
+            authentication_failed! unless browser_session.channel_principal_id == account.channel_principal.id
             browser_session.lock!
             touch_record!(browser_session, at:)
           end

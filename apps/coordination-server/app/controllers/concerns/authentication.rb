@@ -30,7 +30,8 @@ module Authentication
   end
 
   def find_browser_session
-    BrowserSession.includes(:account).find_by(id: cookies.signed[BROWSER_SESSION_COOKIE]).then do |value|
+    BrowserSession.includes(channel_principal: :account)
+      .find_by(id: cookies.signed[BROWSER_SESSION_COOKIE]).then do |value|
       value if value&.account&.active?
     end
   end
@@ -52,7 +53,7 @@ module Authentication
         raise Coordination::OutcomeError.new("AUTHENTICATION_FAILED", status: :unauthorized)
       end
       Coordination::AccountActivity.touch!(account:, at: now)
-      account.browser_sessions.create!(
+      account.channel_principal.browser_sessions.create!(
         client_family: Coordination::BrowserFamily.classify(request.user_agent),
         last_activity_at: now
       ).tap do |browser_session|

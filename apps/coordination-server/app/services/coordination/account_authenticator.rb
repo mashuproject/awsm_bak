@@ -1,6 +1,6 @@
 module Coordination
-  AccountPrincipal = Data.define(:account, :confirmed_at, :session, :scope) do
-    def initialize(account:, confirmed_at:, session: nil, scope: "Account")
+  AccountPrincipal = Data.define(:account, :channel_principal, :confirmed_at, :session) do
+    def initialize(account:, channel_principal: account.channel_principal, confirmed_at:, session: nil)
       super
     end
   end
@@ -18,15 +18,23 @@ module Coordination
         session = SessionCredentials.authenticate(credential)
         raise OutcomeError.new("AUTHENTICATION_FAILED", status: :unauthorized) unless session.account.active?
 
-        AccountPrincipal.new(account: session.account, confirmed_at: session.confirmed_at, session:,
-          scope: session.scope)
+        AccountPrincipal.new(
+          account: session.account,
+          channel_principal: session.channel_principal,
+          confirmed_at: session.confirmed_at,
+          session:
+        )
       end
 
       def authenticate_login(username, password)
         account = Account.find_by(username: Account.normalize_value_for(:username, username))
-        digest = account&.password_digest || SYNTHETIC_AUTHENTICATION_DIGEST
+        authenticator = account&.channel_principal&.password_authenticator
+        digest = authenticator&.password_digest || SYNTHETIC_AUTHENTICATION_DIGEST
         authenticated = BCrypt::Password.new(digest).is_password?(password)
-        return account if authenticated && account&.active?
+        if authenticated && account&.active? && authenticator&.active?
+          authenticator.update!(last_used_at: Time.current)
+          return account
+        end
 
         raise OutcomeError.new("AUTHENTICATION_FAILED", status: :unauthorized)
       end

@@ -1,189 +1,112 @@
 require "rails_helper"
-require "digest"
 require "fileutils"
 
 RSpec.describe Coordination::AccountDeletionWorker do
-  let(:account) { create_account(username: "erase_this") }
-
-  def pending_job(for_account = account, receipt: false)
-    for_account.update!(state: "Deleting")
-    for_account.account_deletion_jobs.create!(
-      reason: receipt ? "Manual" : "Inactivity",
-      state: "Pending",
-      stage: "Freeze",
-      receipt_digest: receipt ? Digest::SHA256.digest("receipt") : nil
+  let(:password) { "correct horse battery staple" }
+  let(:account) do
+    create_account(
+      username: "erase_this",
+      password:,
+      password_confirmation: password
     )
   end
 
-  def add_unfinished_upload(for_account = account)
-    vault_id = SecureRandom.uuid
-    vault = for_account.vault_replicas.create!(
-      vault_id:,
-      **vault_slot_attributes(account: for_account, vault_id:),
-      state: "Provisional",
-      provisional_expires_at: 1.day.from_now
+  def grant(replica:, target: account)
+    ReplicaAccessGrant.create!(
+      hosted_replica: replica,
+      channel_principal: target.channel_principal,
+      capabilities: ReplicaAccessGrant::CAPABILITIES,
+      grantable_capabilities: ReplicaAccessGrant::CAPABILITIES
     )
-    create_vault_device_principal(account: for_account, vault:)
-    generation_id = SecureRandom.uuid
-    generation = vault.vault_generations.create!(
-      generation_id:,
-      generation_number: 0,
-      state: "Candidate"
-    )
-    object_bytes = "encrypted-object".b
-    object_key = "objects/#{SecureRandom.uuid}"
-    FileUtils.mkdir_p(Coordination::DiskStore.path(object_key).dirname)
-    File.binwrite(Coordination::DiskStore.path(object_key), object_bytes)
-    record = vault.opaque_records.create!(
-      object_id: generation_id,
-      object_type: "VaultGeneration",
-      byte_length: object_bytes.bytesize,
-      sha256: Digest::SHA256.digest(object_bytes),
-      state: "Uploading",
-      target_generation_id: generation_id,
-      vault_key_epoch_id: vault.active_key_epoch_id,
-      storage_key: object_key
-    )
-    generation.update!(generation_record: record)
-    upload = record.create_upload!(
-      state: "Open",
-      part_size: 1024,
-      part_count: 1,
-      expires_at: 1.day.from_now,
-      last_activity_at: Time.current
-    )
-    part_bytes = "encrypted-part".b
-    part_key = "parts/#{upload.id}/0"
-    FileUtils.mkdir_p(Coordination::DiskStore.path(part_key).dirname)
-    File.binwrite(Coordination::DiskStore.path(part_key), part_bytes)
-    part = upload.upload_parts.create!(
-      part_number: 0,
-      byte_length: part_bytes.bytesize,
-      sha256: Digest::SHA256.digest(part_bytes),
-      storage_key: part_key,
-      received_at: Time.current
-    )
-
-    { vault:, generation:, record:, upload:, part:, object_key:, part_key: }
   end
 
-  it "deletes an empty Account and retains only a bounded succeeded receipt job" do
+  def add_item(replica:, admitted_by_grant:, contents:)
+    storage_key = "objects/#{SecureRandom.uuid}"
+    path = Coordination::DiskStore.path(storage_key)
+    FileUtils.mkdir_p(path.dirname)
+    File.binwrite(path, contents)
+    OpaqueStorageItem.create!(
+      hosted_replica: replica,
+      admitted_by_grant:,
+      storage_item_id: Digest::SHA256.digest("item:#{contents}"),
+      storage_class: "Compact",
+      byte_length: contents.bytesize,
+      ciphertext_digest: Digest::SHA256.digest(contents),
+      storage_key:,
+      inventory_cursor: 1
+    )
+  end
+
+  def begin_deletion
+    Coordination::AccountDeletion.accept_manual!(
+      account:,
+      password:,
+      username_confirmation: account.username
+    ).first
+  end
+
+  it "reaps a solely granted Hosted Replica before deleting the Host identity" do
+    replica = HostedReplica.create!(management_label: "Private mirror")
+    access_grant = grant(replica:)
+    item = add_item(replica:, admitted_by_grant: access_grant, contents: "opaque bytes".b)
     old_account_id = account.id
-    job = pending_job(account, receipt: true)
+    job = begin_deletion
 
-    described_class.perform!(job.id, at: Time.zone.parse("2026-07-27 12:00:00"))
+    described_class.perform!(job.id, at: Time.zone.parse("2026-08-02 12:00:00"))
 
     expect(Account.find_by(id: old_account_id)).to be_nil
+    expect(HostedReplica.find_by(id: replica.id)).to be_nil
+    expect(Coordination::DiskStore.exists?(item.storage_key)).to be(false)
     expect(job.reload).to have_attributes(
       account_id: nil,
       state: "Succeeded",
       stage: "Complete",
-      processed_bytes: 0,
-      total_bytes: 0,
-      error_outcome: nil,
-      receipt_expires_at: Time.zone.parse("2026-07-28 12:00:00")
+      total_bytes: item.byte_length,
+      processed_bytes: item.byte_length,
+      completed_at: Time.zone.parse("2026-08-02 12:00:00")
     )
   end
 
-  it "deletes unfinished upload bytes and the complete synchronized graph without crossing Accounts" do
-    owned = add_unfinished_upload
-    other_account = create_account(username: "keep_this")
-    other = add_unfinished_upload(other_account)
+  it "removes only this Account's Grant when another principal retains the Hosted Replica" do
+    other = create_account(username: "keep_this")
+    replica = HostedReplica.create!(management_label: "Shared mirror")
+    account_grant = grant(replica:)
+    other_grant = grant(replica:, target: other)
+    item = add_item(replica:, admitted_by_grant: account_grant, contents: "shared opaque bytes".b)
     old_account_id = account.id
-    old_vault_id = owned.fetch(:vault).vault_id
-    job = pending_job
+    job = begin_deletion
 
     described_class.perform!(job.id)
 
     expect(Account.find_by(id: old_account_id)).to be_nil
-    expect(VaultReplica.find_by(vault_id: old_vault_id)).to be_nil
-    expect(Coordination::DiskStore.exists?(owned.fetch(:object_key))).to be(false)
-    expect(Coordination::DiskStore.exists?(owned.fetch(:part_key))).to be(false)
-    expect(other_account.reload).to be_active
-    expect(other.fetch(:record).reload.storage_key).to eq(other.fetch(:object_key))
-    expect(Coordination::DiskStore.exists?(other.fetch(:object_key))).to be(true)
-    expect(Coordination::DiskStore.exists?(other.fetch(:part_key))).to be(true)
-    expect(job.reload.processed_bytes).to eq(
-      "encrypted-object".bytesize + "encrypted-part".bytesize
+    expect(other.reload).to be_active
+    expect(replica.reload).to be_active
+    expect(replica.replica_access_grants).to contain_exactly(other_grant)
+    expect(Coordination::DiskStore.exists?(item.storage_key)).to be(true)
+    expect(item.reload.admitted_by_grant).to be_nil
+    expect(job.reload).to have_attributes(
+      state: "Succeeded",
+      total_bytes: 0,
+      processed_bytes: 0
     )
   end
 
-  it "treats already-missing bytes as idempotently deleted" do
-    owned = add_unfinished_upload
-    File.delete(Coordination::DiskStore.path(owned.fetch(:object_key)))
-    File.delete(Coordination::DiskStore.path(owned.fetch(:part_key)))
-    job = pending_job
-
-    described_class.perform!(job.id)
-
-    expect(job.reload).to have_attributes(state: "Succeeded", stage: "Complete")
-  end
-
-  it "retains the deletion fence and retry state after storage failure, then resumes" do
-    owned = add_unfinished_upload
-    job = pending_job
+  it "retains the deletion fence and retry state when opaque-byte deletion fails" do
+    replica = HostedReplica.create!(management_label: "Retry mirror")
+    access_grant = grant(replica:)
+    add_item(replica:, admitted_by_grant: access_grant, contents: "retry bytes".b)
+    job = begin_deletion
     allow(Coordination::DiskStore).to receive(:delete).and_raise(Errno::EIO)
 
     expect { described_class.perform!(job.id) }.to raise_error(Errno::EIO)
 
     expect(account.reload.state).to eq("Deleting")
+    expect(account.channel_principal.reload.state).to eq("Revoked")
     expect(job.reload).to have_attributes(
       state: "FailedRetryable",
-      stage: "DeleteOpaqueBytes",
+      stage: "ReapReplicas",
       retry_count: 1,
       error_outcome: "STORAGE_UNAVAILABLE"
     )
-    expect(owned.fetch(:record).reload.storage_key).to eq(owned.fetch(:object_key))
-  end
-
-  it "never removes relational state when byte absence cannot be verified" do
-    owned = add_unfinished_upload
-    job = pending_job
-    allow(Coordination::DiskStore).to receive(:delete).and_return(:deleted)
-    allow(Coordination::DiskStore).to receive(:exists?).and_return(true)
-
-    expect { described_class.perform!(job.id) }.to raise_error(
-      Coordination::AccountDeletionWorker::DeletionVerificationFailed
-    )
-
-    expect(account.reload.state).to eq("Deleting")
-    expect(job.reload).to have_attributes(
-      state: "FailedRetryable",
-      stage: "DeleteOpaqueBytes",
-      error_outcome: "DELETE_VERIFICATION_FAILED"
-    )
-    expect(owned.fetch(:record).reload).to be_present
-  end
-
-  it "releases username and Vault identity only after verified completion" do
-    owned = add_unfinished_upload
-    original_id = account.id
-    username = account.username
-    vault_id = owned.fetch(:vault).vault_id
-    job = pending_job
-
-    expect {
-      create_account(username:)
-    }.to raise_error(ActiveRecord::RecordInvalid)
-    expect {
-      create_account(username: "another_owner").vault_replicas.create!(
-        vault_id:,
-        state: "Provisional",
-        head_cursor: 0
-      )
-    }.to raise_error(ActiveRecord::RecordInvalid)
-
-    described_class.perform!(job.id)
-
-    replacement = create_account(username:)
-    expect(replacement.id).not_to eq(original_id)
-    expect {
-      replacement.vault_replicas.create!(
-        vault_id:,
-        **vault_slot_attributes(account: replacement, vault_id:),
-        state: "Provisional",
-        provisional_expires_at: 1.day.from_now
-      )
-    }.to change(VaultReplica, :count).by(1)
   end
 end

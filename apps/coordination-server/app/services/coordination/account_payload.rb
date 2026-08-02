@@ -4,7 +4,6 @@ module Coordination
       def response(account:, issued:)
         {
           account: {
-            accountId: account.id,
             username: account.username,
             inactiveDeletionAt: (
               account.last_activity_at +
@@ -12,7 +11,6 @@ module Coordination
             ).iso8601(3)
           },
           sessionId: issued.fetch(:session).id,
-          scope: issued.fetch(:session).scope,
           accessToken: issued.fetch(:access_token),
           accessExpiresAt: issued.fetch(:access_expires_at).iso8601(3),
           refreshToken: issued.fetch(:refresh_token),

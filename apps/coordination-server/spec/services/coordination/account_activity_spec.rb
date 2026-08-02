@@ -5,7 +5,7 @@ RSpec.describe Coordination::AccountActivity do
     create_account(last_activity_at: Time.utc(2026, 1, 1, 12))
   end
   let(:browser_session) do
-    account.browser_sessions.create!(
+    account.channel_principal.browser_sessions.create!(
       client_family: "Firefox",
       last_activity_at: Time.utc(2026, 1, 1, 12)
     )

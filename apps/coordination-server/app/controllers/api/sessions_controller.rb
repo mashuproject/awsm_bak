@@ -5,7 +5,7 @@ module Api
         params.require(:username),
         params.require(:password)
       )
-      issued = Coordination::SessionCredentials.issue(account:, scope: "Account")
+      issued = Coordination::SessionCredentials.issue(account:)
       Coordination::AccountActivity.touch!(account:)
       render json: Coordination::AccountPayload.response(account:, issued:)
     rescue ActionController::ParameterMissing

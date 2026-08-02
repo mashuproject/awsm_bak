@@ -1,10 +1,10 @@
 require "rails_helper"
 
-RSpec.describe "Plan 20 Account deletion", type: :request do
+RSpec.describe "canonical Account deletion", type: :request do
   let(:password) { "correct horse battery staple" }
   let(:account) do
     create_account(
-      username: "quiet_vault",
+      username: "quiet_replica",
       password:,
       password_confirmation: password
     )
@@ -15,7 +15,7 @@ RSpec.describe "Plan 20 Account deletion", type: :request do
     expect(response).to redirect_to("/account")
   end
 
-  it "renders the precise permanent-deletion confirmation without an Export gate" do
+  it "explains Host-local deletion without claiming to delete the Vault elsewhere" do
     sign_in
 
     get "/account/deletion/new"
@@ -24,11 +24,11 @@ RSpec.describe "Plan 20 Account deletion", type: :request do
     expect(response.body.squish).to include(
       "Permanently delete this Account",
       "Current password",
-      "Type quiet_vault to confirm",
+      "Type quiet_replica to confirm",
       "There is no recovery period",
-      "does not delete data stored in your browser or in Exports"
+      "Copies stored elsewhere are unaffected"
     )
-    expect(response.body).not_to include("Complete Export", "email")
+    expect(response.body).not_to include("Device", "Recovery Kit", "email")
   end
 
   it "keeps the Account active when password or typed username is invalid" do
@@ -47,47 +47,42 @@ RSpec.describe "Plan 20 Account deletion", type: :request do
     end
   end
 
-  it "atomically freezes the Account, revokes authority, and issues only an opaque receipt" do
+  it "atomically revokes the Channel Principal, sessions, and Grants and schedules orphan reaping" do
+    replica = HostedReplica.create!(management_label: "Delete with Account")
+    access_grant = ReplicaAccessGrant.create!(
+      hosted_replica: replica,
+      channel_principal: account.channel_principal,
+      capabilities: ReplicaAccessGrant::CAPABILITIES,
+      grantable_capabilities: ReplicaAccessGrant::CAPABILITIES
+    )
+    api = Coordination::SessionCredentials.issue(account:)
     sign_in
-    api = Coordination::SessionCredentials.issue(account:, scope: "Account")
-    account.browser_sessions.create!(
-      client_family: "Chrome",
-      last_activity_at: Time.current
-    )
-    ticket = account.transfer_tickets.create!(
-      vault_replica: account.vault_replicas.create!(
-        vault_id: SecureRandom.uuid,
-        state: "Provisional",
-        head_cursor: 0
-      ),
-      token_sha256: Digest::SHA256.digest("ticket"),
-      purpose: "RecoveryDownload",
-      expires_at: 10.minutes.from_now
-    )
 
     post "/account/deletion", params: {
       account_deletion: {
         current_password: password,
-        username_confirmation: " QUIET_VAULT "
+        username_confirmation: " QUIET_REPLICA "
       }
     }
 
     expect(response).to redirect_to("/account/deletion")
     expect(account.reload.state).to eq("Deleting")
-    expect(account.browser_sessions).to be_empty
+    expect(account.channel_principal.reload.state).to eq("Revoked")
+    expect(account.channel_principal.browser_sessions).to be_empty
     expect(api.fetch(:session).reload).to be_revoked
-    expect(api.fetch(:session).session_credentials.where(revoked_at: nil)).to be_empty
-    expect(ticket.reload.revoked_at).to be_present
-    job = AccountDeletionJob.find_by!(account:)
-    expect(job).to have_attributes(
+    expect(access_grant.reload.revoked_at).to be_present
+    expect(replica.reload.state).to eq("Reaping")
+    expect(replica.hosted_replica_reaping_jobs.sole).to have_attributes(
+      reason: "AccountDeletion",
+      state: "Pending",
+      stage: "Freeze"
+    )
+    expect(AccountDeletionJob.find_by!(account:)).to have_attributes(
       reason: "Manual",
       state: "Pending",
       stage: "Freeze",
       receipt_digest: be_present
     )
-    expect(job.receipt_digest.bytesize).to eq(32)
-    expect(response.cookies["account_deletion_receipt"]).to be_present
-    expect(response.body).not_to include(account.username, account.id, job.id)
   end
 
   it "authorizes minimal no-store status only with the deletion receipt" do
