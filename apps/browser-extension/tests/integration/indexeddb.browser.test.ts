@@ -77,10 +77,19 @@ test("atomically activates and restarts an unknown canonical Complete Import", a
   await expect(scenario(page, "canonical-complete-import")).resolves.toEqual({
     vaultLabel: "Imported research",
     readOnly: true,
+    authoringPreserved: true,
     recordCount: 2,
     resolutionCount: 4,
     epochCount: 1,
     restartedReadable: true,
+    knownRelation: "equal",
+    incomingRelation: "incoming-fast-forward",
+    reconciliation: { relation: "incoming-fast-forward", changed: true },
+    ancestorReconciliation: { relation: "incoming-ancestor", changed: false },
+    divergentReconciliation: { relation: "divergent", changed: false },
+    reconciledLifecycle: 2,
+    collisionStatePreserved: true,
+    reconciledRecordCount: 3,
     duplicate: "VAULT_ALREADY_EXISTS",
   });
 });

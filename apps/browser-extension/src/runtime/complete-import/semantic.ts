@@ -44,6 +44,7 @@ import {
 import { decodeCanonicalAuthorityCheckpoint } from "../projection/canonical-authority-checkpoint";
 import {
   type CanonicalAuthorityFeatureManifest,
+  type CanonicalAuthorityKeyEnvelopeSlot,
   CanonicalAuthorityReplay,
 } from "../projection/canonical-authority-replay";
 import type { CanonicalReplicaState } from "../vault/canonical-local-state";
@@ -67,11 +68,18 @@ export interface ValidatedCompleteExportSemantics {
   readonly reachability: CompleteExportReachability;
   readonly replicaState: CanonicalReplicaState;
   readonly baseline: VaultBaseline;
+  readonly genesis: AuthenticatedVaultEvent;
+  readonly events: readonly AuthenticatedVaultEvent[];
   readonly vaultLabel: string | null;
   readonly keyEpochs: readonly {
     readonly keyEpochId: Identifier<"KeyEpoch">;
     readonly displayNumber: number;
   }[];
+  readonly activeClientCredentials: readonly {
+    readonly clientCredentialId: Identifier<"ClientCredential">;
+    readonly memberId: Identifier<"Member">;
+  }[];
+  readonly keyEnvelopeSlots: readonly CanonicalAuthorityKeyEnvelopeSlot[];
 }
 
 function key(value: Uint8Array): string {
@@ -174,6 +182,11 @@ async function validateSelectedEventAuthority(input: {
     readonly keyEpochId: Identifier<"KeyEpoch">;
     readonly displayNumber: number;
   }[];
+  readonly activeClientCredentials: readonly {
+    readonly clientCredentialId: Identifier<"ClientCredential">;
+    readonly memberId: Identifier<"Member">;
+  }[];
+  readonly keyEnvelopeSlots: readonly CanonicalAuthorityKeyEnvelopeSlot[];
 }> {
   const baselineBody = exactMap(
     input.baseline.body,
@@ -363,7 +376,14 @@ async function validateSelectedEventAuthority(input: {
       },
     },
   });
-  return { replicaState, keyEpochs };
+  return {
+    replicaState,
+    keyEpochs,
+    activeClientCredentials: [...authority.clientCredentials.values()]
+      .filter(({ active }) => active)
+      .map(({ clientCredentialId, memberId }) => ({ clientCredentialId, memberId })),
+    keyEnvelopeSlots: authority.keyEnvelopeSlots,
+  };
 }
 
 export async function validateCompleteExportSemantics(input: {
@@ -559,8 +579,14 @@ export async function validateCompleteExportSemantics(input: {
       reachability,
       replicaState: authority.replicaState,
       baseline,
+      genesis,
+      events: [...records.values()]
+        .filter((record): record is AuthenticatedVaultEvent => "family" in record)
+        .sort((left, right) => key(left.recordId).localeCompare(key(right.recordId))),
       vaultLabel: baselineVaultLabel(baseline),
       keyEpochs: authority.keyEpochs,
+      activeClientCredentials: authority.activeClientCredentials,
+      keyEnvelopeSlots: authority.keyEnvelopeSlots,
     };
   } catch (error) {
     for (const entry of keyInventory.entries) await wipe(entry.keyEpochKey);

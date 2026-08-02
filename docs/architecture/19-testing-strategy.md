@@ -95,6 +95,12 @@ closure. Unknown-Vault activation proves Artifact promotion before one initial-R
 authoring-free restart through the ordinary open path, collision atomicity, and cleanup or
 reconciliation of preparation-owned state after every failure boundary.
 
+Known-Vault Import tests classify both causal and Authority DAGs, including equal, ancestor,
+descendant, sibling, and mixed-direction pairs. Same-Generation fast-forward tests cover opaque
+reprotection of an existing logical item, active local authoring retention and recipient Key
+Envelope verification, exact Replica-state compare-and-swap, restart, and non-mutation for ancestor
+or divergent input.
+
 Storage Relief always displays the non-blocking last-copy warning, records only local eviction,
 works with zero Remotes, and treats later absence or corrupt hydration honestly. On-demand Replicas
 can Capture without first hydrating unrelated wrappers.

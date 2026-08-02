@@ -1,5 +1,5 @@
 import { digestArtifactPayload, sealArtifactFrames } from "../../../src/crypto/artifact-stream";
-import { openCompactItem } from "../../../src/crypto/compact";
+import { openCompactItem, sealCompactItem } from "../../../src/crypto/compact";
 import { DEPENDENCY_TYPES } from "../../../src/domain/canonical/dependencies";
 import {
   keyEpochId as deriveKeyEpochId,
@@ -113,6 +113,7 @@ import {
   WorkspaceService,
 } from "../../../src/runtime/vault";
 import { prepareCanonicalVaultCreation } from "../../../src/runtime/vault/canonical-create";
+import { prepareCanonicalClosureEvent } from "../../../src/runtime/vault/canonical-lifecycle-prepare";
 import {
   canonicalLocalStorageContext,
   decodeCanonicalReplicaState,
@@ -563,68 +564,243 @@ async function canonicalCompleteImportScenario(): Promise<unknown> {
       bytes: creation.clientKeyEnvelope.envelope.bytes,
     },
   ];
-  const opaqueItemInventory: CompleteExportOpaqueItem[] = stored.map((item) => {
-    const entry = prepareCompleteExportEntry(2, item.bytes);
-    return {
-      namespace: item.namespace,
-      logicalId: item.logicalId,
-      storageItemId: decodeOpaqueEnvelope(item.bytes).storageItemId,
-      keyEpochId: creation.secrets.keyEpoch.id,
-      byteLength: entry.header.byteLength,
-      byteDigest: entry.header.byteDigest,
-    };
-  });
-  const manifestInput: CompleteExportManifestInput = {
+  const initialReplicaState = {
     vaultId: creation.ids.vaultId,
     generationId: creation.ids.generationId,
-    frontier: [creation.genesis.recordId],
+    causalFrontier: [creation.genesis.recordId],
+    authorityFrontier: [creation.genesis.recordId],
+    continuityRecordIds: [creation.genesis.recordId],
+    baselineId: creation.baseline.recordId,
+    currentKeyEpochId: creation.secrets.keyEpoch.id,
     requiredFeatureSetId: creation.baseline.requiredFeatureSetId,
-    typedLogicalRoots: [
-      { type: DEPENDENCY_TYPES.VaultRecord, id: creation.genesis.recordId },
-      { type: DEPENDENCY_TYPES.VaultBaseline, id: creation.baseline.recordId },
-    ],
-    opaqueItemInventory,
-    continuityProofRoots: [creation.genesis.recordId],
+    authoringClientCredentialId: creation.ids.clientCredentialId,
+    memberId: creation.ids.firstMemberId,
+    lifecycle: 1 as const,
+    preservationRoots: [],
+    garbageCollectionFences: [],
+    adoption: null,
   };
-  const manifest = decodeCompleteExportManifest(
-    encodeCompleteExportManifest({
-      format: 1,
-      ...manifestInput,
-      stateDigest: completeExportStateDigest(manifestInput),
-    }),
-  );
-  const keyInventory = decodeCompleteExportKeyInventory(
-    encodeCompleteExportKeyInventory({
+  const closure = await prepareCanonicalClosureEvent({
+    vault: {
+      directory: {
+        vaultId: creation.ids.vaultId,
+        generationId: creation.ids.generationId,
+        label: "Imported research",
+        selectedClientCredentialId: creation.ids.clientCredentialId,
+      },
+      replicaState: initialReplicaState,
+      clientSecret: {
+        vaultId: creation.ids.vaultId,
+        memberId: creation.ids.firstMemberId,
+        clientCredentialId: creation.ids.clientCredentialId,
+        signingPublicKey: creation.secrets.client.signingPublicKey,
+        signingSecretKey: creation.secrets.client.signingSecretKey,
+        wrappingPublicKey: creation.secrets.client.wrappingPublicKey,
+        wrappingPrivateKey: creation.secrets.client.wrappingPrivateKey,
+      },
+      epochSecret: {
+        vaultId: creation.ids.vaultId,
+        keyEpochId: creation.secrets.keyEpoch.id,
+        displayNumber: 0,
+        key: creation.secrets.keyEpoch.key,
+      },
+      baseline: creation.baseline,
+      genesis: creation.genesis,
+    },
+    assertedAt: 1_800_000_000_002,
+  });
+  const siblingClosure = await prepareCanonicalClosureEvent({
+    vault: {
+      directory: {
+        vaultId: creation.ids.vaultId,
+        generationId: creation.ids.generationId,
+        label: "Imported research",
+        selectedClientCredentialId: creation.ids.clientCredentialId,
+      },
+      replicaState: initialReplicaState,
+      clientSecret: {
+        vaultId: creation.ids.vaultId,
+        memberId: creation.ids.firstMemberId,
+        clientCredentialId: creation.ids.clientCredentialId,
+        signingPublicKey: creation.secrets.client.signingPublicKey,
+        signingSecretKey: creation.secrets.client.signingSecretKey,
+        wrappingPublicKey: creation.secrets.client.wrappingPublicKey,
+        wrappingPrivateKey: creation.secrets.client.wrappingPrivateKey,
+      },
+      epochSecret: {
+        vaultId: creation.ids.vaultId,
+        keyEpochId: creation.secrets.keyEpoch.id,
+        displayNumber: 0,
+        key: creation.secrets.keyEpoch.key,
+      },
+      baseline: creation.baseline,
+      genesis: creation.genesis,
+    },
+    assertedAt: 1_800_000_000_003,
+    protectionParameters: new Uint8Array(64).fill(61),
+  });
+  const packageFrom = (
+    packageItems: readonly {
+      readonly namespace: 1 | 2;
+      readonly logicalId: Uint8Array;
+      readonly bytes: Uint8Array;
+    }[],
+    frontierId: Identifier<"VaultRecord">,
+  ) => {
+    const opaqueItemInventory: CompleteExportOpaqueItem[] = packageItems.map((item) => {
+      const entry = prepareCompleteExportEntry(2, item.bytes);
+      return {
+        namespace: item.namespace,
+        logicalId: item.logicalId,
+        storageItemId: decodeOpaqueEnvelope(item.bytes).storageItemId,
+        keyEpochId: creation.secrets.keyEpoch.id,
+        byteLength: entry.header.byteLength,
+        byteDigest: entry.header.byteDigest,
+      };
+    });
+    const manifestInput: CompleteExportManifestInput = {
       vaultId: creation.ids.vaultId,
       generationId: creation.ids.generationId,
-      entries: [
-        {
-          keyEpochId: creation.secrets.keyEpoch.id,
-          keyEpochKey: creation.secrets.keyEpoch.key,
-        },
+      frontier: [frontierId],
+      requiredFeatureSetId: creation.baseline.requiredFeatureSetId,
+      typedLogicalRoots: [
+        { type: DEPENDENCY_TYPES.VaultRecord, id: frontierId },
+        { type: DEPENDENCY_TYPES.VaultBaseline, id: creation.baseline.recordId },
       ],
-    }),
-  );
-  const bytesByStorageId = new Map(
-    stored.map((item, index) => [
-      bytesKey(opaqueItemInventory[index]?.storageItemId ?? new Uint8Array()),
-      item.bytes,
-    ]),
-  );
-  const source = {
-    openOpaque: async (item: CompleteExportOpaqueItem) => {
-      const bytes = bytesByStorageId.get(bytesKey(item.storageItemId));
-      if (bytes === undefined) throw new Error("Missing Complete Import fixture bytes");
-      return new Blob([Uint8Array.from(bytes)]).stream();
-    },
+      opaqueItemInventory,
+      continuityProofRoots: [frontierId],
+    };
+    const manifest = decodeCompleteExportManifest(
+      encodeCompleteExportManifest({
+        format: 1,
+        ...manifestInput,
+        stateDigest: completeExportStateDigest(manifestInput),
+      }),
+    );
+    const keyInventory = decodeCompleteExportKeyInventory(
+      encodeCompleteExportKeyInventory({
+        vaultId: creation.ids.vaultId,
+        generationId: creation.ids.generationId,
+        entries: [
+          {
+            keyEpochId: creation.secrets.keyEpoch.id,
+            keyEpochKey: creation.secrets.keyEpoch.key,
+          },
+        ],
+      }),
+    );
+    const bytesByStorageId = new Map(
+      packageItems.map((item, index) => [
+        bytesKey(opaqueItemInventory[index]?.storageItemId ?? new Uint8Array()),
+        item.bytes,
+      ]),
+    );
+    return {
+      manifest,
+      keyInventory,
+      source: {
+        openOpaque: async (item: CompleteExportOpaqueItem) => {
+          const bytes = bytesByStorageId.get(bytesKey(item.storageItemId));
+          if (bytes === undefined) throw new Error("Missing Complete Import fixture bytes");
+          return new Blob([Uint8Array.from(bytes)]).stream();
+        },
+      },
+    };
   };
+  const initialPackage = packageFrom(stored, creation.genesis.recordId);
+  const [reprotectedBaseline, reprotectedGenesis] = await Promise.all([
+    sealCompactItem({
+      vaultId: creation.ids.vaultId,
+      keyEpochId: creation.secrets.keyEpoch.id,
+      keyEpochKey: creation.secrets.keyEpoch.key,
+      payloadType: 1,
+      payloadBytes: creation.baseline.bytes,
+      protectionParameters: new Uint8Array(64).fill(62),
+    }),
+    sealCompactItem({
+      vaultId: creation.ids.vaultId,
+      keyEpochId: creation.secrets.keyEpoch.id,
+      keyEpochKey: creation.secrets.keyEpoch.key,
+      payloadType: 1,
+      payloadBytes: creation.genesis.bytes,
+      protectionParameters: new Uint8Array(64).fill(63),
+    }),
+  ]);
+  const reprotectedStored = stored.map((item) => {
+    if (sameBytes(item.logicalId, creation.baseline.recordId)) {
+      return { ...item, bytes: reprotectedBaseline.bytes };
+    }
+    if (sameBytes(item.logicalId, creation.genesis.recordId)) {
+      return { ...item, bytes: reprotectedGenesis.bytes };
+    }
+    return item;
+  });
+  const successorPackage = packageFrom(
+    [
+      ...reprotectedStored,
+      {
+        namespace: 1,
+        logicalId: closure.event.recordId,
+        bytes: closure.eventEnvelope.bytes,
+      },
+    ],
+    closure.event.recordId,
+  );
+  const siblingPackage = packageFrom(
+    [
+      ...stored,
+      {
+        namespace: 1,
+        logicalId: siblingClosure.event.recordId,
+        bytes: siblingClosure.eventEnvelope.bytes,
+      },
+    ],
+    siblingClosure.event.recordId,
+  );
+  const authoringDatabaseName = `awsm-canonical-complete-import-authoring-${crypto.randomUUID()}`;
+  const authoringStorage = new CanonicalIndexedDb(authoringDatabaseName);
+  let authoringPreserved = false;
+  try {
+    const wrappingKey =
+      await authoringStorage.getOrCreateInstallationWrappingKey(NORMAL_STORAGE_REALM);
+    const prepared = await prepareCanonicalVaultStorage({
+      creation,
+      label: "Imported research",
+      realm: NORMAL_STORAGE_REALM,
+      wrappingKey,
+    });
+    await authoringStorage.commitInitialVault(prepared.commit);
+    await new CanonicalCompleteImportService(
+      authoringStorage,
+      NORMAL_STORAGE_REALM,
+      new CanonicalOpfsArtifactStore(),
+    ).reconcileKnown(successorPackage);
+    const retained = await new CanonicalVaultService(
+      authoringStorage,
+      NORMAL_STORAGE_REALM,
+    ).openVault(creation.ids.vaultId);
+    authoringPreserved =
+      retained.clientSecret !== null &&
+      sameBytes(
+        retained.replicaState.authoringClientCredentialId ?? new Uint8Array(),
+        creation.ids.clientCredentialId,
+      ) &&
+      sameBytes(retained.replicaState.memberId ?? new Uint8Array(), creation.ids.firstMemberId) &&
+      sameBytes(
+        retained.directory.selectedClientCredentialId ?? new Uint8Array(),
+        creation.ids.clientCredentialId,
+      );
+  } finally {
+    await authoringStorage.close();
+    await deleteBrowserDatabase(authoringDatabaseName);
+  }
   const first = new CanonicalIndexedDb(databaseName);
   try {
     await new CanonicalCompleteImportService(
       first,
       NORMAL_STORAGE_REALM,
       new CanonicalOpfsArtifactStore(),
-    ).activateUnknown({ manifest, keyInventory, source });
+    ).activateUnknown(initialPackage);
     const recordCount = (
       await first.listBytes(
         NORMAL_STORAGE_REALM,
@@ -653,13 +829,45 @@ async function canonicalCompleteImportScenario(): Promise<unknown> {
       const opened = await new CanonicalVaultService(restarted, NORMAL_STORAGE_REALM).openVault(
         creation.ids.vaultId,
       );
+      const knownRelation = await new CanonicalCompleteImportService(
+        restarted,
+        NORMAL_STORAGE_REALM,
+        new CanonicalOpfsArtifactStore(),
+      ).classifyKnown(initialPackage);
+      const incomingRelation = await new CanonicalCompleteImportService(
+        restarted,
+        NORMAL_STORAGE_REALM,
+        new CanonicalOpfsArtifactStore(),
+      ).classifyKnown(successorPackage);
+      const reconciliation = await new CanonicalCompleteImportService(
+        restarted,
+        NORMAL_STORAGE_REALM,
+        new CanonicalOpfsArtifactStore(),
+      ).reconcileKnown(successorPackage);
+      const reconciled = await new CanonicalVaultService(restarted, NORMAL_STORAGE_REALM).openVault(
+        creation.ids.vaultId,
+      );
+      const ancestorReconciliation = await new CanonicalCompleteImportService(
+        restarted,
+        NORMAL_STORAGE_REALM,
+        new CanonicalOpfsArtifactStore(),
+      ).reconcileKnown(initialPackage);
+      const divergentReconciliation = await new CanonicalCompleteImportService(
+        restarted,
+        NORMAL_STORAGE_REALM,
+        new CanonicalOpfsArtifactStore(),
+      ).reconcileKnown(siblingPackage);
+      const afterNonMutatingCollisions = await new CanonicalVaultService(
+        restarted,
+        NORMAL_STORAGE_REALM,
+      ).openVault(creation.ids.vaultId);
       let duplicate = "missing";
       try {
         await new CanonicalCompleteImportService(
           restarted,
           NORMAL_STORAGE_REALM,
           new CanonicalOpfsArtifactStore(),
-        ).activateUnknown({ manifest, keyInventory, source });
+        ).activateUnknown(initialPackage);
       } catch (error) {
         duplicate = canonicalStorageErrorId(error);
       }
@@ -669,10 +877,28 @@ async function canonicalCompleteImportScenario(): Promise<unknown> {
           opened.clientSecret === null &&
           opened.replicaState.authoringClientCredentialId === null &&
           opened.replicaState.memberId === null,
+        authoringPreserved,
         recordCount,
         resolutionCount,
         epochCount,
         restartedReadable: sameBytes(opened.genesis.recordId, creation.genesis.recordId),
+        knownRelation,
+        incomingRelation,
+        reconciliation,
+        ancestorReconciliation,
+        divergentReconciliation,
+        reconciledLifecycle: reconciled.replicaState.lifecycle,
+        collisionStatePreserved: sameBytes(
+          afterNonMutatingCollisions.replicaState.causalFrontier[0] ?? new Uint8Array(),
+          closure.event.recordId,
+        ),
+        reconciledRecordCount: (
+          await restarted.listBytes(
+            NORMAL_STORAGE_REALM,
+            NAMESPACES.vaultRecord.key,
+            bytesKey(creation.ids.vaultId),
+          )
+        ).length,
         duplicate,
       };
     } finally {

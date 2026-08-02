@@ -219,6 +219,21 @@ The Runtime never keeps two active entries claiming one Vault ID and never silen
 local work. To author after a fresh import, the user enrolls a Client Credential through ordinary
 Recovery or invitation authority.
 
+For the same Generation, the Runtime compares both authenticated causal and Authority DAGs. Equal
+Frontiers change nothing; an incoming ancestor does not rewind; an incoming descendant must
+contain both local Frontiers; and sibling or mixed-direction histories are divergent. Timestamps
+never decide this relationship.
+
+A same-Generation fast-forward reuses an already verified local representation when the same
+logical ID arrived under different opaque protection, adds only missing immutable items, promotes
+new Artifact representations before exposure, and replaces Replica Safety State under an exact
+prior-state compare-and-swap. It preserves local preservation roots and Garbage Collection fences.
+It retains the local member and selected authoring Client Credential only if authenticated incoming
+authority still recognizes that exact active binding and every imported Epoch's exact Client Key
+Envelope opens for the retained local private key; invalid recipient delivery fails reconciliation,
+while ended authority makes those local bindings absent. An equal, ancestor, divergent, failed, or
+raced reconciliation changes no accepted state.
+
 # 7. Vacuum and Fork
 
 A pre-Vacuum Complete Export can preserve exact predecessor history. A post-Vacuum Export is

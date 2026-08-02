@@ -31,6 +31,10 @@ import {
   encodeCompleteExportManifest,
 } from "../../src/runtime/complete-export/contracts";
 import {
+  buildCompleteImportHistoryView,
+  classifyCompleteImportCollision,
+} from "../../src/runtime/complete-import/collision";
+import {
   type CompleteImportPreparedSource,
   validateCompleteExportSemantics,
 } from "../../src/runtime/complete-import/semantic";
@@ -256,8 +260,11 @@ async function initialVaultPackage() {
   });
 }
 
-async function capturedVaultPackage(input: { readonly signingSecretKey?: Uint8Array } = {}) {
-  const creation = await prepareCanonicalVaultCreation({ label: "Research", assertedAt: 1 });
+async function capturedVaultPackage(
+  input: { readonly signingSecretKey?: Uint8Array; readonly creation?: Creation } = {},
+) {
+  const creation =
+    input.creation ?? (await prepareCanonicalVaultCreation({ label: "Research", assertedAt: 1 }));
   const artifacts = new MemoryArtifactStore();
   const snapshot = await createPageSnapshotBlob({
     capturedAt: 2,
@@ -604,6 +611,35 @@ describe("canonical Complete Import semantic validation", () => {
     expect(validated.reachability.recordIds).toHaveLength(3);
     expect(validated.reachability.vaultObjectIds).toHaveLength(2);
     expect(validated.reachability.artifactIds).toHaveLength(1);
+  });
+
+  it("classifies an authenticated same-Generation descendant without trusting timestamps", async () => {
+    const creation = await prepareCanonicalVaultCreation({ label: "Research", assertedAt: 1 });
+    const initial = await packageFrom({
+      creation,
+      stored: initialStored(creation),
+      frontierId: creation.genesis.recordId,
+    });
+    const captured = await capturedVaultPackage({ creation });
+    const [local, incoming] = await Promise.all([
+      validateCompleteExportSemantics(initial),
+      validateCompleteExportSemantics(captured),
+    ]);
+
+    expect(
+      classifyCompleteImportCollision({
+        local: buildCompleteImportHistoryView({
+          state: local.replicaState,
+          genesisId: local.genesis.recordId,
+          events: local.events,
+        }),
+        incoming: buildCompleteImportHistoryView({
+          state: incoming.replicaState,
+          genesisId: incoming.genesis.recordId,
+          events: incoming.events,
+        }),
+      }),
+    ).toBe("incoming-fast-forward");
   });
 
   it("atomically activates an unknown package as an authoring-free local Replica", async () => {
