@@ -116,6 +116,7 @@ import { decodeReplicaGarbageCollectionJob } from "../../../src/runtime/storage/
 import { CanonicalReplicaGarbageCollectionService } from "../../../src/runtime/storage/garbage-collection-service";
 import type { StorageReliefFaults } from "../../../src/runtime/storage-relief/contracts";
 import { StorageReliefJobRunner } from "../../../src/runtime/storage-relief/runner";
+import { CanonicalPullSynchronizationJobService } from "../../../src/runtime/synchronization/canonical-pull-synchronization-job-service";
 import { InterruptedStaleDiscardReconciler } from "../../../src/runtime/synchronization/recovery-reconciliation";
 import { serverSwitchStartupDecision } from "../../../src/runtime/synchronization/server-switch-startup";
 import {
@@ -144,7 +145,11 @@ import { CanonicalVaultService } from "../../../src/runtime/vault/canonical-serv
 import { prepareVacuum } from "../../../src/runtime/vault/canonical-vacuum-content-checkpoint";
 import type { VaultRecordsV1 } from "../../../src/runtime/vault/contracts";
 import { unwrapDeviceSlot } from "../../../src/runtime/vault/slots";
-import { decodeOpaqueEnvelope, FRAME_PLAINTEXT_LIMIT } from "../../../src/storage/opaque-envelope";
+import {
+  decodeOpaqueEnvelope,
+  encodeOpaqueEnvelope,
+  FRAME_PLAINTEXT_LIMIT,
+} from "../../../src/storage/opaque-envelope";
 import { TEST_KEY_EPOCH_ID, testKeyring } from "../../helpers/keyring";
 
 function id(suffix: string): string {
@@ -441,6 +446,63 @@ async function canonicalStorageScenario(): Promise<unknown> {
     };
   } finally {
     await storage.close();
+    await deleteBrowserDatabase(databaseName);
+  }
+}
+
+async function canonicalPullJobScenario(): Promise<unknown> {
+  const databaseName = `awsm-canonical-pull-job-${crypto.randomUUID()}`;
+  const vaultId = identifier("Vault", new Uint8Array(32).fill(1));
+  const remoteId = id("101");
+  const storage = new CanonicalIndexedDb(databaseName);
+  try {
+    const jobs = new CanonicalPullSynchronizationJobService(storage, NORMAL_STORAGE_REALM, () =>
+      id("102"),
+    );
+    const created = await jobs.create({ vaultId, remoteId });
+    const envelope = encodeOpaqueEnvelope({
+      storageClass: 1,
+      protectionParameters: new Uint8Array(64).fill(3),
+      payload: new Uint8Array(16).fill(4),
+    });
+    const resumedPosition = identifier("StorageItem", new Uint8Array(32).fill(5));
+    const checkpoint = {
+      ...created,
+      snapshotCursor: 9,
+      nextPosition: resumedPosition,
+      quarantineStorageItemIds: [envelope.storageItemId],
+      progress: {
+        discoveredItemCount: 1,
+        downloadedItemCount: 1,
+        promotedItemCount: 0,
+        rejectedItemCount: 0,
+      },
+    };
+    await jobs.recordQuarantine({ previous: created, next: checkpoint, bytes: envelope.bytes });
+    await storage.close();
+
+    const restarted = new CanonicalIndexedDb(databaseName);
+    try {
+      const resumed = await new CanonicalPullSynchronizationJobService(
+        restarted,
+        NORMAL_STORAGE_REALM,
+      ).load({ vaultId, jobId: checkpoint.jobId });
+      const quarantined = await restarted.listBytes(
+        NORMAL_STORAGE_REALM,
+        NAMESPACES.incomingQuarantine.key,
+        remoteId,
+      );
+      return {
+        snapshotCursor: resumed.snapshotCursor,
+        quarantineCount: quarantined.length,
+        resumedInventoryStage:
+          resumed.stage === 1 && resumed.nextPosition !== null && resumed.snapshotCursor === 9,
+      };
+    } finally {
+      await restarted.close();
+    }
+  } finally {
+    await storage.close().catch(() => undefined);
     await deleteBrowserDatabase(databaseName);
   }
 }
@@ -8187,6 +8249,14 @@ async function run(): Promise<void> {
         return encrypt(...input);
       },
     });
+  }
+  if (scenario === "canonical-pull-job") {
+    const output = document.querySelector("#result");
+    if (output !== null) {
+      output.textContent = JSON.stringify(await canonicalPullJobScenario());
+      output.setAttribute("data-complete", "true");
+    }
+    return;
   }
   const result =
     scenario === "canonical-client-runtime"

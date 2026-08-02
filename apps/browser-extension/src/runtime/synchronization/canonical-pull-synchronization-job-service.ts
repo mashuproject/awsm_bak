@@ -125,6 +125,29 @@ export class CanonicalPullSynchronizationJobService {
     return decodeCanonicalPullSynchronizationJob(bytes);
   }
 
+  async load(input: {
+    readonly vaultId: CanonicalPullSynchronizationJob["vaultId"];
+    readonly jobId: string;
+  }): Promise<CanonicalPullSynchronizationJob> {
+    const bytes = await this.storage.getBytes(this.realm, {
+      namespace: NAMESPACES.pullSynchronizationJob.key,
+      scopeKey: identifierStorageKey(input.vaultId),
+      itemKey: input.jobId,
+    });
+    if (bytes === undefined) throw new TypeError("Synchronization Job is unavailable");
+    const job = decodeCanonicalPullSynchronizationJob(bytes);
+    if (
+      job.jobId !== input.jobId ||
+      !bytesEqual(job.vaultId, input.vaultId) ||
+      !sameRealm(job.realm, this.realm)
+    ) {
+      throw new TypeError(
+        "Synchronization Job storage identity does not match its protected state",
+      );
+    }
+    return job;
+  }
+
   async recordQuarantine(input: {
     readonly previous: CanonicalPullSynchronizationJob;
     readonly next: CanonicalPullSynchronizationJob;

@@ -202,4 +202,36 @@ describe("canonical pull-synchronization Job service", () => {
     expect(commit.expectedMutableItems).toHaveLength(1);
     expect(commit.mutableItems).toHaveLength(1);
   });
+
+  it("reopens one persisted Job only when its Vault, Realm, and local identity agree", async () => {
+    const stored = new Map<string, Uint8Array>();
+    const storage = {
+      commitExecutionMutation: async (commit: {
+        readonly mutableItems?: readonly {
+          readonly namespace: string;
+          readonly scopeKey: string;
+          readonly itemKey: string;
+          readonly bytes: Uint8Array;
+        }[];
+      }) => {
+        for (const item of commit.mutableItems ?? []) {
+          stored.set(`${item.namespace}:${item.scopeKey}:${item.itemKey}`, item.bytes);
+        }
+      },
+      getBytes: async (
+        _realm: unknown,
+        item: { readonly namespace: string; readonly scopeKey: string; readonly itemKey: string },
+      ) => stored.get(`${item.namespace}:${item.scopeKey}:${item.itemKey}`),
+    };
+    const service = new CanonicalPullSynchronizationJobService(
+      storage as unknown as ConstructorParameters<typeof CanonicalPullSynchronizationJobService>[0],
+      NORMAL_STORAGE_REALM,
+      () => JOB_ID,
+    );
+    const created = await service.create({ vaultId: filled("Vault", 1), remoteId: REMOTE_ID });
+
+    await expect(service.load({ vaultId: created.vaultId, jobId: created.jobId })).resolves.toEqual(
+      created,
+    );
+  });
 });
