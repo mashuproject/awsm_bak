@@ -7,7 +7,12 @@ import {
   identifier,
   randomIdentifier,
 } from "../../../src/domain/canonical/identifiers";
-import { encodeVaultObject, NOTE_CONTENT_OBJECT } from "../../../src/domain/canonical/object";
+import {
+  ARTIFACT_OBJECT,
+  artifactId,
+  encodeVaultObject,
+  NOTE_CONTENT_OBJECT,
+} from "../../../src/domain/canonical/object";
 import {
   decodeVaultBaseline,
   decodeVaultEvent,
@@ -118,6 +123,7 @@ import { decodeReplicaGarbageCollectionJob } from "../../../src/runtime/storage/
 import { CanonicalReplicaGarbageCollectionService } from "../../../src/runtime/storage/garbage-collection-service";
 import type { StorageReliefFaults } from "../../../src/runtime/storage-relief/contracts";
 import { StorageReliefJobRunner } from "../../../src/runtime/storage-relief/runner";
+import { CanonicalHostedArtifactHydrationService } from "../../../src/runtime/synchronization/canonical-hosted-artifact-hydration";
 import { CanonicalHostedPullService } from "../../../src/runtime/synchronization/canonical-hosted-pull-service";
 import {
   deriveHostedReplicaOpaqueLocator,
@@ -125,6 +131,7 @@ import {
 } from "../../../src/runtime/synchronization/canonical-hosted-replica-locator";
 import { nextCanonicalPullRetry } from "../../../src/runtime/synchronization/canonical-pull-retry";
 import { CanonicalPullSynchronizationJobService } from "../../../src/runtime/synchronization/canonical-pull-synchronization-job-service";
+import { CanonicalReplicaRemoteService } from "../../../src/runtime/synchronization/canonical-remote-service";
 import { InterruptedStaleDiscardReconciler } from "../../../src/runtime/synchronization/recovery-reconciliation";
 import { serverSwitchStartupDecision } from "../../../src/runtime/synchronization/server-switch-startup";
 import {
@@ -738,6 +745,193 @@ async function canonicalHostedPullScenario(): Promise<unknown> {
       await restartedStorage.close();
     }
   } finally {
+    await storage.close().catch(() => undefined);
+    await deleteBrowserDatabase(databaseName);
+  }
+}
+
+async function canonicalHostedArtifactHydrationScenario(): Promise<unknown> {
+  const databaseName = `awsm-canonical-hosted-artifact-hydration-${crypto.randomUUID()}`;
+  const storage = new CanonicalIndexedDb(databaseName);
+  const artifacts = new CanonicalOpfsArtifactStore();
+  let hydratedStorageItemId: Identifier<"StorageItem"> | undefined;
+  try {
+    const vaults = new CanonicalVaultService(storage, NORMAL_STORAGE_REALM);
+    const ceremony = await vaults.beginCreate({
+      setupId: id("107"),
+      expectedVaultId: null,
+      label: "Hosted Artifact hydration",
+      assertedAt: 1,
+    });
+    const created = await ceremony.confirm(ceremony.recoveryPhrase);
+    const vault = await vaults.openVault(created.vaultId);
+    const payload = new TextEncoder().encode("hydrated Artifact payload");
+    const plaintextDigest = await digestArtifactPayload({
+      plaintextLength: payload.byteLength,
+      source: chunkedSource(payload),
+    });
+    const object = encodeVaultObject({
+      vaultId: created.vaultId,
+      objectType: ARTIFACT_OBJECT,
+      requiredFeatureSetId: vault.replicaState.requiredFeatureSetId,
+      body: canonicalMap([
+        [0, 1],
+        [1, "awsm.artifact.capture"],
+        [2, "application/vnd.awsm.web-page+zip"],
+        [3, "awsm.representation.web-page-zip"],
+        [4, payload.byteLength],
+        [5, plaintextDigest],
+        [
+          6,
+          canonicalMap([
+            [0, 1],
+            [1, 1_048_576],
+            [2, 16],
+            [3, payload.byteLength],
+            [4, plaintextDigest],
+          ]),
+        ],
+        [7, new Uint8Array([0xa1, 0x00, 0x01])],
+      ]),
+      extensions: new Map(),
+    });
+    const objectEnvelope = await sealCompactItem({
+      vaultId: created.vaultId,
+      keyEpochId: vault.epochSecret.keyEpochId,
+      keyEpochKey: vault.epochSecret.key,
+      payloadType: 2,
+      payloadBytes: object.bytes,
+      protectionParameters: new Uint8Array(64).fill(11),
+    });
+    const sourceWrapper = await artifacts.prepare({
+      vaultId: created.vaultId,
+      keyEpochId: vault.epochSecret.keyEpochId,
+      keyEpochKey: vault.epochSecret.key,
+      artifactId: artifactId(object),
+      contract: { plaintextLength: payload.byteLength, plaintextDigest },
+      source: chunkedSource(payload),
+      protectionParameters: new Uint8Array(64).fill(12),
+    });
+    await sourceWrapper.promote();
+    const remoteWrapper = new Uint8Array(
+      await new Response(await artifacts.open(sourceWrapper.storageItemId)).arrayBuffer(),
+    );
+    await artifacts.remove(sourceWrapper.storageItemId);
+
+    const vaultKey = bytesKey(created.vaultId);
+    const objectResolution = await prepareWrappedLocalStateItem({
+      namespace: NAMESPACES.logicalResolution.key,
+      scopeKey: vaultKey,
+      itemKey: `3:${bytesKey(object.objectId)}`,
+      wrappingKey: vault.installationWrappingKey,
+      domain: "awsm.local.logical-resolution",
+      context: canonicalLocalStorageContext(created.vaultId, object.objectId),
+      bytes: encodeLogicalResolution({
+        vaultId: created.vaultId,
+        kind: 3,
+        logicalId: object.objectId,
+        storageItemId: objectEnvelope.storageItemId,
+        keyEpochId: vault.epochSecret.keyEpochId,
+        availability: 1,
+      }),
+    });
+    await storage.commitReplicaMutation({
+      realm: NORMAL_STORAGE_REALM,
+      expectedReplicaState: vault.replicaStateStorageBytes,
+      nextReplicaState: {
+        namespace: NAMESPACES.replicaState.key,
+        scopeKey: vaultKey,
+        itemKey: "current",
+        bytes: vault.replicaStateStorageBytes,
+      },
+      immutableItems: [
+        {
+          namespace: NAMESPACES.vaultObject.key,
+          scopeKey: vaultKey,
+          itemKey: bytesKey(object.objectId),
+          bytes: objectEnvelope.bytes,
+        },
+      ],
+      mutableItems: [objectResolution],
+    });
+
+    const remoteId = "019fa62e-a653-7f63-b2bf-94e7ed5e46ca";
+    const locatorSalt = new Uint8Array(32).fill(92);
+    const locator = await deriveHostedReplicaOpaqueLocator({
+      locatorSalt,
+      logicalNamespace: HOSTED_REPLICA_LOGICAL_NAMESPACE.Artifact,
+      logicalId: artifactId(object),
+    });
+    const remotes = new CanonicalReplicaRemoteService(storage, NORMAL_STORAGE_REALM);
+    await remotes.configure({
+      remote: {
+        remoteId,
+        vaultId: created.vaultId,
+        name: "Fixture Artifact Host",
+        endpoint: "https://artifact-host.example/",
+        hostedReplicaHandle: "019fa62e-a653-7f63-b2bf-94e7ed5e46cb",
+        locatorSalt,
+        enabled: true,
+        inventoryPageSize: 100,
+      },
+      bearerToken: "fixture-artifact-channel-token",
+    });
+    const hydrated = await new CanonicalHostedArtifactHydrationService({
+      remotes,
+      vaults,
+      artifacts,
+      createHttp: () => ({
+        inventory: async () => ({
+          snapshotCursor: 1,
+          nextPosition: null,
+          items: [
+            {
+              storageItemId: sourceWrapper.storageItemId,
+              storageClass: 2,
+              byteLength: remoteWrapper.byteLength,
+              ciphertextDigest: sourceWrapper.stream.envelopePrefix.ciphertextDigest,
+              locator,
+            },
+          ],
+        }),
+        item: async () => new Blob([remoteWrapper]).stream(),
+      }),
+    }).hydrate({ vaultId: created.vaultId, artifactId: artifactId(object) });
+    hydratedStorageItemId = hydrated.storageItemId;
+    const openedAfterHydration = await vaults.openVault(created.vaultId);
+    const resolution = await vaults.readLogicalResolution({
+      vault: openedAfterHydration,
+      kind: 5,
+      logicalId: artifactId(object),
+    });
+    await storage.close();
+
+    const restartedStorage = new CanonicalIndexedDb(databaseName);
+    try {
+      const restartedVaults = new CanonicalVaultService(restartedStorage, NORMAL_STORAGE_REALM);
+      const reopened = await restartedVaults.openVault(created.vaultId);
+      const reopenedResolution = await restartedVaults.readLogicalResolution({
+        vault: reopened,
+        kind: 5,
+        logicalId: artifactId(object),
+      });
+      return {
+        hydrated:
+          hydrated.remoteId === remoteId &&
+          bytesEqual(hydrated.storageItemId, sourceWrapper.storageItemId) &&
+          (await artifacts.has(sourceWrapper.storageItemId)),
+        localResolutionPublished:
+          resolution.availability === 1 &&
+          bytesEqual(resolution.storageItemId, sourceWrapper.storageItemId),
+        reopened:
+          reopenedResolution.availability === 1 &&
+          bytesEqual(reopenedResolution.storageItemId, sourceWrapper.storageItemId),
+      };
+    } finally {
+      await restartedStorage.close();
+    }
+  } finally {
+    if (hydratedStorageItemId !== undefined) await artifacts.remove(hydratedStorageItemId);
     await storage.close().catch(() => undefined);
     await deleteBrowserDatabase(databaseName);
   }
@@ -8521,6 +8715,14 @@ async function run(): Promise<void> {
     const output = document.querySelector("#result");
     if (output !== null) {
       output.textContent = JSON.stringify(await canonicalHostedPullScenario());
+      output.setAttribute("data-complete", "true");
+    }
+    return;
+  }
+  if (scenario === "canonical-hosted-artifact-hydration") {
+    const output = document.querySelector("#result");
+    if (output !== null) {
+      output.textContent = JSON.stringify(await canonicalHostedArtifactHydrationScenario());
       output.setAttribute("data-complete", "true");
     }
     return;

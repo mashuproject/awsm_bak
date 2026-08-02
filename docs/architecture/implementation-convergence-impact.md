@@ -220,13 +220,14 @@ foundation can now hydrate one known Streamable Artifact by scanning every enabl
 inventory with its derived locator, fully verifying a candidate under a local Key Epoch, and
 conditionally publishing the local Artifact Resolution. It skips unavailable or invalid Remotes
 without giving them semantic authority; it is not yet wired into the background or a user surface,
-and has no real-browser hydration proof. Authority, Key-Epoch, Required-Feature,
-Vacuum/adoption, Remote-management UI, shipped activation, and general multi-Remote convergence
-remain Quarantined or unfinished. Retryable opaque-Host transport failures now checkpoint bounded
-local retries without changing Vault state. One local coordinator pulls configured Remotes
-sequentially and isolates an individual Remote failure, while rejecting corrupt local Remote
-scope/identity before a channel call. Remote onboarding, destination materialization, Authority and
-Generation proof, and shipped activation remain unfinished.
+and now has a real Chromium IndexedDB/OPFS restart proof using the actual protected Remote
+configuration service. Authority, Key-Epoch, Required-Feature, Vacuum/adoption,
+Remote-management UI, shipped activation, and general multi-Remote convergence remain Quarantined
+or unfinished. Retryable opaque-Host transport failures now checkpoint bounded local retries
+without changing Vault state. One local coordinator pulls configured Remotes sequentially and
+isolates an individual Remote failure, while rejecting corrupt local Remote scope/identity before a
+channel call. Remote onboarding, destination materialization, Authority and Generation proof, and
+shipped activation remain unfinished.
 
 ## 4.4 Account dashboard and public pages
 

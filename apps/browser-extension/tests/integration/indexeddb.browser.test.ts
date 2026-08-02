@@ -83,6 +83,16 @@ test("promotes one authenticated Hosted Content pull through IndexedDB and resta
   });
 });
 
+test("hydrates one verified Artifact from a configured Hosted Replica through IndexedDB and OPFS", async ({
+  page,
+}) => {
+  await expect(scenario(page, "canonical-hosted-artifact-hydration")).resolves.toEqual({
+    hydrated: true,
+    localResolutionPublished: true,
+    reopened: true,
+  });
+});
+
 test("atomically restores an encrypted canonical Vault after browser restart", async ({ page }) => {
   await expect(scenario(page, "canonical-vault-initialization")).resolves.toEqual({
     recoveryWordCount: 12,
