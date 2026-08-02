@@ -210,6 +210,33 @@ describe("canonical opaque dependency resolution", () => {
     ).resolves.toBe(true);
   });
 
+  it("permits a pulled Object only when no local logical resolution exists, and fails closed on malformed local state", async () => {
+    const vaultId = randomIdentifier("Vault");
+    const objectId = randomIdentifier("VaultObject");
+    const vault = { replicaState: { vaultId } } as never;
+    const storage = {
+      getBytes: vi.fn(async () => undefined),
+    } as unknown as CanonicalIndexedDb;
+    const service = new CanonicalVaultService(storage, NORMAL_STORAGE_REALM);
+    const open = vi.spyOn(service, "openResolvedCompactItem");
+    const input = {
+      vault,
+      kind: 3 as const,
+      logicalId: objectId,
+      namespace: NAMESPACES.vaultObject.key,
+      payloadType: 2 as const,
+    };
+
+    await expect(service.hasVerifiedCompactLogicalItem(input)).resolves.toBe(false);
+    expect(open).not.toHaveBeenCalled();
+
+    vi.mocked(storage.getBytes).mockResolvedValueOnce(new Uint8Array([1]));
+    open.mockRejectedValueOnce(new TypeError("corrupt local Object"));
+    await expect(service.hasVerifiedCompactLogicalItem(input)).rejects.toThrow(
+      "corrupt local Object",
+    );
+  });
+
   it("returns only a locally verified Key Envelope with the resolved outer identity", async () => {
     const vaultId = randomIdentifier("Vault");
     const keyEpochId = randomIdentifier("KeyEpoch");
