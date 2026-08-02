@@ -1,4 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { sealCompactItem } from "../../src/crypto/compact";
+import { DEPENDENCY_TYPES } from "../../src/domain/canonical/dependencies";
+import { identifier } from "../../src/domain/canonical/identifiers";
+import { encodeVaultObject, NOTE_CONTENT_OBJECT } from "../../src/domain/canonical/object";
 import { canonicalMap, canonicalSet } from "../../src/domain/canonical/value";
 import { prepareCanonicalContentEvent } from "../../src/runtime/content/canonical-prepare";
 import { CanonicalReplayService } from "../../src/runtime/projection/canonical-replay";
@@ -153,5 +157,87 @@ describe("canonical pull Content validation", () => {
         rootRecordIds: [creation.genesis.recordId],
       }),
     ).resolves.toMatchObject({ acceptedCandidates: [] });
+  });
+
+  it("accepts and selects a newly required Note Content Object with its Content Record", async () => {
+    const { creation, vault, local } = await openedInitialVault();
+    const object = encodeVaultObject({
+      vaultId: creation.ids.vaultId,
+      objectType: NOTE_CONTENT_OBJECT,
+      requiredFeatureSetId: vault.replicaState.requiredFeatureSetId,
+      body: canonicalMap([
+        [0, 1],
+        [1, "Pulled note"],
+        [2, "The Note Content Object arrives with its Event."],
+        [3, "awsm.note.commonmark"],
+      ]),
+      extensions: new Map(),
+    });
+    const objectEnvelope = await sealCompactItem({
+      vaultId: creation.ids.vaultId,
+      keyEpochId: creation.secrets.keyEpoch.id,
+      keyEpochKey: creation.secrets.keyEpoch.key,
+      payloadType: 2,
+      payloadBytes: object.bytes,
+      protectionParameters: new Uint8Array(64).fill(10),
+    });
+    const prepared = await prepareCanonicalContentEvent({
+      vault,
+      type: 27,
+      assertedAt: 2,
+      body: canonicalMap([
+        [0, identifier("Note", new Uint8Array(32).fill(3))],
+        [
+          1,
+          canonicalMap([
+            [0, 1],
+            [1, identifier("Collection", new Uint8Array(32).fill(4))],
+          ]),
+        ],
+        [2, object.objectId],
+      ]),
+      dependencies: [{ type: DEPENDENCY_TYPES.NoteContentObject, id: object.objectId }],
+      protectionParameters: new Uint8Array(64).fill(9),
+    });
+    const recordCandidate: CanonicalPulledCompactCandidate = {
+      kind: "VaultRecord",
+      logicalId: prepared.event.recordId,
+      record: prepared.event,
+      keyEpochId: creation.secrets.keyEpoch.id,
+      storageItemId: prepared.eventEnvelope.storageItemId,
+    };
+    const objectCandidate: CanonicalPulledCompactCandidate = {
+      kind: "VaultObject",
+      logicalId: object.objectId,
+      object,
+      keyEpochId: creation.secrets.keyEpoch.id,
+      storageItemId: objectEnvelope.storageItemId,
+    };
+    const service = new CanonicalPullContentValidationService(
+      new CanonicalReplayService({
+        ...local,
+        hasVerifiedCompactLogicalItem: async () => false,
+      } as never),
+      {
+        readQuarantine: async ({ storageItemId }) => {
+          if (storageItemId.toString() === prepared.eventEnvelope.storageItemId.toString()) {
+            return prepared.eventEnvelope.bytes;
+          }
+          if (storageItemId.toString() === objectEnvelope.storageItemId.toString()) {
+            return objectEnvelope.bytes;
+          }
+          return undefined;
+        },
+      },
+    );
+
+    await expect(
+      service.validate({
+        remoteId: REMOTE_ID,
+        vault,
+        candidates: [recordCandidate, objectCandidate],
+        rootRecordIds: [prepared.event.recordId],
+      }),
+    ).resolves.toMatchObject({ acceptedCandidates: [recordCandidate, objectCandidate] });
   });
 });

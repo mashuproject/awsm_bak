@@ -29,6 +29,7 @@ type PullJobPort = Pick<
 type VaultPort = Pick<
   CanonicalVaultService,
   | "hasVerifiedCompactStorageItem"
+  | "hasVerifiedCompactLogicalItem"
   | "listEpochSecrets"
   | "openResolvedCompactItem"
   | "openVault"

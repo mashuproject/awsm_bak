@@ -22,6 +22,10 @@ export type CanonicalPulledContentRecord = Extract<
   CanonicalPulledCompactCandidate,
   { readonly kind: "VaultRecord" }
 >;
+export type CanonicalPulledContentCandidate = Extract<
+  CanonicalPulledCompactCandidate,
+  { readonly kind: "VaultRecord" | "VaultObject" }
+>;
 type QuarantineReader = {
   readonly readQuarantine: (input: {
     readonly remoteId: string;
@@ -55,23 +59,38 @@ function decodeRecord(bytes: Uint8Array): AuthenticatedVaultEvent | VaultBaselin
 
 function candidateMaps(candidates: readonly CanonicalPulledCompactCandidate[]): {
   readonly records: ReadonlyMap<string, CanonicalPulledContentRecord>;
+  readonly objects: ReadonlyMap<
+    string,
+    Extract<CanonicalPulledCompactCandidate, { readonly kind: "VaultObject" }>
+  >;
 } {
   const records = new Map<string, CanonicalPulledContentRecord>();
+  const objects = new Map<
+    string,
+    Extract<CanonicalPulledCompactCandidate, { readonly kind: "VaultObject" }>
+  >();
   const storageItems = new Set<string>();
   for (const candidate of candidates) {
-    if (candidate.kind !== "VaultRecord") continue;
     const storageItemKey = key(candidate.storageItemId);
     if (storageItems.has(storageItemKey)) {
       throw new TypeError("Pulled candidates repeat an opaque Storage Item");
     }
     storageItems.add(storageItemKey);
+    if (candidate.kind === "FeatureManifest") continue;
     const candidateKey = key(candidate.logicalId);
-    if (records.has(candidateKey)) {
-      throw new TypeError("Pulled candidates repeat a protected logical identity");
+    if (candidate.kind === "VaultRecord") {
+      if (records.has(candidateKey)) {
+        throw new TypeError("Pulled candidates repeat a protected logical identity");
+      }
+      records.set(candidateKey, candidate);
+    } else {
+      if (objects.has(candidateKey)) {
+        throw new TypeError("Pulled candidates repeat a protected logical identity");
+      }
+      objects.set(candidateKey, candidate);
     }
-    records.set(candidateKey, candidate);
   }
-  return { records };
+  return { records, objects };
 }
 
 function assertCurrentContentContext(
@@ -89,28 +108,29 @@ function assertCurrentContentContext(
 }
 
 function candidateOpened(
-  candidate: CanonicalPulledContentRecord,
+  candidate: CanonicalPulledContentCandidate,
   bytes: Uint8Array,
 ): OpenedCompactItem {
   const envelope = decodeOpaqueEnvelope(bytes);
   same(envelope.storageItemId, candidate.storageItemId, "Pulled Quarantine Storage Item ID");
   return {
     keyEpochId: candidate.keyEpochId,
-    payloadType: 1,
-    payloadBytes: candidate.record.bytes,
+    payloadType: candidate.kind === "VaultRecord" ? 1 : 2,
+    payloadBytes:
+      candidate.kind === "VaultRecord" ? candidate.record.bytes : candidate.object.bytes,
     envelope,
   };
 }
 
 export interface CanonicalPullContentValidation {
   readonly nextReplicaState: CanonicalReplicaState;
-  readonly acceptedCandidates: readonly CanonicalPulledContentRecord[];
+  readonly acceptedCandidates: readonly CanonicalPulledContentCandidate[];
 }
 
 /**
- * Validates one explicit same-Generation Content Record branch against an accepted Replica. Every
- * non-Record compact dependency must already be locally verified; Authority, Key-Epoch,
- * Required-Feature, Vacuum, and new Object candidates stay in Quarantine for their own validator.
+ * Validates one explicit same-Generation Content Record branch against an accepted Replica. New
+ * Vault Objects required by that branch may join the same atomic promotion cohort. Authority,
+ * Key-Epoch, Required-Feature, and Vacuum candidates stay in Quarantine for their own validator.
  */
 export class CanonicalPullContentValidationService {
   constructor(
@@ -179,7 +199,9 @@ export class CanonicalPullContentValidationService {
       replicaState: nextReplicaState,
     };
     const bytesByStorageItem = new Map<string, Uint8Array>();
-    const readCandidate = async (candidate: CanonicalPulledContentRecord): Promise<Uint8Array> => {
+    const readCandidate = async (
+      candidate: CanonicalPulledContentCandidate,
+    ): Promise<Uint8Array> => {
       const candidateKey = key(candidate.storageItemId);
       const cached = bytesByStorageItem.get(candidateKey);
       if (cached !== undefined) return cached;
@@ -193,15 +215,37 @@ export class CanonicalPullContentValidationService {
       bytesByStorageItem.set(candidateKey, Uint8Array.from(opened.envelope.bytes));
       return opened.envelope.bytes;
     };
-    const candidateForCompact = (kind: 1 | 3 | 4, logicalId: Uint8Array) =>
-      kind === 1 ? candidates.records.get(key(logicalId)) : undefined;
+    const usedObjectCandidateKeys = new Set<string>();
+    const candidateForCompact = async (request: {
+      readonly vault: PersistedOpenedCanonicalVault;
+      readonly kind: 1 | 3 | 4;
+      readonly logicalId: Uint8Array;
+      readonly namespace:
+        | typeof NAMESPACES.vaultRecord.key
+        | typeof NAMESPACES.vaultObject.key
+        | typeof NAMESPACES.featureManifest.key;
+      readonly payloadType: 1 | 2 | 3;
+    }): Promise<CanonicalPulledContentCandidate | undefined> => {
+      if (request.kind === 1) return candidates.records.get(key(request.logicalId));
+      if (request.kind !== 3) return undefined;
+      const candidate = candidates.objects.get(key(request.logicalId));
+      if (candidate === undefined) return undefined;
+      if (await this.replays.vaults.hasVerifiedCompactLogicalItem(request)) return undefined;
+      usedObjectCandidateKeys.add(key(candidate.logicalId));
+      return candidate;
+    };
     const virtualVaults = {
       openResolvedCompactItem: async (request: {
+        readonly vault: PersistedOpenedCanonicalVault;
         readonly kind: 1 | 3 | 4;
         readonly logicalId: Uint8Array;
+        readonly namespace:
+          | typeof NAMESPACES.vaultRecord.key
+          | typeof NAMESPACES.vaultObject.key
+          | typeof NAMESPACES.featureManifest.key;
         readonly payloadType: 1 | 2 | 3;
       }): Promise<OpenedCompactItem> => {
-        const candidate = candidateForCompact(request.kind, request.logicalId);
+        const candidate = await candidateForCompact(request);
         if (candidate === undefined) {
           return this.replays.vaults.openResolvedCompactItem(request as never);
         }
@@ -256,14 +300,24 @@ export class CanonicalPullContentValidationService {
           } as never)
         ).payloadBytes,
     });
-    const acceptedRecordIds = new Set(reachability.recordIds.map(key));
     const selectedRecordIds = new Set(selectedRecords.map(({ logicalId }) => key(logicalId)));
+    const reachableObjectIds = new Set(reachability.vaultObjectIds.map(key));
     const acceptedCandidates = input.candidates.filter(
-      (candidate): candidate is CanonicalPulledContentRecord =>
-        candidate.kind === "VaultRecord" && selectedRecordIds.has(key(candidate.logicalId)),
+      (candidate): candidate is CanonicalPulledContentCandidate =>
+        (candidate.kind === "VaultRecord" && selectedRecordIds.has(key(candidate.logicalId))) ||
+        (candidate.kind === "VaultObject" &&
+          usedObjectCandidateKeys.has(key(candidate.logicalId)) &&
+          reachableObjectIds.has(key(candidate.logicalId))),
     );
-    if (!selectedRecords.every(({ logicalId }) => acceptedRecordIds.has(key(logicalId)))) {
+    if (
+      !selectedRecords.every(({ logicalId }) =>
+        reachability.recordIds.some((recordId) => key(recordId) === key(logicalId)),
+      )
+    ) {
       throw new TypeError("Pulled Content branch is not reachable from its proposed Frontier");
+    }
+    if ([...usedObjectCandidateKeys].some((objectKey) => !reachableObjectIds.has(objectKey))) {
+      throw new TypeError("Pulled Content Object is not reachable from its proposed Frontier");
     }
     await Promise.all(acceptedCandidates.map(readCandidate));
     return { nextReplicaState, acceptedCandidates };

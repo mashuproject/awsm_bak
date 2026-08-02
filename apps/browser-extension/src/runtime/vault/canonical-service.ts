@@ -746,6 +746,28 @@ export class CanonicalVaultService {
     return false;
   }
 
+  async hasVerifiedCompactLogicalItem(input: {
+    readonly vault: PersistedOpenedCanonicalVault;
+    readonly kind: 1 | 3 | 4;
+    readonly logicalId: Uint8Array;
+    readonly namespace:
+      | typeof NAMESPACES.vaultRecord.key
+      | typeof NAMESPACES.vaultObject.key
+      | typeof NAMESPACES.featureManifest.key;
+    readonly payloadType: CompactPayloadType;
+  }): Promise<boolean> {
+    const vaultKey = identifierStorageKey(input.vault.replicaState.vaultId);
+    const logicalKey = identifierStorageKey(input.logicalId as Identifier<"VaultRecord">);
+    const resolution = await this.storage.getBytes(this.realm, {
+      namespace: NAMESPACES.logicalResolution.key,
+      scopeKey: vaultKey,
+      itemKey: `${input.kind}:${logicalKey}`,
+    });
+    if (resolution === undefined) return false;
+    await this.openResolvedCompactItem(input);
+    return true;
+  }
+
   async readLogicalResolution(input: {
     readonly vault: PersistedOpenedCanonicalVault;
     readonly kind: LogicalResolution["kind"];

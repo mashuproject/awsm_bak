@@ -102,6 +102,7 @@ describe("canonical Hosted pull service", () => {
       hasVerifiedCompactStorageItem: async () => {
         throw new TypeError("unexpected inventory lookup");
       },
+      hasVerifiedCompactLogicalItem: async () => false,
       openResolvedCompactItem: async ({ logicalId }: { readonly logicalId: Uint8Array }) => {
         if (logicalId.toString() === creation.baseline.recordId.toString()) {
           return {

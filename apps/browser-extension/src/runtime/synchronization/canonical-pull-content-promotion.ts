@@ -30,9 +30,30 @@ function key(value: Identifier<"StorageItem">): string {
   return identifierStorageKey(value);
 }
 
+function candidateStorage(input: CanonicalPullContentValidation["acceptedCandidates"][number]): {
+  readonly kind: 1 | 3;
+  readonly namespace: typeof NAMESPACES.vaultRecord.key | typeof NAMESPACES.vaultObject.key;
+} {
+  switch (input.kind) {
+    case "VaultRecord":
+      if (!bytesEqual(input.logicalId, input.record.recordId)) {
+        throw new TypeError("Validated Content Record identity does not match its signed Record");
+      }
+      return { kind: 1, namespace: NAMESPACES.vaultRecord.key };
+    case "VaultObject":
+      if (!bytesEqual(input.logicalId, input.object.objectId)) {
+        throw new TypeError(
+          "Validated Content Object identity does not match its canonical Object",
+        );
+      }
+      return { kind: 3, namespace: NAMESPACES.vaultObject.key };
+  }
+}
+
 /**
- * Turns an already validated same-Generation Content Record branch into one atomic local
- * promotion. Authority, Key-Epoch, Feature, and Object candidates never enter this boundary.
+ * Turns an already validated same-Generation Content branch and its required Objects into one
+ * atomic local promotion. Authority, Key-Epoch, Feature, and Vacuum candidates never enter this
+ * boundary.
  */
 export class CanonicalPullContentPromotionService {
   constructor(private readonly jobs: PullPromotionPort) {}
@@ -60,12 +81,10 @@ export class CanonicalPullContentPromotionService {
       ]),
     );
     const promotedReferences = input.validation.acceptedCandidates.map((candidate) => {
-      if (!bytesEqual(candidate.logicalId, candidate.record.recordId)) {
-        throw new TypeError("Validated Content Record identity does not match its signed Record");
-      }
+      candidateStorage(candidate);
       const reference = references.get(key(candidate.storageItemId));
       if (reference === undefined) {
-        throw new TypeError("Validated Content Record is absent from Synchronization Quarantine");
+        throw new TypeError("Validated Content item is absent from Synchronization Quarantine");
       }
       return reference;
     });
@@ -131,7 +150,7 @@ export class CanonicalPullContentPromotionService {
         prepareWrappedLocalStateItem({
           namespace: NAMESPACES.logicalResolution.key,
           scopeKey: vaultKey,
-          itemKey: `1:${identifierStorageKey(candidate.logicalId)}`,
+          itemKey: `${candidateStorage(candidate).kind}:${identifierStorageKey(candidate.logicalId)}`,
           wrappingKey: input.vault.installationWrappingKey,
           domain: "awsm.local.logical-resolution",
           context: canonicalLocalStorageContext(
@@ -140,7 +159,7 @@ export class CanonicalPullContentPromotionService {
           ),
           bytes: encodeLogicalResolution({
             vaultId: input.vault.replicaState.vaultId,
-            kind: 1,
+            kind: candidateStorage(candidate).kind,
             logicalId: candidate.logicalId,
             storageItemId: candidate.storageItemId,
             keyEpochId: candidate.keyEpochId,
@@ -150,7 +169,7 @@ export class CanonicalPullContentPromotionService {
       ),
     ]);
     const immutableItems: NamespaceBytes[] = opaqueBytes.map(({ candidate, bytes }) => ({
-      namespace: NAMESPACES.vaultRecord.key,
+      namespace: candidateStorage(candidate).namespace,
       scopeKey: vaultKey,
       itemKey: identifierStorageKey(candidate.logicalId),
       bytes,

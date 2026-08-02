@@ -74,6 +74,7 @@ test("promotes one authenticated Hosted Content pull through IndexedDB and resta
 }) => {
   await expect(scenario(page, "canonical-hosted-pull")).resolves.toEqual({
     promoted: true,
+    objectPromoted: true,
     completed: true,
     quarantineRemoved: true,
     reopened: true,

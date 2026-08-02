@@ -213,8 +213,12 @@ remains.
 `spec/contracts/openapi_spec.rb`, and Rails request specs now form one executable contract. Browser
 synchronization now has a strict Hosted HTTP adapter plus Installation-wrapped Remote credentials,
 durable snapshot inventory/Quarantine, Host-locator retention, and local Compact classification.
-It has not yet crossed the next trust boundary: atomic Authority/dependency/DAG validation and
-promotion into accepted Replica state.
+For a non-adopted current Generation, it also validates one complete same-Generation Content DAG
+branch and its newly required Vault Object closure, then atomically promotes only those newly
+accepted Compact items with the exact pull Job and Replica state. Authority, Key-Epoch,
+Required-Feature, Vacuum/adoption, unsupported Object/hydration, retry, Remote-management UI, and
+shipped-background work remain Quarantined or unfinished; this foundation does not claim general
+multi-Remote convergence.
 
 ## 4.4 Account dashboard and public pages
 

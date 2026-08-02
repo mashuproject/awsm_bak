@@ -7,13 +7,14 @@ import {
   identifier,
   randomIdentifier,
 } from "../../../src/domain/canonical/identifiers";
+import { encodeVaultObject, NOTE_CONTENT_OBJECT } from "../../../src/domain/canonical/object";
 import {
   decodeVaultBaseline,
   decodeVaultEvent,
   verifyVaultEventSignature,
 } from "../../../src/domain/canonical/record";
 import { concatBytes } from "../../../src/domain/canonical/transcript";
-import { canonicalMap, canonicalSet } from "../../../src/domain/canonical/value";
+import { canonicalMap } from "../../../src/domain/canonical/value";
 import { bytesEqual } from "../../../src/domain/hash";
 import {
   type AtomicRegistrationV1,
@@ -534,11 +535,42 @@ async function canonicalHostedPullScenario(): Promise<unknown> {
     });
     const created = await ceremony.confirm(ceremony.recoveryPhrase);
     const vault = await vaults.openVault(created.vaultId);
+    const object = encodeVaultObject({
+      vaultId: created.vaultId,
+      objectType: NOTE_CONTENT_OBJECT,
+      requiredFeatureSetId: vault.replicaState.requiredFeatureSetId,
+      body: canonicalMap([
+        [0, 1],
+        [1, "Hosted note"],
+        [2, "Pulled through IndexedDB."],
+        [3, "awsm.note.commonmark"],
+      ]),
+      extensions: new Map(),
+    });
+    const objectEnvelope = await sealCompactItem({
+      vaultId: created.vaultId,
+      keyEpochId: vault.epochSecret.keyEpochId,
+      keyEpochKey: vault.epochSecret.key,
+      payloadType: 2,
+      payloadBytes: object.bytes,
+      protectionParameters: new Uint8Array(64).fill(10),
+    });
     const content = await prepareCanonicalContentEvent({
       vault,
-      type: 4,
+      type: 27,
       assertedAt: 2,
-      body: canonicalMap([[0, canonicalSet([new Uint8Array(32).fill(8)])]]),
+      body: canonicalMap([
+        [0, identifier("Note", new Uint8Array(32).fill(3))],
+        [
+          1,
+          canonicalMap([
+            [0, 1],
+            [1, identifier("Collection", new Uint8Array(32).fill(4))],
+          ]),
+        ],
+        [2, object.objectId],
+      ]),
+      dependencies: [{ type: DEPENDENCY_TYPES.NoteContentObject, id: object.objectId }],
       protectionParameters: new Uint8Array(64).fill(9),
     });
     const remoteId = id("104");
@@ -548,11 +580,16 @@ async function canonicalHostedPullScenario(): Promise<unknown> {
       logicalNamespace: HOSTED_REPLICA_LOGICAL_NAMESPACE.VaultRecord,
       logicalId: content.event.recordId,
     });
+    const objectLocator = await deriveHostedReplicaOpaqueLocator({
+      locatorSalt,
+      logicalNamespace: HOSTED_REPLICA_LOGICAL_NAMESPACE.VaultObject,
+      logicalId: object.objectId,
+    });
     const jobs = new CanonicalPullSynchronizationJobService(storage, NORMAL_STORAGE_REALM, () =>
       id("105"),
     );
     const createdJob = await jobs.create({ vaultId: created.vaultId, remoteId });
-    const validationJob = {
+    const recordValidationJob = {
       ...createdJob,
       stage: 2 as const,
       snapshotCursor: 1,
@@ -566,8 +603,25 @@ async function canonicalHostedPullScenario(): Promise<unknown> {
     };
     await jobs.recordQuarantine({
       previous: createdJob,
-      next: validationJob,
+      next: recordValidationJob,
       bytes: content.eventEnvelope.bytes,
+    });
+    const validationJob = {
+      ...recordValidationJob,
+      quarantineReferences: [
+        ...recordValidationJob.quarantineReferences,
+        { storageItemId: objectEnvelope.storageItemId, locator: objectLocator },
+      ],
+      progress: {
+        ...recordValidationJob.progress,
+        discoveredItemCount: 2,
+        downloadedItemCount: 2,
+      },
+    };
+    await jobs.recordQuarantine({
+      previous: recordValidationJob,
+      next: validationJob,
+      bytes: objectEnvelope.bytes,
     });
     const pulled = await new CanonicalHostedPullService({
       remotes: {
@@ -593,10 +647,20 @@ async function canonicalHostedPullScenario(): Promise<unknown> {
       scopeKey: remoteId,
       itemKey: bytesKey(content.eventEnvelope.storageItemId),
     });
+    const objectQuarantine = await storage.getBytes(NORMAL_STORAGE_REALM, {
+      namespace: NAMESPACES.incomingQuarantine.key,
+      scopeKey: remoteId,
+      itemKey: bytesKey(objectEnvelope.storageItemId),
+    });
     const promoted = await storage.getBytes(NORMAL_STORAGE_REALM, {
       namespace: NAMESPACES.vaultRecord.key,
       scopeKey: bytesKey(created.vaultId),
       itemKey: bytesKey(content.event.recordId),
+    });
+    const promotedObject = await storage.getBytes(NORMAL_STORAGE_REALM, {
+      namespace: NAMESPACES.vaultObject.key,
+      scopeKey: bytesKey(created.vaultId),
+      itemKey: bytesKey(object.objectId),
     });
     await storage.close();
 
@@ -608,8 +672,9 @@ async function canonicalHostedPullScenario(): Promise<unknown> {
       ).openVault(created.vaultId);
       return {
         promoted: promoted !== undefined,
+        objectPromoted: promotedObject !== undefined,
         completed: pulled.stage === 3 && pulled.state === 3,
-        quarantineRemoved: quarantine === undefined,
+        quarantineRemoved: quarantine === undefined && objectQuarantine === undefined,
         reopened:
           reopened.replicaState.causalFrontier.length === 1 &&
           sameBytes(

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
+import { sealCompactItem } from "../../src/crypto/compact";
 import { unwrapInstallationBytes } from "../../src/crypto/installation-wrap";
+import { encodeVaultObject, NOTE_CONTENT_OBJECT } from "../../src/domain/canonical/object";
+import { canonicalMap } from "../../src/domain/canonical/value";
 import { identifierStorageKey } from "../../src/drivers/indexeddb/canonical-database";
 import { NAMESPACES, NORMAL_STORAGE_REALM } from "../../src/drivers/indexeddb/canonical-schema";
 import { CanonicalPullContentPromotionService } from "../../src/runtime/synchronization/canonical-pull-content-promotion";
@@ -49,6 +52,33 @@ describe("canonical pull Content promotion", () => {
       keyEpochId: creation.secrets.keyEpoch.id,
       storageItemId: creation.genesisEnvelope.storageItemId,
     };
+    const object = encodeVaultObject({
+      vaultId: creation.ids.vaultId,
+      objectType: NOTE_CONTENT_OBJECT,
+      requiredFeatureSetId: creation.genesis.requiredFeatureSetId,
+      body: canonicalMap([
+        [0, 1],
+        [1, "Pulled note"],
+        [2, "Body"],
+        [3, "awsm.note.commonmark"],
+      ]),
+      extensions: new Map(),
+    });
+    const objectEnvelope = await sealCompactItem({
+      vaultId: creation.ids.vaultId,
+      keyEpochId: creation.secrets.keyEpoch.id,
+      keyEpochKey: creation.secrets.keyEpoch.key,
+      payloadType: 2,
+      payloadBytes: object.bytes,
+      protectionParameters: new Uint8Array(64).fill(4),
+    });
+    const objectCandidate = {
+      kind: "VaultObject" as const,
+      logicalId: object.objectId,
+      object,
+      keyEpochId: creation.secrets.keyEpoch.id,
+      storageItemId: objectEnvelope.storageItemId,
+    };
     const previous = {
       jobId: "019fa62e-a653-7f63-b2bf-94e7ed5e46cb",
       vaultId: creation.ids.vaultId,
@@ -64,6 +94,10 @@ describe("canonical pull Content promotion", () => {
         {
           storageItemId: creation.genesisEnvelope.storageItemId,
           locator: new Uint8Array(32).fill(7),
+        },
+        {
+          storageItemId: objectEnvelope.storageItemId,
+          locator: new Uint8Array(32).fill(8),
         },
       ],
       progress: {
@@ -84,8 +118,14 @@ describe("canonical pull Content promotion", () => {
       service.promote({
         vault,
         previous,
-        validation: { nextReplicaState: replicaState, acceptedCandidates: [candidate] },
-        readQuarantine: async () => creation.genesisEnvelope.bytes,
+        validation: {
+          nextReplicaState: replicaState,
+          acceptedCandidates: [candidate, objectCandidate],
+        },
+        readQuarantine: async ({ storageItemId }) =>
+          storageItemId.toString() === creation.genesisEnvelope.storageItemId.toString()
+            ? creation.genesisEnvelope.bytes
+            : objectEnvelope.bytes,
       }),
     ).resolves.toMatchObject({ stage: 3, state: 3, quarantineReferences: [] });
 
@@ -100,6 +140,12 @@ describe("canonical pull Content promotion", () => {
             scopeKey: identifierStorageKey(creation.ids.vaultId),
             itemKey: identifierStorageKey(creation.genesis.recordId),
             bytes: creation.genesisEnvelope.bytes,
+          },
+          {
+            namespace: NAMESPACES.vaultObject.key,
+            scopeKey: identifierStorageKey(creation.ids.vaultId),
+            itemKey: identifierStorageKey(object.objectId),
+            bytes: objectEnvelope.bytes,
           },
         ],
       }),
@@ -135,6 +181,26 @@ describe("canonical pull Content promotion", () => {
       kind: 1,
       logicalId: creation.genesis.recordId,
       storageItemId: creation.genesisEnvelope.storageItemId,
+      keyEpochId: creation.secrets.keyEpoch.id,
+      availability: 1,
+    });
+    const objectResolutionItem = commit.resolutionItems[1];
+    if (objectResolutionItem === undefined)
+      throw new TypeError("expected one promoted Object logical resolution");
+    expect(
+      decodeLogicalResolution(
+        await unwrapInstallationBytes({
+          wrappingKey: vault.installationWrappingKey,
+          domain: "awsm.local.logical-resolution",
+          context: canonicalLocalStorageContext(creation.ids.vaultId, object.objectId),
+          wrappedBytes: objectResolutionItem.bytes,
+        }),
+      ),
+    ).toMatchObject({
+      vaultId: creation.ids.vaultId,
+      kind: 3,
+      logicalId: object.objectId,
+      storageItemId: objectEnvelope.storageItemId,
       keyEpochId: creation.secrets.keyEpoch.id,
       availability: 1,
     });
