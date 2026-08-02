@@ -52,12 +52,24 @@ RSpec.describe "Plan 16 product site", type: :request do
   it "renders factual privacy and security explanations" do
     get "/privacy"
     expect(response).to have_http_status(:ok)
-    expect(response.body).to include("operational metadata", "no analytics")
+    expect(response.body).to include(
+      "Host-local access and quota records for Hosted Replicas",
+      "opaque encrypted item bytes",
+      "other Client installations",
+      "no analytics"
+    )
+    expect(response.body).not_to include("Device certificates", "remote embedding endpoint")
 
     get "/security"
     expect(response).to have_http_status(:ok)
     expect(response.body).to include("The server coordinates. The client holds the keys.")
-    expect(response.body).to include("Account password", "Recovery Phrase")
+    expect(response.body).to include(
+      "Account password",
+      "Recovery Phrase",
+      "Host Access Grant",
+      "Client Credential"
+    )
+    expect(response.body).not_to include("Device removal", "remote embedding endpoint")
   end
 
   it "defines capitalized product concepts in a public glossary" do
