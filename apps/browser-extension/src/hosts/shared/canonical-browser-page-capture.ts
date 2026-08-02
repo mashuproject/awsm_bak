@@ -32,6 +32,16 @@ export interface CanonicalBrowserPageCaptureHost {
   ): Promise<CanonicalBrowserCollectedPageSnapshot>;
 }
 
+export interface CanonicalBrowserPageCapturePort {
+  captureActivePage(tabId?: number): Promise<{
+    readonly originalUrl: string;
+    readonly finalUrl: string;
+    readonly title: string;
+    readonly capturedAt: number;
+    readonly primary: { readonly blob: Blob };
+  }>;
+}
+
 export class CanonicalBrowserPageCaptureError extends Error {
   readonly id: "UNSUPPORTED_URL" | "PERMISSION_DENIED";
 
@@ -54,7 +64,7 @@ function canonicalHttpUrl(value: string): string {
   return url.toString();
 }
 
-export class CanonicalBrowserPageCapture {
+export class CanonicalBrowserPageCapture implements CanonicalBrowserPageCapturePort {
   constructor(
     private readonly host: CanonicalBrowserPageCaptureHost,
     private readonly clientVersion: string,
