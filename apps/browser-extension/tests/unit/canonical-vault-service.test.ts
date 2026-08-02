@@ -12,6 +12,7 @@ import {
   canonicalLocalStorageContext,
   decodeInstallationSelection,
   encodeEpochSecretState,
+  encodeLogicalResolution,
   prepareWrappedLocalStateItem,
 } from "../../src/runtime/vault/canonical-local-state";
 import {
@@ -168,6 +169,47 @@ describe("canonical Vault selection", () => {
 });
 
 describe("canonical opaque dependency resolution", () => {
+  it("finds a local Compact representation only through a matching verified logical resolution", async () => {
+    const vaultId = randomIdentifier("Vault");
+    const recordId = randomIdentifier("VaultRecord");
+    const keyEpochId = randomIdentifier("KeyEpoch");
+    const wrappingKey = await crypto.subtle.generateKey({ name: "AES-KW", length: 256 }, false, [
+      "wrapKey",
+      "unwrapKey",
+    ]);
+    const envelope = encodeOpaqueEnvelope({
+      storageClass: COMPACT_STORAGE_CLASS,
+      protectionParameters: new Uint8Array(64).fill(1),
+      payload: new Uint8Array(16).fill(2),
+    });
+    const resolution = await prepareWrappedLocalStateItem({
+      namespace: NAMESPACES.logicalResolution.key,
+      scopeKey: identifierStorageKey(vaultId),
+      itemKey: `1:${identifierStorageKey(recordId)}`,
+      wrappingKey,
+      domain: "awsm.local.logical-resolution",
+      context: canonicalLocalStorageContext(vaultId, recordId),
+      bytes: encodeLogicalResolution({
+        vaultId,
+        kind: 1,
+        logicalId: recordId,
+        storageItemId: envelope.storageItemId,
+        keyEpochId,
+        availability: 1,
+      }),
+    });
+    const storage = {
+      getOrCreateInstallationWrappingKey: async () => wrappingKey,
+      listBytes: async () => [resolution],
+      getBytes: async () => envelope.bytes,
+    } as unknown as CanonicalIndexedDb;
+    const service = new CanonicalVaultService(storage, NORMAL_STORAGE_REALM);
+
+    await expect(
+      service.hasVerifiedCompactStorageItem({ vaultId, storageItemId: envelope.storageItemId }),
+    ).resolves.toBe(true);
+  });
+
   it("returns only a locally verified Key Envelope with the resolved outer identity", async () => {
     const vaultId = randomIdentifier("Vault");
     const keyEpochId = randomIdentifier("KeyEpoch");

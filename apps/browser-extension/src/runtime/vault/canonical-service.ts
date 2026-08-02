@@ -667,6 +667,85 @@ export class CanonicalVaultService {
     }
   }
 
+  async hasVerifiedCompactStorageItem(input: {
+    readonly vaultId: Identifier<"Vault">;
+    readonly storageItemId: Identifier<"StorageItem">;
+  }): Promise<boolean> {
+    const wrappingKey = await this.storage.getOrCreateInstallationWrappingKey(this.realm);
+    const vaultKey = identifierStorageKey(input.vaultId);
+    const resolutions = await this.storage.listBytes(
+      this.realm,
+      NAMESPACES.logicalResolution.key,
+      vaultKey,
+    );
+    for (const entry of resolutions) {
+      const [kindText, logicalStorageKey, ...extra] = entry.itemKey.split(":");
+      if (extra.length !== 0 || logicalStorageKey === undefined) {
+        throw new TypeError("Logical Resolution storage key is malformed");
+      }
+      const kind = Number(kindText);
+      let logicalId: LogicalResolution["logicalId"];
+      let namespace:
+        | typeof NAMESPACES.vaultRecord.key
+        | typeof NAMESPACES.keyEnvelope.key
+        | typeof NAMESPACES.vaultObject.key
+        | typeof NAMESPACES.featureManifest.key;
+      switch (kind) {
+        case 1:
+          logicalId = identifierFromStorageKey("VaultRecord", logicalStorageKey);
+          namespace = NAMESPACES.vaultRecord.key;
+          break;
+        case 2:
+          logicalId = identifierFromStorageKey("KeyEnvelope", logicalStorageKey);
+          namespace = NAMESPACES.keyEnvelope.key;
+          break;
+        case 3:
+          logicalId = identifierFromStorageKey("VaultObject", logicalStorageKey);
+          namespace = NAMESPACES.vaultObject.key;
+          break;
+        case 4:
+          logicalId = identifierFromStorageKey("FeatureManifest", logicalStorageKey);
+          namespace = NAMESPACES.featureManifest.key;
+          break;
+        default:
+          continue;
+      }
+      const resolution = decodeLogicalResolution(
+        await openWrappedLocalState({
+          wrappingKey,
+          domain: "awsm.local.logical-resolution",
+          vaultId: input.vaultId,
+          identity: logicalId,
+          wrappedBytes: entry.bytes,
+        }),
+      );
+      sameBytes(resolution.vaultId, input.vaultId, "Resolution Vault ID");
+      if (resolution.kind !== kind || !bytesEqual(resolution.logicalId, logicalId)) {
+        throw new TypeError(
+          "Logical Resolution storage identity does not match its protected state",
+        );
+      }
+      if (
+        resolution.availability !== 1 ||
+        !bytesEqual(resolution.storageItemId, input.storageItemId)
+      ) {
+        continue;
+      }
+      const envelopeBytes = await this.requireBytes({
+        namespace,
+        scopeKey: vaultKey,
+        itemKey: logicalStorageKey,
+      });
+      sameBytes(
+        decodeOpaqueEnvelope(envelopeBytes).storageItemId,
+        input.storageItemId,
+        "Resolution Storage Item ID",
+      );
+      return true;
+    }
+    return false;
+  }
+
   async readLogicalResolution(input: {
     readonly vault: PersistedOpenedCanonicalVault;
     readonly kind: LogicalResolution["kind"];

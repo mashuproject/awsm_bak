@@ -99,6 +99,9 @@ describe("canonical Hosted pull service", () => {
     const local = {
       openVault: async () => vault,
       listEpochSecrets: async () => [vault.epochSecret],
+      hasVerifiedCompactStorageItem: async () => {
+        throw new TypeError("unexpected inventory lookup");
+      },
       openResolvedCompactItem: async ({ logicalId }: { readonly logicalId: Uint8Array }) => {
         if (logicalId.toString() === creation.baseline.recordId.toString()) {
           return {
@@ -158,9 +161,6 @@ describe("canonical Hosted pull service", () => {
         promoteValidated: async (input) => {
           promoted.push(input);
         },
-      },
-      hasStoredCompactStorageItem: async () => {
-        throw new TypeError("unexpected inventory lookup");
       },
     });
 

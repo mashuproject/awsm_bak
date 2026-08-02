@@ -28,7 +28,11 @@ type PullJobPort = Pick<
 
 type VaultPort = Pick<
   CanonicalVaultService,
-  "listEpochSecrets" | "openResolvedCompactItem" | "openVault" | "readResolvedOpaqueItem"
+  | "hasVerifiedCompactStorageItem"
+  | "listEpochSecrets"
+  | "openResolvedCompactItem"
+  | "openVault"
+  | "readResolvedOpaqueItem"
 >;
 
 function contentBranchRoots(
@@ -63,10 +67,6 @@ export class CanonicalHostedPullService {
       readonly remotes: Pick<CanonicalReplicaRemoteService, "load">;
       readonly vaults: VaultPort;
       readonly jobs: PullJobPort;
-      readonly hasStoredCompactStorageItem: (input: {
-        readonly vaultId: Identifier<"Vault">;
-        readonly storageItemId: Identifier<"StorageItem">;
-      }) => Promise<boolean>;
       readonly createHttp?: (input: {
         readonly endpoint: string;
         readonly bearerToken: string;
@@ -96,7 +96,7 @@ export class CanonicalHostedPullService {
         checkpoint: this.dependencies.jobs.checkpoint.bind(this.dependencies.jobs),
         recordQuarantine: this.dependencies.jobs.recordQuarantine.bind(this.dependencies.jobs),
         hasStoredStorageItem: (storageItemId) =>
-          this.dependencies.hasStoredCompactStorageItem({
+          this.dependencies.vaults.hasVerifiedCompactStorageItem({
             vaultId: input.vaultId,
             storageItemId,
           }),
