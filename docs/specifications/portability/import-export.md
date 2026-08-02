@@ -224,6 +224,14 @@ Frontiers change nothing; an incoming ancestor does not rewind; an incoming desc
 contain both local Frontiers; and sibling or mixed-direction histories are divergent. Timestamps
 never decide this relationship.
 
+Across Generations, the Runtime requires one unique signed Vacuum chain from the predecessor
+Generation to the incoming Generation, with the chain's final successor Baseline equal to the
+incoming active Baseline. The first Vacuum boundary MUST contain both exact local predecessor
+Frontiers: its signed causal Frontier must descend from every local causal head, and its signed
+Authority Parents must descend from every local Authority head. A package that cannot prove this
+inclusion is divergent and MUST NOT replace local state. The reverse proven relationship is an
+incoming Generation ancestor and never rewinds the active Generation.
+
 A same-Generation fast-forward reuses an already verified local representation when the same
 logical ID arrived under different opaque protection, adds only missing immutable items, promotes
 new Artifact representations before exposure, and replaces Replica Safety State under an exact
@@ -233,6 +241,13 @@ authority still recognizes that exact active binding and every imported Epoch's 
 Envelope opens for the retained local private key; invalid recipient delivery fails reconciliation,
 while ended authority makes those local bindings absent. An equal, ancestor, divergent, failed, or
 raced reconciliation changes no accepted state.
+
+A proven incoming Vacuum successor uses the same authenticated opaque-item preparation,
+representation reuse, authoring-eligibility checks, Artifact promotion, and exact prior-state
+compare-and-swap as a same-Generation fast-forward. The atomic commit installs the successor
+Generation and Vacuum Adoption and invalidates predecessor Library and Search Materializations. It
+preserves local preservation roots and Garbage Collection fences and does not delete predecessor
+authoritative bytes; later Garbage Collection remains a separate operation.
 
 # 7. Vacuum and Fork
 

@@ -128,6 +128,7 @@ import {
   prepareWrappedLocalStateItem,
 } from "../../../src/runtime/vault/canonical-local-state";
 import { CanonicalVaultService } from "../../../src/runtime/vault/canonical-service";
+import { prepareVacuum } from "../../../src/runtime/vault/canonical-vacuum-content-checkpoint";
 import type { VaultRecordsV1 } from "../../../src/runtime/vault/contracts";
 import { unwrapDeviceSlot } from "../../../src/runtime/vault/slots";
 import { decodeOpaqueEnvelope, FRAME_PLAINTEXT_LIMIT } from "../../../src/storage/opaque-envelope";
@@ -646,7 +647,14 @@ async function canonicalCompleteImportScenario(): Promise<unknown> {
       readonly bytes: Uint8Array;
     }[],
     frontierId: Identifier<"VaultRecord">,
+    options: {
+      readonly generationId?: Identifier<"Generation">;
+      readonly baselineId?: Identifier<"VaultRecord">;
+      readonly authorityFrontierId?: Identifier<"VaultRecord">;
+    } = {},
   ) => {
+    const generationId = options.generationId ?? creation.ids.generationId;
+    const baselineId = options.baselineId ?? creation.baseline.recordId;
     const opaqueItemInventory: CompleteExportOpaqueItem[] = packageItems.map((item) => {
       const entry = prepareCompleteExportEntry(2, item.bytes);
       return {
@@ -660,15 +668,15 @@ async function canonicalCompleteImportScenario(): Promise<unknown> {
     });
     const manifestInput: CompleteExportManifestInput = {
       vaultId: creation.ids.vaultId,
-      generationId: creation.ids.generationId,
+      generationId,
       frontier: [frontierId],
       requiredFeatureSetId: creation.baseline.requiredFeatureSetId,
       typedLogicalRoots: [
         { type: DEPENDENCY_TYPES.VaultRecord, id: frontierId },
-        { type: DEPENDENCY_TYPES.VaultBaseline, id: creation.baseline.recordId },
+        { type: DEPENDENCY_TYPES.VaultBaseline, id: baselineId },
       ],
       opaqueItemInventory,
-      continuityProofRoots: [frontierId],
+      continuityProofRoots: [options.authorityFrontierId ?? frontierId],
     };
     const manifest = decodeCompleteExportManifest(
       encodeCompleteExportManifest({
@@ -680,7 +688,7 @@ async function canonicalCompleteImportScenario(): Promise<unknown> {
     const keyInventory = decodeCompleteExportKeyInventory(
       encodeCompleteExportKeyInventory({
         vaultId: creation.ids.vaultId,
-        generationId: creation.ids.generationId,
+        generationId,
         entries: [
           {
             keyEpochId: creation.secrets.keyEpoch.id,
@@ -757,6 +765,60 @@ async function canonicalCompleteImportScenario(): Promise<unknown> {
     ],
     siblingClosure.event.recordId,
   );
+  const vacuumReplay = await new CanonicalReplayService({} as never).replayOpened({
+    directory: {
+      vaultId: creation.ids.vaultId,
+      generationId: creation.ids.generationId,
+      label: "Imported research",
+      selectedClientCredentialId: creation.ids.clientCredentialId,
+    },
+    replicaState: initialReplicaState,
+    clientSecret: {
+      vaultId: creation.ids.vaultId,
+      memberId: creation.ids.firstMemberId,
+      clientCredentialId: creation.ids.clientCredentialId,
+      signingPublicKey: creation.secrets.client.signingPublicKey,
+      signingSecretKey: creation.secrets.client.signingSecretKey,
+      wrappingPublicKey: creation.secrets.client.wrappingPublicKey,
+      wrappingPrivateKey: creation.secrets.client.wrappingPrivateKey,
+    },
+    epochSecret: {
+      vaultId: creation.ids.vaultId,
+      keyEpochId: creation.secrets.keyEpoch.id,
+      displayNumber: 0,
+      key: creation.secrets.keyEpoch.key,
+    },
+    baseline: creation.baseline,
+    genesis: creation.genesis,
+    installationWrappingKey: {} as CryptoKey,
+    replicaStateStorageBytes: new Uint8Array(),
+  });
+  const vacuum = await prepareVacuum({
+    replay: vacuumReplay,
+    successorGenerationId: randomIdentifier("Generation"),
+    assertedAt: 1_800_000_000_004,
+  });
+  const vacuumPackage = packageFrom(
+    [
+      ...stored,
+      {
+        namespace: 1,
+        logicalId: vacuum.successor.baseline.recordId,
+        bytes: vacuum.successor.baselineEnvelope.bytes,
+      },
+      {
+        namespace: 1,
+        logicalId: vacuum.event.recordId,
+        bytes: vacuum.eventEnvelope.bytes,
+      },
+    ],
+    vacuum.successor.baseline.recordId,
+    {
+      generationId: vacuum.successor.baseline.generationId,
+      baselineId: vacuum.successor.baseline.recordId,
+      authorityFrontierId: vacuum.event.recordId,
+    },
+  );
   const authoringDatabaseName = `awsm-canonical-complete-import-authoring-${crypto.randomUUID()}`;
   const authoringStorage = new CanonicalIndexedDb(authoringDatabaseName);
   let authoringPreserved = false;
@@ -793,6 +855,74 @@ async function canonicalCompleteImportScenario(): Promise<unknown> {
   } finally {
     await authoringStorage.close();
     await deleteBrowserDatabase(authoringDatabaseName);
+  }
+  const vacuumDatabaseName = `awsm-canonical-complete-import-vacuum-${crypto.randomUUID()}`;
+  const vacuumStorage = new CanonicalIndexedDb(vacuumDatabaseName);
+  let vacuumAdoption: unknown = null;
+  let vacuumReopened = false;
+  let predecessorMaterializationsRemoved = false;
+  let predecessorAfterAdoption: unknown = null;
+  let successorStatePreserved = false;
+  try {
+    await new CanonicalCompleteImportService(
+      vacuumStorage,
+      NORMAL_STORAGE_REALM,
+      new CanonicalOpfsArtifactStore(),
+    ).activateUnknown(initialPackage);
+    const vaultKey = bytesKey(creation.ids.vaultId);
+    await vacuumStorage.putMutable(NORMAL_STORAGE_REALM, {
+      namespace: NAMESPACES.libraryProjection.key,
+      scopeKey: vaultKey,
+      itemKey: "current",
+      bytes: new Uint8Array([1]),
+    });
+    await vacuumStorage.putMutable(NORMAL_STORAGE_REALM, {
+      namespace: NAMESPACES.searchMaterialization.key,
+      scopeKey: vaultKey,
+      itemKey: "current",
+      bytes: new Uint8Array([2]),
+    });
+    vacuumAdoption = await new CanonicalCompleteImportService(
+      vacuumStorage,
+      NORMAL_STORAGE_REALM,
+      new CanonicalOpfsArtifactStore(),
+    ).reconcileKnown(vacuumPackage);
+    const adopted = await new CanonicalVaultService(vacuumStorage, NORMAL_STORAGE_REALM).openVault(
+      creation.ids.vaultId,
+    );
+    vacuumReopened =
+      sameBytes(adopted.replicaState.generationId, vacuum.successor.baseline.generationId) &&
+      sameBytes(
+        adopted.replicaState.adoption?.vacuumEventRecordId ?? new Uint8Array(),
+        vacuum.event.recordId,
+      );
+    predecessorMaterializationsRemoved =
+      (await vacuumStorage.getBytes(NORMAL_STORAGE_REALM, {
+        namespace: NAMESPACES.libraryProjection.key,
+        scopeKey: vaultKey,
+        itemKey: "current",
+      })) === undefined &&
+      (await vacuumStorage.getBytes(NORMAL_STORAGE_REALM, {
+        namespace: NAMESPACES.searchMaterialization.key,
+        scopeKey: vaultKey,
+        itemKey: "current",
+      })) === undefined;
+    predecessorAfterAdoption = await new CanonicalCompleteImportService(
+      vacuumStorage,
+      NORMAL_STORAGE_REALM,
+      new CanonicalOpfsArtifactStore(),
+    ).reconcileKnown(initialPackage);
+    successorStatePreserved = sameBytes(
+      (
+        await new CanonicalVaultService(vacuumStorage, NORMAL_STORAGE_REALM).openVault(
+          creation.ids.vaultId,
+        )
+      ).replicaState.generationId,
+      vacuum.successor.baseline.generationId,
+    );
+  } finally {
+    await vacuumStorage.close();
+    await deleteBrowserDatabase(vacuumDatabaseName);
   }
   const first = new CanonicalIndexedDb(databaseName);
   try {
@@ -878,6 +1008,11 @@ async function canonicalCompleteImportScenario(): Promise<unknown> {
           opened.replicaState.authoringClientCredentialId === null &&
           opened.replicaState.memberId === null,
         authoringPreserved,
+        vacuumAdoption,
+        vacuumReopened,
+        predecessorMaterializationsRemoved,
+        predecessorAfterAdoption,
+        successorStatePreserved,
         recordCount,
         resolutionCount,
         epochCount,

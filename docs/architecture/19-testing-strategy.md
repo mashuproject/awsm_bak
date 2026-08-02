@@ -101,6 +101,13 @@ reprotection of an existing logical item, active local authoring retention and r
 Envelope verification, exact Replica-state compare-and-swap, restart, and non-mutation for ancestor
 or divergent input.
 
+Cross-Generation Import tests prove a unique authenticated Vacuum chain to the incoming Baseline,
+inclusion of both local predecessor Frontiers at the first boundary, non-mutation when either local
+Frontier is omitted, and non-rewind when the incoming package is a Generation ancestor. Successful
+adoption tests reopen the successor through the ordinary Vault path, invalidate predecessor Library
+and Search Materializations in the same compare-and-swap transaction, preserve local safety roots,
+and leave predecessor authoritative bytes available to separate Garbage Collection.
+
 Storage Relief always displays the non-blocking last-copy warning, records only local eviction,
 works with zero Remotes, and treats later absence or corrupt hydration honestly. On-demand Replicas
 can Capture without first hydrating unrelated wrappers.

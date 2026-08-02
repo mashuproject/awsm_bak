@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import type { Identifier, IdentifierKind } from "../../src/domain/canonical/identifiers";
+import type { AuthenticatedVaultEvent } from "../../src/domain/canonical/record";
 import { CausalGraph } from "../../src/domain/canonical/reducers";
+import { canonicalMap, canonicalSet } from "../../src/domain/canonical/value";
 import {
   buildCompleteImportHistoryView,
   type CompleteImportHistoryView,
@@ -38,6 +40,7 @@ function history(input: {
     readonly Identifier<"VaultRecord">[],
   ])[];
   readonly overrides?: Partial<CompleteImportHistoryView>;
+  readonly continuityEvents?: readonly AuthenticatedVaultEvent[];
 }): CompleteImportHistoryView {
   return {
     vaultId,
@@ -48,8 +51,44 @@ function history(input: {
     authorityFrontier: input.authorityFrontier,
     causalGraph: graph(input.causalEntries),
     authorityGraph: graph(input.authorityEntries),
+    continuityEvents: input.continuityEvents ?? [],
     ...input.overrides,
   };
+}
+
+function vacuumBoundary(input: {
+  readonly recordId: Identifier<"VaultRecord">;
+  readonly predecessorGenerationId: Identifier<"Generation">;
+  readonly predecessorFrontier: readonly Identifier<"VaultRecord">[];
+  readonly predecessorAuthorityFrontier: readonly Identifier<"VaultRecord">[];
+  readonly successorGenerationId: Identifier<"Generation">;
+  readonly successorBaselineId: Identifier<"VaultRecord">;
+}): AuthenticatedVaultEvent {
+  return {
+    vaultId,
+    generationId: input.predecessorGenerationId,
+    recordId: input.recordId,
+    parentRecordIds: input.predecessorFrontier,
+    authorityParentRecordIds: input.predecessorAuthorityFrontier,
+    dependencies: [],
+    requiredFeatureSetId: id<"RequiredFeatureSet">(120),
+    extensions: new Map(),
+    family: 3,
+    type: 1,
+    signerCredentialId: id<"ClientCredential">(121),
+    assertedAt: 99n,
+    body: canonicalMap([
+      [0, input.predecessorGenerationId],
+      [1, canonicalSet(input.predecessorFrontier)],
+      [2, input.successorGenerationId],
+      [3, input.successorBaselineId],
+      [4, new Uint8Array(32).fill(122)],
+      [5, new Uint8Array(32).fill(123)],
+      [6, new Uint8Array(32).fill(124)],
+    ]),
+    bytes: new Uint8Array(),
+    signature: new Uint8Array(64),
+  } as AuthenticatedVaultEvent;
 }
 
 describe("canonical Complete Import collision classification", () => {
@@ -195,4 +234,84 @@ describe("canonical Complete Import collision classification", () => {
     expect(built.authorityGraph.has(vacuumEventId)).toBe(true);
     expect(classifyCompleteImportCollision({ local: built, incoming: built })).toBe("equal");
   });
+
+  it("recognizes a compatible authenticated incoming Vacuum successor", () => {
+    const successorGenerationId = id<"Generation">(50);
+    const successorBaselineId = id<"VaultRecord">(51);
+    const vacuumEventId = id<"VaultRecord">(52);
+    const boundary = vacuumBoundary({
+      recordId: vacuumEventId,
+      predecessorGenerationId: generationId,
+      predecessorFrontier: [genesisId],
+      predecessorAuthorityFrontier: [genesisId],
+      successorGenerationId,
+      successorBaselineId,
+    });
+    const local = history({
+      causalFrontier: [genesisId],
+      authorityFrontier: [genesisId],
+      causalEntries: rootEntries,
+      authorityEntries: rootEntries,
+    });
+    const incoming = history({
+      causalFrontier: [successorBaselineId],
+      authorityFrontier: [vacuumEventId],
+      causalEntries: [[successorBaselineId, []]],
+      authorityEntries: [[vacuumEventId, []]],
+      continuityEvents: [boundary],
+      overrides: {
+        generationId: successorGenerationId,
+        baselineId: successorBaselineId,
+      },
+    });
+
+    expect(classifyCompleteImportCollision({ local, incoming })).toBe("incoming-vacuum-successor");
+    expect(classifyCompleteImportCollision({ local: incoming, incoming: local })).toBe(
+      "incoming-generation-ancestor",
+    );
+  });
+
+  it.each(["causal", "authority"] as const)(
+    "does not adopt a successor whose signed predecessor %s Frontier omits local work",
+    (omittedFrontier) => {
+      const localHead = id<"VaultRecord">(60);
+      const remoteHead = id<"VaultRecord">(61);
+      const successorGenerationId = id<"Generation">(62);
+      const successorBaselineId = id<"VaultRecord">(63);
+      const vacuumEventId = id<"VaultRecord">(64);
+      const local = history({
+        causalFrontier: omittedFrontier === "causal" ? [localHead] : [genesisId],
+        authorityFrontier: omittedFrontier === "authority" ? [localHead] : [genesisId],
+        causalEntries:
+          omittedFrontier === "causal" ? [...rootEntries, [localHead, [genesisId]]] : rootEntries,
+        authorityEntries:
+          omittedFrontier === "authority"
+            ? [...rootEntries, [localHead, [genesisId]]]
+            : rootEntries,
+      });
+      const incoming = history({
+        causalFrontier: [successorBaselineId],
+        authorityFrontier: [vacuumEventId],
+        causalEntries: [[successorBaselineId, []]],
+        authorityEntries: [[vacuumEventId, []]],
+        continuityEvents: [
+          vacuumBoundary({
+            recordId: vacuumEventId,
+            predecessorGenerationId: generationId,
+            predecessorFrontier: omittedFrontier === "causal" ? [remoteHead] : [genesisId],
+            predecessorAuthorityFrontier:
+              omittedFrontier === "authority" ? [remoteHead] : [genesisId],
+            successorGenerationId,
+            successorBaselineId,
+          }),
+        ],
+        overrides: {
+          generationId: successorGenerationId,
+          baselineId: successorBaselineId,
+        },
+      });
+
+      expect(classifyCompleteImportCollision({ local, incoming })).toBe("divergent");
+    },
+  );
 });

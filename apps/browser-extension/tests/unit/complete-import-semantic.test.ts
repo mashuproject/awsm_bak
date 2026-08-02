@@ -337,8 +337,11 @@ async function capturedVaultPackage(
   });
 }
 
-async function vacuumedVaultPackage(input: { readonly signingSecretKey?: Uint8Array } = {}) {
-  const creation = await prepareCanonicalVaultCreation({ label: "Research", assertedAt: 1 });
+async function vacuumedVaultPackage(
+  input: { readonly signingSecretKey?: Uint8Array; readonly creation?: Creation } = {},
+) {
+  const creation =
+    input.creation ?? (await prepareCanonicalVaultCreation({ label: "Research", assertedAt: 1 }));
   const replay = await new CanonicalReplayService({} as never).replayOpened({
     ...openedVault(creation),
     installationWrappingKey: {} as CryptoKey,
@@ -640,6 +643,35 @@ describe("canonical Complete Import semantic validation", () => {
         }),
       }),
     ).toBe("incoming-fast-forward");
+  });
+
+  it("classifies an authenticated Vacuum package as the compatible successor Generation", async () => {
+    const creation = await prepareCanonicalVaultCreation({ label: "Research", assertedAt: 1 });
+    const initial = await packageFrom({
+      creation,
+      stored: initialStored(creation),
+      frontierId: creation.genesis.recordId,
+    });
+    const successor = await vacuumedVaultPackage({ creation });
+    const [local, incoming] = await Promise.all([
+      validateCompleteExportSemantics(initial),
+      validateCompleteExportSemantics(successor),
+    ]);
+
+    expect(
+      classifyCompleteImportCollision({
+        local: buildCompleteImportHistoryView({
+          state: local.replicaState,
+          genesisId: local.genesis.recordId,
+          events: local.events,
+        }),
+        incoming: buildCompleteImportHistoryView({
+          state: incoming.replicaState,
+          genesisId: incoming.genesis.recordId,
+          events: incoming.events,
+        }),
+      }),
+    ).toBe("incoming-vacuum-successor");
   });
 
   it("atomically activates an unknown package as an authoring-free local Replica", async () => {

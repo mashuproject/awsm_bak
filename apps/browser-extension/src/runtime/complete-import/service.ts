@@ -3,6 +3,7 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { openKeyEnvelope } from "../../crypto/key-envelope";
 import { wipe } from "../../crypto/sodium";
 import type { Identifier } from "../../domain/canonical/identifiers";
+import { decodeVaultEvent } from "../../domain/canonical/record";
 import { bytesEqual } from "../../domain/hash";
 import {
   type CanonicalIndexedDb,
@@ -43,8 +44,8 @@ import {
 } from "../vault/canonical-service";
 import {
   buildCompleteImportHistoryView,
+  type CompleteImportCollisionRelation,
   classifyCompleteImportCollision,
-  type SameGenerationCompleteImportCollision,
 } from "./collision";
 import {
   type CompleteImportPreparedSource,
@@ -58,7 +59,7 @@ export interface ActivatedCompleteImport {
 }
 
 export interface ReconciledCompleteImport {
-  readonly relation: SameGenerationCompleteImportCollision;
+  readonly relation: CompleteImportCollisionRelation;
   readonly changed: boolean;
 }
 
@@ -212,6 +213,27 @@ function retainedAuthoringState(input: {
   };
 }
 
+async function readLocalContinuityEvents(
+  vaults: CanonicalVaultService,
+  vault: PersistedOpenedCanonicalVault,
+) {
+  return Promise.all(
+    vault.replicaState.continuityRecordIds.map(async (recordId) =>
+      decodeVaultEvent(
+        (
+          await vaults.openResolvedCompactItem({
+            vault,
+            kind: 1,
+            logicalId: recordId,
+            namespace: NAMESPACES.vaultRecord.key,
+            payloadType: 1,
+          })
+        ).payloadBytes,
+      ),
+    ),
+  );
+}
+
 async function verifyRetainedClientKeyDelivery(input: {
   readonly local: PersistedOpenedCanonicalVault;
   readonly authoringClientCredentialId: Identifier<"ClientCredential"> | null;
@@ -281,17 +303,17 @@ export class CanonicalCompleteImportService {
     readonly manifest: CompleteExportManifest;
     readonly keyInventory: CompleteExportKeyInventory;
     readonly source: CompleteImportPreparedSource;
-  }): Promise<SameGenerationCompleteImportCollision> {
+  }): Promise<CompleteImportCollisionRelation> {
     const validated = await validateCompleteExportSemantics(input);
     try {
-      const replay = await new CanonicalReplayService(
-        new CanonicalVaultService(this.storage, this.realm),
-      ).replay(validated.manifest.vaultId);
+      const vaults = new CanonicalVaultService(this.storage, this.realm);
+      const replay = await new CanonicalReplayService(vaults).replay(validated.manifest.vaultId);
+      const continuityEvents = await readLocalContinuityEvents(vaults, replay.vault);
       return classifyCompleteImportCollision({
         local: buildCompleteImportHistoryView({
           state: replay.vault.replicaState,
           genesisId: replay.vault.genesis.recordId,
-          events: replay.events,
+          events: [...replay.events, ...continuityEvents],
         }),
         incoming: buildCompleteImportHistoryView({
           state: validated.replicaState,
@@ -315,11 +337,12 @@ export class CanonicalCompleteImportService {
     try {
       const vaults = new CanonicalVaultService(this.storage, this.realm);
       const replay = await new CanonicalReplayService(vaults).replay(validated.manifest.vaultId);
+      const continuityEvents = await readLocalContinuityEvents(vaults, replay.vault);
       const relation = classifyCompleteImportCollision({
         local: buildCompleteImportHistoryView({
           state: replay.vault.replicaState,
           genesisId: replay.vault.genesis.recordId,
-          events: replay.events,
+          events: [...replay.events, ...continuityEvents],
         }),
         incoming: buildCompleteImportHistoryView({
           state: validated.replicaState,
@@ -327,7 +350,10 @@ export class CanonicalCompleteImportService {
           events: validated.events,
         }),
       });
-      if (relation !== "incoming-fast-forward") return { relation, changed: false };
+      const adoptsVacuum = relation === "incoming-vacuum-successor";
+      if (relation !== "incoming-fast-forward" && !adoptsVacuum) {
+        return { relation, changed: false };
+      }
       for (const item of validated.manifest.opaqueItemInventory) {
         if (item.namespace !== 5) continue;
         preparedArtifacts.push(
@@ -452,6 +478,22 @@ export class CanonicalCompleteImportService {
         nextReplicaState,
         immutableItems: compact.immutableItems,
         mutableItems: [...resolutionItems, directory, ...epochItems],
+        ...(adoptsVacuum
+          ? {
+              deletedItems: [
+                {
+                  namespace: NAMESPACES.libraryProjection.key,
+                  scopeKey: vaultKey,
+                  itemKey: "current",
+                },
+                {
+                  namespace: NAMESPACES.searchMaterialization.key,
+                  scopeKey: vaultKey,
+                  itemKey: "current",
+                },
+              ],
+            }
+          : {}),
       });
       committed = true;
       return { relation, changed: true };
