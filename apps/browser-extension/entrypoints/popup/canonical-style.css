@@ -35,6 +35,18 @@ p {
   margin: 0;
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  padding: 0;
+  white-space: nowrap;
+  border: 0;
+}
+
 h1 {
   font-size: 1.5rem;
   line-height: 1.2;
@@ -120,9 +132,9 @@ h2 {
 }
 
 .canonical-popup__primary {
-  border-color: var(--awsm-cobalt);
-  color: var(--awsm-paper);
-  background: var(--awsm-cobalt);
+  border-color: var(--awsm-ink);
+  color: var(--awsm-ink);
+  background: var(--awsm-coral);
   font-weight: 700;
 }
 
@@ -153,8 +165,9 @@ h2 {
 button:focus-visible,
 input:focus-visible,
 textarea:focus-visible {
-  outline: 3px solid var(--awsm-cobalt);
-  outline-offset: 2px;
+  outline: 3px solid var(--awsm-ink);
+  outline-offset: 4px;
+  box-shadow: 0 0 0 4px var(--awsm-yellow);
 }
 
 button:disabled {

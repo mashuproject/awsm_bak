@@ -18,6 +18,7 @@
     "test:e2e:chrome": "wxt build --mode e2e && AWSM_EXTENSION_BUILD=.output/chrome-mv3-e2e LD_LIBRARY_PATH=.output/browser-libs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH} playwright test -c playwright.e2e.config.ts",
     "test:e2e:firefox": "corepack pnpm build:firefox && playwright test -c tests/firefox-production/playwright.config.mjs && wxt build -b firefox --mv3 --mode e2e && AWSM_FIREFOX_EXTENSION_BUILD=.output/firefox-mv3-e2e AWSM_FIREFOX_EXPORT=true playwright test -c tests/firefox-production/playwright.config.mjs",
     "test:e2e:cross-browser": "corepack pnpm build:chrome && corepack pnpm build:firefox && playwright test -c tests/cross-browser/playwright.config.ts",
+    "test:e2e:canonical-surface": "sh -c 'wxt build -c tests/canonical-surface/wxt.config.ts && playwright test -c tests/canonical-surface/playwright.config.ts; run_status=$?; wxt prepare; restore_status=$?; [ $run_status -eq 0 ] && exit $restore_status; exit $run_status'",
     "test:e2e:design": "wxt build --mode e2e && AWSM_EXTENSION_BUILD=.output/chrome-mv3-e2e LD_LIBRARY_PATH=.output/browser-libs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH} playwright test -c tests/design/playwright.config.ts",
     "test:firefox:feasibility": "wxt build -c tests/firefox-feasibility/wxt.config.ts -b firefox --mv3 && playwright test -c tests/firefox-feasibility/playwright.config.mjs",
     "test:watch": "vitest",
