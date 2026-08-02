@@ -114,9 +114,19 @@ freshness is not provable and MUST NOT be claimed.
 
 # 7. Sparse wrappers
 
-Compact Records and Objects synchronize independently from heavy wrappers. The Client hydrates a
-wrapper from any authorized Remote that can supply exact bytes, verifies every frame and final
-contract, and may later perform Storage Relief. No inventory response proves another durable copy.
+Compact Records and Objects synchronize independently from heavy wrappers. For a known Artifact,
+the Client derives that Remote's Artifact locator from the Remote-local salt and the protected
+Artifact ID, scans ordinary opaque inventory, and retrieves a matching complete Streamable item.
+The locator is only a query hint: a Host can return no item, an unrelated item, or invalid bytes.
+
+The Client prepares the complete wrapper locally, verifies its outer identity and every encrypted
+frame against the authenticated Artifact Object under a locally held Key Epoch, and only then
+conditionally publishes one local Artifact Resolution. That publication compares the exact prior
+Replica Safety State and the prior Resolution bytes (or its absence), so a concurrent local
+representation change cannot be overwritten. An unavailable Remote or an invalid candidate cannot
+change local Resolution state; a later configured Remote remains eligible to supply the Artifact.
+Prepared or promoted physical residue without that publication is unreachable local state and is
+eligible for ordinary reconciliation. No inventory response proves another durable copy.
 
 # 8. CAP and consistency
 

@@ -432,6 +432,41 @@ async function canonicalStorageScenario(): Promise<unknown> {
       nextReplicaState,
     );
     const currentJobAfterMutableConflict = await storage.getBytes(NORMAL_STORAGE_REALM, mutableJob);
+    const existingResolution = {
+      namespace: NAMESPACES.logicalResolution.key,
+      scopeKey: vaultKey,
+      itemKey: "existing-resolution",
+      bytes: Uint8Array.of(40),
+    } as const;
+    await storage.putMutable(NORMAL_STORAGE_REALM, existingResolution);
+    const staleAbsentRecord = {
+      namespace: NAMESPACES.vaultRecord.key,
+      scopeKey: vaultKey,
+      itemKey: "stale-absent-record",
+      bytes: Uint8Array.of(41),
+    } as const;
+    let staleAbsent = "missing";
+    try {
+      await storage.commitReplicaMutation({
+        realm: NORMAL_STORAGE_REALM,
+        expectedReplicaState: nextReplicaState.bytes,
+        expectedAbsentItems: [
+          {
+            namespace: existingResolution.namespace,
+            scopeKey: existingResolution.scopeKey,
+            itemKey: existingResolution.itemKey,
+          },
+        ],
+        nextReplicaState: { ...initialReplicaState, bytes: Uint8Array.of(42) },
+        immutableItems: [staleAbsentRecord],
+      });
+    } catch (error) {
+      staleAbsent = canonicalStorageErrorId(error);
+    }
+    const currentReplicaAfterAbsentConflict = await storage.getBytes(
+      NORMAL_STORAGE_REALM,
+      nextReplicaState,
+    );
 
     return {
       databaseVersion,
@@ -451,6 +486,10 @@ async function canonicalStorageScenario(): Promise<unknown> {
         currentReplicaAfterMutableConflict?.[0] === 20 &&
         currentJobAfterMutableConflict?.[0] === 30 &&
         (await storage.getBytes(NORMAL_STORAGE_REALM, staleMutableRecord)) === undefined,
+      staleAbsent,
+      staleAbsentWriteAbsent:
+        currentReplicaAfterAbsentConflict?.[0] === 20 &&
+        (await storage.getBytes(NORMAL_STORAGE_REALM, staleAbsentRecord)) === undefined,
     };
   } finally {
     await storage.close();

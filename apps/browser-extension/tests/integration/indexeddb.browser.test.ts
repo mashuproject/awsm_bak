@@ -57,6 +57,8 @@ test("enforces the canonical storage families, Realms, immutability, and frontie
     staleWriteAbsent: true,
     staleMutable: "VAULT_CONTEXT_CHANGED",
     staleMutableWriteAbsent: true,
+    staleAbsent: "VAULT_CONTEXT_CHANGED",
+    staleAbsentWriteAbsent: true,
   });
 });
 

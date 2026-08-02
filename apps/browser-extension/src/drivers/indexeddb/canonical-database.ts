@@ -61,6 +61,7 @@ export interface InitialVaultCommit {
 export interface ReplicaMutationCommit {
   readonly realm: StorageRealm;
   readonly expectedReplicaState: Uint8Array;
+  readonly expectedAbsentItems?: readonly Omit<NamespaceBytes, "bytes">[];
   readonly expectedMutableItems?: readonly NamespaceBytes[];
   readonly nextReplicaState: NamespaceBytes;
   readonly immutableItems?: readonly NamespaceBytes[];
@@ -550,6 +551,7 @@ export class CanonicalIndexedDb {
     const immutableItems = input.immutableItems ?? [];
     const mutableItems = input.mutableItems ?? [];
     const deletedItems = input.deletedItems ?? [];
+    const expectedAbsentItems = input.expectedAbsentItems ?? [];
     const expectedMutableItems = input.expectedMutableItems ?? [];
     const allWrittenItems = [input.nextReplicaState, ...immutableItems, ...mutableItems];
     for (const item of allWrittenItems) assertBytes(item);
@@ -569,11 +571,18 @@ export class CanonicalIndexedDb {
         throw new TypeError(`${item.namespace} cannot be a mutable compare-and-swap input`);
       }
     }
+    for (const item of expectedAbsentItems) {
+      if (descriptor(item.namespace).immutable) {
+        throw new TypeError(`${item.namespace} cannot be an absent mutable-state assertion`);
+      }
+    }
+    assertUniqueItems(input.realm, expectedAbsentItems);
     assertUniqueItems(input.realm, expectedMutableItems);
     assertUniqueItems(input.realm, [...allWrittenItems, ...deletedItems]);
 
     const families = [
       ...familyNames(allWrittenItems),
+      ...expectedAbsentItems.map((item) => descriptor(item.namespace).family),
       ...familyNames(expectedMutableItems),
       ...deletedItems.map((item) => descriptor(item.namespace).family),
     ];
@@ -588,6 +597,19 @@ export class CanonicalIndexedDb {
           "VAULT_CONTEXT_CHANGED",
           "The Replica frontier changed before the commit.",
         );
+      }
+      for (const item of expectedAbsentItems) {
+        const stored = await requestValue(
+          transaction
+            .objectStore(descriptor(item.namespace).family)
+            .get(storageKey(input.realm, item)),
+        );
+        if (stored !== undefined) {
+          throw new CanonicalStorageError(
+            "VAULT_CONTEXT_CHANGED",
+            "Mutable safety state already contains the requested local identity.",
+          );
+        }
       }
       for (const item of expectedMutableItems) {
         const stored = await requestValue(

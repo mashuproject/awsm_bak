@@ -64,13 +64,15 @@ Host Storage Admission, download completion, or a matching outer digest is insuf
 
 # 5. Resolution state
 
-Each client Replica keeps protected Replica Safety State that maps exact protected logical IDs to
-the local and Remote Opaque Storage Item IDs known to represent them. The mapping MAY include the
-verified Key Epoch used to open an item.
+Each client Replica keeps one protected local Resolution for an exact protected logical ID. The
+Resolution identifies its local Opaque Storage Item representation, the Key Epoch that verified it,
+and local availability. It does not list or make claims about another Replica's retained bytes.
 
-The mapping is acceleration, not Vault truth. A client can rebuild it by enumerating one authorized
-opaque inventory and decrypting and validating candidates. A Replica Host cannot create or
-interpret it.
+Remote reachability is derived on demand for each configured Remote from that Remote's local
+locator salt and the protected logical ID. A matching Host inventory locator is an untrusted query
+result, not a Resolution and not evidence of remote availability. The local Resolution is an
+acceleration, not Vault truth. A client can rebuild it by enumerating authorized opaque inventory
+and validating candidates. A Replica Host cannot create or interpret it.
 
 # 6. Artifact wrappers
 
@@ -87,15 +89,17 @@ Object IDs or reachability semantics.
 
 # 7. Replica-local availability
 
-For every reachable eligible wrapper, one client Replica records exactly one:
+For every reachable eligible wrapper, one client Replica records exactly one local state:
 
 - `Present`: complete verified wrapper exists locally;
-- `Evicted`: intentional local absence with no claim that another copy exists; or
+- `Evicted`: intentional local absence with no claim that another copy exists;
 - `UnexpectedlyMissing`: bytes expected locally are absent or fail verification.
 
 Availability is Replica Safety State and does not synchronize as portable Vault truth. Storage
 Relief may change Present to Evicted only after the unconditional data-loss warning. Retrieval may
-change Evicted to Present only after full verification.
+change Evicted to Present only after full verification. A configured Remote may be queried while a
+wrapper is absent, but neither its configuration nor its inventory changes this local state until
+that verification succeeds.
 
 # 8. Enumeration and retrieval
 

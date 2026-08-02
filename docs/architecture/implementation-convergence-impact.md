@@ -215,14 +215,18 @@ synchronization now has a strict Hosted HTTP adapter plus Installation-wrapped R
 durable snapshot inventory/Quarantine, Host-locator retention, and local Compact classification.
 For a non-adopted current Generation, it also validates one complete same-Generation Content DAG
 branch and its newly required Vault Object closure, then atomically promotes only those newly
-accepted Compact items with the exact pull Job and Replica state. Authority, Key-Epoch,
-Required-Feature, Vacuum/adoption, unsupported Object/hydration, Remote-management UI, and
-shipped-background work remain Quarantined or unfinished. Retryable opaque-Host transport failures
-now checkpoint bounded local retries without changing Vault state. One local coordinator now pulls
-configured Remotes sequentially and isolates an individual Remote failure, while rejecting corrupt
-local Remote scope/identity before a channel call. Remote onboarding, materialization, Authority and
-Generation proof, hydration, shipped activation, and general multi-Remote convergence remain
-unfinished.
+accepted Compact items with the exact pull Job and Replica state. A repository-tested Runtime
+foundation can now hydrate one known Streamable Artifact by scanning every enabled Remote's opaque
+inventory with its derived locator, fully verifying a candidate under a local Key Epoch, and
+conditionally publishing the local Artifact Resolution. It skips unavailable or invalid Remotes
+without giving them semantic authority; it is not yet wired into the background or a user surface,
+and has no real-browser hydration proof. Authority, Key-Epoch, Required-Feature,
+Vacuum/adoption, Remote-management UI, shipped activation, and general multi-Remote convergence
+remain Quarantined or unfinished. Retryable opaque-Host transport failures now checkpoint bounded
+local retries without changing Vault state. One local coordinator pulls configured Remotes
+sequentially and isolates an individual Remote failure, while rejecting corrupt local Remote
+scope/identity before a channel call. Remote onboarding, destination materialization, Authority and
+Generation proof, and shipped activation remain unfinished.
 
 ## 4.4 Account dashboard and public pages
 

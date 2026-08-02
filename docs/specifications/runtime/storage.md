@@ -132,15 +132,19 @@ logical Artifact identity, verifies the exact wrapper contract, and uses Prepare
 Execution State where the physical systems cannot commit atomically.
 
 Randomized outer envelope bytes and Opaque Storage Item IDs are placement identities. Protected
-logical IDs remain stable across backends. Protected local resolution state maps logical IDs to
-available opaque representations per Remote.
+logical IDs remain stable across backends. Protected local Resolution state maps each logical ID to
+its one local representation and availability. Per-Remote reachability is derived transiently from
+that Remote's locator salt and the protected logical ID; it is not a Remote-scoped Resolution and
+does not claim that the Remote retains bytes.
 
 # 6. Sparse availability
 
-Replica Safety State distinguishes verified local, remotely resolvable, expected but unavailable,
-and corrupt. Storage Relief may remove a heavy wrapper after a clear, non-blocking warning that the
-Client cannot verify another usable copy. Compact authority and resolution state remain sufficient
-to retrieve known missing bytes when a configured Remote supplies them.
+Replica Safety State distinguishes a verified local representation, intentional eviction, expected
+but unavailable local bytes, and corrupt local bytes. Remote configuration and a derivable locator
+may make a query possible but are not an availability state or a durability claim. Storage Relief
+may remove a heavy wrapper after a clear, non-blocking warning that the Client cannot verify another
+usable copy. Compact authority and the protected Artifact identity remain sufficient to query a
+configured Remote and fully verify any returned bytes.
 
 # 7. Deletion and Garbage Collection
 
