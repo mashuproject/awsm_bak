@@ -69,9 +69,9 @@ test("runs the canonical local Vault ceremony through a packaged extension", asy
     await expect(first.getByRole("heading", { name: "Create your local Vault" })).toBeVisible();
     await assertInteractiveTargets(first);
     await expectReadableContrast(first);
+    await first.evaluate(() => window.scrollTo(0, 0));
     await first.screenshot({
       path: testInfo.outputPath("canonical-popup-create.png"),
-      fullPage: true,
     });
 
     await first.getByLabel("Vault name").fill("Field Notes");
@@ -83,9 +83,9 @@ test("runs the canonical local Vault ceremony through a packaged extension", asy
     expect(recoveryPhrase).not.toHaveLength(0);
     await assertInteractiveTargets(first);
     await expectReadableContrast(first);
+    await first.evaluate(() => window.scrollTo(0, 0));
     await first.screenshot({
       path: testInfo.outputPath("canonical-popup-recovery.png"),
-      fullPage: true,
     });
 
     await first.getByLabel("Type the Recovery Phrase to continue").fill(recoveryPhrase);
@@ -101,14 +101,91 @@ test("runs the canonical local Vault ceremony through a packaged extension", asy
     await first.setViewportSize({ width: 360, height: 700 });
     await expect(first.getByRole("button", { name: "Archive this page" })).toBeVisible();
     await expectReadableContrast(first);
+    await first.evaluate(() => window.scrollTo(0, 0));
     await first.screenshot({
       path: testInfo.outputPath("canonical-popup-capture-narrow.png"),
-      fullPage: true,
     });
 
     const second = await popup(client);
     await expect(second.getByRole("heading", { name: "Archive this page" })).toBeVisible();
     await expect(second.getByText("Vault · Field Notes")).toBeVisible();
+
+    await first.setViewportSize({ width: 400, height: 700 });
+    const vaultSettings = first.getByRole("button", { name: "Vault settings" });
+    await expect(vaultSettings).toBeVisible();
+    await vaultSettings.click();
+    await expect(first.getByRole("heading", { name: "Vault settings" })).toBeVisible();
+    await expect(first.getByText("Vault · Field Notes")).toBeVisible();
+    await expect(first.getByRole("button", { name: "Change Recovery Phrase" })).toBeVisible();
+    await expect(first.getByRole("button", { name: "Fork this Vault" })).toBeVisible();
+    await expect(first.getByRole("button", { name: "Vacuum this Vault" })).toBeVisible();
+    await expect(first.getByRole("button", { name: "Close Vault" })).toBeVisible();
+    await expect(first.getByRole("button", { name: "Close Vault" })).toHaveCSS(
+      "background-color",
+      "rgb(169, 46, 34)",
+    );
+    await assertInteractiveTargets(first);
+    await expectReadableContrast(first);
+    await first.evaluate(() => window.scrollTo(0, 0));
+    await first.screenshot({
+      path: testInfo.outputPath("canonical-popup-settings.png"),
+    });
+
+    await first.getByRole("button", { name: "Change Recovery Phrase" }).click();
+    await expect(
+      first.getByRole("heading", { name: "Replace your Recovery Phrase" }),
+    ).toBeVisible();
+    await expect(
+      first.getByRole("textbox", { name: "New Recovery Phrase", exact: true }),
+    ).toBeVisible();
+    await assertInteractiveTargets(first);
+    await expectReadableContrast(first);
+    await first.evaluate(() => window.scrollTo(0, 0));
+    await first.screenshot({
+      path: testInfo.outputPath("canonical-popup-recovery-replacement.png"),
+    });
+    await first.getByRole("button", { name: "Cancel Recovery Phrase replacement" }).click();
+    await expect(first.getByRole("heading", { name: "Vault settings" })).toBeVisible();
+
+    await first.getByRole("button", { name: "Fork this Vault" }).click();
+    await expect(first.getByRole("heading", { name: "Fork this Vault" })).toBeVisible();
+    await expect(
+      first.getByRole("textbox", { name: "Recovery Phrase", exact: true }),
+    ).toBeVisible();
+    await assertInteractiveTargets(first);
+    await expectReadableContrast(first);
+    await first.evaluate(() => window.scrollTo(0, 0));
+    await first.screenshot({
+      path: testInfo.outputPath("canonical-popup-fork.png"),
+    });
+    await first.getByRole("button", { name: "Cancel Vault fork" }).click();
+    await expect(first.getByRole("heading", { name: "Vault settings" })).toBeVisible();
+
+    await first.getByRole("button", { name: "Vacuum this Vault" }).click();
+    await expect(first.getByRole("heading", { name: "Vacuum this Vault?" })).toBeVisible();
+    await assertInteractiveTargets(first);
+    await expectReadableContrast(first);
+    await first.evaluate(() => window.scrollTo(0, 0));
+    await first.screenshot({
+      path: testInfo.outputPath("canonical-popup-vacuum.png"),
+    });
+    await first.getByRole("button", { name: "Cancel Vacuum" }).click();
+    await expect(first.getByRole("heading", { name: "Vault settings" })).toBeVisible();
+
+    await first.getByRole("button", { name: "Close Vault" }).click();
+    await expect(first.getByRole("heading", { name: "Close this Vault?" })).toBeVisible();
+    await first.evaluate(() => window.scrollTo(0, 0));
+    await expect(first.locator(".canonical-popup__brand")).toBeInViewport();
+    expect(
+      (await first.locator(".canonical-popup__brand").boundingBox())?.y,
+    ).toBeGreaterThanOrEqual(0);
+    await assertInteractiveTargets(first);
+    await expectReadableContrast(first);
+    await first.screenshot({
+      path: testInfo.outputPath("canonical-popup-closure.png"),
+    });
+    await first.getByRole("button", { name: "Cancel closure" }).click();
+    await expect(first.getByRole("heading", { name: "Vault settings" })).toBeVisible();
   } finally {
     await client.context.close();
   }

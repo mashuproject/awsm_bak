@@ -60,6 +60,7 @@ h2 {
 .canonical-popup__brand,
 .canonical-popup__actions,
 .canonical-popup__choices,
+.canonical-popup__management,
 .canonical-popup__recent,
 .canonical-popup__form {
   display: grid;
@@ -116,7 +117,9 @@ h2 {
 .canonical-popup__form textarea,
 .canonical-popup__primary,
 .canonical-popup__actions button,
-.canonical-popup__choices button {
+.canonical-popup__choices button,
+.canonical-popup__management button,
+.canonical-popup__quiet {
   width: 100%;
   min-height: 44px;
   border: 1px solid var(--awsm-border-subtle);
@@ -135,6 +138,24 @@ h2 {
   border-color: var(--awsm-ink);
   color: var(--awsm-ink);
   background: var(--awsm-coral);
+  font-weight: 700;
+}
+
+.canonical-popup__management .canonical-popup__quiet,
+.canonical-popup__quiet {
+  border-color: transparent;
+  color: var(--awsm-link);
+  background: var(--awsm-paper);
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.canonical-popup__actions .canonical-popup__danger,
+.canonical-popup__management .canonical-popup__danger {
+  border-color: var(--awsm-danger);
+  color: var(--awsm-paper);
+  background: var(--awsm-danger);
   font-weight: 700;
 }
 

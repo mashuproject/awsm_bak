@@ -48,6 +48,22 @@ function displayCaptureTitle(title: string | null, url: string): string {
   return title === null || title.length === 0 ? new URL(url).hostname : title;
 }
 
+type CanonicalPopupVaultScreen =
+  | { readonly kind: "Capture" }
+  | { readonly kind: "Settings" }
+  | {
+      readonly kind: "RecoveryPhraseReplacement";
+      readonly setup: Awaited<
+        ReturnType<CanonicalPopupApplicationClient["beginRecoveryPhraseReplacement"]>
+      >;
+    }
+  | {
+      readonly kind: "Fork";
+      readonly setup: Awaited<ReturnType<CanonicalPopupApplicationClient["beginVaultFork"]>>;
+    }
+  | { readonly kind: "VacuumConfirmation" }
+  | { readonly kind: "ClosureConfirmation" };
+
 const app = requiredElement("#app");
 const announcer = requiredElement("#announcer");
 const client: CanonicalPopupApplicationClient = createCanonicalPopupApplicationClient({
@@ -58,6 +74,7 @@ let pendingRecoveryConfirmation: CanonicalPopupRecoveryConfirmation | undefined;
 let renderedView: CanonicalPopupView | undefined;
 let transientError: string | undefined;
 let capturePending = false;
+let vaultScreen: CanonicalPopupVaultScreen = { kind: "Capture" };
 
 const controller = new CanonicalPopupController(client, (view) => {
   renderedView = view;
@@ -293,6 +310,17 @@ function renderCapture(view: CanonicalPopupView, content: DocumentFragment): voi
     });
   });
   content.append(capture);
+  const settings = element(
+    "button",
+    "Vault settings",
+    "canonical-popup__quiet",
+  ) as HTMLButtonElement;
+  settings.type = "button";
+  settings.addEventListener("click", () => {
+    vaultScreen = { kind: "Settings" };
+    render(view);
+  });
+  content.append(settings);
   const captures = view.library.filter(({ lifecycle }) => lifecycle === "Active").slice(0, 3);
   const recent = element("section", undefined, "canonical-popup__recent");
   recent.append(element("h2", "Recent captures"));
@@ -315,28 +343,297 @@ function renderCapture(view: CanonicalPopupView, content: DocumentFragment): voi
   content.append(recent);
 }
 
+function renderVaultSettings(view: CanonicalPopupView, content: DocumentFragment): void {
+  const presentation = canonicalPopupPresentation(view.state);
+  if (presentation.kind !== "Capture") throw new Error("Vault settings require a selected Vault.");
+  content.append(
+    element(
+      "p",
+      `Vault · ${displayVaultLabel(presentation.vault.label)}`,
+      "canonical-popup__context",
+    ),
+    element(
+      "p",
+      "Recovery, Fork, Vacuum, and closure affect this Vault. Your Host Account does not grant access to its contents.",
+      "canonical-popup__warning",
+    ),
+  );
+  const actions = element("div", undefined, "canonical-popup__management");
+  const replace = element("button", "Change Recovery Phrase") as HTMLButtonElement;
+  replace.type = "button";
+  replace.addEventListener("click", () => {
+    action(replace, async () => {
+      transientError = undefined;
+      const setup = await client.beginRecoveryPhraseReplacement(presentation.vault.vaultId);
+      vaultScreen = { kind: "RecoveryPhraseReplacement", setup };
+      await controller.refresh();
+    });
+  });
+  const fork = element("button", "Fork this Vault") as HTMLButtonElement;
+  fork.type = "button";
+  fork.addEventListener("click", () => {
+    action(fork, async () => {
+      transientError = undefined;
+      const setup = await client.beginVaultFork(presentation.vault.vaultId);
+      vaultScreen = { kind: "Fork", setup };
+      await controller.refresh();
+    });
+  });
+  const vacuum = element("button", "Vacuum this Vault") as HTMLButtonElement;
+  vacuum.type = "button";
+  vacuum.addEventListener("click", () => {
+    vaultScreen = { kind: "VacuumConfirmation" };
+    render(view);
+  });
+  const close = element("button", "Close Vault", "canonical-popup__danger") as HTMLButtonElement;
+  close.type = "button";
+  close.addEventListener("click", () => {
+    vaultScreen = { kind: "ClosureConfirmation" };
+    render(view);
+  });
+  const back = element("button", "Back to archive", "canonical-popup__quiet") as HTMLButtonElement;
+  back.type = "button";
+  back.addEventListener("click", () => {
+    vaultScreen = { kind: "Capture" };
+    render(view);
+  });
+  actions.append(replace, fork, vacuum, close, back);
+  content.append(actions);
+}
+
+function renderRecoveryPhraseReplacement(
+  content: DocumentFragment,
+  setup: Extract<
+    CanonicalPopupVaultScreen,
+    { readonly kind: "RecoveryPhraseReplacement" }
+  >["setup"],
+): void {
+  content.append(
+    element(
+      "p",
+      "Write the new Recovery Phrase down somewhere safe. It replaces the current phrase after confirmation.",
+      "canonical-popup__warning",
+    ),
+  );
+  const phrase = element("textarea") as HTMLTextAreaElement;
+  phrase.readOnly = true;
+  phrase.value = setup.recoveryPhrase;
+  phrase.rows = 3;
+  phrase.setAttribute("aria-label", "New Recovery Phrase");
+  content.append(phrase);
+  const form = element("form", undefined, "canonical-popup__form");
+  const confirmationLabel = element("label", "Type the new Recovery Phrase to continue");
+  const confirmation = element("input") as HTMLInputElement;
+  confirmation.autocomplete = "off";
+  confirmation.required = true;
+  confirmationLabel.append(confirmation);
+  const actions = element("div", undefined, "canonical-popup__actions");
+  const cancel = element("button", "Cancel Recovery Phrase replacement") as HTMLButtonElement;
+  cancel.type = "button";
+  cancel.addEventListener("click", () => {
+    action(cancel, async () => {
+      transientError = undefined;
+      await client.cancelRecoveryPhraseReplacement(setup.setupId);
+      vaultScreen = { kind: "Settings" };
+      await controller.refresh();
+    });
+  });
+  const submit = element(
+    "button",
+    "Confirm new Recovery Phrase",
+    "canonical-popup__primary",
+  ) as HTMLButtonElement;
+  submit.type = "submit";
+  actions.append(cancel, submit);
+  form.append(confirmationLabel, actions);
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    action(submit, async () => {
+      transientError = undefined;
+      await client.confirmRecoveryPhraseReplacement({
+        setupId: setup.setupId,
+        recoveryPhrase: confirmation.value,
+      });
+      vaultScreen = { kind: "Settings" };
+      announcer.textContent = "Recovery Phrase replaced.";
+      await controller.refresh();
+    });
+  });
+  content.append(form);
+}
+
+function renderVaultFork(
+  content: DocumentFragment,
+  setup: Extract<CanonicalPopupVaultScreen, { readonly kind: "Fork" }>["setup"],
+): void {
+  content.append(
+    element(
+      "p",
+      "Fork creates a new Vault from the current state. It leaves this Vault and its history unchanged.",
+      "canonical-popup__warning",
+    ),
+  );
+  const phrase = element("textarea") as HTMLTextAreaElement;
+  phrase.readOnly = true;
+  phrase.value = setup.recoveryPhrase;
+  phrase.rows = 3;
+  phrase.setAttribute("aria-label", "Recovery Phrase");
+  content.append(phrase);
+  const form = element("form", undefined, "canonical-popup__form");
+  const confirmationLabel = element("label", "Type the Recovery Phrase to create the Fork");
+  const confirmation = element("input") as HTMLInputElement;
+  confirmation.autocomplete = "off";
+  confirmation.required = true;
+  confirmationLabel.append(confirmation);
+  const actions = element("div", undefined, "canonical-popup__actions");
+  const cancel = element("button", "Cancel Vault fork") as HTMLButtonElement;
+  cancel.type = "button";
+  cancel.addEventListener("click", () => {
+    action(cancel, async () => {
+      transientError = undefined;
+      await client.cancelVaultFork(setup.setupId);
+      vaultScreen = { kind: "Settings" };
+      await controller.refresh();
+    });
+  });
+  const submit = element(
+    "button",
+    "Confirm Vault fork",
+    "canonical-popup__primary",
+  ) as HTMLButtonElement;
+  submit.type = "submit";
+  actions.append(cancel, submit);
+  form.append(confirmationLabel, actions);
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    action(submit, async () => {
+      transientError = undefined;
+      await client.confirmVaultFork({ setupId: setup.setupId, recoveryPhrase: confirmation.value });
+      vaultScreen = { kind: "Capture" };
+      announcer.textContent = "Vault forked.";
+      await controller.refresh();
+    });
+  });
+  content.append(form);
+}
+
+function renderVacuumConfirmation(view: CanonicalPopupView, content: DocumentFragment): void {
+  const presentation = canonicalPopupPresentation(view.state);
+  if (presentation.kind !== "Capture") throw new Error("Vacuum requires a selected Vault.");
+  content.append(
+    element(
+      "p",
+      "Vacuum creates a new baseline. Other Replicas can adopt it, or Fork before adoption to retain the older history. This Client does not delete old bytes automatically.",
+      "canonical-popup__warning",
+    ),
+  );
+  const actions = element("div", undefined, "canonical-popup__actions");
+  const cancel = element("button", "Cancel Vacuum") as HTMLButtonElement;
+  cancel.type = "button";
+  cancel.addEventListener("click", () => {
+    vaultScreen = { kind: "Settings" };
+    render(view);
+  });
+  const confirm = element(
+    "button",
+    "Confirm Vacuum",
+    "canonical-popup__danger",
+  ) as HTMLButtonElement;
+  confirm.type = "button";
+  confirm.addEventListener("click", () => {
+    action(confirm, async () => {
+      transientError = undefined;
+      await client.vacuumVault(presentation.vault.vaultId);
+      vaultScreen = { kind: "Settings" };
+      announcer.textContent = "Vault Vacuum created.";
+      await controller.refresh();
+    });
+  });
+  actions.append(cancel, confirm);
+  content.append(actions);
+}
+
+function renderClosureConfirmation(view: CanonicalPopupView, content: DocumentFragment): void {
+  const presentation = canonicalPopupPresentation(view.state);
+  if (presentation.kind !== "Capture") throw new Error("Closure requires a selected Vault.");
+  content.append(
+    element(
+      "p",
+      "Closing stops new Events in this Vault. Existing Replicas keep their current data and can Fork it into a new Vault.",
+      "canonical-popup__warning",
+    ),
+  );
+  const actions = element("div", undefined, "canonical-popup__actions");
+  const cancel = element("button", "Cancel closure") as HTMLButtonElement;
+  cancel.type = "button";
+  cancel.addEventListener("click", () => {
+    vaultScreen = { kind: "Settings" };
+    render(view);
+  });
+  const confirm = element(
+    "button",
+    "Confirm closure",
+    "canonical-popup__danger",
+  ) as HTMLButtonElement;
+  confirm.type = "button";
+  confirm.addEventListener("click", () => {
+    action(confirm, async () => {
+      transientError = undefined;
+      await client.closeVault(presentation.vault.vaultId);
+      vaultScreen = { kind: "Settings" };
+      announcer.textContent = "Vault closed.";
+      await controller.refresh();
+    });
+  });
+  actions.append(cancel, confirm);
+  content.append(actions);
+}
+
+function popupHeading(presentation: ReturnType<typeof canonicalPopupPresentation>): string {
+  if (presentation.kind !== "Capture") {
+    return presentation.kind === "CreateVault"
+      ? "Create your local Vault"
+      : presentation.kind === "SelectVault"
+        ? "Choose a Vault"
+        : presentation.kind === "ConfirmRecoveryPhrase"
+          ? "Protect your Vault"
+          : "Resume Vault setup";
+  }
+  switch (vaultScreen.kind) {
+    case "Capture":
+      return "Archive this page";
+    case "Settings":
+      return "Vault settings";
+    case "RecoveryPhraseReplacement":
+      return "Replace your Recovery Phrase";
+    case "Fork":
+      return "Fork this Vault";
+    case "VacuumConfirmation":
+      return "Vacuum this Vault?";
+    case "ClosureConfirmation":
+      return "Close this Vault?";
+  }
+}
+
 function render(view: CanonicalPopupView): void {
   const presentation = canonicalPopupPresentation(view.state, pendingRecoveryConfirmation);
   const content = document.createDocumentFragment();
-  content.append(
-    heading(
-      presentation.kind === "CreateVault"
-        ? "Create your local Vault"
-        : presentation.kind === "SelectVault"
-          ? "Choose a Vault"
-          : presentation.kind === "ConfirmRecoveryPhrase"
-            ? "Protect your Vault"
-            : presentation.kind === "ResumeRecoveryPhrase"
-              ? "Resume Vault setup"
-              : "Archive this page",
-    ),
-  );
+  content.append(heading(popupHeading(presentation)));
   if (transientError !== undefined) content.append(status(transientError, "error"));
   if (presentation.kind === "CreateVault") renderCreateVault(view, content);
   if (presentation.kind === "SelectVault") renderVaultSelection(view, content);
   if (presentation.kind === "ConfirmRecoveryPhrase") renderRecoveryConfirmation(content);
   if (presentation.kind === "ResumeRecoveryPhrase") renderRecoveryResume(presentation, content);
-  if (presentation.kind === "Capture") renderCapture(view, content);
+  if (presentation.kind === "Capture") {
+    if (vaultScreen.kind === "Capture") renderCapture(view, content);
+    if (vaultScreen.kind === "Settings") renderVaultSettings(view, content);
+    if (vaultScreen.kind === "RecoveryPhraseReplacement") {
+      renderRecoveryPhraseReplacement(content, vaultScreen.setup);
+    }
+    if (vaultScreen.kind === "Fork") renderVaultFork(content, vaultScreen.setup);
+    if (vaultScreen.kind === "VacuumConfirmation") renderVacuumConfirmation(view, content);
+    if (vaultScreen.kind === "ClosureConfirmation") renderClosureConfirmation(view, content);
+  }
   app.replaceChildren(content);
   app.setAttribute("aria-busy", "false");
 }
