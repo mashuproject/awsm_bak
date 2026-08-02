@@ -248,6 +248,36 @@ export class CanonicalPullSynchronizationJobService {
     return job;
   }
 
+  async findActive(input: {
+    readonly vaultId: CanonicalPullSynchronizationJob["vaultId"];
+    readonly remoteId: string;
+  }): Promise<CanonicalPullSynchronizationJob | undefined> {
+    const vaultKey = identifierStorageKey(input.vaultId);
+    const entries = await this.storage.listBytes(
+      this.realm,
+      NAMESPACES.pullSynchronizationJob.key,
+      vaultKey,
+    );
+    const active: CanonicalPullSynchronizationJob[] = [];
+    for (const entry of entries) {
+      const job = decodeCanonicalPullSynchronizationJob(entry.bytes);
+      if (
+        job.jobId !== entry.itemKey ||
+        !bytesEqual(job.vaultId, input.vaultId) ||
+        !sameRealm(job.realm, this.realm)
+      ) {
+        throw new TypeError(
+          "Synchronization Job storage identity does not match its protected state",
+        );
+      }
+      if (job.remoteId === input.remoteId && job.state !== 3) active.push(job);
+    }
+    if (active.length > 1) {
+      throw new TypeError("One Vault and Replica Remote cannot retain multiple active pull Jobs");
+    }
+    return active[0];
+  }
+
   async recordQuarantine(input: {
     readonly previous: CanonicalPullSynchronizationJob;
     readonly next: CanonicalPullSynchronizationJob;

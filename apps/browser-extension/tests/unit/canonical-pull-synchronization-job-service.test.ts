@@ -4,6 +4,7 @@ import { type Identifier, identifier } from "../../src/domain/canonical/identifi
 import { identifierStorageKey } from "../../src/drivers/indexeddb/canonical-database";
 import { NAMESPACES, NORMAL_STORAGE_REALM } from "../../src/drivers/indexeddb/canonical-schema";
 import { CanonicalPullSynchronizationJobService } from "../../src/runtime/synchronization/canonical-pull-synchronization-job-service";
+import { encodeCanonicalPullSynchronizationJob } from "../../src/runtime/synchronization/canonical-state";
 import { encodeOpaqueEnvelope } from "../../src/storage/opaque-envelope";
 
 const REMOTE_ID = "019fa62e-a653-7f63-b2bf-94e7ed5e46ca";
@@ -18,6 +19,42 @@ function reference(storageItemId: Identifier<"StorageItem">, locatorByte: number
 }
 
 describe("canonical pull-synchronization Job service", () => {
+  it("finds the sole active local pull Job for one Vault and Remote", async () => {
+    const vaultId = filled("Vault", 1);
+    const active = {
+      jobId: JOB_ID,
+      vaultId,
+      remoteId: REMOTE_ID,
+      realm: NORMAL_STORAGE_REALM,
+      stage: 2 as const,
+      state: 1 as const,
+      snapshotCursor: 3,
+      nextPosition: null,
+      attempt: 0,
+      retryAfterMs: null,
+      quarantineReferences: [],
+      progress: {
+        discoveredItemCount: 0,
+        downloadedItemCount: 0,
+        promotedItemCount: 0,
+        rejectedItemCount: 0,
+      },
+    };
+    const service = new CanonicalPullSynchronizationJobService(
+      {
+        listBytes: async () => [
+          {
+            itemKey: JOB_ID,
+            bytes: encodeCanonicalPullSynchronizationJob(active),
+          },
+        ],
+      } as unknown as ConstructorParameters<typeof CanonicalPullSynchronizationJobService>[0],
+      NORMAL_STORAGE_REALM,
+    );
+
+    await expect(service.findActive({ vaultId, remoteId: REMOTE_ID })).resolves.toEqual(active);
+  });
+
   it("creates one local durable pull Job bound to the Vault, Remote, and Storage Realm", async () => {
     const commits: unknown[] = [];
     const service = new CanonicalPullSynchronizationJobService(
