@@ -68,11 +68,17 @@ export class CanonicalReplayService {
     const baselineKey = key(vault.baseline.recordId);
     const adoption = vault.replicaState.adoption;
     const initialClient = initialVaultClientAuthority(vault.genesis);
+    const body = exactMap(vault.baseline.body, [0, 1, 2, 3, 4, 5], "Accepted Baseline body");
+    const authorityCheckpoint = exactMap(
+      mapValue(body, 3),
+      [...Array(10).keys()],
+      "Accepted Baseline authority checkpoint",
+    );
     const authorityReplay = new CanonicalAuthorityReplay(
       vault.genesis,
       adoption === null ? vault.genesis.recordId : adoption.vacuumEventRecordId,
+      mapValue(authorityCheckpoint, 7),
     );
-    const body = exactMap(vault.baseline.body, [0, 1, 2, 3, 4, 5], "Accepted Baseline body");
     graph.addBaseline(vault.baseline.recordId, contentCheckpointCauseIds(mapValue(body, 2)));
 
     const visit = async (recordId: Identifier<"VaultRecord">): Promise<void> => {

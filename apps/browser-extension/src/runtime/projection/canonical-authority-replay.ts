@@ -74,6 +74,7 @@ export interface CanonicalAuthorityState {
     readonly candidateRecordIds: readonly Identifier<"VaultRecord">[];
     readonly keyEpochIds: readonly Identifier<"KeyEpoch">[];
   }[];
+  readonly keyEnvelopeSlots: readonly CanonicalAuthorityKeyEnvelopeSlot[];
   readonly writeFences: readonly CanonicalAuthorityWriteFence[];
   readonly clientCredentials: ReadonlyMap<string, CanonicalAuthorityClientCredential>;
   readonly lifecycle: 1 | 2;
@@ -117,6 +118,14 @@ export interface CanonicalAuthorityKeyEpoch {
   readonly current: boolean;
 }
 
+export interface CanonicalAuthorityKeyEnvelopeSlot {
+  readonly keyEpochId: Identifier<"KeyEpoch">;
+  readonly targetKind: 1 | 2;
+  readonly targetCredentialId: Uint8Array;
+  readonly targetRevision: number | null;
+  readonly keyEnvelopeId: Identifier<"KeyEnvelope">;
+}
+
 export interface CanonicalAuthorityInvitation {
   readonly invitationId: Identifier<"Invitation">;
   readonly issuerMemberId: Identifier<"Member">;
@@ -158,13 +167,7 @@ interface InvitationTerminalFact extends CanonicalAuthorityInvitationConflictCan
   readonly acceptance: AcceptedInvitation | null;
 }
 
-interface InvitationEnvelopeSlot {
-  readonly keyEpochId: Identifier<"KeyEpoch">;
-  readonly targetKind: 1 | 2;
-  readonly targetCredentialId: Uint8Array;
-  readonly targetRevision: number | null;
-  readonly keyEnvelopeId: Identifier<"KeyEnvelope">;
-}
+type InvitationEnvelopeSlot = CanonicalAuthorityKeyEnvelopeSlot;
 
 interface CancelledInvitation {
   readonly invitationId: Identifier<"Invitation">;
@@ -214,6 +217,10 @@ interface KeyEpochTransition {
   readonly envelopeSlots: readonly InvitationEnvelopeSlot[];
 }
 
+interface KeyDelivery {
+  readonly envelopeSlots: readonly InvitationEnvelopeSlot[];
+}
+
 export class CanonicalAuthorityReplay {
   readonly #vaultId: Identifier<"Vault">;
   readonly #anchorRecordId: Identifier<"VaultRecord">;
@@ -221,6 +228,7 @@ export class CanonicalAuthorityReplay {
   readonly #initialCredential: CanonicalAuthorityClientCredential;
   readonly #initialRecoveryCredential: CanonicalAuthorityRecoveryCredential;
   readonly #initialKeyEpoch: CanonicalAuthorityKeyEpoch;
+  readonly #anchorEnvelopeSlots: readonly InvitationEnvelopeSlot[];
   readonly #graph = new CausalGraph();
   readonly #events: AuthenticatedVaultEvent[] = [];
   readonly #acceptedInvitations = new Map<string, AcceptedInvitation>();
@@ -229,10 +237,12 @@ export class CanonicalAuthorityReplay {
   readonly #clientEnrollments = new Map<string, ClientCredentialEnrollment>();
   readonly #recoveryReplacements = new Map<string, RecoveryCredentialReplacement>();
   readonly #keyEpochTransitions = new Map<string, KeyEpochTransition>();
+  readonly #keyDeliveries = new Map<string, KeyDelivery>();
 
   constructor(
     genesis: AuthenticatedVaultEvent,
-    anchorRecordId: Identifier<"VaultRecord"> = genesis.recordId,
+    anchorRecordId: Identifier<"VaultRecord">,
+    anchorEnvelopeSlotsValue: CanonicalValue,
   ) {
     const initial = initialVaultClientAuthority(genesis);
     this.#vaultId = genesis.vaultId;
@@ -276,6 +286,10 @@ export class CanonicalAuthorityReplay {
       displayNumber: 0,
       current: true,
     };
+    this.#anchorEnvelopeSlots = parseEnvelopeSlots(
+      anchorEnvelopeSlotsValue,
+      "Accepted Baseline Key Envelope slots",
+    );
     this.#graph.add(anchorRecordId, []);
   }
 
@@ -778,6 +792,40 @@ export class CanonicalAuthorityReplay {
             },
           ]
         : [];
+    const keyEnvelopeSlotsById = new Map<string, InvitationEnvelopeSlot>();
+    const addEnvelopeSlots = (slots: readonly InvitationEnvelopeSlot[]): void => {
+      for (const slot of slots) {
+        const slotId = key(slot.keyEnvelopeId);
+        const existing = keyEnvelopeSlotsById.get(slotId);
+        if (
+          existing !== undefined &&
+          envelopeSlotTargetKey(existing) !== envelopeSlotTargetKey(slot)
+        ) {
+          throw new TypeError("Authority State rebinds a Key Envelope identity");
+        }
+        if (existing === undefined) keyEnvelopeSlotsById.set(slotId, slot);
+      }
+    };
+    addEnvelopeSlots(this.#anchorEnvelopeSlots);
+    for (const event of this.#events) {
+      if (event.family !== 1 || !this.#isIncluded(event.recordId, frontier)) continue;
+      const slots =
+        event.type === 6
+          ? this.#acceptedInvitations.get(key(event.recordId))?.envelopeSlots
+          : event.type === 9
+            ? this.#clientEnrollments.get(key(event.recordId))?.envelopeSlots
+            : event.type === 11
+              ? this.#recoveryReplacements.get(key(event.recordId))?.envelopeSlots
+              : event.type === 12
+                ? this.#keyEpochTransitions.get(key(event.recordId))?.envelopeSlots
+                : event.type === 13
+                  ? this.#keyDeliveries.get(key(event.recordId))?.envelopeSlots
+                  : undefined;
+      if (slots !== undefined) addEnvelopeSlots(slots);
+    }
+    const keyEnvelopeSlots = [...keyEnvelopeSlotsById.values()].sort((left, right) =>
+      compareIds(left.keyEnvelopeId, right.keyEnvelopeId),
+    );
     const hasDescendantKeyEpochTransition = (
       cutoffRecordIds: readonly Identifier<"VaultRecord">[],
     ): boolean =>
@@ -890,6 +938,7 @@ export class CanonicalAuthorityReplay {
       recoveryConflicts,
       keyEpochs,
       keyEpochConflicts,
+      keyEnvelopeSlots,
       writeFences: [...writeFences.values()].sort((left, right) =>
         compareIds(left.subjectId, right.subjectId),
       ),
@@ -1184,6 +1233,10 @@ export class CanonicalAuthorityReplay {
         }
         validateKeyEpochTransitionSlots(transition, parentState);
         this.#keyEpochTransitions.set(key(event.recordId), transition);
+      } else if (event.type === 13) {
+        const delivery = parseKeyDelivery(event);
+        validateKeyDelivery(delivery, parentState);
+        this.#keyDeliveries.set(key(event.recordId), delivery);
       } else {
         throw new TypeError("This replay slice cannot yet reduce this Authority Event type");
       }
@@ -1409,6 +1462,32 @@ function validateExactEnvelopeTargetSet(
   }
 }
 
+function envelopeSlotTargetKey(slot: InvitationEnvelopeSlot): string {
+  return `${key(slot.keyEpochId)}:${slot.targetKind}:${key(slot.targetCredentialId)}:${slot.targetRevision === null ? "null" : slot.targetRevision}`;
+}
+
+function validateEnvelopeIdentityBindings(
+  slots: readonly InvitationEnvelopeSlot[],
+  authority: CanonicalAuthorityState,
+  field: string,
+): void {
+  const targetsByEnvelopeId = new Map(
+    authority.keyEnvelopeSlots.map((slot) => [
+      key(slot.keyEnvelopeId),
+      envelopeSlotTargetKey(slot),
+    ]),
+  );
+  for (const slot of slots) {
+    const envelopeId = key(slot.keyEnvelopeId);
+    const target = envelopeSlotTargetKey(slot);
+    const existingTarget = targetsByEnvelopeId.get(envelopeId);
+    if (existingTarget !== undefined && existingTarget !== target) {
+      throw new TypeError(`${field} rebinds a Key Envelope identity`);
+    }
+    targetsByEnvelopeId.set(envelopeId, target);
+  }
+}
+
 function parseRecoveryCredentialReplacement(
   event: AuthenticatedVaultEvent,
 ): RecoveryCredentialReplacement {
@@ -1492,6 +1571,7 @@ function validateRecoveryCredentialReplacementSlots(
     expected,
     "Recovery Replacement Envelope slots are not the complete set",
   );
+  validateEnvelopeIdentityBindings(replacement.envelopeSlots, authority, "Recovery Replacement");
 }
 
 function parseKeyEpochTransition(event: AuthenticatedVaultEvent): KeyEpochTransition {
@@ -1525,6 +1605,58 @@ function validateKeyEpochTransitionSlots(
     expected,
     "Key Epoch Transition Envelope slots are not the exact eligible target set",
   );
+  validateEnvelopeIdentityBindings(transition.envelopeSlots, authority, "Key Epoch Transition");
+}
+
+function parseKeyDelivery(event: AuthenticatedVaultEvent): KeyDelivery {
+  const body = exactMap(event.body, [0], "Key Delivery body");
+  return {
+    envelopeSlots: parseEnvelopeSlots(mapValue(body, 0), "Key Delivery Envelope slots"),
+  };
+}
+
+function validateKeyDelivery(delivery: KeyDelivery, authority: CanonicalAuthorityState): void {
+  const targetKeys = new Set<string>();
+  for (const slot of delivery.envelopeSlots) {
+    const hasEpoch = authority.keyEpochs.some(({ keyEpochId }) =>
+      bytesEqual(keyEpochId, slot.keyEpochId),
+    );
+    const eligible =
+      hasEpoch && slot.targetKind === 1
+        ? slot.targetRevision !== null &&
+          authority.recoveryCredentials.some(
+            (credential) =>
+              credential.effective &&
+              credential.revision === slot.targetRevision &&
+              bytesEqual(credential.recoveryCredentialId, slot.targetCredentialId) &&
+              containsId(authority.activeMemberIds, credential.memberId),
+          )
+        : hasEpoch && slot.targetKind === 2
+          ? slot.targetRevision === null &&
+            [...authority.clientCredentials.values()].some(
+              (credential) =>
+                credential.active &&
+                bytesEqual(credential.clientCredentialId, slot.targetCredentialId) &&
+                containsId(authority.activeMemberIds, credential.memberId),
+            )
+          : false;
+    if (!eligible) throw new TypeError("Key Delivery target is not currently eligible");
+    const targetKey = envelopeSlotTargetKey(slot);
+    if (targetKeys.has(targetKey)) {
+      throw new TypeError("Key Delivery contains more than one Envelope for one target");
+    }
+    if (
+      authority.keyEnvelopeSlots.some(
+        (existing) =>
+          bytesEqual(existing.keyEnvelopeId, slot.keyEnvelopeId) &&
+          envelopeSlotTargetKey(existing) === targetKey,
+      )
+    ) {
+      throw new TypeError("Key Delivery Envelope slot is already present");
+    }
+    targetKeys.add(targetKey);
+  }
+  validateEnvelopeIdentityBindings(delivery.envelopeSlots, authority, "Key Delivery");
 }
 
 async function verifyClientCredentialEnrollmentPossession(
@@ -1590,6 +1722,7 @@ function validateClientCredentialEnrollmentSlots(
     expected,
     "Client Credential Enrollment Envelope slots are not the complete set",
   );
+  validateEnvelopeIdentityBindings(enrollment.envelopeSlots, authority, "Client Enrollment");
 }
 
 async function verifyInvitationCancellation(
@@ -1764,7 +1897,9 @@ export function canonicalAuthorityKeyEnvelopeRequirements(
           ? parseRecoveryCredentialReplacement(event).envelopeSlots
           : event.type === 12
             ? parseKeyEpochTransition(event).envelopeSlots
-            : [];
+            : event.type === 13
+              ? parseKeyDelivery(event).envelopeSlots
+              : [];
   return slots.map(({ keyEnvelopeId, keyEpochId }) => ({ keyEnvelopeId, keyEpochId }));
 }
 
@@ -1820,6 +1955,7 @@ function validateInvitationAcceptanceSlots(
     expected,
     "Invitation Acceptance Envelope slots are not the complete target set",
   );
+  validateEnvelopeIdentityBindings(acceptance.envelopeSlots, authority, "Invitation Acceptance");
 }
 
 function canonicalNumericPrefix(

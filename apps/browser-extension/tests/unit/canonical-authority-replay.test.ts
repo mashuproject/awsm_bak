@@ -381,6 +381,64 @@ async function keyEpochTransition(
   };
 }
 
+async function keyDelivery(
+  creation: Awaited<ReturnType<typeof prepareCanonicalVaultCreation>>,
+  input: {
+    readonly parentRecordIds: CanonicalReplicaState["authorityFrontier"];
+    readonly signerCredentialId: Identifier<"ClientCredential">;
+    readonly signingSecretKey: Uint8Array;
+    readonly assertedAt: number;
+    readonly keyEnvelopeIds?: readonly Identifier<"KeyEnvelope">[];
+    readonly targets: readonly {
+      readonly keyEpochId: Identifier<"KeyEpoch">;
+      readonly targetKind: 1 | 2;
+      readonly targetCredentialId: Uint8Array;
+      readonly targetRevision: number | null;
+    }[];
+  },
+) {
+  const keyEnvelopeIds =
+    input.keyEnvelopeIds ?? input.targets.map(() => randomIdentifier("KeyEnvelope"));
+  if (keyEnvelopeIds.length !== input.targets.length) {
+    throw new TypeError("Key Delivery fixture requires one Envelope ID per target");
+  }
+  const slots = canonicalSet(
+    input.targets.map((target, index) => {
+      const keyEnvelopeId = keyEnvelopeIds[index];
+      if (keyEnvelopeId === undefined)
+        throw new TypeError("Key Delivery target has no Envelope ID");
+      return canonicalMap([
+        [0, target.keyEpochId],
+        [1, target.targetKind],
+        [2, target.targetCredentialId],
+        [3, target.targetRevision],
+        [4, keyEnvelopeId],
+      ]);
+    }),
+  );
+  const event = await signVaultEvent(
+    {
+      vaultId: creation.ids.vaultId,
+      generationId: creation.ids.generationId,
+      parentRecordIds: input.parentRecordIds,
+      authorityParentRecordIds: input.parentRecordIds,
+      dependencies: keyEnvelopeIds.map((id) => ({
+        type: DEPENDENCY_TYPES.KeyEnvelope,
+        id,
+      })),
+      requiredFeatureSetId: creation.genesis.requiredFeatureSetId,
+      extensions: advisoryExtensions([]),
+      family: 1,
+      type: 13,
+      signerCredentialId: input.signerCredentialId,
+      assertedAt: input.assertedAt,
+      body: canonicalMap([[0, slots]]),
+    },
+    input.signingSecretKey,
+  );
+  return { event, keyEnvelopeIds };
+}
+
 describe("canonical Authority replay", () => {
   it("derives Closure when the sole Administrator resigns", async () => {
     const { creation, event, replay } = await replaySingleAuthorityEvent({
@@ -1145,6 +1203,311 @@ describe("canonical Authority replay", () => {
     expect(partialOpaqueRead.mock.calls.map(([input]) => input.logicalId)).not.toContainEqual(
       partial.clientEnvelopeId,
     );
+  });
+
+  it("delivers a missing concurrent-Epoch slot without changing Authority", async () => {
+    const creation = await prepareCanonicalVaultCreation({ label: "Delivery", assertedAt: 1 });
+    const { proposedCredentialId, proposed, envelopeId, proposal } = await clientEnrollmentProposal(
+      creation,
+      91,
+    );
+    const enrollment = await signVaultEvent(
+      {
+        vaultId: creation.ids.vaultId,
+        generationId: creation.ids.generationId,
+        parentRecordIds: [creation.genesis.recordId],
+        authorityParentRecordIds: [creation.genesis.recordId],
+        dependencies: [{ type: DEPENDENCY_TYPES.KeyEnvelope, id: envelopeId }],
+        requiredFeatureSetId: creation.genesis.requiredFeatureSetId,
+        extensions: advisoryExtensions([]),
+        family: 1,
+        type: 9,
+        signerCredentialId: creation.ids.clientCredentialId,
+        assertedAt: 2,
+        body: canonicalMap([
+          [0, proposal],
+          [1, 1],
+          [2, null],
+          [3, null],
+        ]),
+      },
+      creation.secrets.client.signingSecretKey,
+    );
+    const transition = await keyEpochTransition(creation, {
+      parentRecordIds: [creation.genesis.recordId],
+      parentKeyEpochIds: [creation.secrets.keyEpoch.id],
+      displayNumber: 1,
+      assertedAt: 3,
+    });
+    const delivery = await keyDelivery(creation, {
+      parentRecordIds: [enrollment.recordId, transition.event.recordId],
+      signerCredentialId: proposedCredentialId,
+      signingSecretKey: proposed.privateKey,
+      assertedAt: 4,
+      targets: [
+        {
+          keyEpochId: transition.keyEpochId,
+          targetKind: 2,
+          targetCredentialId: proposedCredentialId,
+          targetRevision: null,
+        },
+      ],
+    });
+    const deliveredEnvelopeId = delivery.keyEnvelopeIds[0];
+    if (deliveredEnvelopeId === undefined) {
+      throw new TypeError("Key Delivery fixture did not produce its Envelope ID");
+    }
+    const byId = new Map(
+      [enrollment, transition.event, delivery.event].map(
+        (event) => [Buffer.from(event.recordId).toString("hex"), event] as const,
+      ),
+    );
+    const readResolvedOpaqueItem = vi.fn(
+      async (_input: { readonly logicalId: Uint8Array; readonly expectedKeyEpochId: Uint8Array }) =>
+        new Uint8Array([1]),
+    );
+    const replay = await new CanonicalReplayService({
+      openResolvedCompactItem: vi.fn(async ({ logicalId }: { logicalId: Uint8Array }) => ({
+        payloadBytes: byId.get(Buffer.from(logicalId).toString("hex"))?.bytes,
+      })),
+      readResolvedOpaqueItem,
+    } as never).replayOpened(
+      openedVaultAtFrontier(
+        creation,
+        [delivery.event.recordId],
+        [enrollment.recordId, transition.event.recordId, delivery.event.recordId],
+      ),
+    );
+
+    expect(
+      replay.authority.clientCredentials.get(Buffer.from(proposedCredentialId).toString("hex")),
+    ).toEqual(expect.objectContaining({ active: true }));
+    expect(replay.authority.keyEpochs.filter(({ current }) => current)).toEqual([
+      expect.objectContaining({ keyEpochId: transition.keyEpochId, displayNumber: 1 }),
+    ]);
+    expect(replay.authority.keyEnvelopeSlots).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ keyEnvelopeId: creation.recoveryKeyEnvelope.id }),
+        expect.objectContaining({ keyEnvelopeId: creation.clientKeyEnvelope.id }),
+        expect.objectContaining({ keyEnvelopeId: deliveredEnvelopeId }),
+      ]),
+    );
+    expect(replay.authority.keyEnvelopeSlots).toHaveLength(6);
+    expect(readResolvedOpaqueItem.mock.calls.map(([input]) => input.logicalId)).toContainEqual(
+      deliveredEnvelopeId,
+    );
+
+    const redundant = await keyDelivery(creation, {
+      parentRecordIds: [delivery.event.recordId],
+      signerCredentialId: proposedCredentialId,
+      signingSecretKey: proposed.privateKey,
+      assertedAt: 5,
+      keyEnvelopeIds: [deliveredEnvelopeId],
+      targets: [
+        {
+          keyEpochId: transition.keyEpochId,
+          targetKind: 2,
+          targetCredentialId: proposedCredentialId,
+          targetRevision: null,
+        },
+      ],
+    });
+    byId.set(Buffer.from(redundant.event.recordId).toString("hex"), redundant.event);
+    const redundantReads = vi.fn(
+      async (_input: { readonly logicalId: Uint8Array }) => new Uint8Array([1]),
+    );
+    await expect(
+      new CanonicalReplayService({
+        openResolvedCompactItem: vi.fn(async ({ logicalId }: { logicalId: Uint8Array }) => ({
+          payloadBytes: byId.get(Buffer.from(logicalId).toString("hex"))?.bytes,
+        })),
+        readResolvedOpaqueItem: redundantReads,
+      } as never).replayOpened(
+        openedVaultAtFrontier(
+          creation,
+          [redundant.event.recordId],
+          [
+            enrollment.recordId,
+            transition.event.recordId,
+            delivery.event.recordId,
+            redundant.event.recordId,
+          ],
+        ),
+      ),
+    ).rejects.toThrow("Key Delivery Envelope slot is already present");
+    expect(
+      redundantReads.mock.calls.filter(([input]) =>
+        Buffer.from(input.logicalId).equals(Buffer.from(deliveredEnvelopeId)),
+      ),
+    ).toHaveLength(1);
+
+    const invalid = await keyDelivery(creation, {
+      parentRecordIds: [enrollment.recordId, transition.event.recordId],
+      signerCredentialId: proposedCredentialId,
+      signingSecretKey: proposed.privateKey,
+      assertedAt: 6,
+      targets: [
+        {
+          keyEpochId: transition.keyEpochId,
+          targetKind: 2,
+          targetCredentialId: randomIdentifier("ClientCredential"),
+          targetRevision: null,
+        },
+      ],
+    });
+    byId.set(Buffer.from(invalid.event.recordId).toString("hex"), invalid.event);
+    const invalidReads = vi.fn(
+      async (_input: { readonly logicalId: Uint8Array }) => new Uint8Array([1]),
+    );
+    await expect(
+      new CanonicalReplayService({
+        openResolvedCompactItem: vi.fn(async ({ logicalId }: { logicalId: Uint8Array }) => ({
+          payloadBytes: byId.get(Buffer.from(logicalId).toString("hex"))?.bytes,
+        })),
+        readResolvedOpaqueItem: invalidReads,
+      } as never).replayOpened(
+        openedVaultAtFrontier(
+          creation,
+          [invalid.event.recordId],
+          [enrollment.recordId, transition.event.recordId, invalid.event.recordId],
+        ),
+      ),
+    ).rejects.toThrow("Key Delivery target is not currently eligible");
+    expect(invalidReads.mock.calls.map(([input]) => input.logicalId)).not.toContainEqual(
+      invalid.keyEnvelopeIds[0],
+    );
+
+    const duplicateTarget = await keyDelivery(creation, {
+      parentRecordIds: [enrollment.recordId, transition.event.recordId],
+      signerCredentialId: proposedCredentialId,
+      signingSecretKey: proposed.privateKey,
+      assertedAt: 7,
+      targets: [
+        {
+          keyEpochId: transition.keyEpochId,
+          targetKind: 2,
+          targetCredentialId: proposedCredentialId,
+          targetRevision: null,
+        },
+        {
+          keyEpochId: transition.keyEpochId,
+          targetKind: 2,
+          targetCredentialId: proposedCredentialId,
+          targetRevision: null,
+        },
+      ],
+    });
+    byId.set(Buffer.from(duplicateTarget.event.recordId).toString("hex"), duplicateTarget.event);
+    const duplicateReads = vi.fn(
+      async (_input: { readonly logicalId: Uint8Array }) => new Uint8Array([1]),
+    );
+    await expect(
+      new CanonicalReplayService({
+        openResolvedCompactItem: vi.fn(async ({ logicalId }: { logicalId: Uint8Array }) => ({
+          payloadBytes: byId.get(Buffer.from(logicalId).toString("hex"))?.bytes,
+        })),
+        readResolvedOpaqueItem: duplicateReads,
+      } as never).replayOpened(
+        openedVaultAtFrontier(
+          creation,
+          [duplicateTarget.event.recordId],
+          [enrollment.recordId, transition.event.recordId, duplicateTarget.event.recordId],
+        ),
+      ),
+    ).rejects.toThrow("Key Delivery contains more than one Envelope for one target");
+    const duplicateReadIds = duplicateReads.mock.calls.map(([input]) => input.logicalId);
+    for (const keyEnvelopeId of duplicateTarget.keyEnvelopeIds) {
+      expect(duplicateReadIds).not.toContainEqual(keyEnvelopeId);
+    }
+
+    const rebound = await keyDelivery(creation, {
+      parentRecordIds: [enrollment.recordId, transition.event.recordId],
+      signerCredentialId: proposedCredentialId,
+      signingSecretKey: proposed.privateKey,
+      assertedAt: 8,
+      keyEnvelopeIds: [creation.clientKeyEnvelope.id],
+      targets: [
+        {
+          keyEpochId: transition.keyEpochId,
+          targetKind: 2,
+          targetCredentialId: proposedCredentialId,
+          targetRevision: null,
+        },
+      ],
+    });
+    byId.set(Buffer.from(rebound.event.recordId).toString("hex"), rebound.event);
+    const reboundReads = vi.fn(
+      async (_input: { readonly logicalId: Uint8Array }) => new Uint8Array([1]),
+    );
+    await expect(
+      new CanonicalReplayService({
+        openResolvedCompactItem: vi.fn(async ({ logicalId }: { logicalId: Uint8Array }) => ({
+          payloadBytes: byId.get(Buffer.from(logicalId).toString("hex"))?.bytes,
+        })),
+        readResolvedOpaqueItem: reboundReads,
+      } as never).replayOpened(
+        openedVaultAtFrontier(
+          creation,
+          [rebound.event.recordId],
+          [enrollment.recordId, transition.event.recordId, rebound.event.recordId],
+        ),
+      ),
+    ).rejects.toThrow("Key Delivery rebinds a Key Envelope identity");
+    expect(reboundReads.mock.calls.map(([input]) => input.logicalId)).not.toContainEqual(
+      creation.clientKeyEnvelope.id,
+    );
+
+    const duplicateDeliveryId = randomIdentifier("KeyEnvelope");
+    const duplicateDeliveryTarget = [
+      {
+        keyEpochId: transition.keyEpochId,
+        targetKind: 2 as const,
+        targetCredentialId: proposedCredentialId,
+        targetRevision: null,
+      },
+    ];
+    const leftDuplicate = await keyDelivery(creation, {
+      parentRecordIds: [enrollment.recordId, transition.event.recordId],
+      signerCredentialId: proposedCredentialId,
+      signingSecretKey: proposed.privateKey,
+      assertedAt: 10_000,
+      keyEnvelopeIds: [duplicateDeliveryId],
+      targets: duplicateDeliveryTarget,
+    });
+    const rightDuplicate = await keyDelivery(creation, {
+      parentRecordIds: [enrollment.recordId, transition.event.recordId],
+      signerCredentialId: proposedCredentialId,
+      signingSecretKey: proposed.privateKey,
+      assertedAt: -10_000,
+      keyEnvelopeIds: [duplicateDeliveryId],
+      targets: duplicateDeliveryTarget,
+    });
+    byId.set(Buffer.from(leftDuplicate.event.recordId).toString("hex"), leftDuplicate.event);
+    byId.set(Buffer.from(rightDuplicate.event.recordId).toString("hex"), rightDuplicate.event);
+    const convergedDuplicates = await new CanonicalReplayService({
+      openResolvedCompactItem: vi.fn(async ({ logicalId }: { logicalId: Uint8Array }) => ({
+        payloadBytes: byId.get(Buffer.from(logicalId).toString("hex"))?.bytes,
+      })),
+      readResolvedOpaqueItem: vi.fn(async () => new Uint8Array([1])),
+    } as never).replayOpened(
+      openedVaultAtFrontier(
+        creation,
+        [leftDuplicate.event.recordId, rightDuplicate.event.recordId],
+        [
+          enrollment.recordId,
+          transition.event.recordId,
+          leftDuplicate.event.recordId,
+          rightDuplicate.event.recordId,
+        ],
+      ),
+    );
+    expect(
+      convergedDuplicates.authority.keyEnvelopeSlots.filter(({ keyEnvelopeId }) =>
+        Buffer.from(keyEnvelopeId).equals(Buffer.from(duplicateDeliveryId)),
+      ),
+    ).toHaveLength(1);
+    expect(convergedDuplicates.authority.keyEpochConflicts).toEqual([]);
+    expect(convergedDuplicates.authority.writeFences).toEqual([]);
   });
 
   it("replays the complete Invitation, conflict, and member-removal lifecycle", async () => {
