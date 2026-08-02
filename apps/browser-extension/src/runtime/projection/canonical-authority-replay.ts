@@ -23,6 +23,7 @@ import {
   type CanonicalMapKey,
   type CanonicalValue,
   canonicalMap,
+  canonicalSet,
   encodeCanonicalValue,
 } from "../../domain/canonical/value";
 import { bytesEqual } from "../../domain/hash";
@@ -63,6 +64,11 @@ export interface CanonicalAuthorityState {
   readonly activeInvitations: readonly CanonicalAuthorityInvitation[];
   readonly invitationConflicts: readonly CanonicalAuthorityInvitationConflict[];
   readonly recoveryCredentials: readonly CanonicalAuthorityRecoveryCredential[];
+  readonly recoveryConflicts: readonly {
+    readonly memberId: Identifier<"Member">;
+    readonly candidateRecordIds: readonly Identifier<"VaultRecord">[];
+    readonly recoveryCredentialIds: readonly Identifier<"RecoveryCredential">[];
+  }[];
   readonly keyEpochs: readonly CanonicalAuthorityKeyEpoch[];
   readonly writeFences: readonly CanonicalAuthorityWriteFence[];
   readonly clientCredentials: ReadonlyMap<string, CanonicalAuthorityClientCredential>;
@@ -183,6 +189,16 @@ interface ClientCredentialEnrollment {
   readonly envelopeSlots: readonly InvitationEnvelopeSlot[];
 }
 
+interface RecoveryCredentialReplacement {
+  readonly memberId: Identifier<"Member">;
+  readonly replacedRecoveryCredentialIds: readonly Identifier<"RecoveryCredential">[];
+  readonly recoveryCredential: Omit<CanonicalAuthorityRecoveryCredential, "effective">;
+  readonly replacementCredentialBytes: Uint8Array;
+  readonly envelopeSlotsBytes: Uint8Array;
+  readonly envelopeSlots: readonly InvitationEnvelopeSlot[];
+  readonly possessionSignature: Uint8Array;
+}
+
 export class CanonicalAuthorityReplay {
   readonly #anchorRecordId: Identifier<"VaultRecord">;
   readonly #firstMemberId: Identifier<"Member">;
@@ -195,6 +211,7 @@ export class CanonicalAuthorityReplay {
   readonly #cancelledInvitations = new Map<string, CancelledInvitation>();
   readonly #resolvedInvitations = new Map<string, ResolvedInvitation>();
   readonly #clientEnrollments = new Map<string, ClientCredentialEnrollment>();
+  readonly #recoveryReplacements = new Map<string, RecoveryCredentialReplacement>();
 
   constructor(
     genesis: AuthenticatedVaultEvent,
@@ -499,10 +516,61 @@ export class CanonicalAuthorityReplay {
         ];
       }),
     );
+    const recoveryFenceCauses = new Map<string, Identifier<"VaultRecord">[]>();
+    for (const replacementEvent of this.#events) {
+      if (
+        replacementEvent.family !== 1 ||
+        replacementEvent.type !== 11 ||
+        !this.#isIncluded(replacementEvent.recordId, frontier)
+      ) {
+        continue;
+      }
+      const replacement = this.#recoveryReplacements.get(key(replacementEvent.recordId));
+      if (replacement === undefined) {
+        throw new TypeError("Recovery Credential Replacement state is missing");
+      }
+      for (const recoveryCredentialId of replacement.replacedRecoveryCredentialIds) {
+        const fenceKey = `${key(replacement.memberId)}:${key(recoveryCredentialId)}`;
+        const causes = recoveryFenceCauses.get(fenceKey) ?? [];
+        causes.push(replacementEvent.recordId);
+        recoveryFenceCauses.set(fenceKey, causes);
+      }
+    }
+    const dominatedRecoveryEnrollmentRecordIds = new Set<string>();
+    for (const enrollmentEvent of this.#events) {
+      if (
+        enrollmentEvent.family !== 1 ||
+        enrollmentEvent.type !== 9 ||
+        !this.#isIncluded(enrollmentEvent.recordId, frontier)
+      ) {
+        continue;
+      }
+      const enrollment = this.#clientEnrollments.get(key(enrollmentEvent.recordId));
+      if (
+        enrollment === undefined ||
+        enrollment.authorizationKind !== 2 ||
+        enrollment.recoveryCredentialId === null
+      ) {
+        continue;
+      }
+      const fenceKey = `${key(enrollment.memberId)}:${key(enrollment.recoveryCredentialId)}`;
+      if (
+        recoveryFenceCauses
+          .get(fenceKey)
+          ?.some((causeId) => !this.#graph.isAncestor(enrollmentEvent.recordId, causeId)) === true
+      ) {
+        dominatedRecoveryEnrollmentRecordIds.add(key(enrollmentEvent.recordId));
+      }
+    }
     const clientCredentials = new Map<string, CanonicalAuthorityClientCredential>();
     const addClientCredential = (
       credential: Omit<CanonicalAuthorityClientCredential, "active">,
+      eligible = true,
     ): void => {
+      const active =
+        eligible &&
+        activeMembers.has(key(credential.memberId)) &&
+        !endedCredentialIds.has(key(credential.clientCredentialId));
       const existing = clientCredentials.get(key(credential.clientCredentialId));
       if (existing !== undefined) {
         if (
@@ -512,22 +580,52 @@ export class CanonicalAuthorityReplay {
         ) {
           throw new TypeError("Authority State reuses a Client Credential identity");
         }
+        if (active && !existing.active) {
+          clientCredentials.set(key(credential.clientCredentialId), { ...existing, active: true });
+        }
         return;
       }
       clientCredentials.set(key(credential.clientCredentialId), {
         ...credential,
-        active:
-          activeMembers.has(key(credential.memberId)) &&
-          !endedCredentialIds.has(key(credential.clientCredentialId)),
+        active,
       });
     };
     addClientCredential(this.#initialCredential);
-    const recoveryCredentials: CanonicalAuthorityRecoveryCredential[] = [
+    const recoveryCredentialCandidates = new Map<
+      string,
+      Omit<CanonicalAuthorityRecoveryCredential, "effective">
+    >();
+    const recoveryCredentialCauseIds = new Map<string, Identifier<"VaultRecord">>();
+    const addRecoveryCredential = (
+      credential: Omit<CanonicalAuthorityRecoveryCredential, "effective">,
+      causeId: Identifier<"VaultRecord">,
+    ): void => {
+      const existing = recoveryCredentialCandidates.get(key(credential.recoveryCredentialId));
+      if (existing !== undefined) {
+        if (
+          !bytesEqual(existing.memberId, credential.memberId) ||
+          existing.revision !== credential.revision ||
+          !bytesEqual(existing.signingPublicKey, credential.signingPublicKey) ||
+          !bytesEqual(existing.wrappingPublicKey, credential.wrappingPublicKey)
+        ) {
+          throw new TypeError("Authority State reuses a Recovery Credential identity");
+        }
+        return;
+      }
+      recoveryCredentialCandidates.set(key(credential.recoveryCredentialId), credential);
+      recoveryCredentialCauseIds.set(key(credential.recoveryCredentialId), causeId);
+    };
+    addRecoveryCredential(
       {
-        ...this.#initialRecoveryCredential,
-        effective: activeMembers.has(key(this.#initialRecoveryCredential.memberId)),
+        recoveryCredentialId: this.#initialRecoveryCredential.recoveryCredentialId,
+        memberId: this.#initialRecoveryCredential.memberId,
+        revision: this.#initialRecoveryCredential.revision,
+        signingPublicKey: this.#initialRecoveryCredential.signingPublicKey,
+        wrappingPublicKey: this.#initialRecoveryCredential.wrappingPublicKey,
       },
-    ];
+      this.#anchorRecordId,
+    );
+    const replacedRecoveryCredentialIds = new Set<string>();
     for (const event of this.#events) {
       if (event.family !== 1 || !this.#isIncluded(event.recordId, frontier)) {
         continue;
@@ -537,38 +635,65 @@ export class CanonicalAuthorityReplay {
         if (enrollment === undefined) {
           throw new TypeError("Client Credential Enrollment state is missing");
         }
-        addClientCredential(enrollment.clientCredential);
+        addClientCredential(
+          enrollment.clientCredential,
+          !dominatedRecoveryEnrollmentRecordIds.has(key(event.recordId)),
+        );
         continue;
       }
-      if (event.type !== 6) continue;
-      const acceptance = this.#acceptedInvitations.get(key(event.recordId));
-      if (acceptance === undefined) throw new TypeError("Invitation Acceptance state is missing");
-      addClientCredential(acceptance.clientCredential);
-      const existingRecovery = recoveryCredentials.find(({ recoveryCredentialId }) =>
-        bytesEqual(recoveryCredentialId, acceptance.recoveryCredential.recoveryCredentialId),
-      );
-      if (existingRecovery !== undefined) {
-        if (
-          !bytesEqual(existingRecovery.memberId, acceptance.recoveryCredential.memberId) ||
-          existingRecovery.revision !== acceptance.recoveryCredential.revision ||
-          !bytesEqual(
-            existingRecovery.signingPublicKey,
-            acceptance.recoveryCredential.signingPublicKey,
-          ) ||
-          !bytesEqual(
-            existingRecovery.wrappingPublicKey,
-            acceptance.recoveryCredential.wrappingPublicKey,
-          )
-        ) {
-          throw new TypeError("Authority State reuses a Recovery Credential identity");
-        }
+      if (event.type === 6) {
+        const acceptance = this.#acceptedInvitations.get(key(event.recordId));
+        if (acceptance === undefined) throw new TypeError("Invitation Acceptance state is missing");
+        addClientCredential(acceptance.clientCredential);
+        addRecoveryCredential(acceptance.recoveryCredential, event.recordId);
         continue;
       }
-      recoveryCredentials.push({
-        ...acceptance.recoveryCredential,
-        effective: activeMembers.has(key(acceptance.memberId)),
-      });
+      if (event.type !== 11) continue;
+      const replacement = this.#recoveryReplacements.get(key(event.recordId));
+      if (replacement === undefined) {
+        throw new TypeError("Recovery Credential Replacement state is missing");
+      }
+      addRecoveryCredential(replacement.recoveryCredential, event.recordId);
+      for (const recoveryCredentialId of replacement.replacedRecoveryCredentialIds) {
+        replacedRecoveryCredentialIds.add(key(recoveryCredentialId));
+      }
     }
+    const recoveryCredentials = [...recoveryCredentialCandidates.values()].map(
+      (credential): CanonicalAuthorityRecoveryCredential => ({
+        ...credential,
+        effective:
+          activeMembers.has(key(credential.memberId)) &&
+          !replacedRecoveryCredentialIds.has(key(credential.recoveryCredentialId)),
+      }),
+    );
+    const effectiveRecoveryByMember = new Map<string, CanonicalAuthorityRecoveryCredential[]>();
+    for (const credential of recoveryCredentials.filter(({ effective }) => effective)) {
+      const credentials = effectiveRecoveryByMember.get(key(credential.memberId)) ?? [];
+      credentials.push(credential);
+      effectiveRecoveryByMember.set(key(credential.memberId), credentials);
+    }
+    const recoveryConflicts = [...effectiveRecoveryByMember.values()]
+      .filter((credentials) => credentials.length > 1)
+      .map((credentials) => {
+        const memberId = credentials[0]?.memberId;
+        if (memberId === undefined) throw new TypeError("Recovery Conflict has no Member");
+        return {
+          memberId,
+          candidateRecordIds: credentials
+            .map(({ recoveryCredentialId }) => {
+              const causeId = recoveryCredentialCauseIds.get(key(recoveryCredentialId));
+              if (causeId === undefined) {
+                throw new TypeError("Recovery Conflict candidate has no authority Cause");
+              }
+              return causeId;
+            })
+            .sort(compareIds),
+          recoveryCredentialIds: credentials
+            .map(({ recoveryCredentialId }) => recoveryCredentialId)
+            .sort(compareIds),
+        };
+      })
+      .sort((left, right) => compareIds(left.memberId, right.memberId));
     const writeFences = new Map<string, CanonicalAuthorityWriteFence>();
     for (const conflict of invitationConflicts) {
       const causeRecordIds = conflict.candidates
@@ -642,6 +767,7 @@ export class CanonicalAuthorityReplay {
       recoveryCredentials: recoveryCredentials.sort((left, right) =>
         compareIds(left.recoveryCredentialId, right.recoveryCredentialId),
       ),
+      recoveryConflicts,
       keyEpochs: [this.#initialKeyEpoch],
       writeFences: [...writeFences.values()].sort((left, right) =>
         compareIds(left.subjectId, right.subjectId),
@@ -871,6 +997,38 @@ export class CanonicalAuthorityReplay {
         }
         validateClientCredentialEnrollmentSlots(enrollment, parentState);
         this.#clientEnrollments.set(key(event.recordId), enrollment);
+      } else if (event.type === 11) {
+        const replacement = parseRecoveryCredentialReplacement(event);
+        if (!bytesEqual(replacement.memberId, signer.memberId)) {
+          throw new TypeError("Recovery Credential Replacement signer is not the target Member");
+        }
+        const effectiveCredentials = parentState.recoveryCredentials.filter(
+          ({ memberId, effective }) => effective && bytesEqual(memberId, replacement.memberId),
+        );
+        if (
+          !sameIdSet(
+            replacement.replacedRecoveryCredentialIds,
+            effectiveCredentials.map(({ recoveryCredentialId }) => recoveryCredentialId),
+          )
+        ) {
+          throw new TypeError("Recovery Replacement does not name every effective Credential");
+        }
+        if (
+          parentState.recoveryCredentials.some(({ recoveryCredentialId }) =>
+            bytesEqual(recoveryCredentialId, replacement.recoveryCredential.recoveryCredentialId),
+          )
+        ) {
+          throw new TypeError("Recovery Replacement reuses a Recovery Credential identity");
+        }
+        const expectedRevision =
+          effectiveCredentials.reduce((maximum, { revision }) => Math.max(maximum, revision), -1) +
+          1;
+        if (replacement.recoveryCredential.revision !== expectedRevision) {
+          throw new TypeError("Recovery Replacement revision does not follow its effective heads");
+        }
+        await verifyRecoveryCredentialReplacement(replacement, event);
+        validateRecoveryCredentialReplacementSlots(replacement, parentState);
+        this.#recoveryReplacements.set(key(event.recordId), replacement);
       } else {
         throw new TypeError("This replay slice cannot yet reduce this Authority Event type");
       }
@@ -1074,6 +1232,95 @@ function parseEnvelopeSlots(
       };
     },
   );
+}
+
+function parseRecoveryCredentialReplacement(
+  event: AuthenticatedVaultEvent,
+): RecoveryCredentialReplacement {
+  const body = exactMap(event.body, [0, 1, 2, 3, 4], "Recovery Credential Replacement body");
+  const memberId = identifierValue(mapValue(body, 0), "Member", "Recovery Replacement Member ID");
+  const descriptorValue = mapValue(body, 2);
+  const descriptor = exactMap(descriptorValue, [0, 1, 2, 3, 4], "Replacement Recovery Credential");
+  const envelopeSlotsValue = mapValue(body, 3);
+  return {
+    memberId,
+    replacedRecoveryCredentialIds: idSetValue(
+      mapValue(body, 1),
+      "RecoveryCredential",
+      "Replaced Recovery Credential IDs",
+      { nonempty: true },
+    ),
+    recoveryCredential: {
+      recoveryCredentialId: identifierValue(
+        mapValue(descriptor, 0),
+        "RecoveryCredential",
+        "Replacement Recovery Credential ID",
+      ),
+      memberId,
+      revision: nonnegativeInteger(mapValue(descriptor, 2), "Replacement Recovery revision"),
+      signingPublicKey: byteString(
+        mapValue(descriptor, 3),
+        32,
+        "Replacement Recovery signing public key",
+      ),
+      wrappingPublicKey: byteString(
+        mapValue(descriptor, 4),
+        32,
+        "Replacement Recovery wrapping public key",
+      ),
+    },
+    replacementCredentialBytes: encodeCanonicalValue(descriptorValue),
+    envelopeSlotsBytes: encodeCanonicalValue(envelopeSlotsValue),
+    envelopeSlots: parseEnvelopeSlots(envelopeSlotsValue, "Recovery Replacement Envelope slots"),
+    possessionSignature: byteString(
+      mapValue(body, 4),
+      64,
+      "Recovery replacement possession signature",
+    ),
+  };
+}
+
+async function verifyRecoveryCredentialReplacement(
+  replacement: RecoveryCredentialReplacement,
+  event: AuthenticatedVaultEvent,
+): Promise<void> {
+  const sodium = await readySodium();
+  if (
+    !sodium.crypto_sign_verify_detached(
+      replacement.possessionSignature,
+      transcript("awsm:recovery-replacement-possession:v1", [
+        event.vaultId,
+        replacement.memberId,
+        encodeCanonicalValue(canonicalSet(event.authorityParentRecordIds)),
+        replacement.replacementCredentialBytes,
+        replacement.envelopeSlotsBytes,
+      ]),
+      replacement.recoveryCredential.signingPublicKey,
+    )
+  ) {
+    throw new TypeError("Recovery Credential Replacement possession signature is invalid");
+  }
+}
+
+function validateRecoveryCredentialReplacementSlots(
+  replacement: RecoveryCredentialReplacement,
+  authority: CanonicalAuthorityState,
+): void {
+  const expected = new Set(
+    authority.keyEpochs.map(
+      ({ keyEpochId }) =>
+        `${key(keyEpochId)}:1:${key(replacement.recoveryCredential.recoveryCredentialId)}:${replacement.recoveryCredential.revision}`,
+    ),
+  );
+  const actual = new Set(
+    replacement.envelopeSlots.map(
+      (slot) =>
+        `${key(slot.keyEpochId)}:${slot.targetKind}:${key(slot.targetCredentialId)}:${slot.targetRevision === null ? "null" : slot.targetRevision}`,
+    ),
+  );
+  if (actual.size !== expected.size || [...expected].some((slot) => !actual.has(slot))) {
+    throw new TypeError("Recovery Replacement Envelope slots are not the complete set");
+  }
 }
 
 async function verifyClientCredentialEnrollmentPossession(
@@ -1313,7 +1560,9 @@ export function canonicalAuthorityKeyEnvelopeRequirements(
       ? parseInvitationAcceptance(event).envelopeSlots
       : event.type === 9
         ? parseClientCredentialEnrollment(event).envelopeSlots
-        : [];
+        : event.type === 11
+          ? parseRecoveryCredentialReplacement(event).envelopeSlots
+          : [];
   return slots.map(({ keyEnvelopeId, keyEpochId }) => ({ keyEnvelopeId, keyEpochId }));
 }
 

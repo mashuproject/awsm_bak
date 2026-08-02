@@ -95,6 +95,14 @@ function openedVaultAt(
   creation: Awaited<ReturnType<typeof prepareCanonicalVaultCreation>>,
   event: Awaited<ReturnType<typeof signVaultEvent>>,
 ): PersistedOpenedCanonicalVault {
+  return openedVaultAtFrontier(creation, [event.recordId]);
+}
+
+function openedVaultAtFrontier(
+  creation: Awaited<ReturnType<typeof prepareCanonicalVaultCreation>>,
+  frontier: CanonicalReplicaState["causalFrontier"],
+  continuityRecordIds: CanonicalReplicaState["continuityRecordIds"] = frontier,
+): PersistedOpenedCanonicalVault {
   return {
     directory: {
       vaultId: creation.ids.vaultId,
@@ -105,9 +113,9 @@ function openedVaultAt(
     replicaState: {
       vaultId: creation.ids.vaultId,
       generationId: creation.ids.generationId,
-      causalFrontier: [event.recordId],
-      authorityFrontier: [event.recordId],
-      continuityRecordIds: [creation.genesis.recordId, event.recordId],
+      causalFrontier: frontier,
+      authorityFrontier: frontier,
+      continuityRecordIds: [creation.genesis.recordId, ...continuityRecordIds],
       baselineId: creation.baseline.recordId,
       currentKeyEpochId: creation.secrets.keyEpoch.id,
       requiredFeatureSetId: creation.genesis.requiredFeatureSetId,
@@ -189,6 +197,75 @@ async function clientEnrollmentProposal(
       transcript("awsm:client-enrollment-proposal-id:v1", [encodeCanonicalValue(proposal)]),
     ),
   };
+}
+
+async function recoveryReplacement(
+  creation: Awaited<ReturnType<typeof prepareCanonicalVaultCreation>>,
+  input: {
+    readonly parentRecordIds: CanonicalReplicaState["authorityFrontier"];
+    readonly replacedCredentialIds: readonly Uint8Array[];
+    readonly revision: number;
+    readonly seedByte: number;
+    readonly assertedAt: number;
+    readonly corruptPossession?: boolean;
+  },
+) {
+  const sodium = await readySodium();
+  const recoveryCredentialId = randomIdentifier("RecoveryCredential");
+  const recovery = sodium.crypto_sign_seed_keypair(new Uint8Array(32).fill(input.seedByte));
+  const descriptor = canonicalMap([
+    [0, recoveryCredentialId],
+    [1, creation.ids.firstMemberId],
+    [2, input.revision],
+    [3, recovery.publicKey],
+    [4, new Uint8Array(32).fill(input.seedByte + 1)],
+  ]);
+  const envelopeId = randomIdentifier("KeyEnvelope");
+  const slots = canonicalSet([
+    canonicalMap([
+      [0, creation.secrets.keyEpoch.id],
+      [1, 1],
+      [2, recoveryCredentialId],
+      [3, input.revision],
+      [4, envelopeId],
+    ]),
+  ]);
+  const possession = input.corruptPossession
+    ? new Uint8Array(64)
+    : sodium.crypto_sign_detached(
+        transcript("awsm:recovery-replacement-possession:v1", [
+          creation.ids.vaultId,
+          creation.ids.firstMemberId,
+          encodeCanonicalValue(canonicalSet(input.parentRecordIds)),
+          encodeCanonicalValue(descriptor),
+          encodeCanonicalValue(slots),
+        ]),
+        recovery.privateKey,
+      );
+  const event = await signVaultEvent(
+    {
+      vaultId: creation.ids.vaultId,
+      generationId: creation.ids.generationId,
+      parentRecordIds: input.parentRecordIds,
+      authorityParentRecordIds: input.parentRecordIds,
+      dependencies: [{ type: DEPENDENCY_TYPES.KeyEnvelope, id: envelopeId }],
+      requiredFeatureSetId: creation.genesis.requiredFeatureSetId,
+      extensions: advisoryExtensions([]),
+      family: 1,
+      type: 11,
+      signerCredentialId: creation.ids.clientCredentialId,
+      assertedAt: input.assertedAt,
+      body: canonicalMap([
+        [0, creation.ids.firstMemberId],
+        [1, canonicalSet(input.replacedCredentialIds)],
+        [2, descriptor],
+        [3, slots],
+        [4, possession],
+      ]),
+    },
+    creation.secrets.client.signingSecretKey,
+  );
+  return { event, recoveryCredentialId, envelopeId };
 }
 
 describe("canonical Authority replay", () => {
@@ -447,6 +524,290 @@ describe("canonical Authority replay", () => {
       } as never).replayOpened(openedVaultAt(creation, invalidEnrollment)),
     ).rejects.toThrow("Client Enrollment Recovery authorization is invalid");
     expect(invalidOpaqueRead).not.toHaveBeenCalled();
+  });
+
+  it("replaces the effective Recovery Credential and retains the new revision", async () => {
+    const creation = await prepareCanonicalVaultCreation({ label: "Rotation", assertedAt: 1 });
+    const replacement = await recoveryReplacement(creation, {
+      parentRecordIds: [creation.genesis.recordId],
+      replacedCredentialIds: [creation.ids.recoveryCredentialId],
+      revision: 1,
+      seedByte: 75,
+      assertedAt: 2,
+    });
+    const readResolvedOpaqueItem = vi.fn(async () => new Uint8Array([1]));
+    const replay = await new CanonicalReplayService({
+      openResolvedCompactItem: vi.fn(async () => ({ payloadBytes: replacement.event.bytes })),
+      readResolvedOpaqueItem,
+    } as never).replayOpened(openedVaultAt(creation, replacement.event));
+
+    expect(replay.authority.recoveryCredentials).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          recoveryCredentialId: creation.ids.recoveryCredentialId,
+          revision: 0,
+          effective: false,
+        }),
+        expect.objectContaining({
+          recoveryCredentialId: replacement.recoveryCredentialId,
+          memberId: creation.ids.firstMemberId,
+          revision: 1,
+          effective: true,
+        }),
+      ]),
+    );
+    expect(readResolvedOpaqueItem).toHaveBeenCalledOnce();
+
+    const invalidPossession = await recoveryReplacement(creation, {
+      parentRecordIds: [creation.genesis.recordId],
+      replacedCredentialIds: [creation.ids.recoveryCredentialId],
+      revision: 1,
+      seedByte: 76,
+      assertedAt: 3,
+      corruptPossession: true,
+    });
+    const invalidOpaqueRead = vi.fn(async () => new Uint8Array([1]));
+    await expect(
+      new CanonicalReplayService({
+        openResolvedCompactItem: vi.fn(async () => ({
+          payloadBytes: invalidPossession.event.bytes,
+        })),
+        readResolvedOpaqueItem: invalidOpaqueRead,
+      } as never).replayOpened(openedVaultAt(creation, invalidPossession.event)),
+    ).rejects.toThrow("Recovery Credential Replacement possession signature is invalid");
+    expect(invalidOpaqueRead).not.toHaveBeenCalled();
+
+    const skippedRevision = await recoveryReplacement(creation, {
+      parentRecordIds: [creation.genesis.recordId],
+      replacedCredentialIds: [creation.ids.recoveryCredentialId],
+      revision: 2,
+      seedByte: 78,
+      assertedAt: 4,
+    });
+    await expect(
+      new CanonicalReplayService({
+        openResolvedCompactItem: vi.fn(async () => ({ payloadBytes: skippedRevision.event.bytes })),
+        readResolvedOpaqueItem: vi.fn(async () => new Uint8Array([1])),
+      } as never).replayOpened(openedVaultAt(creation, skippedRevision.event)),
+    ).rejects.toThrow("Recovery Replacement revision does not follow its effective heads");
+  });
+
+  it("preserves concurrent Recovery Replacements as a recovery-only Conflict", async () => {
+    const creation = await prepareCanonicalVaultCreation({ label: "Conflict", assertedAt: 1 });
+    const left = await recoveryReplacement(creation, {
+      parentRecordIds: [creation.genesis.recordId],
+      replacedCredentialIds: [creation.ids.recoveryCredentialId],
+      revision: 1,
+      seedByte: 77,
+      assertedAt: 10_000,
+    });
+    const right = await recoveryReplacement(creation, {
+      parentRecordIds: [creation.genesis.recordId],
+      replacedCredentialIds: [creation.ids.recoveryCredentialId],
+      revision: 1,
+      seedByte: 79,
+      assertedAt: -10_000,
+    });
+    const byId = new Map([
+      [Buffer.from(left.event.recordId).toString("hex"), left.event],
+      [Buffer.from(right.event.recordId).toString("hex"), right.event],
+    ]);
+    const replay = await new CanonicalReplayService({
+      openResolvedCompactItem: vi.fn(async ({ logicalId }: { logicalId: Uint8Array }) => ({
+        payloadBytes: byId.get(Buffer.from(logicalId).toString("hex"))?.bytes,
+      })),
+      readResolvedOpaqueItem: vi.fn(async () => new Uint8Array([1])),
+    } as never).replayOpened(
+      openedVaultAtFrontier(creation, [left.event.recordId, right.event.recordId]),
+    );
+
+    expect(
+      replay.authority.recoveryCredentials
+        .filter(({ effective }) => effective)
+        .map(({ recoveryCredentialId }) => recoveryCredentialId),
+    ).toEqual(expect.arrayContaining([left.recoveryCredentialId, right.recoveryCredentialId]));
+    expect(replay.authority.recoveryConflicts).toEqual([
+      expect.objectContaining({
+        memberId: creation.ids.firstMemberId,
+        candidateRecordIds: expect.arrayContaining([left.event.recordId, right.event.recordId]),
+        recoveryCredentialIds: expect.arrayContaining([
+          left.recoveryCredentialId,
+          right.recoveryCredentialId,
+        ]),
+      }),
+    ]);
+    expect(
+      replay.authority.clientCredentials.get(
+        Buffer.from(creation.ids.clientCredentialId).toString("hex"),
+      )?.active,
+    ).toBe(true);
+    expect(replay.authority.writeFences).toEqual([]);
+  });
+
+  it("resolves a Recovery Conflict through one descendant all-head Replacement", async () => {
+    const creation = await prepareCanonicalVaultCreation({ label: "Resolution", assertedAt: 1 });
+    const left = await recoveryReplacement(creation, {
+      parentRecordIds: [creation.genesis.recordId],
+      replacedCredentialIds: [creation.ids.recoveryCredentialId],
+      revision: 1,
+      seedByte: 87,
+      assertedAt: 2,
+    });
+    const right = await recoveryReplacement(creation, {
+      parentRecordIds: [creation.genesis.recordId],
+      replacedCredentialIds: [creation.ids.recoveryCredentialId],
+      revision: 1,
+      seedByte: 89,
+      assertedAt: 3,
+    });
+    const resolution = await recoveryReplacement(creation, {
+      parentRecordIds: [left.event.recordId, right.event.recordId],
+      replacedCredentialIds: [left.recoveryCredentialId, right.recoveryCredentialId],
+      revision: 2,
+      seedByte: 91,
+      assertedAt: 4,
+    });
+    const byId = new Map(
+      [left.event, right.event, resolution.event].map(
+        (event) => [Buffer.from(event.recordId).toString("hex"), event] as const,
+      ),
+    );
+    const replay = await new CanonicalReplayService({
+      openResolvedCompactItem: vi.fn(async ({ logicalId }: { logicalId: Uint8Array }) => ({
+        payloadBytes: byId.get(Buffer.from(logicalId).toString("hex"))?.bytes,
+      })),
+      readResolvedOpaqueItem: vi.fn(async () => new Uint8Array([1])),
+    } as never).replayOpened(
+      openedVaultAtFrontier(
+        creation,
+        [resolution.event.recordId],
+        [left.event.recordId, right.event.recordId, resolution.event.recordId],
+      ),
+    );
+
+    expect(replay.authority.recoveryConflicts).toEqual([]);
+    expect(replay.authority.recoveryCredentials.filter(({ effective }) => effective)).toEqual([
+      expect.objectContaining({
+        recoveryCredentialId: resolution.recoveryCredentialId,
+        revision: 2,
+      }),
+    ]);
+
+    const partial = await recoveryReplacement(creation, {
+      parentRecordIds: [left.event.recordId, right.event.recordId],
+      replacedCredentialIds: [left.recoveryCredentialId],
+      revision: 2,
+      seedByte: 93,
+      assertedAt: 5,
+    });
+    byId.set(Buffer.from(partial.event.recordId).toString("hex"), partial.event);
+    const partialOpaqueRead = vi.fn(
+      async ({ logicalId }: { readonly logicalId: Uint8Array }) => logicalId,
+    );
+    await expect(
+      new CanonicalReplayService({
+        openResolvedCompactItem: vi.fn(async ({ logicalId }: { logicalId: Uint8Array }) => ({
+          payloadBytes: byId.get(Buffer.from(logicalId).toString("hex"))?.bytes,
+        })),
+        readResolvedOpaqueItem: partialOpaqueRead,
+      } as never).replayOpened(
+        openedVaultAtFrontier(
+          creation,
+          [partial.event.recordId],
+          [left.event.recordId, right.event.recordId, partial.event.recordId],
+        ),
+      ),
+    ).rejects.toThrow("Recovery Replacement does not name every effective Credential");
+    expect(partialOpaqueRead.mock.calls.map(([input]) => input.logicalId)).not.toContainEqual(
+      partial.envelopeId,
+    );
+  });
+
+  it("lets a Recovery Fence dominate concurrent Enrollment from the closed phrase", async () => {
+    const sodium = await readySodium();
+    const creation = await prepareCanonicalVaultCreation({ label: "Fence", assertedAt: 1 });
+    const replacement = await recoveryReplacement(creation, {
+      parentRecordIds: [creation.genesis.recordId],
+      replacedCredentialIds: [creation.ids.recoveryCredentialId],
+      revision: 1,
+      seedByte: 81,
+      assertedAt: 2,
+    });
+    const { proposedCredentialId, proposed, envelopeId, proposal, proposalId } =
+      await clientEnrollmentProposal(creation, 83);
+    const recoveryAuthorization = sodium.crypto_sign_detached(
+      transcript("awsm:recovery-client-enrollment-authorization:v1", [proposalId]),
+      creation.secrets.recovery.signingSecretKey,
+    );
+    const enrollment = await signVaultEvent(
+      {
+        vaultId: creation.ids.vaultId,
+        generationId: creation.ids.generationId,
+        parentRecordIds: [creation.genesis.recordId],
+        authorityParentRecordIds: [creation.genesis.recordId],
+        dependencies: [{ type: DEPENDENCY_TYPES.KeyEnvelope, id: envelopeId }],
+        requiredFeatureSetId: creation.genesis.requiredFeatureSetId,
+        extensions: advisoryExtensions([]),
+        family: 1,
+        type: 9,
+        signerCredentialId: proposedCredentialId,
+        assertedAt: 3,
+        body: canonicalMap([
+          [0, proposal],
+          [1, 2],
+          [2, creation.ids.recoveryCredentialId],
+          [3, recoveryAuthorization],
+        ]),
+      },
+      proposed.privateKey,
+    );
+    const byId = new Map([
+      [Buffer.from(replacement.event.recordId).toString("hex"), replacement.event],
+      [Buffer.from(enrollment.recordId).toString("hex"), enrollment],
+    ]);
+    const replay = await new CanonicalReplayService({
+      openResolvedCompactItem: vi.fn(async ({ logicalId }: { logicalId: Uint8Array }) => ({
+        payloadBytes: byId.get(Buffer.from(logicalId).toString("hex"))?.bytes,
+      })),
+      readResolvedOpaqueItem: vi.fn(async () => new Uint8Array([1])),
+    } as never).replayOpened(
+      openedVaultAtFrontier(creation, [replacement.event.recordId, enrollment.recordId]),
+    );
+
+    expect(
+      replay.authority.clientCredentials.get(Buffer.from(proposedCredentialId).toString("hex")),
+    ).toEqual(expect.objectContaining({ memberId: creation.ids.firstMemberId, active: false }));
+    expect(replayEventMemberId(replay, enrollment)).toEqual(creation.ids.firstMemberId);
+    expect(replay.authority.writeFences).toEqual([]);
+
+    const descendantReplacement = await recoveryReplacement(creation, {
+      parentRecordIds: [enrollment.recordId],
+      replacedCredentialIds: [creation.ids.recoveryCredentialId],
+      revision: 1,
+      seedByte: 85,
+      assertedAt: 4,
+    });
+    byId.set(
+      Buffer.from(descendantReplacement.event.recordId).toString("hex"),
+      descendantReplacement.event,
+    );
+    const priorEnrollment = await new CanonicalReplayService({
+      openResolvedCompactItem: vi.fn(async ({ logicalId }: { logicalId: Uint8Array }) => ({
+        payloadBytes: byId.get(Buffer.from(logicalId).toString("hex"))?.bytes,
+      })),
+      readResolvedOpaqueItem: vi.fn(async () => new Uint8Array([1])),
+    } as never).replayOpened(
+      openedVaultAtFrontier(
+        creation,
+        [descendantReplacement.event.recordId],
+        [enrollment.recordId, descendantReplacement.event.recordId],
+      ),
+    );
+    expect(
+      priorEnrollment.authority.clientCredentials.get(
+        Buffer.from(proposedCredentialId).toString("hex"),
+      )?.active,
+    ).toBe(true);
   });
 
   it("replays the complete Invitation, conflict, and member-removal lifecycle", async () => {

@@ -21,6 +21,7 @@ export function singleCredentialAuthority(input: {
     activeInvitations: [],
     invitationConflicts: [],
     recoveryCredentials: [],
+    recoveryConflicts: [],
     keyEpochs: [],
     writeFences: [],
     clientCredentials: new Map([
