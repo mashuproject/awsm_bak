@@ -180,4 +180,26 @@ describe("canonical pull-synchronization Job service", () => {
     );
     expect(commits).toHaveLength(1);
   });
+
+  it("advances an inventory checkpoint only through an exact prior local Job state", async () => {
+    const commits: unknown[] = [];
+    const service = new CanonicalPullSynchronizationJobService(
+      {
+        commitExecutionMutation: async (commit: unknown) => commits.push(commit),
+      } as unknown as ConstructorParameters<typeof CanonicalPullSynchronizationJobService>[0],
+      NORMAL_STORAGE_REALM,
+      () => JOB_ID,
+    );
+    const previous = await service.create({ vaultId: filled("Vault", 1), remoteId: REMOTE_ID });
+    const next = { ...previous, snapshotCursor: 3, nextPosition: filled("StorageItem", 4) };
+
+    await service.checkpoint({ previous, next });
+
+    const commit = commits[1] as {
+      readonly expectedMutableItems: readonly { readonly bytes: Uint8Array }[];
+      readonly mutableItems: readonly { readonly bytes: Uint8Array }[];
+    };
+    expect(commit.expectedMutableItems).toHaveLength(1);
+    expect(commit.mutableItems).toHaveLength(1);
+  });
 });

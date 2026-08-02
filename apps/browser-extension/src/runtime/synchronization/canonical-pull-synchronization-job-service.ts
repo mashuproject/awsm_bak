@@ -66,6 +66,19 @@ function newlyAddedQuarantine(
   return added[0];
 }
 
+function sameQuarantine(
+  previous: CanonicalPullSynchronizationJob,
+  next: CanonicalPullSynchronizationJob,
+): boolean {
+  if (previous.quarantineStorageItemIds.length !== next.quarantineStorageItemIds.length) {
+    return false;
+  }
+  const previousIds = new Set(previous.quarantineStorageItemIds.map(key));
+  return next.quarantineStorageItemIds.every((storageItemId) =>
+    previousIds.has(key(storageItemId)),
+  );
+}
+
 export class CanonicalPullSynchronizationJobService {
   constructor(
     private readonly storage: CanonicalIndexedDb,
@@ -135,6 +148,23 @@ export class CanonicalPullSynchronizationJobService {
       realm: this.realm,
       expectedMutableItems: [item(input.previous, previousBytes)],
       immutableItems: [quarantine],
+      mutableItems: [item(input.next, nextBytes)],
+    });
+  }
+
+  async checkpoint(input: {
+    readonly previous: CanonicalPullSynchronizationJob;
+    readonly next: CanonicalPullSynchronizationJob;
+  }): Promise<void> {
+    assertSameJobContext(input.previous, input.next, this.realm);
+    if (!sameQuarantine(input.previous, input.next)) {
+      throw new TypeError("An ordinary Synchronization checkpoint cannot alter Quarantine state");
+    }
+    const previousBytes = encodeCanonicalPullSynchronizationJob(input.previous);
+    const nextBytes = encodeCanonicalPullSynchronizationJob(input.next);
+    await this.storage.commitExecutionMutation({
+      realm: this.realm,
+      expectedMutableItems: [item(input.previous, previousBytes)],
       mutableItems: [item(input.next, nextBytes)],
     });
   }
