@@ -91,6 +91,106 @@ async function replaySingleAuthorityEvent(input: {
   return { creation, event, replay: await service.replayOpened(vault) };
 }
 
+function openedVaultAt(
+  creation: Awaited<ReturnType<typeof prepareCanonicalVaultCreation>>,
+  event: Awaited<ReturnType<typeof signVaultEvent>>,
+): PersistedOpenedCanonicalVault {
+  return {
+    directory: {
+      vaultId: creation.ids.vaultId,
+      generationId: creation.ids.generationId,
+      label: "Authority",
+      selectedClientCredentialId: creation.ids.clientCredentialId,
+    },
+    replicaState: {
+      vaultId: creation.ids.vaultId,
+      generationId: creation.ids.generationId,
+      causalFrontier: [event.recordId],
+      authorityFrontier: [event.recordId],
+      continuityRecordIds: [creation.genesis.recordId, event.recordId],
+      baselineId: creation.baseline.recordId,
+      currentKeyEpochId: creation.secrets.keyEpoch.id,
+      requiredFeatureSetId: creation.genesis.requiredFeatureSetId,
+      authoringClientCredentialId: creation.ids.clientCredentialId,
+      memberId: creation.ids.firstMemberId,
+      lifecycle: 1,
+      preservationRoots: [],
+      garbageCollectionFences: [],
+      adoption: null,
+    },
+    clientSecret: {
+      vaultId: creation.ids.vaultId,
+      memberId: creation.ids.firstMemberId,
+      clientCredentialId: creation.ids.clientCredentialId,
+      signingPublicKey: creation.secrets.client.signingPublicKey,
+      signingSecretKey: creation.secrets.client.signingSecretKey,
+      wrappingPublicKey: creation.secrets.client.wrappingPublicKey,
+      wrappingPrivateKey: creation.secrets.client.wrappingPrivateKey,
+    },
+    epochSecret: {
+      vaultId: creation.ids.vaultId,
+      keyEpochId: creation.secrets.keyEpoch.id,
+      displayNumber: 0,
+      key: creation.secrets.keyEpoch.key,
+    },
+    baseline: creation.baseline,
+    genesis: creation.genesis,
+    installationWrappingKey: {} as CryptoKey,
+    replicaStateStorageBytes: new Uint8Array(),
+  };
+}
+
+async function clientEnrollmentProposal(
+  creation: Awaited<ReturnType<typeof prepareCanonicalVaultCreation>>,
+  seedByte: number,
+) {
+  const sodium = await readySodium();
+  const proposedCredentialId = randomIdentifier("ClientCredential");
+  const proposed = sodium.crypto_sign_seed_keypair(new Uint8Array(32).fill(seedByte));
+  const certificate = canonicalMap([
+    [0, proposedCredentialId],
+    [1, creation.ids.firstMemberId],
+    [2, proposed.publicKey],
+    [3, new Uint8Array(32).fill(seedByte + 1)],
+  ]);
+  const envelopeId = randomIdentifier("KeyEnvelope");
+  const slots = canonicalSet([
+    canonicalMap([
+      [0, creation.secrets.keyEpoch.id],
+      [1, 2],
+      [2, proposedCredentialId],
+      [3, null],
+      [4, envelopeId],
+    ]),
+  ]);
+  const prefix = canonicalMap([
+    [0, creation.ids.vaultId],
+    [1, creation.ids.firstMemberId],
+    [2, canonicalSet([creation.genesis.recordId])],
+    [3, certificate],
+    [4, slots],
+  ]);
+  const proposal = canonicalMap([
+    ...prefix,
+    [
+      5,
+      sodium.crypto_sign_detached(
+        transcript("awsm:client-enrollment-proposal:v1", [encodeCanonicalValue(prefix)]),
+        proposed.privateKey,
+      ),
+    ],
+  ]);
+  return {
+    proposedCredentialId,
+    proposed,
+    envelopeId,
+    proposal,
+    proposalId: sha256(
+      transcript("awsm:client-enrollment-proposal-id:v1", [encodeCanonicalValue(proposal)]),
+    ),
+  };
+}
+
 describe("canonical Authority replay", () => {
   it("derives Closure when the sole Administrator resigns", async () => {
     const { creation, event, replay } = await replaySingleAuthorityEvent({
@@ -187,6 +287,166 @@ describe("canonical Authority replay", () => {
         current: true,
       },
     ]);
+  });
+
+  it("enrolls an additional Client Credential authorized by an existing Credential", async () => {
+    const creation = await prepareCanonicalVaultCreation({ label: "Enrollment", assertedAt: 1 });
+    const { proposedCredentialId, envelopeId, proposal } = await clientEnrollmentProposal(
+      creation,
+      71,
+    );
+    const enrollment = await signVaultEvent(
+      {
+        vaultId: creation.ids.vaultId,
+        generationId: creation.ids.generationId,
+        parentRecordIds: [creation.genesis.recordId],
+        authorityParentRecordIds: [creation.genesis.recordId],
+        dependencies: [{ type: DEPENDENCY_TYPES.KeyEnvelope, id: envelopeId }],
+        requiredFeatureSetId: creation.genesis.requiredFeatureSetId,
+        extensions: advisoryExtensions([]),
+        family: 1,
+        type: 9,
+        signerCredentialId: creation.ids.clientCredentialId,
+        assertedAt: 2,
+        body: canonicalMap([
+          [0, proposal],
+          [1, 1],
+          [2, null],
+          [3, null],
+        ]),
+      },
+      creation.secrets.client.signingSecretKey,
+    );
+    const readResolvedOpaqueItem = vi.fn(
+      async (_input: { readonly logicalId: Uint8Array; readonly expectedKeyEpochId: Uint8Array }) =>
+        new Uint8Array([1]),
+    );
+    const replay = await new CanonicalReplayService({
+      openResolvedCompactItem: vi.fn(async () => ({ payloadBytes: enrollment.bytes })),
+      readResolvedOpaqueItem,
+    } as never).replayOpened(openedVaultAt(creation, enrollment));
+
+    expect(
+      replay.authority.clientCredentials.get(Buffer.from(proposedCredentialId).toString("hex")),
+    ).toEqual(expect.objectContaining({ memberId: creation.ids.firstMemberId, active: true }));
+    expect(readResolvedOpaqueItem).toHaveBeenCalledOnce();
+    expect(readResolvedOpaqueItem.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        logicalId: envelopeId,
+        expectedKeyEpochId: creation.secrets.keyEpoch.id,
+      }),
+    );
+
+    const invalidProposal = canonicalMap(
+      [...proposal].map(([field, value]) =>
+        field === 5 ? ([field, new Uint8Array(64)] as const) : ([field, value] as const),
+      ),
+    );
+    const invalidEnrollment = await signVaultEvent(
+      {
+        vaultId: creation.ids.vaultId,
+        generationId: creation.ids.generationId,
+        parentRecordIds: [creation.genesis.recordId],
+        authorityParentRecordIds: [creation.genesis.recordId],
+        dependencies: [{ type: DEPENDENCY_TYPES.KeyEnvelope, id: envelopeId }],
+        requiredFeatureSetId: creation.genesis.requiredFeatureSetId,
+        extensions: advisoryExtensions([]),
+        family: 1,
+        type: 9,
+        signerCredentialId: creation.ids.clientCredentialId,
+        assertedAt: 3,
+        body: canonicalMap([
+          [0, invalidProposal],
+          [1, 1],
+          [2, null],
+          [3, null],
+        ]),
+      },
+      creation.secrets.client.signingSecretKey,
+    );
+    const invalidOpaqueRead = vi.fn(async () => new Uint8Array([1]));
+    await expect(
+      new CanonicalReplayService({
+        openResolvedCompactItem: vi.fn(async () => ({ payloadBytes: invalidEnrollment.bytes })),
+        readResolvedOpaqueItem: invalidOpaqueRead,
+      } as never).replayOpened(openedVaultAt(creation, invalidEnrollment)),
+    ).rejects.toThrow("Client Credential Enrollment possession signature is invalid");
+    expect(invalidOpaqueRead).not.toHaveBeenCalled();
+  });
+
+  it("enrolls a proposed Client Credential through same-member Recovery authority", async () => {
+    const sodium = await readySodium();
+    const creation = await prepareCanonicalVaultCreation({ label: "Recovery", assertedAt: 1 });
+    const { proposedCredentialId, proposed, envelopeId, proposal, proposalId } =
+      await clientEnrollmentProposal(creation, 73);
+    const recoveryAuthorization = sodium.crypto_sign_detached(
+      transcript("awsm:recovery-client-enrollment-authorization:v1", [proposalId]),
+      creation.secrets.recovery.signingSecretKey,
+    );
+    const enrollment = await signVaultEvent(
+      {
+        vaultId: creation.ids.vaultId,
+        generationId: creation.ids.generationId,
+        parentRecordIds: [creation.genesis.recordId],
+        authorityParentRecordIds: [creation.genesis.recordId],
+        dependencies: [{ type: DEPENDENCY_TYPES.KeyEnvelope, id: envelopeId }],
+        requiredFeatureSetId: creation.genesis.requiredFeatureSetId,
+        extensions: advisoryExtensions([]),
+        family: 1,
+        type: 9,
+        signerCredentialId: proposedCredentialId,
+        assertedAt: 2,
+        body: canonicalMap([
+          [0, proposal],
+          [1, 2],
+          [2, creation.ids.recoveryCredentialId],
+          [3, recoveryAuthorization],
+        ]),
+      },
+      proposed.privateKey,
+    );
+    const readResolvedOpaqueItem = vi.fn(async () => new Uint8Array([1]));
+    const replay = await new CanonicalReplayService({
+      openResolvedCompactItem: vi.fn(async () => ({ payloadBytes: enrollment.bytes })),
+      readResolvedOpaqueItem,
+    } as never).replayOpened(openedVaultAt(creation, enrollment));
+
+    expect(
+      replay.authority.clientCredentials.get(Buffer.from(proposedCredentialId).toString("hex")),
+    ).toEqual(expect.objectContaining({ memberId: creation.ids.firstMemberId, active: true }));
+    expect(replayEventMemberId(replay, enrollment)).toEqual(creation.ids.firstMemberId);
+    expect(readResolvedOpaqueItem).toHaveBeenCalledOnce();
+
+    const invalidEnrollment = await signVaultEvent(
+      {
+        vaultId: creation.ids.vaultId,
+        generationId: creation.ids.generationId,
+        parentRecordIds: [creation.genesis.recordId],
+        authorityParentRecordIds: [creation.genesis.recordId],
+        dependencies: [{ type: DEPENDENCY_TYPES.KeyEnvelope, id: envelopeId }],
+        requiredFeatureSetId: creation.genesis.requiredFeatureSetId,
+        extensions: advisoryExtensions([]),
+        family: 1,
+        type: 9,
+        signerCredentialId: proposedCredentialId,
+        assertedAt: 3,
+        body: canonicalMap([
+          [0, proposal],
+          [1, 2],
+          [2, creation.ids.recoveryCredentialId],
+          [3, new Uint8Array(64)],
+        ]),
+      },
+      proposed.privateKey,
+    );
+    const invalidOpaqueRead = vi.fn(async () => new Uint8Array([1]));
+    await expect(
+      new CanonicalReplayService({
+        openResolvedCompactItem: vi.fn(async () => ({ payloadBytes: invalidEnrollment.bytes })),
+        readResolvedOpaqueItem: invalidOpaqueRead,
+      } as never).replayOpened(openedVaultAt(creation, invalidEnrollment)),
+    ).rejects.toThrow("Client Enrollment Recovery authorization is invalid");
+    expect(invalidOpaqueRead).not.toHaveBeenCalled();
   });
 
   it("replays the complete Invitation, conflict, and member-removal lifecycle", async () => {

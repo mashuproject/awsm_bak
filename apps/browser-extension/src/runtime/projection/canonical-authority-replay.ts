@@ -1,3 +1,5 @@
+import { sha256 } from "@noble/hashes/sha2.js";
+
 import { readySodium } from "../../crypto/sodium";
 import type { Identifier } from "../../domain/canonical/identifiers";
 import {
@@ -169,6 +171,18 @@ interface ResolvedInvitation {
   readonly rejectedConsumedRecordIds: readonly Identifier<"VaultRecord">[];
 }
 
+interface ClientCredentialEnrollment {
+  readonly memberId: Identifier<"Member">;
+  readonly clientCredential: Omit<CanonicalAuthorityClientCredential, "active">;
+  readonly authorizationKind: 1 | 2;
+  readonly recoveryCredentialId: Identifier<"RecoveryCredential"> | null;
+  readonly recoveryAuthorization: Uint8Array | null;
+  readonly proposalBytes: Uint8Array;
+  readonly proposalPrefixBytes: Uint8Array;
+  readonly possessionSignature: Uint8Array;
+  readonly envelopeSlots: readonly InvitationEnvelopeSlot[];
+}
+
 export class CanonicalAuthorityReplay {
   readonly #anchorRecordId: Identifier<"VaultRecord">;
   readonly #firstMemberId: Identifier<"Member">;
@@ -180,6 +194,7 @@ export class CanonicalAuthorityReplay {
   readonly #acceptedInvitations = new Map<string, AcceptedInvitation>();
   readonly #cancelledInvitations = new Map<string, CancelledInvitation>();
   readonly #resolvedInvitations = new Map<string, ResolvedInvitation>();
+  readonly #clientEnrollments = new Map<string, ClientCredentialEnrollment>();
 
   constructor(
     genesis: AuthenticatedVaultEvent,
@@ -514,9 +529,18 @@ export class CanonicalAuthorityReplay {
       },
     ];
     for (const event of this.#events) {
-      if (event.family !== 1 || event.type !== 6 || !this.#isIncluded(event.recordId, frontier)) {
+      if (event.family !== 1 || !this.#isIncluded(event.recordId, frontier)) {
         continue;
       }
+      if (event.type === 9) {
+        const enrollment = this.#clientEnrollments.get(key(event.recordId));
+        if (enrollment === undefined) {
+          throw new TypeError("Client Credential Enrollment state is missing");
+        }
+        addClientCredential(enrollment.clientCredential);
+        continue;
+      }
+      if (event.type !== 6) continue;
       const acceptance = this.#acceptedInvitations.get(key(event.recordId));
       if (acceptance === undefined) throw new TypeError("Invitation Acceptance state is missing");
       addClientCredential(acceptance.clientCredential);
@@ -635,9 +659,20 @@ export class CanonicalAuthorityReplay {
     if (parentState.lifecycle === 2) {
       throw new TypeError("An Event cannot descend from Closed Authority State");
     }
-    const signer = parentState.clientCredentials.get(key(event.signerCredentialId));
-    if (signer === undefined || !signer.active) {
-      throw new TypeError("Vault Event signer is not an active Client Credential");
+    const enrollment =
+      event.family === 1 && event.type === 9 ? parseClientCredentialEnrollment(event) : null;
+    let signer: CanonicalAuthorityClientCredential;
+    if (enrollment?.authorizationKind === 2) {
+      if (!bytesEqual(event.signerCredentialId, enrollment.clientCredential.clientCredentialId)) {
+        throw new TypeError("Recovery-authorized Enrollment signer is not the proposed Credential");
+      }
+      signer = { ...enrollment.clientCredential, active: false };
+    } else {
+      const activeSigner = parentState.clientCredentials.get(key(event.signerCredentialId));
+      if (activeSigner === undefined || !activeSigner.active) {
+        throw new TypeError("Vault Event signer is not an active Client Credential");
+      }
+      signer = activeSigner;
     }
     if (!(await verifyVaultEventSignature(event, signer.signingPublicKey))) {
       throw new TypeError("Vault Event signature is invalid");
@@ -814,6 +849,28 @@ export class CanonicalAuthorityReplay {
             )
             .map(({ headRecordId }) => headRecordId),
         });
+      } else if (event.type === 9) {
+        if (enrollment === null) throw new TypeError("Client Enrollment state is missing");
+        if (!containsId(parentState.activeMemberIds, enrollment.memberId)) {
+          throw new TypeError("Client Enrollment target is not an active Member");
+        }
+        if (
+          enrollment.authorizationKind === 1 &&
+          !bytesEqual(enrollment.memberId, signer.memberId)
+        ) {
+          throw new TypeError("Client Enrollment signer does not belong to the target Member");
+        }
+        if (
+          parentState.clientCredentials.has(key(enrollment.clientCredential.clientCredentialId))
+        ) {
+          throw new TypeError("Client Enrollment reuses a Client Credential identity");
+        }
+        await verifyClientCredentialEnrollmentPossession(enrollment);
+        if (enrollment.authorizationKind === 2) {
+          await verifyRecoveryClientCredentialEnrollment(enrollment, parentState);
+        }
+        validateClientCredentialEnrollmentSlots(enrollment, parentState);
+        this.#clientEnrollments.set(key(event.recordId), enrollment);
       } else {
         throw new TypeError("This replay slice cannot yet reduce this Authority Event type");
       }
@@ -915,6 +972,179 @@ function parseInvitationResolution(
   };
 }
 
+function parseClientCredentialEnrollment(
+  event: AuthenticatedVaultEvent,
+): ClientCredentialEnrollment {
+  const body = exactMap(event.body, [0, 1, 2, 3], "Client Credential Enrollment body");
+  const proposalValue = mapValue(body, 0);
+  const proposal = exactMap(
+    proposalValue,
+    [0, 1, 2, 3, 4, 5],
+    "Client Credential Enrollment Proposal",
+  );
+  const memberId = identifierValue(mapValue(proposal, 1), "Member", "Enrollment Member ID");
+  const certificate = exactMap(mapValue(proposal, 3), [0, 1, 2, 3], "Proposed Client Certificate");
+  const envelopeSlots = parseEnvelopeSlots(
+    mapValue(proposal, 4),
+    "Client Credential Enrollment Envelope slots",
+  );
+  const authorizationKind = oneOfCodes(
+    mapValue(body, 1),
+    [1, 2] as const,
+    "Enrollment authorization kind",
+  );
+  const recoveryCredentialId = nullable(mapValue(body, 2), (entry) =>
+    identifierValue(entry, "RecoveryCredential", "Authorizing Recovery Credential ID"),
+  );
+  const recoveryAuthorization = nullable(mapValue(body, 3), (entry) =>
+    byteString(entry, 64, "Recovery enrollment authorization"),
+  );
+  if (
+    (authorizationKind === 2) !==
+    (recoveryCredentialId !== null && recoveryAuthorization !== null)
+  ) {
+    throw new TypeError("Recovery authorization fields do not match enrollment kind");
+  }
+  return {
+    memberId,
+    clientCredential: {
+      clientCredentialId: identifierValue(
+        mapValue(certificate, 0),
+        "ClientCredential",
+        "Proposed Client Credential ID",
+      ),
+      memberId,
+      signingPublicKey: byteString(
+        mapValue(certificate, 2),
+        32,
+        "Proposed Client signing public key",
+      ),
+      wrappingPublicKey: byteString(
+        mapValue(certificate, 3),
+        32,
+        "Proposed Client wrapping public key",
+      ),
+    },
+    authorizationKind,
+    recoveryCredentialId,
+    recoveryAuthorization,
+    proposalBytes: encodeCanonicalValue(proposalValue),
+    proposalPrefixBytes: encodeCanonicalValue(canonicalNumericPrefix(proposal, 4)),
+    possessionSignature: byteString(
+      mapValue(proposal, 5),
+      64,
+      "Proposed Client possession signature",
+    ),
+    envelopeSlots,
+  };
+}
+
+function parseEnvelopeSlots(
+  value: CanonicalValue,
+  field: string,
+): readonly InvitationEnvelopeSlot[] {
+  return canonicalSetValue(value, field, (entry) => entry, { nonempty: true }).map(
+    (entry, index): InvitationEnvelopeSlot => {
+      const slot = exactMap(entry, [0, 1, 2, 3, 4], `${field}[${index}]`);
+      const targetKind = oneOfCodes(
+        mapValue(slot, 1),
+        [1, 2] as const,
+        `${field}[${index}] target kind`,
+      );
+      return {
+        keyEpochId: identifierValue(
+          mapValue(slot, 0),
+          "KeyEpoch",
+          `${field}[${index}] Key Epoch ID`,
+        ),
+        targetKind,
+        targetCredentialId: identifierValue(
+          mapValue(slot, 2),
+          targetKind === 1 ? "RecoveryCredential" : "ClientCredential",
+          `${field}[${index}] target Credential ID`,
+        ),
+        targetRevision: nullable(mapValue(slot, 3), (targetRevision) =>
+          nonnegativeInteger(targetRevision, `${field}[${index}] target revision`),
+        ),
+        keyEnvelopeId: identifierValue(
+          mapValue(slot, 4),
+          "KeyEnvelope",
+          `${field}[${index}] Key Envelope ID`,
+        ),
+      };
+    },
+  );
+}
+
+async function verifyClientCredentialEnrollmentPossession(
+  enrollment: ClientCredentialEnrollment,
+): Promise<void> {
+  const sodium = await readySodium();
+  if (
+    !sodium.crypto_sign_verify_detached(
+      enrollment.possessionSignature,
+      transcript("awsm:client-enrollment-proposal:v1", [enrollment.proposalPrefixBytes]),
+      enrollment.clientCredential.signingPublicKey,
+    )
+  ) {
+    throw new TypeError("Client Credential Enrollment possession signature is invalid");
+  }
+}
+
+async function verifyRecoveryClientCredentialEnrollment(
+  enrollment: ClientCredentialEnrollment,
+  authority: CanonicalAuthorityState,
+): Promise<void> {
+  if (enrollment.recoveryCredentialId === null || enrollment.recoveryAuthorization === null) {
+    throw new TypeError("Recovery-authorized Enrollment is missing its authorization");
+  }
+  const authorizingRecoveryCredentialId = enrollment.recoveryCredentialId;
+  const recovery = authority.recoveryCredentials.find(({ recoveryCredentialId }) =>
+    bytesEqual(recoveryCredentialId, authorizingRecoveryCredentialId),
+  );
+  if (
+    recovery === undefined ||
+    !recovery.effective ||
+    !bytesEqual(recovery.memberId, enrollment.memberId)
+  ) {
+    throw new TypeError("Client Enrollment Recovery Credential is not effective for the Member");
+  }
+  const proposalId = sha256(
+    transcript("awsm:client-enrollment-proposal-id:v1", [enrollment.proposalBytes]),
+  );
+  const sodium = await readySodium();
+  if (
+    !sodium.crypto_sign_verify_detached(
+      enrollment.recoveryAuthorization,
+      transcript("awsm:recovery-client-enrollment-authorization:v1", [proposalId]),
+      recovery.signingPublicKey,
+    )
+  ) {
+    throw new TypeError("Client Enrollment Recovery authorization is invalid");
+  }
+}
+
+function validateClientCredentialEnrollmentSlots(
+  enrollment: ClientCredentialEnrollment,
+  authority: CanonicalAuthorityState,
+): void {
+  const expected = new Set(
+    authority.keyEpochs.map(
+      ({ keyEpochId }) =>
+        `${key(keyEpochId)}:2:${key(enrollment.clientCredential.clientCredentialId)}:null`,
+    ),
+  );
+  const actual = new Set(
+    enrollment.envelopeSlots.map(
+      (slot) =>
+        `${key(slot.keyEpochId)}:${slot.targetKind}:${key(slot.targetCredentialId)}:${slot.targetRevision === null ? "null" : slot.targetRevision}`,
+    ),
+  );
+  if (actual.size !== expected.size || [...expected].some((slot) => !actual.has(slot))) {
+    throw new TypeError("Client Credential Enrollment Envelope slots are not the complete set");
+  }
+}
+
 async function verifyInvitationCancellation(
   cancellation: CancelledInvitation,
   invitation: CanonicalAuthorityInvitation,
@@ -1005,40 +1235,10 @@ function parseInvitationAcceptance(event: AuthenticatedVaultEvent): AcceptedInvi
     const capability = exactMap(value, [0, 1, 2, 3, 4], `Granted capability[${index}]`);
     return mapValue(capability, 3) === "awsm.vault.administrator";
   });
-  const envelopeSlots = canonicalSetValue(
+  const envelopeSlots = parseEnvelopeSlots(
     mapValue(proposal, 7),
     "Invitation Acceptance Envelope slots",
-    (entry) => entry,
-    { nonempty: true },
-  ).map((value, index): InvitationEnvelopeSlot => {
-    const slot = exactMap(value, [0, 1, 2, 3, 4], `Invitation Envelope slot[${index}]`);
-    const targetKind = oneOfCodes(
-      mapValue(slot, 1),
-      [1, 2] as const,
-      `Invitation Envelope slot[${index}] target kind`,
-    );
-    return {
-      keyEpochId: identifierValue(
-        mapValue(slot, 0),
-        "KeyEpoch",
-        `Invitation Envelope slot[${index}] Key Epoch ID`,
-      ),
-      targetKind,
-      targetCredentialId: identifierValue(
-        mapValue(slot, 2),
-        targetKind === 1 ? "RecoveryCredential" : "ClientCredential",
-        `Invitation Envelope slot[${index}] target Credential ID`,
-      ),
-      targetRevision: nullable(mapValue(slot, 3), (entry) =>
-        nonnegativeInteger(entry, `Invitation Envelope slot[${index}] target revision`),
-      ),
-      keyEnvelopeId: identifierValue(
-        mapValue(slot, 4),
-        "KeyEnvelope",
-        `Invitation Envelope slot[${index}] Key Envelope ID`,
-      ),
-    };
-  });
+  );
   return {
     invitationId: identifierValue(mapValue(join, 0), "Invitation", "Invitation ID"),
     memberId,
@@ -1107,11 +1307,14 @@ export function canonicalAuthorityKeyEnvelopeRequirements(
   readonly keyEnvelopeId: Identifier<"KeyEnvelope">;
   readonly keyEpochId: Identifier<"KeyEpoch">;
 }[] {
-  if (event.family !== 1 || event.type !== 6) return [];
-  return parseInvitationAcceptance(event).envelopeSlots.map(({ keyEnvelopeId, keyEpochId }) => ({
-    keyEnvelopeId,
-    keyEpochId,
-  }));
+  if (event.family !== 1) return [];
+  const slots =
+    event.type === 6
+      ? parseInvitationAcceptance(event).envelopeSlots
+      : event.type === 9
+        ? parseClientCredentialEnrollment(event).envelopeSlots
+        : [];
+  return slots.map(({ keyEnvelopeId, keyEpochId }) => ({ keyEnvelopeId, keyEpochId }));
 }
 
 async function verifyInvitationAcceptance(
