@@ -277,6 +277,29 @@ function renderRecoveryResume(
   content.append(form);
 }
 
+function renderRecentCaptures(view: CanonicalPopupView, content: DocumentFragment): void {
+  const captures = view.library.filter(({ lifecycle }) => lifecycle === "Active").slice(0, 3);
+  const recent = element("section", undefined, "canonical-popup__recent");
+  recent.append(element("h2", "Recent captures"));
+  if (captures.length === 0) {
+    recent.append(
+      element("p", "No pages have been archived in this Vault yet.", "canonical-popup__muted"),
+    );
+  } else {
+    const list = element("ul");
+    for (const captureItem of captures) {
+      const row = element("li");
+      row.append(
+        element("strong", displayCaptureTitle(captureItem.title, captureItem.finalUrl)),
+        element("span", new URL(captureItem.finalUrl).hostname),
+      );
+      list.append(row);
+    }
+    recent.append(list);
+  }
+  content.append(recent);
+}
+
 function renderCapture(view: CanonicalPopupView, content: DocumentFragment): void {
   const presentation = canonicalPopupPresentation(view.state);
   if (presentation.kind !== "Capture") throw new Error("Popup Capture presentation is invalid.");
@@ -321,26 +344,7 @@ function renderCapture(view: CanonicalPopupView, content: DocumentFragment): voi
     render(view);
   });
   content.append(settings);
-  const captures = view.library.filter(({ lifecycle }) => lifecycle === "Active").slice(0, 3);
-  const recent = element("section", undefined, "canonical-popup__recent");
-  recent.append(element("h2", "Recent captures"));
-  if (captures.length === 0) {
-    recent.append(
-      element("p", "No pages have been archived in this Vault yet.", "canonical-popup__muted"),
-    );
-  } else {
-    const list = element("ul");
-    for (const captureItem of captures) {
-      const row = element("li");
-      row.append(
-        element("strong", displayCaptureTitle(captureItem.title, captureItem.finalUrl)),
-        element("span", new URL(captureItem.finalUrl).hostname),
-      );
-      list.append(row);
-    }
-    recent.append(list);
-  }
-  content.append(recent);
+  renderRecentCaptures(view, content);
 }
 
 function renderVaultSettings(view: CanonicalPopupView, content: DocumentFragment): void {
@@ -436,6 +440,7 @@ function renderClosedVault(view: CanonicalPopupView, content: DocumentFragment):
     render(view);
   });
   content.append(settings);
+  renderRecentCaptures(view, content);
 }
 
 function renderRecoverAccess(

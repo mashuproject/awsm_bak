@@ -1,4 +1,5 @@
 import { cp, readFile, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { resolve } from "node:path";
 import { chromium, expect, type Page, type TestInfo, test } from "@playwright/test";
 
@@ -31,11 +32,66 @@ async function packagedCanonicalExtension(testInfo: TestInfo): Promise<{
 
 async function popup(
   client: Awaited<ReturnType<typeof packagedCanonicalExtension>>,
+  activePage?: Page,
 ): Promise<Page> {
+  if (activePage !== undefined) await activePage.bringToFront();
   const page = await client.context.newPage();
   await page.setViewportSize({ width: 400, height: 700 });
   await page.goto(`chrome-extension://${client.extensionId}/popup.html`);
+  if (activePage !== undefined) {
+    await page.evaluate(async (activeUrl) => {
+      const extensionApi = (
+        globalThis as unknown as {
+          chrome: {
+            runtime: {
+              sendMessage(message: unknown, ...rest: unknown[]): unknown;
+            };
+            tabs: {
+              query(value: unknown): Promise<readonly { id?: number; url?: string }[]>;
+              update(id: number, value: { active: true }): Promise<unknown>;
+            };
+          };
+        }
+      ).chrome;
+      const tabs = await extensionApi.tabs.query({});
+      const activeTab = tabs.find((tab) => tab.id !== undefined && tab.url === activeUrl);
+      if (activeTab?.id === undefined) throw new Error("Active Capture fixture tab is missing.");
+      await extensionApi.tabs.update(activeTab.id, { active: true });
+      const nativeSendMessage = extensionApi.runtime.sendMessage.bind(extensionApi.runtime);
+      extensionApi.runtime.sendMessage = (message: unknown, ...rest: unknown[]) =>
+        nativeSendMessage(
+          typeof message === "object" &&
+            message !== null &&
+            "type" in message &&
+            message.type === "CaptureActivePage"
+            ? { ...message, tabId: activeTab.id }
+            : message,
+          ...rest,
+        );
+    }, activePage.url());
+  }
   return page;
+}
+
+async function captureFixture(): Promise<{ readonly url: string; close(): Promise<void> }> {
+  const server = createServer((_request, response) => {
+    response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    response.end("<!doctype html><title>Captured fixture</title><main>Stored locally.</main>");
+  });
+  await new Promise<void>((resolveServer, rejectServer) => {
+    server.once("error", rejectServer);
+    server.listen(0, "127.0.0.1", resolveServer);
+  });
+  const address = server.address();
+  if (address === null || typeof address === "string")
+    throw new Error("Capture fixture did not bind TCP.");
+  return {
+    url: `http://127.0.0.1:${address.port}/fixture`,
+    close: () =>
+      new Promise((resolveClose, rejectClose) =>
+        server.close((error) => (error ? rejectClose(error) : resolveClose())),
+      ),
+  };
 }
 
 async function assertInteractiveTargets(page: Page): Promise<void> {
@@ -64,8 +120,11 @@ test("runs the canonical local Vault ceremony through a packaged extension", asy
   test.setTimeout(90_000);
   expect(browserName).toBe("chromium");
   const client = await packagedCanonicalExtension(testInfo);
+  const fixture = await captureFixture();
   try {
-    const first = await popup(client);
+    const activePage = await client.context.newPage();
+    await activePage.goto(fixture.url);
+    const first = await popup(client, activePage);
     await expect(first.getByRole("heading", { name: "Create your local Vault" })).toBeVisible();
     await assertInteractiveTargets(first);
     await expectReadableContrast(first);
@@ -98,6 +157,10 @@ test("runs the canonical local Vault ceremony through a packaged extension", asy
     expect(announcerBox?.height).toBeLessThanOrEqual(1);
     await assertInteractiveTargets(first);
     await expectReadableContrast(first);
+
+    await first.getByRole("button", { name: "Archive this page" }).click();
+    await expect(first.getByRole("heading", { name: "Recent captures" })).toBeVisible();
+    await expect(first.getByText("Captured fixture")).toBeVisible();
 
     await first.setViewportSize({ width: 360, height: 700 });
     await expect(first.getByRole("button", { name: "Archive this page" })).toBeVisible();
@@ -189,15 +252,18 @@ test("runs the canonical local Vault ceremony through a packaged extension", asy
     await expect(first.getByRole("heading", { name: "Vault is closed" })).toBeVisible();
     await expect(first.getByRole("button", { name: "Archive this page" })).toHaveCount(0);
     await expect(first.getByText("This Vault is closed.")).toBeVisible();
+    await expect(first.getByRole("heading", { name: "Recent captures" })).toBeVisible();
+    await expect(first.getByText("Captured fixture")).toBeVisible();
     await expect(first.getByRole("button", { name: "Vault settings" })).toBeVisible();
     await assertInteractiveTargets(first);
     await expectReadableContrast(first);
     await first.evaluate(() => window.scrollTo(0, 0));
     await expect(first.locator(".canonical-popup__brand")).toBeInViewport();
-    await first.screenshot({
+    await first.locator("main").screenshot({
       path: testInfo.outputPath("canonical-popup-closed.png"),
     });
   } finally {
     await client.context.close();
+    await fixture.close();
   }
 });
