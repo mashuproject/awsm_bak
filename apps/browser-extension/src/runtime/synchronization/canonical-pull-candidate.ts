@@ -9,9 +9,14 @@ import {
   decodeVaultEvent,
   type VaultBaseline,
 } from "../../domain/canonical/record";
+import { byteString } from "../../domain/canonical/schema";
 import { decodeCanonicalValue } from "../../domain/canonical/value";
 import { bytesEqual } from "../../domain/hash";
 import type { EpochSecretState } from "../vault/canonical-local-state";
+import {
+  deriveHostedReplicaOpaqueLocator,
+  HOSTED_REPLICA_LOGICAL_NAMESPACE,
+} from "./canonical-hosted-replica-locator";
 
 export type CanonicalPulledCompactCandidate =
   | {
@@ -115,6 +120,19 @@ function candidateForOpened(input: {
   }
 }
 
+function locatorNamespace(
+  candidate: CanonicalPulledCompactCandidate,
+): (typeof HOSTED_REPLICA_LOGICAL_NAMESPACE)[keyof typeof HOSTED_REPLICA_LOGICAL_NAMESPACE] {
+  switch (candidate.kind) {
+    case "VaultRecord":
+      return HOSTED_REPLICA_LOGICAL_NAMESPACE.VaultRecord;
+    case "VaultObject":
+      return HOSTED_REPLICA_LOGICAL_NAMESPACE.VaultObject;
+    case "FeatureManifest":
+      return HOSTED_REPLICA_LOGICAL_NAMESPACE.FeatureManifest;
+  }
+}
+
 /**
  * Opens one outer-verified Compact item privately against the caller's bounded retained Epoch set.
  * A result is only an authenticated candidate: complete DAG, Authority, dependency, and feature
@@ -124,8 +142,12 @@ export async function classifyPulledCompactCandidate(input: {
   readonly vaultId: Identifier<"Vault">;
   readonly epochSecrets: readonly EpochSecretState[];
   readonly envelopeBytes: Uint8Array;
+  readonly locatorSalt: Uint8Array;
+  readonly locator: Uint8Array;
 }): Promise<CanonicalPulledCompactCandidate | null> {
   assertEpochSecrets(input.vaultId, input.epochSecrets);
+  const locatorSalt = byteString(input.locatorSalt, 32, "Pulled Compact Host locator salt");
+  const locator = byteString(input.locator, 32, "Pulled Compact Host locator");
   let opened:
     | {
         readonly keyEpochId: Identifier<"KeyEpoch">;
@@ -157,5 +179,12 @@ export async function classifyPulledCompactCandidate(input: {
     }
   }
   if (opened === undefined) return null;
-  return candidateForOpened({ vaultId: input.vaultId, ...opened });
+  const candidate = candidateForOpened({ vaultId: input.vaultId, ...opened });
+  const expectedLocator = await deriveHostedReplicaOpaqueLocator({
+    locatorSalt,
+    logicalNamespace: locatorNamespace(candidate),
+    logicalId: candidate.logicalId,
+  });
+  same(locator, expectedLocator, "Pulled Compact Host locator");
+  return candidate;
 }

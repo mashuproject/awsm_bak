@@ -172,6 +172,10 @@ as an opaque fixed-length value for **every** storage class, so its presence doe
 Envelopes or any other item kind. Several immutable physical representations may have the same
 locator.
 
+The initial Client-only namespace codes are `1` Vault Record, `2` Key Envelope, `3` Vault Object,
+`4` Feature Manifest, and `5` Artifact. They are input bytes to the derivation only; a Host never
+receives them as item metadata.
+
 The Host does not verify this derivation. After opening an item, a trusted Client recomputes the
 locator from authenticated protected context before it accepts the representation. This lets a
 Client resolve a signed Key Envelope dependency to one or more opaque physical representations

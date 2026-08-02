@@ -9,10 +9,45 @@ import {
 import { keyEpochId } from "../../src/domain/canonical/identifiers";
 import { encodeVaultObject, NOTE_CONTENT_OBJECT } from "../../src/domain/canonical/object";
 import { canonicalMap } from "../../src/domain/canonical/value";
+import {
+  deriveHostedReplicaOpaqueLocator,
+  HOSTED_REPLICA_LOGICAL_NAMESPACE,
+} from "../../src/runtime/synchronization/canonical-hosted-replica-locator";
 import { classifyPulledCompactCandidate } from "../../src/runtime/synchronization/canonical-pull-candidate";
 import { prepareCanonicalVaultCreation } from "../../src/runtime/vault/canonical-create";
 
+const LOCATOR_SALT = new Uint8Array(32).fill(91);
+
 describe("canonical pulled Compact candidate", () => {
+  it("rejects an opened logical item whose Host-provided opaque locator is not derived for this Remote", async () => {
+    const creation = await prepareCanonicalVaultCreation({ label: "Sync", assertedAt: 1 });
+    const envelope = await sealCompactItem({
+      vaultId: creation.ids.vaultId,
+      keyEpochId: creation.secrets.keyEpoch.id,
+      keyEpochKey: creation.secrets.keyEpoch.key,
+      payloadType: 1,
+      payloadBytes: creation.genesis.bytes,
+      protectionParameters: new Uint8Array(64).fill(72),
+    });
+
+    await expect(
+      classifyPulledCompactCandidate({
+        vaultId: creation.ids.vaultId,
+        epochSecrets: [
+          {
+            vaultId: creation.ids.vaultId,
+            keyEpochId: creation.secrets.keyEpoch.id,
+            displayNumber: 1,
+            key: creation.secrets.keyEpoch.key,
+          },
+        ],
+        envelopeBytes: envelope.bytes,
+        locatorSalt: LOCATOR_SALT,
+        locator: new Uint8Array(32).fill(74),
+      }),
+    ).rejects.toThrow(/Host locator/u);
+  });
+
   it("opens an authenticated Record through a retained Epoch and derives its protected logical identity", async () => {
     const creation = await prepareCanonicalVaultCreation({ label: "Sync", assertedAt: 1 });
     const historicalKey = new Uint8Array(32).fill(71);
@@ -44,6 +79,12 @@ describe("canonical pulled Compact candidate", () => {
           },
         ],
         envelopeBytes: envelope.bytes,
+        locatorSalt: LOCATOR_SALT,
+        locator: await deriveHostedReplicaOpaqueLocator({
+          locatorSalt: LOCATOR_SALT,
+          logicalNamespace: HOSTED_REPLICA_LOGICAL_NAMESPACE.VaultRecord,
+          logicalId: creation.genesis.recordId,
+        }),
       }),
     ).resolves.toMatchObject({
       kind: "VaultRecord",
@@ -104,6 +145,12 @@ describe("canonical pulled Compact candidate", () => {
         vaultId: creation.ids.vaultId,
         epochSecrets,
         envelopeBytes: objectEnvelope.bytes,
+        locatorSalt: LOCATOR_SALT,
+        locator: await deriveHostedReplicaOpaqueLocator({
+          locatorSalt: LOCATOR_SALT,
+          logicalNamespace: HOSTED_REPLICA_LOGICAL_NAMESPACE.VaultObject,
+          logicalId: object.objectId,
+        }),
       }),
     ).resolves.toMatchObject({
       kind: "VaultObject",
@@ -115,6 +162,12 @@ describe("canonical pulled Compact candidate", () => {
         vaultId: creation.ids.vaultId,
         epochSecrets,
         envelopeBytes: manifestEnvelope.bytes,
+        locatorSalt: LOCATOR_SALT,
+        locator: await deriveHostedReplicaOpaqueLocator({
+          locatorSalt: LOCATOR_SALT,
+          logicalNamespace: HOSTED_REPLICA_LOGICAL_NAMESPACE.FeatureManifest,
+          logicalId: featureManifestId(manifestBytes),
+        }),
       }),
     ).resolves.toMatchObject({
       kind: "FeatureManifest",
@@ -168,10 +221,20 @@ describe("canonical pulled Compact candidate", () => {
     };
 
     await expect(
-      classifyPulledCompactCandidate({ ...input, envelopeBytes: unknownEnvelope.bytes }),
+      classifyPulledCompactCandidate({
+        ...input,
+        envelopeBytes: unknownEnvelope.bytes,
+        locatorSalt: LOCATOR_SALT,
+        locator: new Uint8Array(32).fill(92),
+      }),
     ).resolves.toBeNull();
     await expect(
-      classifyPulledCompactCandidate({ ...input, envelopeBytes: foreignEnvelope.bytes }),
+      classifyPulledCompactCandidate({
+        ...input,
+        envelopeBytes: foreignEnvelope.bytes,
+        locatorSalt: LOCATOR_SALT,
+        locator: new Uint8Array(32).fill(93),
+      }),
     ).rejects.toThrow(/Vault Object Vault ID/u);
   });
 });
