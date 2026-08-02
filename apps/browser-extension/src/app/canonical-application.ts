@@ -24,6 +24,13 @@ export type CanonicalApplicationRequest =
       readonly expectedVaultId: string;
       readonly tabId?: number;
     }
+  | { readonly type: "BeginVaultFork"; readonly expectedVaultId: string }
+  | {
+      readonly type: "ConfirmVaultFork";
+      readonly setupId: string;
+      readonly recoveryPhrase: string;
+    }
+  | { readonly type: "CancelVaultFork"; readonly setupId: string }
   | { readonly type: "CloseVault"; readonly expectedVaultId: string }
   | { readonly type: "VacuumVault"; readonly expectedVaultId: string }
   | { readonly type: "ListLibrary"; readonly expectedVaultId: string };
@@ -36,6 +43,9 @@ type CanonicalApplicationRuntime = Pick<
   | "cancelVaultCreation"
   | "selectVault"
   | "capture"
+  | "beginVaultFork"
+  | "confirmVaultFork"
+  | "cancelVaultFork"
   | "closeVault"
   | "vacuumVault"
   | "listLibrary"
@@ -136,6 +146,25 @@ export function decodeCanonicalApplicationRequest(value: unknown): CanonicalAppl
         return { type: value.type, expectedVaultId: value.expectedVaultId, tabId: value.tabId };
       }
       break;
+    case "BeginVaultFork":
+      if (exactKeys(value, ["type", "expectedVaultId"]) && text(value.expectedVaultId)) {
+        return { type: value.type, expectedVaultId: value.expectedVaultId };
+      }
+      break;
+    case "ConfirmVaultFork":
+      if (
+        exactKeys(value, ["type", "setupId", "recoveryPhrase"]) &&
+        text(value.setupId) &&
+        text(value.recoveryPhrase)
+      ) {
+        return { type: value.type, setupId: value.setupId, recoveryPhrase: value.recoveryPhrase };
+      }
+      break;
+    case "CancelVaultFork":
+      if (exactKeys(value, ["type", "setupId"]) && text(value.setupId)) {
+        return { type: value.type, setupId: value.setupId };
+      }
+      break;
     case "CloseVault":
       if (exactKeys(value, ["type", "expectedVaultId"]) && text(value.expectedVaultId)) {
         return { type: value.type, expectedVaultId: value.expectedVaultId };
@@ -214,6 +243,22 @@ export class CanonicalApplication {
           }),
         );
       }
+      case "BeginVaultFork":
+        return this.mutate(() =>
+          this.runtime.beginVaultFork({
+            expectedVaultId: request.expectedVaultId,
+            assertedAt: this.now(),
+          }),
+        );
+      case "ConfirmVaultFork":
+        return this.mutate(() =>
+          this.runtime.confirmVaultFork({
+            setupId: request.setupId,
+            recoveryPhrase: request.recoveryPhrase,
+          }),
+        );
+      case "CancelVaultFork":
+        return this.mutate(() => this.runtime.cancelVaultFork(request.setupId));
       case "CloseVault":
         return this.mutate(() =>
           this.runtime.closeVault({

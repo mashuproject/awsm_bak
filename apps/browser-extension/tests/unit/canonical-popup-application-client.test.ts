@@ -111,7 +111,10 @@ describe("canonical popup application client", () => {
           successorGenerationId: "e".repeat(64),
           vacuumEventRecordId: "f".repeat(64),
           successorBaselineId: "0".repeat(64),
-        }),
+        })
+        .mockResolvedValueOnce({ setupId: "fork-setup", recoveryPhrase: "delta echo foxtrot" })
+        .mockResolvedValueOnce({ vaultId: "1".repeat(64) })
+        .mockResolvedValueOnce(undefined),
       subscribe: vi.fn(() => () => undefined),
     };
     const client = createCanonicalPopupApplicationClient(transport);
@@ -146,6 +149,14 @@ describe("canonical popup application client", () => {
       vacuumEventRecordId: "f".repeat(64),
       successorBaselineId: "0".repeat(64),
     });
+    await expect(client.beginVaultFork("a".repeat(64))).resolves.toEqual({
+      setupId: "fork-setup",
+      recoveryPhrase: "delta echo foxtrot",
+    });
+    await expect(
+      client.confirmVaultFork({ setupId: "fork-setup", recoveryPhrase: "delta echo foxtrot" }),
+    ).resolves.toEqual({ vaultId: "1".repeat(64) });
+    await expect(client.cancelVaultFork("fork-setup")).resolves.toBeUndefined();
 
     expect(transport.request.mock.calls).toEqual([
       [{ type: "BeginVaultCreation", expectedVaultId: null, label: "Research" }],
@@ -155,6 +166,9 @@ describe("canonical popup application client", () => {
       [{ type: "CaptureActivePage", expectedVaultId: "a".repeat(64), tabId: 4 }],
       [{ type: "CloseVault", expectedVaultId: "a".repeat(64) }],
       [{ type: "VacuumVault", expectedVaultId: "a".repeat(64) }],
+      [{ type: "BeginVaultFork", expectedVaultId: "a".repeat(64) }],
+      [{ type: "ConfirmVaultFork", setupId: "fork-setup", recoveryPhrase: "delta echo foxtrot" }],
+      [{ type: "CancelVaultFork", setupId: "fork-setup" }],
     ]);
   });
 });

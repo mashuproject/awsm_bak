@@ -14,6 +14,9 @@ describe("canonical application", () => {
       capture: vi.fn(),
       closeVault: vi.fn(),
       vacuumVault: vi.fn(),
+      beginVaultFork: vi.fn(),
+      confirmVaultFork: vi.fn(),
+      cancelVaultFork: vi.fn(),
     };
     const application = new CanonicalApplication(runtime, () => 1234);
 
@@ -54,6 +57,9 @@ describe("canonical application", () => {
       capture: vi.fn(),
       closeVault: vi.fn(),
       vacuumVault: vi.fn(),
+      beginVaultFork: vi.fn(),
+      confirmVaultFork: vi.fn(),
+      cancelVaultFork: vi.fn(),
     };
     const application = new CanonicalApplication(runtime, () => 1234);
     const expectedVaultId = "a".repeat(64);
@@ -91,6 +97,9 @@ describe("canonical application", () => {
       capture: vi.fn().mockResolvedValue({ bundleId: "b".repeat(64) }),
       closeVault: vi.fn(),
       vacuumVault: vi.fn(),
+      beginVaultFork: vi.fn(),
+      confirmVaultFork: vi.fn(),
+      cancelVaultFork: vi.fn(),
     };
     const capturePage = {
       captureActivePage: vi.fn().mockResolvedValue({
@@ -167,6 +176,51 @@ describe("canonical application", () => {
     ).rejects.toThrow(/Unsupported application Command/u);
   });
 
+  it("keeps the state-only Fork ceremony on exact application Commands", async () => {
+    const runtime = {
+      beginVaultFork: vi.fn().mockResolvedValue({
+        setupId: "setup",
+        recoveryPhrase: "alpha beta gamma",
+      }),
+      confirmVaultFork: vi.fn().mockResolvedValue({ vaultId: "b".repeat(64) }),
+      cancelVaultFork: vi.fn().mockResolvedValue(undefined),
+    };
+    const application = new CanonicalApplication(
+      runtime as never,
+      () => 1234,
+      undefined,
+      () => "command",
+    );
+    const expectedVaultId = "a".repeat(64);
+
+    await expect(application.handle({ type: "BeginVaultFork", expectedVaultId })).resolves.toEqual({
+      setupId: "setup",
+      recoveryPhrase: "alpha beta gamma",
+    });
+    await expect(
+      application.handle({
+        type: "ConfirmVaultFork",
+        setupId: "setup",
+        recoveryPhrase: "alpha beta gamma",
+      }),
+    ).resolves.toEqual({ vaultId: "b".repeat(64) });
+    await expect(
+      application.handle({ type: "CancelVaultFork", setupId: "setup" }),
+    ).resolves.toBeUndefined();
+    expect(runtime.beginVaultFork).toHaveBeenCalledWith({
+      expectedVaultId,
+      assertedAt: 1234,
+    });
+    expect(runtime.confirmVaultFork).toHaveBeenCalledWith({
+      setupId: "setup",
+      recoveryPhrase: "alpha beta gamma",
+    });
+    expect(runtime.cancelVaultFork).toHaveBeenCalledWith("setup");
+    await expect(
+      application.handle({ type: "BeginVaultFork", expectedVaultId, extra: true }),
+    ).rejects.toThrow(/Unsupported application Command/u);
+  });
+
   it("publishes one invalidation after a successful application mutation", async () => {
     const runtime = {
       state: vi.fn(),
@@ -178,6 +232,9 @@ describe("canonical application", () => {
       capture: vi.fn(),
       closeVault: vi.fn(),
       vacuumVault: vi.fn(),
+      beginVaultFork: vi.fn(),
+      confirmVaultFork: vi.fn(),
+      cancelVaultFork: vi.fn(),
     };
     const invalidated = vi.fn();
     const application = new CanonicalApplication(

@@ -31,6 +31,15 @@ export interface CanonicalPopupApplicationClient extends CanonicalPopupClient {
     readonly recoveryPhrase: string;
   }): Promise<{ readonly vaultId: string }>;
   cancelVaultCreation(setupId: string): Promise<void>;
+  beginVaultFork(expectedVaultId: string): Promise<{
+    readonly setupId: string;
+    readonly recoveryPhrase: string;
+  }>;
+  confirmVaultFork(input: {
+    readonly setupId: string;
+    readonly recoveryPhrase: string;
+  }): Promise<{ readonly vaultId: string }>;
+  cancelVaultFork(setupId: string): Promise<void>;
   selectVault(input: {
     readonly expectedVaultId: string | null;
     readonly vaultId: string;
@@ -331,6 +340,28 @@ export function createCanonicalPopupApplicationClient(
     async cancelVaultCreation(setupId) {
       assertText(setupId, "setup ID");
       const value = await transport.request({ type: "CancelVaultCreation", setupId });
+      if (value !== undefined) throw protocolError();
+    },
+    async beginVaultFork(expectedVaultId) {
+      if (!identifier(expectedVaultId)) throw new TypeError("Popup Vault ID is invalid.");
+      return decodeVaultCreation(
+        await transport.request({ type: "BeginVaultFork", expectedVaultId }),
+      );
+    },
+    async confirmVaultFork(input) {
+      assertText(input.setupId, "setup ID");
+      assertText(input.recoveryPhrase, "Recovery Phrase");
+      return decodeVaultCreated(
+        await transport.request({
+          type: "ConfirmVaultFork",
+          setupId: input.setupId,
+          recoveryPhrase: input.recoveryPhrase,
+        }),
+      );
+    },
+    async cancelVaultFork(setupId) {
+      assertText(setupId, "setup ID");
+      const value = await transport.request({ type: "CancelVaultFork", setupId });
       if (value !== undefined) throw protocolError();
     },
     async selectVault(input) {
