@@ -95,8 +95,9 @@ Client recomputes that Remote's locator before it can accept or promote the repr
 A trusted pull promotion is one exact prior-Replica and prior-Job compare-and-swap. It writes only
 the validated immutable Compact representations and their protected local resolutions, advances
 the accepted Replica state and local Job together, and deletes exactly the Remote-scoped Quarantine
-references that it consumed. It never turns a Quarantine checkpoint into semantic authority by
-itself, and it never drops ciphertext that the Client cannot yet open.
+references that it consumed. It invalidates Frontier-bound Library and Search Materializations in
+the same commit. It never turns a Quarantine checkpoint into semantic authority by itself, and it
+never drops ciphertext that the Client cannot yet open.
 
 The Vault directory's selected Client Credential and Replica Safety State's local authoring
 Credential and local member binding are optional. Complete Import installs all three as absent and

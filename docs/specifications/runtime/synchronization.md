@@ -54,7 +54,8 @@ exact prior Replica Safety State and pull Job bytes; persists only the validated
 items and their protected local resolutions; replaces the Job checkpoint; and removes exactly the
 Remote-scoped Quarantine entries consumed by that checkpoint. The transaction cannot add or rewrite
 Quarantine references, change the completed inventory snapshot, or remove unreadable ciphertext.
-The transport checkpoint is not semantic proof; Authority, dependency, DAG, Feature, and Event
+It invalidates Frontier-bound Library and Search Materializations in that same transaction. The
+transport checkpoint is not semantic proof; Authority, dependency, DAG, Feature, and Event
 validation must finish before this transaction begins.
 
 A Replica becomes current by pulling and validating what it lacks. Separately, a Client may

@@ -353,11 +353,23 @@ export class CanonicalPullSynchronizationJobService {
       expectedMutableItems: [item(input.previous, previousBytes)],
       immutableItems: input.immutableItems,
       mutableItems: [...input.resolutionItems, item(input.next, nextBytes)],
-      deletedItems: input.promotedReferences.map((reference) => ({
-        namespace: NAMESPACES.incomingQuarantine.key,
-        scopeKey: input.next.remoteId,
-        itemKey: identifierStorageKey(reference.storageItemId),
-      })),
+      deletedItems: [
+        ...input.promotedReferences.map((reference) => ({
+          namespace: NAMESPACES.incomingQuarantine.key,
+          scopeKey: input.next.remoteId,
+          itemKey: identifierStorageKey(reference.storageItemId),
+        })),
+        {
+          namespace: NAMESPACES.libraryProjection.key,
+          scopeKey: vaultKey,
+          itemKey: "current",
+        },
+        {
+          namespace: NAMESPACES.searchMaterialization.key,
+          scopeKey: vaultKey,
+          itemKey: "current",
+        },
+      ],
     });
   }
 }

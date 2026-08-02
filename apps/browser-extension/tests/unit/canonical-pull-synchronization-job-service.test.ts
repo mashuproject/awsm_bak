@@ -322,6 +322,16 @@ describe("canonical pull-synchronization Job service", () => {
         scopeKey: REMOTE_ID,
         itemKey: identifierStorageKey(storageItemId),
       },
+      {
+        namespace: NAMESPACES.libraryProjection.key,
+        scopeKey: identifierStorageKey(vaultId),
+        itemKey: "current",
+      },
+      {
+        namespace: NAMESPACES.searchMaterialization.key,
+        scopeKey: identifierStorageKey(vaultId),
+        itemKey: "current",
+      },
     ]);
   });
 
