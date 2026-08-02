@@ -13,6 +13,7 @@ import {
   verifyVaultEventSignature,
 } from "../../../src/domain/canonical/record";
 import { concatBytes } from "../../../src/domain/canonical/transcript";
+import { canonicalMap, canonicalSet } from "../../../src/domain/canonical/value";
 import { bytesEqual } from "../../../src/domain/hash";
 import {
   type AtomicRegistrationV1,
@@ -74,6 +75,7 @@ import {
   encodeCompleteExportManifest,
 } from "../../../src/runtime/complete-export/contracts";
 import { CanonicalCompleteImportService } from "../../../src/runtime/complete-import/service";
+import { prepareCanonicalContentEvent } from "../../../src/runtime/content/canonical-prepare";
 import { prepareVaultEpochStorage } from "../../../src/runtime/import/credentials";
 import { CanonicalLibraryProjectionService } from "../../../src/runtime/library/canonical-projection";
 import { createPageSnapshotBlob } from "../../../src/runtime/page-snapshot";
@@ -115,6 +117,11 @@ import { decodeReplicaGarbageCollectionJob } from "../../../src/runtime/storage/
 import { CanonicalReplicaGarbageCollectionService } from "../../../src/runtime/storage/garbage-collection-service";
 import type { StorageReliefFaults } from "../../../src/runtime/storage-relief/contracts";
 import { StorageReliefJobRunner } from "../../../src/runtime/storage-relief/runner";
+import { CanonicalHostedPullService } from "../../../src/runtime/synchronization/canonical-hosted-pull-service";
+import {
+  deriveHostedReplicaOpaqueLocator,
+  HOSTED_REPLICA_LOGICAL_NAMESPACE,
+} from "../../../src/runtime/synchronization/canonical-hosted-replica-locator";
 import { CanonicalPullSynchronizationJobService } from "../../../src/runtime/synchronization/canonical-pull-synchronization-job-service";
 import { InterruptedStaleDiscardReconciler } from "../../../src/runtime/synchronization/recovery-reconciliation";
 import { serverSwitchStartupDecision } from "../../../src/runtime/synchronization/server-switch-startup";
@@ -507,6 +514,111 @@ async function canonicalPullJobScenario(): Promise<unknown> {
       };
     } finally {
       await restarted.close();
+    }
+  } finally {
+    await storage.close().catch(() => undefined);
+    await deleteBrowserDatabase(databaseName);
+  }
+}
+
+async function canonicalHostedPullScenario(): Promise<unknown> {
+  const databaseName = `awsm-canonical-hosted-pull-${crypto.randomUUID()}`;
+  const storage = new CanonicalIndexedDb(databaseName);
+  try {
+    const vaults = new CanonicalVaultService(storage, NORMAL_STORAGE_REALM);
+    const ceremony = await vaults.beginCreate({
+      setupId: id("103"),
+      expectedVaultId: null,
+      label: "Hosted pull",
+      assertedAt: 1,
+    });
+    const created = await ceremony.confirm(ceremony.recoveryPhrase);
+    const vault = await vaults.openVault(created.vaultId);
+    const content = await prepareCanonicalContentEvent({
+      vault,
+      type: 4,
+      assertedAt: 2,
+      body: canonicalMap([[0, canonicalSet([new Uint8Array(32).fill(8)])]]),
+      protectionParameters: new Uint8Array(64).fill(9),
+    });
+    const remoteId = id("104");
+    const locatorSalt = new Uint8Array(32).fill(91);
+    const locator = await deriveHostedReplicaOpaqueLocator({
+      locatorSalt,
+      logicalNamespace: HOSTED_REPLICA_LOGICAL_NAMESPACE.VaultRecord,
+      logicalId: content.event.recordId,
+    });
+    const jobs = new CanonicalPullSynchronizationJobService(storage, NORMAL_STORAGE_REALM, () =>
+      id("105"),
+    );
+    const createdJob = await jobs.create({ vaultId: created.vaultId, remoteId });
+    const validationJob = {
+      ...createdJob,
+      stage: 2 as const,
+      snapshotCursor: 1,
+      quarantineReferences: [{ storageItemId: content.eventEnvelope.storageItemId, locator }],
+      progress: {
+        discoveredItemCount: 1,
+        downloadedItemCount: 1,
+        promotedItemCount: 0,
+        rejectedItemCount: 0,
+      },
+    };
+    await jobs.recordQuarantine({
+      previous: createdJob,
+      next: validationJob,
+      bytes: content.eventEnvelope.bytes,
+    });
+    const pulled = await new CanonicalHostedPullService({
+      remotes: {
+        load: async () => ({
+          remote: {
+            remoteId,
+            vaultId: created.vaultId,
+            name: "Fixture host",
+            endpoint: "https://host.example/",
+            hostedReplicaHandle: id("106"),
+            locatorSalt,
+            enabled: true,
+            inventoryPageSize: 100,
+          },
+          bearerToken: "fixture-channel-token",
+        }),
+      },
+      vaults,
+      jobs,
+    }).pull({ vaultId: created.vaultId, remoteId });
+    const quarantine = await storage.getBytes(NORMAL_STORAGE_REALM, {
+      namespace: NAMESPACES.incomingQuarantine.key,
+      scopeKey: remoteId,
+      itemKey: bytesKey(content.eventEnvelope.storageItemId),
+    });
+    const promoted = await storage.getBytes(NORMAL_STORAGE_REALM, {
+      namespace: NAMESPACES.vaultRecord.key,
+      scopeKey: bytesKey(created.vaultId),
+      itemKey: bytesKey(content.event.recordId),
+    });
+    await storage.close();
+
+    const restartedStorage = new CanonicalIndexedDb(databaseName);
+    try {
+      const reopened = await new CanonicalVaultService(
+        restartedStorage,
+        NORMAL_STORAGE_REALM,
+      ).openVault(created.vaultId);
+      return {
+        promoted: promoted !== undefined,
+        completed: pulled.stage === 3 && pulled.state === 3,
+        quarantineRemoved: quarantine === undefined,
+        reopened:
+          reopened.replicaState.causalFrontier.length === 1 &&
+          sameBytes(
+            reopened.replicaState.causalFrontier[0] ?? new Uint8Array(),
+            content.event.recordId,
+          ),
+      };
+    } finally {
+      await restartedStorage.close();
     }
   } finally {
     await storage.close().catch(() => undefined);
@@ -8284,6 +8396,14 @@ async function run(): Promise<void> {
     const output = document.querySelector("#result");
     if (output !== null) {
       output.textContent = JSON.stringify(await canonicalPullJobScenario());
+      output.setAttribute("data-complete", "true");
+    }
+    return;
+  }
+  if (scenario === "canonical-hosted-pull") {
+    const output = document.querySelector("#result");
+    if (output !== null) {
+      output.textContent = JSON.stringify(await canonicalHostedPullScenario());
       output.setAttribute("data-complete", "true");
     }
     return;

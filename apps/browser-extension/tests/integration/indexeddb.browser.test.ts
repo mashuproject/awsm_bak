@@ -69,6 +69,17 @@ test("reopens a canonical pull Job after an IndexedDB restart", async ({ page })
   });
 });
 
+test("promotes one authenticated Hosted Content pull through IndexedDB and restart", async ({
+  page,
+}) => {
+  await expect(scenario(page, "canonical-hosted-pull")).resolves.toEqual({
+    promoted: true,
+    completed: true,
+    quarantineRemoved: true,
+    reopened: true,
+  });
+});
+
 test("atomically restores an encrypted canonical Vault after browser restart", async ({ page }) => {
   await expect(scenario(page, "canonical-vault-initialization")).resolves.toEqual({
     recoveryWordCount: 12,
