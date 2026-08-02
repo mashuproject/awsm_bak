@@ -437,6 +437,14 @@ export async function prepareCanonicalVaultStorage(input: {
       keyEpochId: creation.secrets.keyEpoch.id,
       availability: 1,
     },
+    ...creation.featureManifests.map(({ id, envelope }) => ({
+      vaultId: ids.vaultId,
+      kind: 4 as const,
+      logicalId: id,
+      storageItemId: envelope.storageItemId,
+      keyEpochId: creation.secrets.keyEpoch.id,
+      availability: 1 as const,
+    })),
     ...(input.additionalLogicalResolutions ?? []),
   ];
   const replicaStateItem = await prepareWrappedLocalStateItem({
@@ -540,6 +548,12 @@ export async function prepareCanonicalVaultStorage(input: {
           itemKey: identifierStorageKey(creation.clientKeyEnvelope.id),
           bytes: creation.clientKeyEnvelope.envelope.bytes,
         },
+        ...creation.featureManifests.map(({ id, envelope }) => ({
+          namespace: NAMESPACES.featureManifest.key,
+          scopeKey: vaultKey,
+          itemKey: identifierStorageKey(id),
+          bytes: envelope.bytes,
+        })),
         ...(input.additionalImmutableItems ?? []),
       ],
       replicaState: replicaStateItem,

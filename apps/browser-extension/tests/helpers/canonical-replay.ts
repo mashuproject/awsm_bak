@@ -1,7 +1,10 @@
-import { EMPTY_REQUIRED_FEATURE_SET_ID } from "../../src/domain/canonical/features";
+import { requiredFeatureSetId } from "../../src/domain/canonical/features";
 import { identifier } from "../../src/domain/canonical/identifiers";
 import { canonicalMap, canonicalSet } from "../../src/domain/canonical/value";
-import type { CanonicalAuthorityState } from "../../src/runtime/projection/canonical-authority-replay";
+import type {
+  CanonicalAuthorityFeatureManifest,
+  CanonicalAuthorityState,
+} from "../../src/runtime/projection/canonical-authority-replay";
 import type { ReplayedCanonicalVault } from "../../src/runtime/projection/canonical-replay";
 
 export const emptyReplayCredentialId = identifier("ClientCredential", new Uint8Array(32).fill(3));
@@ -13,8 +16,10 @@ export function singleCredentialAuthority(input: {
   readonly signingPublicKey?: Uint8Array;
   readonly wrappingPublicKey?: Uint8Array;
   readonly lifecycle?: 1 | 2;
+  readonly featureManifests?: readonly CanonicalAuthorityFeatureManifest[];
 }): CanonicalAuthorityState {
   const lifecycle = input.lifecycle ?? 1;
+  const featureManifests = input.featureManifests ?? [];
   return {
     activeMemberIds: lifecycle === 1 ? [input.memberId] : [],
     administratorIds: lifecycle === 1 ? [input.memberId] : [],
@@ -26,8 +31,8 @@ export function singleCredentialAuthority(input: {
     keyEpochs: [],
     keyEpochConflicts: [],
     keyEnvelopeSlots: [],
-    requiredFeatureSetId: EMPTY_REQUIRED_FEATURE_SET_ID,
-    featureManifests: [],
+    requiredFeatureSetId: requiredFeatureSetId(featureManifests.map(({ manifest }) => manifest)),
+    featureManifests,
     featureSetConflict: null,
     writeFences: [],
     clientCredentials: new Map([

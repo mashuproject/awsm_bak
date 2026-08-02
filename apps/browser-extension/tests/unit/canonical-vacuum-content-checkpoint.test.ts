@@ -44,6 +44,13 @@ function filled<Kind extends Parameters<typeof identifier>[0]>(kind: Kind, byte:
   return identifier(kind, new Uint8Array(32).fill(byte));
 }
 
+function verifiedAuthorityDependencies() {
+  return {
+    resolveKeyEnvelope: vi.fn(async () => new Uint8Array()),
+    resolveFeatureManifest: vi.fn(async () => new Uint8Array()),
+  };
+}
+
 async function registrationReplay(): Promise<{
   readonly replay: ReplayedCanonicalVault;
   readonly bundleId: ReturnType<typeof filled<"Bundle">>;
@@ -331,6 +338,101 @@ async function keyEpochTransitionReplay(): Promise<{
     } as never).replayOpened(vault),
     transition,
   };
+}
+
+async function featureActivationReplay(): Promise<{
+  readonly replay: ReplayedCanonicalVault;
+  readonly activation: Awaited<ReturnType<typeof signVaultEvent>>;
+  readonly manifestBytes: Uint8Array;
+  readonly manifestId: Identifier<"FeatureManifest">;
+}> {
+  const creation = await prepareCanonicalVaultCreation({
+    label: "Feature Vacuum",
+    assertedAt: 1,
+  });
+  const manifest = {
+    featureKey: "awsm.test-continuity",
+    revision: 1,
+    parameters: new Uint8Array([1]),
+    requiredManifestIds: [],
+    incompatibleKeys: [],
+  } as const;
+  const manifestBytes = encodeFeatureManifest(manifest);
+  const manifestId = featureManifestId(manifestBytes);
+  const resultingFeatureSetId = requiredFeatureSetId([manifest]);
+  const activation = await signVaultEvent(
+    {
+      vaultId: creation.ids.vaultId,
+      generationId: creation.ids.generationId,
+      parentRecordIds: [creation.genesis.recordId],
+      authorityParentRecordIds: [creation.genesis.recordId],
+      dependencies: [{ type: DEPENDENCY_TYPES.FeatureManifest, id: manifestId }],
+      requiredFeatureSetId: creation.genesis.requiredFeatureSetId,
+      extensions: advisoryExtensions([]),
+      family: 1,
+      type: 14,
+      signerCredentialId: creation.ids.clientCredentialId,
+      assertedAt: 2,
+      body: canonicalMap([
+        [0, creation.genesis.requiredFeatureSetId],
+        [1, canonicalSet([manifestBytes])],
+        [2, resultingFeatureSetId],
+      ]),
+    },
+    creation.secrets.client.signingSecretKey,
+  );
+  const vault: PersistedOpenedCanonicalVault = {
+    directory: {
+      vaultId: creation.ids.vaultId,
+      generationId: creation.ids.generationId,
+      label: "Feature Vacuum",
+      selectedClientCredentialId: creation.ids.clientCredentialId,
+    },
+    replicaState: {
+      vaultId: creation.ids.vaultId,
+      generationId: creation.ids.generationId,
+      causalFrontier: [activation.recordId],
+      authorityFrontier: [activation.recordId],
+      continuityRecordIds: [creation.genesis.recordId, activation.recordId],
+      baselineId: creation.baseline.recordId,
+      currentKeyEpochId: creation.secrets.keyEpoch.id,
+      requiredFeatureSetId: resultingFeatureSetId,
+      authoringClientCredentialId: creation.ids.clientCredentialId,
+      memberId: creation.ids.firstMemberId,
+      lifecycle: 1,
+      preservationRoots: [],
+      garbageCollectionFences: [],
+      adoption: null,
+    },
+    clientSecret: {
+      vaultId: creation.ids.vaultId,
+      memberId: creation.ids.firstMemberId,
+      clientCredentialId: creation.ids.clientCredentialId,
+      signingPublicKey: creation.secrets.client.signingPublicKey,
+      signingSecretKey: creation.secrets.client.signingSecretKey,
+      wrappingPublicKey: creation.secrets.client.wrappingPublicKey,
+      wrappingPrivateKey: creation.secrets.client.wrappingPrivateKey,
+    },
+    epochSecret: {
+      vaultId: creation.ids.vaultId,
+      keyEpochId: creation.secrets.keyEpoch.id,
+      displayNumber: 0,
+      key: creation.secrets.keyEpoch.key,
+    },
+    baseline: creation.baseline,
+    genesis: creation.genesis,
+    installationWrappingKey: {} as CryptoKey,
+    replicaStateStorageBytes: new Uint8Array(),
+  };
+  const replay = await new CanonicalReplayService(
+    {
+      openResolvedCompactItem: vi.fn(async ({ kind }) => ({
+        payloadBytes: kind === 4 ? manifestBytes : activation.bytes,
+      })),
+    } as never,
+    { supportedFeatureManifestIds: [manifestId] },
+  ).replayOpened(vault);
+  return { replay, activation, manifestBytes, manifestId };
 }
 
 describe("canonical Vacuum Content checkpoint", () => {
@@ -1075,13 +1177,34 @@ describe("canonical Vacuum Content checkpoint", () => {
     await expect(
       validateCurrentVaultAuthority({
         baseline: prepared.successor.baseline,
-        initialBaseline: replay.vault.baseline,
         genesis: replay.vault.genesis,
         continuityEvents: [replay.vault.genesis, prepared.event],
         replicaState: prepared.adoptedReplicaState,
         clientSecret: replay.vault.clientSecret,
         epochSecret: replay.vault.epochSecret,
+        dependencyResolver: verifiedAuthorityDependencies(),
       }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("authenticates an adopted successor after the Initial Baseline has been collected", async () => {
+    const { replay } = await registrationReplay();
+    const prepared = await prepareVacuum({
+      replay,
+      successorGenerationId: filled("Generation", 72),
+      assertedAt: 3,
+    });
+
+    await expect(
+      validateCurrentVaultAuthority({
+        baseline: prepared.successor.baseline,
+        genesis: replay.vault.genesis,
+        continuityEvents: [replay.vault.genesis, prepared.event],
+        replicaState: prepared.adoptedReplicaState,
+        clientSecret: replay.vault.clientSecret,
+        epochSecret: replay.vault.epochSecret,
+        dependencyResolver: verifiedAuthorityDependencies(),
+      } as Parameters<typeof validateCurrentVaultAuthority>[0]),
     ).resolves.toBeUndefined();
   });
 
@@ -1096,12 +1219,12 @@ describe("canonical Vacuum Content checkpoint", () => {
     await expect(
       validateCurrentVaultAuthority({
         baseline: prepared.successor.baseline,
-        initialBaseline: replay.vault.baseline,
         genesis: replay.vault.genesis,
         continuityEvents: [replay.vault.genesis, invitation, prepared.event],
         replicaState: prepared.adoptedReplicaState,
         clientSecret: replay.vault.clientSecret,
         epochSecret: replay.vault.epochSecret,
+        dependencyResolver: verifiedAuthorityDependencies(),
       }),
     ).resolves.toBeUndefined();
   });
@@ -1117,14 +1240,194 @@ describe("canonical Vacuum Content checkpoint", () => {
     await expect(
       validateCurrentVaultAuthority({
         baseline: prepared.successor.baseline,
-        initialBaseline: replay.vault.baseline,
         genesis: replay.vault.genesis,
         continuityEvents: [replay.vault.genesis, transition, prepared.event],
         replicaState: prepared.adoptedReplicaState,
         clientSecret: replay.vault.clientSecret,
         epochSecret: replay.vault.epochSecret,
+        dependencyResolver: verifiedAuthorityDependencies(),
       }),
     ).resolves.toBeUndefined();
+  });
+
+  it("independently resolves every retained Key Envelope authority dependency", async () => {
+    const { replay, transition } = await keyEpochTransitionReplay();
+    const prepared = await prepareVacuum({
+      replay,
+      successorGenerationId: filled("Generation", 95),
+      assertedAt: 3,
+    });
+    const resolveKeyEnvelope = vi.fn(
+      async (_requirement: {
+        readonly keyEnvelopeId: Identifier<"KeyEnvelope">;
+        readonly keyEpochId: Identifier<"KeyEpoch">;
+      }) => new Uint8Array(),
+    );
+
+    await validateCurrentVaultAuthority({
+      baseline: prepared.successor.baseline,
+      genesis: replay.vault.genesis,
+      continuityEvents: [replay.vault.genesis, transition, prepared.event],
+      replicaState: prepared.adoptedReplicaState,
+      clientSecret: replay.vault.clientSecret,
+      epochSecret: replay.vault.epochSecret,
+      dependencyResolver: {
+        resolveKeyEnvelope,
+        resolveFeatureManifest: vi.fn(),
+      },
+    } as Parameters<typeof validateCurrentVaultAuthority>[0]);
+
+    const expectedRequirements = replay.authority.keyEnvelopeSlots.map(
+      ({ keyEnvelopeId, keyEpochId }) => ({
+        keyEnvelopeId,
+        keyEpochId,
+      }),
+    );
+    expect(resolveKeyEnvelope).toHaveBeenCalledTimes(expectedRequirements.length);
+    expect(resolveKeyEnvelope.mock.calls.map(([requirement]) => requirement)).toEqual(
+      expect.arrayContaining(expectedRequirements),
+    );
+  });
+
+  it("independently authenticates a retained Feature Manifest dependency", async () => {
+    const { replay, activation, manifestBytes, manifestId } = await featureActivationReplay();
+    const prepared = await prepareVacuum({
+      replay,
+      successorGenerationId: filled("Generation", 96),
+      assertedAt: 3,
+    });
+    const resolveFeatureManifest = vi.fn(async () => manifestBytes);
+
+    await validateCurrentVaultAuthority({
+      baseline: prepared.successor.baseline,
+      genesis: replay.vault.genesis,
+      continuityEvents: [replay.vault.genesis, activation, prepared.event],
+      replicaState: prepared.adoptedReplicaState,
+      clientSecret: replay.vault.clientSecret,
+      epochSecret: replay.vault.epochSecret,
+      dependencyResolver: {
+        resolveKeyEnvelope: vi.fn(async () => new Uint8Array()),
+        resolveFeatureManifest,
+      },
+    });
+
+    expect(resolveFeatureManifest).toHaveBeenCalledOnce();
+    expect(resolveFeatureManifest).toHaveBeenCalledWith({ featureManifestId: manifestId });
+  });
+
+  it("bootstraps an exact non-empty Genesis Feature Set", async () => {
+    const manifest = {
+      featureKey: "awsm.test-genesis",
+      revision: 1,
+      parameters: new Uint8Array(),
+      requiredManifestIds: [],
+      incompatibleKeys: [],
+    } as const;
+    const creation = await prepareCanonicalVaultCreation({
+      label: "Genesis Feature",
+      assertedAt: 1,
+      featureManifests: [manifest],
+    });
+    const preparedManifest = creation.featureManifests[0];
+    if (preparedManifest === undefined) throw new Error("Missing prepared Feature Manifest");
+    const resolveFeatureManifest = vi.fn(async () => preparedManifest.bytes);
+    const replicaState: CanonicalReplicaState = {
+      vaultId: creation.ids.vaultId,
+      generationId: creation.ids.generationId,
+      causalFrontier: [creation.genesis.recordId],
+      authorityFrontier: [creation.genesis.recordId],
+      continuityRecordIds: [creation.genesis.recordId],
+      baselineId: creation.baseline.recordId,
+      currentKeyEpochId: creation.secrets.keyEpoch.id,
+      requiredFeatureSetId: creation.genesis.requiredFeatureSetId,
+      authoringClientCredentialId: creation.ids.clientCredentialId,
+      memberId: creation.ids.firstMemberId,
+      lifecycle: 1,
+      preservationRoots: [],
+      garbageCollectionFences: [],
+      adoption: null,
+    };
+
+    await validateCurrentVaultAuthority({
+      baseline: creation.baseline,
+      genesis: creation.genesis,
+      continuityEvents: [creation.genesis],
+      replicaState,
+      clientSecret: {
+        vaultId: creation.ids.vaultId,
+        memberId: creation.ids.firstMemberId,
+        clientCredentialId: creation.ids.clientCredentialId,
+        signingPublicKey: creation.secrets.client.signingPublicKey,
+        signingSecretKey: creation.secrets.client.signingSecretKey,
+        wrappingPublicKey: creation.secrets.client.wrappingPublicKey,
+        wrappingPrivateKey: creation.secrets.client.wrappingPrivateKey,
+      },
+      epochSecret: {
+        vaultId: creation.ids.vaultId,
+        keyEpochId: creation.secrets.keyEpoch.id,
+        displayNumber: 0,
+        key: creation.secrets.keyEpoch.key,
+      },
+      dependencyResolver: {
+        resolveKeyEnvelope: vi.fn(async () => new Uint8Array()),
+        resolveFeatureManifest,
+      },
+    });
+
+    expect(resolveFeatureManifest).toHaveBeenCalledOnce();
+    expect(resolveFeatureManifest).toHaveBeenCalledWith({
+      featureManifestId: preparedManifest.id,
+    });
+  });
+
+  it("rejects invalid signed proof Events before resolving their semantic dependencies", async () => {
+    const epoch = await keyEpochTransitionReplay();
+    const epochVacuum = await prepareVacuum({
+      replay: epoch.replay,
+      successorGenerationId: filled("Generation", 97),
+      assertedAt: 3,
+    });
+    const epochResolver = verifiedAuthorityDependencies();
+    await expect(
+      validateCurrentVaultAuthority({
+        baseline: epochVacuum.successor.baseline,
+        genesis: epoch.replay.vault.genesis,
+        continuityEvents: [
+          epoch.replay.vault.genesis,
+          { ...epoch.transition, signature: new Uint8Array(64) },
+          epochVacuum.event,
+        ],
+        replicaState: epochVacuum.adoptedReplicaState,
+        clientSecret: epoch.replay.vault.clientSecret,
+        epochSecret: epoch.replay.vault.epochSecret,
+        dependencyResolver: epochResolver,
+      }),
+    ).rejects.toThrow("Vault Event signature is invalid");
+    expect(epochResolver.resolveKeyEnvelope).not.toHaveBeenCalled();
+
+    const feature = await featureActivationReplay();
+    const featureVacuum = await prepareVacuum({
+      replay: feature.replay,
+      successorGenerationId: filled("Generation", 98),
+      assertedAt: 3,
+    });
+    const featureResolver = verifiedAuthorityDependencies();
+    await expect(
+      validateCurrentVaultAuthority({
+        baseline: featureVacuum.successor.baseline,
+        genesis: feature.replay.vault.genesis,
+        continuityEvents: [
+          feature.replay.vault.genesis,
+          { ...feature.activation, signature: new Uint8Array(64) },
+          featureVacuum.event,
+        ],
+        replicaState: featureVacuum.adoptedReplicaState,
+        clientSecret: feature.replay.vault.clientSecret,
+        epochSecret: feature.replay.vault.epochSecret,
+        dependencyResolver: featureResolver,
+      }),
+    ).rejects.toThrow("Vault Event signature is invalid");
+    expect(featureResolver.resolveFeatureManifest).not.toHaveBeenCalled();
   });
 
   it("authenticates readable imported authority without a local Client Credential", async () => {
@@ -1146,12 +1449,12 @@ describe("canonical Vacuum Content checkpoint", () => {
     await expect(
       validateCurrentVaultAuthority({
         baseline: readOnlyReplay.vault.baseline,
-        initialBaseline: readOnlyReplay.vault.baseline,
         genesis: readOnlyReplay.vault.genesis,
         continuityEvents: [readOnlyReplay.vault.genesis],
         replicaState: readOnlyReplay.vault.replicaState,
         clientSecret: null,
         epochSecret: readOnlyReplay.vault.epochSecret,
+        dependencyResolver: verifiedAuthorityDependencies(),
       }),
     ).resolves.toBeUndefined();
     expect(deriveVacuumContentState(readOnlyReplay).captures[0]?.attribution.memberId).toEqual(
@@ -1165,12 +1468,12 @@ describe("canonical Vacuum Content checkpoint", () => {
     await expect(
       validateCurrentVaultAuthority({
         baseline: replay.vault.baseline,
-        initialBaseline: replay.vault.baseline,
         genesis: replay.vault.genesis,
         continuityEvents: [replay.vault.genesis, { ...invitation, signature: new Uint8Array(64) }],
         replicaState: replay.vault.replicaState,
         clientSecret: replay.vault.clientSecret,
         epochSecret: replay.vault.epochSecret,
+        dependencyResolver: verifiedAuthorityDependencies(),
       }),
     ).rejects.toThrow("Vault Event signature is invalid");
   });
@@ -1204,29 +1507,28 @@ describe("canonical Vacuum Content checkpoint", () => {
     await expect(
       validateCurrentVaultAuthority({
         baseline: second.successor.baseline,
-        initialBaseline: replay.vault.baseline,
         genesis: replay.vault.genesis,
         continuityEvents: [replay.vault.genesis, second.event, first.event],
         replicaState: second.adoptedReplicaState,
         clientSecret: replay.vault.clientSecret,
         epochSecret: replay.vault.epochSecret,
+        dependencyResolver: verifiedAuthorityDependencies(),
       }),
     ).resolves.toBeUndefined();
     await expect(
       validateCurrentVaultAuthority({
         baseline: second.successor.baseline,
-        initialBaseline: replay.vault.baseline,
         genesis: replay.vault.genesis,
         continuityEvents: [replay.vault.genesis, second.event],
         replicaState: second.adoptedReplicaState,
         clientSecret: replay.vault.clientSecret,
         epochSecret: replay.vault.epochSecret,
+        dependencyResolver: verifiedAuthorityDependencies(),
       }),
     ).rejects.toThrow("Continuity Proof has a missing or cyclic Authority Parent");
     await expect(
       validateCurrentVaultAuthority({
         baseline: second.successor.baseline,
-        initialBaseline: replay.vault.baseline,
         genesis: replay.vault.genesis,
         continuityEvents: [replay.vault.genesis, first.event, second.event],
         replicaState: {
@@ -1238,6 +1540,7 @@ describe("canonical Vacuum Content checkpoint", () => {
         },
         clientSecret: replay.vault.clientSecret,
         epochSecret: replay.vault.epochSecret,
+        dependencyResolver: verifiedAuthorityDependencies(),
       }),
     ).rejects.toThrow("Continuity Proof Record set does not match");
     expect(second.continuityRecordIds).toEqual(

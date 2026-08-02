@@ -184,7 +184,9 @@ a history-preserving export.
 The Continuity Proof is a permanent preservation root even after Adoption. Garbage Collection MAY
 remove discarded Content parents referenced only by signed causal-parent fields in that proof; it
 MUST retain every Authority Parent Record and typed dependency needed to validate the proof from
-Genesis to the current Vacuum Event.
+Genesis to the current Vacuum Event. It MAY also remove the Initial Baseline referenced by Genesis
+after a successor is adopted, because fresh Continuity verification bootstraps initial authority
+from Genesis and authenticates the current Baseline through the Vacuum chain.
 
 # 8. Invariants
 

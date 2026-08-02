@@ -662,10 +662,31 @@ A fresh verifier MUST:
 8. require the current Baseline authority and lifecycle checkpoints to equal Authority State at
    that anchor, then apply every descendant proof Event to derive the selected Authority Frontier.
 
+Genesis bootstrap reconstructs only facts that Genesis proves directly: the first Member and
+Administrator, first Client and Recovery Credentials, initial Key Epoch, and initial Required
+Feature Set. It does not trust the rest of the current Baseline checkpoint as initial state. The
+current checkpoint supplies candidate IDs for the two Genesis Key Envelope slots; they MUST name
+exactly that Epoch, Client Credential, and revision-zero Recovery Credential. Full replay and the
+Generation anchor comparison subsequently authenticate those candidates.
+
+The initial Feature Manifest closure is the current Baseline's Manifest dependency set excluding
+every Manifest introduced by a retained Feature Activation Event. Its exact Required Feature Set
+ID MUST equal Genesis. Complete Manifest bytes introduced by Feature Activation come from the
+signed Event for semantic replay. After the complete proof and current Baseline anchor validate,
+the verifier MUST independently resolve every distinct initial, checkpointed, or Event-introduced
+Feature Manifest and compare its derived ID and exact bytes. It performs the analogous resolved
+identity and Epoch check for every distinct retained Key Envelope requirement. An invalid proof
+Event MUST fail before any dependency ID introduced by that Event is resolved.
+
 The proof roots and Record set are canonical sets. Extra proof Records are invalid in Complete
 Export and Backup and ignored as unselected candidates during opaque synchronization. Missing proof
 Records or required authority-semantic dependencies block Recovery, Import, Restore, Adoption, and
 authoring from that Baseline.
+
+After an adopted successor is independently established, Genesis remains permanent but its Initial
+Baseline does not. Genesis's signed Baseline ID remains historical evidence; the Initial Baseline
+and its unrelated dependency closure may be reclaimed when no other preservation root retains
+them.
 
 This proof authenticates authority continuity and the Administrator's destructive Vacuum decision.
 It does not reconstruct discarded Content state or prove global freshness. Existing Replicas still

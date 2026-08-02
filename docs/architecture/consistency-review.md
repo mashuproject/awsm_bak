@@ -68,8 +68,8 @@ The core specifications now own one initial canonical substrate:
   XChaCha20-Poly1305 content protection, and RFC 9180 HPKE Key Envelopes;
 - one Event and Baseline envelope, signed causal and Authority Parent Frontiers, exhaustive base
   type registries, reducer classes, and conflict fences;
-- Initial Baseline plus Genesis bootstrap, Vacuum successor proof, Closure, Historical View, Fork,
-  and Event Re-authoring;
+- Initial Baseline creation plus Genesis-only authority bootstrap, Vacuum successor proof, Closure,
+  Historical View, Fork, and Event Re-authoring;
 - exact authority ceremonies for Invitations, membership, administration, Client and Recovery
   Credentials, Key Epochs, Key Delivery, and feature activation;
 - exact Collection, Folder, Tag, Note, lifecycle, conflict, and Baseline checkpoint structures;
@@ -90,7 +90,9 @@ The audit did more than rename terms. It closed these implementation-significant
 2. Vault Object IDs commit to Vault ID as well as type and canonical bytes, so a state-only Fork
    cannot reuse source Object identity accidentally.
 3. Genesis depends only on the Initial Baseline. Initial Key Envelope slots live in the Baseline
-   closure, avoiding duplicate dependency claims and content-addressing cycles.
+   closure, avoiding duplicate dependency claims and content-addressing cycles; a successor's
+   authenticated current checkpoint carries those slot candidates after the Initial Baseline is
+   reclaimed.
 4. Existing-Credential Enrollment is signed by the existing active Credential; recovery-authorized
    Enrollment is signed by the proposed Credential with separate Recovery authorization.
 5. Invitation Creation binds both Redemption and Cancellation public verifiers while neither

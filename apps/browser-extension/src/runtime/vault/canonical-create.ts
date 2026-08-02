@@ -17,7 +17,13 @@ import {
 } from "../../crypto/key-envelope";
 import { readySodium, wipe } from "../../crypto/sodium";
 import { DEPENDENCY_TYPES, type TypedDependency } from "../../domain/canonical/dependencies";
-import { advisoryExtensions, EMPTY_REQUIRED_FEATURE_SET_ID } from "../../domain/canonical/features";
+import {
+  advisoryExtensions,
+  type FeatureManifest,
+  featureManifestId,
+  requiredFeatureSetId,
+  requiredFeatureSetValue,
+} from "../../domain/canonical/features";
 import { type Identifier, keyEpochId, randomIdentifier } from "../../domain/canonical/identifiers";
 import {
   type AuthenticatedVaultEvent,
@@ -65,6 +71,13 @@ export interface PreparedCanonicalVaultCreation {
   readonly genesis: AuthenticatedVaultEvent;
   readonly baselineEnvelope: OpaqueEnvelope;
   readonly genesisEnvelope: OpaqueEnvelope;
+  readonly featureManifests: readonly PreparedCanonicalFeatureManifest[];
+}
+
+export interface PreparedCanonicalFeatureManifest {
+  readonly id: Identifier<"FeatureManifest">;
+  readonly bytes: Uint8Array;
+  readonly envelope: OpaqueEnvelope;
 }
 
 export async function wipePreparedCanonicalVaultCreation(
@@ -180,7 +193,7 @@ export async function prepareCanonicalVaultCreation(input: {
   readonly label: string | null;
   readonly assertedAt: number | bigint;
   readonly initialContent?: CanonicalInitialContent;
-  readonly requiredFeatureSetId?: Identifier<"RequiredFeatureSet">;
+  readonly featureManifests?: readonly FeatureManifest[];
   readonly deterministic?: CanonicalVaultCreationDeterminism;
 }): Promise<PreparedCanonicalVaultCreation> {
   const deterministic = input.deterministic ?? {};
@@ -256,7 +269,24 @@ export async function prepareCanonicalVaultCreation(input: {
   const contentCheckpoint =
     input.initialContent?.checkpoint ??
     indexedMap(1, indexedMap(input.label, labelCauses), [], [], [], [], [], [], [], []);
-  const requiredFeatureSetId = input.requiredFeatureSetId ?? EMPTY_REQUIRED_FEATURE_SET_ID;
+  const featureManifestValues = input.featureManifests ?? [];
+  const featureManifestBytes = requiredFeatureSetValue(featureManifestValues);
+  const featureManifests = await Promise.all(
+    featureManifestBytes.map(
+      async (bytes): Promise<PreparedCanonicalFeatureManifest> => ({
+        id: featureManifestId(bytes),
+        bytes,
+        envelope: await sealCompactItem({
+          vaultId: ids.vaultId,
+          keyEpochId: keyEpoch.id,
+          keyEpochKey: keyEpoch.key,
+          payloadType: 3,
+          payloadBytes: bytes,
+        }),
+      }),
+    ),
+  );
+  const requiredSetId = requiredFeatureSetId(featureManifestValues);
   const authorityCheckpoint = indexedMap(
     1,
     canonicalSet([ids.firstMemberId]),
@@ -276,8 +306,12 @@ export async function prepareCanonicalVaultCreation(input: {
       ...(input.initialContent?.dependencies ?? []),
       { type: DEPENDENCY_TYPES.KeyEnvelope, id: recoveryKeyEnvelope.id },
       { type: DEPENDENCY_TYPES.KeyEnvelope, id: clientKeyEnvelope.id },
+      ...featureManifests.map(({ id }) => ({
+        type: DEPENDENCY_TYPES.FeatureManifest,
+        id,
+      })),
     ],
-    requiredFeatureSetId,
+    requiredFeatureSetId: requiredSetId,
     extensions: advisoryExtensions([]),
     body: indexedMap(1, 1, contentCheckpoint, authorityCheckpoint, indexedMap(1), null),
   });
@@ -290,7 +324,7 @@ export async function prepareCanonicalVaultCreation(input: {
     encodeCanonicalValue(certificate),
     encodeCanonicalValue(recoveryDescriptor),
     keyEpoch.id,
-    requiredFeatureSetId,
+    requiredSetId,
   ]);
   const library = await readySodium();
   const creationProof = indexedMap(
@@ -304,7 +338,7 @@ export async function prepareCanonicalVaultCreation(input: {
       parentRecordIds: [],
       authorityParentRecordIds: [],
       dependencies: [{ type: DEPENDENCY_TYPES.VaultBaseline, id: baseline.recordId }],
-      requiredFeatureSetId,
+      requiredFeatureSetId: requiredSetId,
       extensions: advisoryExtensions([]),
       family: 1,
       type: 1,
@@ -316,7 +350,7 @@ export async function prepareCanonicalVaultCreation(input: {
         certificate,
         recoveryDescriptor,
         keyEpoch.id,
-        requiredFeatureSetId,
+        requiredSetId,
         creationProof,
       ),
     },
@@ -390,5 +424,6 @@ export async function prepareCanonicalVaultCreation(input: {
     genesis,
     baselineEnvelope,
     genesisEnvelope,
+    featureManifests,
   };
 }

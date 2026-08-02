@@ -5,7 +5,6 @@ import {
   openCompactItem,
 } from "../../crypto/compact";
 import { openKeyEnvelope } from "../../crypto/key-envelope";
-import { DEPENDENCY_TYPES } from "../../domain/canonical/dependencies";
 import type { Identifier } from "../../domain/canonical/identifiers";
 import {
   type AuthenticatedVaultEvent,
@@ -13,7 +12,6 @@ import {
   decodeVaultEvent,
   type VaultBaseline,
 } from "../../domain/canonical/record";
-import { exactMap, identifierValue, mapValue } from "../../domain/canonical/schema";
 import { bytesEqual } from "../../domain/hash";
 import {
   type CanonicalIndexedDb,
@@ -346,71 +344,60 @@ export class CanonicalVaultService {
       ).payloadBytes,
     );
     sameBytes(baseline.recordId, replicaState.baselineId, "Opened Baseline ID");
-    const genesisBody = exactMap(genesis.body, [0, 1, 2, 3, 4, 5, 6], "Genesis body");
-    const initialBaselineId = identifierValue(
-      mapValue(genesisBody, 0),
-      "VaultRecord",
-      "Genesis Baseline ID",
-    );
-    let initialBaseline = baseline;
-    if (!bytesEqual(initialBaselineId, baseline.recordId)) {
-      const initialBaselineEnvelopeBytes = await this.requireBytes({
-        namespace: NAMESPACES.vaultRecord.key,
-        scopeKey: vaultKey,
-        itemKey: identifierStorageKey(initialBaselineId),
-      });
-      await this.validateResolution({
-        wrappingKey,
-        vaultId,
-        kind: 1,
-        logicalId: initialBaselineId,
-        expectedKeyEpochId: epochSecret.keyEpochId,
-        envelopeBytes: initialBaselineEnvelopeBytes,
-      });
-      initialBaseline = decodeVaultBaseline(
-        (
-          await openCompactItem({
-            vaultId,
-            keyEpochId: epochSecret.keyEpochId,
-            keyEpochKey: epochSecret.key,
-            envelopeBytes: initialBaselineEnvelopeBytes,
-          })
-        ).payloadBytes,
-      );
-      sameBytes(initialBaseline.recordId, initialBaselineId, "Initial Baseline ID");
-    }
     if (baselineVaultLabel(baseline) !== directory.label) {
       throw new TypeError("Vault Directory label does not match authoritative state");
     }
+    const openedVault: PersistedOpenedCanonicalVault = {
+      directory,
+      replicaState,
+      clientSecret,
+      epochSecret,
+      baseline,
+      genesis,
+      installationWrappingKey: wrappingKey,
+      replicaStateStorageBytes: replicaWrapped,
+    };
+    const resolvedKeyEnvelopes = new Map<
+      string,
+      { readonly id: Identifier<"KeyEnvelope">; readonly bytes: Uint8Array }
+    >();
     await validateCurrentVaultAuthority({
       baseline,
-      initialBaseline,
       genesis,
       continuityEvents,
       replicaState,
       clientSecret,
       epochSecret,
+      dependencyResolver: {
+        resolveKeyEnvelope: async ({ keyEnvelopeId, keyEpochId }) => {
+          const cacheKey = identifierStorageKey(keyEnvelopeId);
+          const cached = resolvedKeyEnvelopes.get(cacheKey);
+          if (cached !== undefined) return cached.bytes;
+          const envelopeBytes = await this.readResolvedOpaqueItem({
+            vault: openedVault,
+            kind: 2,
+            logicalId: keyEnvelopeId,
+            expectedKeyEpochId: keyEpochId,
+            namespace: NAMESPACES.keyEnvelope.key,
+          });
+          resolvedKeyEnvelopes.set(cacheKey, { id: keyEnvelopeId, bytes: envelopeBytes });
+          return envelopeBytes;
+        },
+        resolveFeatureManifest: async ({ featureManifestId }) =>
+          (
+            await this.openResolvedCompactItem({
+              vault: openedVault,
+              kind: 4,
+              logicalId: featureManifestId,
+              namespace: NAMESPACES.featureManifest.key,
+              payloadType: 3,
+            })
+          ).payloadBytes,
+      },
     });
 
-    const keyEnvelopeDependencies = baseline.dependencies.filter(
-      ({ type }) => type === DEPENDENCY_TYPES.KeyEnvelope,
-    );
     let openedClientEnvelope = 0;
-    for (const dependency of keyEnvelopeDependencies) {
-      const keyEnvelopeId = dependency.id as Identifier<"KeyEnvelope">;
-      const envelopeBytes = await this.requireBytes({
-        namespace: NAMESPACES.keyEnvelope.key,
-        scopeKey: vaultKey,
-        itemKey: identifierStorageKey(keyEnvelopeId),
-      });
-      await this.validateResolution({
-        wrappingKey,
-        vaultId,
-        kind: 2,
-        logicalId: keyEnvelopeId,
-        expectedKeyEpochId: epochSecret.keyEpochId,
-        envelopeBytes,
-      });
+    for (const { id: keyEnvelopeId, bytes: envelopeBytes } of resolvedKeyEnvelopes.values()) {
       if (clientSecret === null) continue;
       try {
         const opened = await openKeyEnvelope({
@@ -432,18 +419,9 @@ export class CanonicalVaultService {
       }
     }
     if (clientSecret !== null && openedClientEnvelope !== 1) {
-      throw new TypeError("Exactly one initial Key Envelope must open for the selected Client");
+      throw new TypeError("Exactly one current Key Envelope must open for the selected Client");
     }
-    return {
-      directory,
-      replicaState,
-      clientSecret,
-      epochSecret,
-      baseline,
-      genesis,
-      installationWrappingKey: wrappingKey,
-      replicaStateStorageBytes: replicaWrapped,
-    };
+    return openedVault;
   }
 
   async readLogicalResolution(input: {

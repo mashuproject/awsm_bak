@@ -68,7 +68,7 @@ The destination Initial Baseline contains:
 - every unresolved Collection, Folder, Tag, and Note Content Conflict represented by its complete
   mapped candidate state; and
 - the destination's new single member, Administrator, Credentials, Epoch, Envelopes, and Required
-  Feature Set.
+  Feature Set, with every exact source Manifest reprotected under the destination Epoch.
 
 It contains no source membership, Administrator, Credential, Recovery, Key Epoch, transition,
 Event DAG, signature, or lifecycle authority history. Source member and Client Credential IDs MAY

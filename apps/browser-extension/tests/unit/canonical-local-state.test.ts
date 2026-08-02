@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { encodeFeatureManifest, featureManifestId } from "../../src/domain/canonical/features";
 import { randomIdentifier } from "../../src/domain/canonical/identifiers";
 import { canonicalSet } from "../../src/domain/canonical/value";
 import { NAMESPACES, NORMAL_STORAGE_REALM } from "../../src/drivers/indexeddb/canonical-schema";
@@ -136,6 +137,35 @@ describe("canonical local Vault state", () => {
     );
     expect(resolutions).toEqual(prepared.logicalResolutions);
     expect(resolutions.every(({ availability }) => availability === 1)).toBe(true);
+  });
+
+  it("commits initial Feature Manifests and their verified resolutions atomically", async () => {
+    const manifest = {
+      featureKey: "awsm.test-local-state",
+      revision: 1,
+      parameters: new Uint8Array(),
+      requiredManifestIds: [],
+      incompatibleKeys: [],
+    } as const;
+    const manifestId = featureManifestId(encodeFeatureManifest(manifest));
+    const creation = await prepareCanonicalVaultCreation({
+      label: "Feature Vault",
+      assertedAt: 1,
+      featureManifests: [manifest],
+    });
+    const prepared = await prepareCanonicalVaultStorage({
+      creation,
+      label: "Feature Vault",
+      realm: NORMAL_STORAGE_REALM,
+      wrappingKey: await wrappingKey(),
+    });
+
+    expect(prepared.commit.immutableItems).toContainEqual(
+      expect.objectContaining({ namespace: NAMESPACES.featureManifest.key }),
+    );
+    expect(prepared.logicalResolutions).toContainEqual(
+      expect.objectContaining({ kind: 4, logicalId: manifestId, availability: 1 }),
+    );
   });
 
   it("includes prepared Fork Objects and resolutions in the one initial transaction", async () => {

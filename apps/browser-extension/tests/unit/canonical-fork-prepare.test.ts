@@ -3,8 +3,13 @@ import { describe, expect, it, vi } from "vitest";
 import * as sodium from "../../src/crypto/sodium";
 import { contentCheckpointCauseIds } from "../../src/domain/canonical/baseline-body";
 import { DEPENDENCY_TYPES } from "../../src/domain/canonical/dependencies";
-import { advisoryExtensions } from "../../src/domain/canonical/features";
-import { type Identifier, identifier } from "../../src/domain/canonical/identifiers";
+import {
+  advisoryExtensions,
+  encodeFeatureManifest,
+  type FeatureManifest,
+  featureManifestId,
+} from "../../src/domain/canonical/features";
+import { identifier } from "../../src/domain/canonical/identifiers";
 import {
   ARTIFACT_OBJECT,
   BUNDLE_DESCRIPTOR_OBJECT,
@@ -50,12 +55,12 @@ function indexedMap(...values: readonly CanonicalValue[]) {
 async function prepareEmptyFork(
   label: string | null,
   lifecycle: 1 | 2 = 1,
-  requiredFeatureSetId?: Identifier<"RequiredFeatureSet">,
+  featureManifests: readonly FeatureManifest[] = [],
 ) {
   const source = await prepareCanonicalVaultCreation({
     label,
     assertedAt: 1,
-    ...(requiredFeatureSetId === undefined ? {} : { requiredFeatureSetId }),
+    featureManifests,
   });
   const local = await prepareCanonicalVaultStorage({
     creation: source,
@@ -106,6 +111,10 @@ async function prepareEmptyFork(
         signingPublicKey: source.secrets.client.signingPublicKey,
         wrappingPublicKey: source.secrets.client.wrappingPublicKey,
         lifecycle,
+        featureManifests: featureManifests.map((manifest) => {
+          const bytes = encodeFeatureManifest(manifest);
+          return { id: featureManifestId(bytes), bytes, manifest };
+        }),
       }),
     },
     artifactStore: {} as CanonicalArtifactStore,
@@ -316,9 +325,21 @@ describe("canonical Fork preparation", () => {
     wipe.mockRestore();
   });
 
-  it("blocks a non-empty Required Feature Set until its Manifest closure can be copied", async () => {
-    await expect(prepareEmptyFork(null, 1, filled("RequiredFeatureSet", 71))).rejects.toThrow(
-      /Required Feature Set Manifest closure/u,
+  it("copies a non-empty Required Feature Set into the destination Initial Baseline", async () => {
+    const feature = {
+      featureKey: "awsm.test-fork-closure",
+      revision: 1,
+      parameters: new Uint8Array(),
+      requiredManifestIds: [],
+      incompatibleKeys: [],
+    } as const;
+    const { source, prepared } = await prepareEmptyFork(null, 1, [feature]);
+
+    expect(prepared.creation.baseline.requiredFeatureSetId).toEqual(
+      source.baseline.requiredFeatureSetId,
     );
+    expect(prepared.creation.featureManifests.map(({ bytes }) => bytes)).toEqual([
+      encodeFeatureManifest(feature),
+    ]);
   });
 });

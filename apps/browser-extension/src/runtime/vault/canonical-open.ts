@@ -1,6 +1,11 @@
 import { readySodium } from "../../crypto/sodium";
 import { vaultBaselineDependencyRequirements } from "../../domain/canonical/baseline-body";
 import { DEPENDENCY_TYPES, dependencySet } from "../../domain/canonical/dependencies";
+import {
+  decodeFeatureManifest,
+  featureManifestId,
+  requiredFeatureSetId,
+} from "../../domain/canonical/features";
 import type { Identifier } from "../../domain/canonical/identifiers";
 import type { AuthenticatedVaultEvent, VaultBaseline } from "../../domain/canonical/record";
 import { verifyVaultEventSignature } from "../../domain/canonical/record";
@@ -28,9 +33,11 @@ import {
   encodeCanonicalAuthorityCheckpoint,
 } from "../projection/canonical-authority-checkpoint";
 import {
+  type CanonicalAuthorityFeatureManifest,
   CanonicalAuthorityReplay,
   type CanonicalAuthorityState,
   canonicalAuthorityFeatureManifestRequirements,
+  canonicalAuthorityKeyEnvelopeRequirements,
 } from "../projection/canonical-authority-replay";
 import type {
   CanonicalReplicaState,
@@ -48,6 +55,10 @@ function compareBytes(left: Uint8Array, right: Uint8Array): number {
     if (difference !== 0) return difference;
   }
   return left.byteLength - right.byteLength;
+}
+
+function identifierKey(value: Uint8Array): string {
+  return [...value].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 function sameCanonical(left: CanonicalValue, right: CanonicalValue, field: string): void {
@@ -148,9 +159,171 @@ function sameSet(left: readonly Uint8Array[], right: readonly Uint8Array[], fiel
   }
 }
 
+async function genesisAuthorityState(input: {
+  readonly vaultId: Identifier<"Vault">;
+  readonly genesis: AuthenticatedVaultEvent;
+  readonly currentBaselineAuthority: CanonicalAuthorityState;
+  readonly initialFeatureManifests: readonly CanonicalAuthorityFeatureManifest[];
+}): Promise<CanonicalAuthorityState> {
+  const { genesis } = input;
+  if (genesis.family !== 1 || genesis.type !== 1) {
+    throw new TypeError("Initial authority root is not Genesis");
+  }
+  if (genesis.parentRecordIds.length !== 0 || genesis.authorityParentRecordIds.length !== 0) {
+    throw new TypeError("Genesis must be parentless");
+  }
+  same(genesis.vaultId, input.vaultId, "Genesis Vault ID");
+  const body = exactMap(genesis.body, [0, 1, 2, 3, 4, 5, 6], "Genesis body");
+  const baselineId = identifierValue(mapValue(body, 0), "VaultRecord", "Genesis Baseline ID");
+  sameCanonical(
+    dependencySet(genesis.dependencies),
+    dependencySet([{ type: DEPENDENCY_TYPES.VaultBaseline, id: baselineId }]),
+    "Genesis dependency",
+  );
+  const memberId = identifierValue(mapValue(body, 1), "Member", "Genesis first Member ID");
+  const certificate = exactMap(mapValue(body, 2), [0, 1, 2, 3], "Genesis Client Certificate");
+  const recovery = exactMap(mapValue(body, 3), [0, 1, 2, 3, 4], "Genesis Recovery Credential");
+  const clientCredentialId = identifierValue(
+    mapValue(certificate, 0),
+    "ClientCredential",
+    "Genesis Client Credential ID",
+  );
+  const certificateMemberId = identifierValue(
+    mapValue(certificate, 1),
+    "Member",
+    "Genesis Client Member ID",
+  );
+  same(certificateMemberId, memberId, "Genesis Client Member ID");
+  const clientSigningPublicKey = byteString(
+    mapValue(certificate, 2),
+    32,
+    "Genesis Client signing public key",
+  );
+  const clientWrappingPublicKey = byteString(
+    mapValue(certificate, 3),
+    32,
+    "Genesis Client wrapping public key",
+  );
+  const recoveryCredentialId = identifierValue(
+    mapValue(recovery, 0),
+    "RecoveryCredential",
+    "Genesis Recovery Credential ID",
+  );
+  same(
+    identifierValue(mapValue(recovery, 1), "Member", "Genesis Recovery Member ID"),
+    memberId,
+    "Genesis Recovery Member ID",
+  );
+  const recoveryRevision = exactCode(mapValue(recovery, 2), 0, "Genesis Recovery revision");
+  const recoverySigningPublicKey = byteString(
+    mapValue(recovery, 3),
+    32,
+    "Genesis Recovery signing public key",
+  );
+  const recoveryWrappingPublicKey = byteString(
+    mapValue(recovery, 4),
+    32,
+    "Genesis Recovery wrapping public key",
+  );
+  const keyEpochId = identifierValue(mapValue(body, 4), "KeyEpoch", "Genesis Key Epoch ID");
+  same(
+    identifierValue(mapValue(body, 5), "RequiredFeatureSet", "Genesis Feature Set ID"),
+    genesis.requiredFeatureSetId,
+    "Genesis Feature Set ID",
+  );
+  same(
+    genesis.requiredFeatureSetId,
+    requiredFeatureSetId(input.initialFeatureManifests.map(({ manifest }) => manifest)),
+    "Genesis base Required Feature Set",
+  );
+  same(clientCredentialId, genesis.signerCredentialId, "Genesis signer Credential");
+  const proof = exactMap(mapValue(body, 6), [0, 1], "Genesis creation proof");
+  const proofBytes = transcript("awsm:genesis-possession-proof:v1", [
+    genesis.vaultId,
+    genesis.generationId,
+    baselineId,
+    memberId,
+    encodeCanonicalValue(certificate),
+    encodeCanonicalValue(recovery),
+    keyEpochId,
+    genesis.requiredFeatureSetId,
+  ]);
+  const sodium = await readySodium();
+  if (
+    !sodium.crypto_sign_verify_detached(
+      byteString(mapValue(proof, 0), 64, "Genesis Client proof"),
+      proofBytes,
+      clientSigningPublicKey,
+    ) ||
+    !sodium.crypto_sign_verify_detached(
+      byteString(mapValue(proof, 1), 64, "Genesis Recovery proof"),
+      proofBytes,
+      recoverySigningPublicKey,
+    ) ||
+    !(await verifyVaultEventSignature(genesis, clientSigningPublicKey))
+  ) {
+    throw new TypeError("Genesis signatures are invalid");
+  }
+  const initialSlots = input.currentBaselineAuthority.keyEnvelopeSlots.filter(
+    (slot) =>
+      bytesEqual(slot.keyEpochId, keyEpochId) &&
+      ((slot.targetKind === 1 &&
+        bytesEqual(slot.targetCredentialId, recoveryCredentialId) &&
+        slot.targetRevision === recoveryRevision) ||
+        (slot.targetKind === 2 &&
+          bytesEqual(slot.targetCredentialId, clientCredentialId) &&
+          slot.targetRevision === null)),
+  );
+  if (
+    initialSlots.length !== 2 ||
+    !initialSlots.some(({ targetKind }) => targetKind === 1) ||
+    !initialSlots.some(({ targetKind }) => targetKind === 2)
+  ) {
+    throw new TypeError("Current Baseline does not retain both Genesis Key Envelope slots");
+  }
+  return {
+    activeMemberIds: [memberId],
+    administratorIds: [memberId],
+    administratorConflicts: [],
+    activeInvitations: [],
+    invitationConflicts: [],
+    recoveryCredentials: [
+      {
+        recoveryCredentialId,
+        memberId,
+        revision: recoveryRevision,
+        signingPublicKey: recoverySigningPublicKey,
+        wrappingPublicKey: recoveryWrappingPublicKey,
+        effective: true,
+      },
+    ],
+    recoveryConflicts: [],
+    keyEpochs: [{ keyEpochId, displayNumber: 0, current: true }],
+    keyEpochConflicts: [],
+    keyEnvelopeSlots: initialSlots,
+    requiredFeatureSetId: genesis.requiredFeatureSetId,
+    featureManifests: input.initialFeatureManifests,
+    featureSetConflict: null,
+    writeFences: [],
+    clientCredentials: new Map([
+      [
+        identifierKey(clientCredentialId),
+        {
+          clientCredentialId,
+          memberId,
+          signingPublicKey: clientSigningPublicKey,
+          wrappingPublicKey: clientWrappingPublicKey,
+          active: true,
+        },
+      ],
+    ]),
+    lifecycle: 1,
+  };
+}
+
 async function replayContinuityProof(input: {
   readonly vaultId: Identifier<"Vault">;
-  readonly initialBaseline: VaultBaseline;
+  readonly initialAuthority: CanonicalAuthorityState;
   readonly genesis: AuthenticatedVaultEvent;
   readonly continuityEvents: readonly AuthenticatedVaultEvent[];
 }): Promise<CanonicalAuthorityReplay> {
@@ -164,26 +337,17 @@ async function replayContinuityProof(input: {
   ) {
     throw new TypeError("Continuity Proof must contain one Genesis and only authority semantics");
   }
-  const initialBody = exactMap(
-    input.initialBaseline.body,
-    [0, 1, 2, 3, 4, 5],
-    "Initial Baseline body",
-  );
-  const initialAuthority = decodeCanonicalAuthorityCheckpoint({
-    vaultId: input.vaultId,
-    checkpoint: mapValue(initialBody, 3),
-    requiredFeatureSetId: input.initialBaseline.requiredFeatureSetId,
-    featureManifests: [],
-    lifecycle: 1,
-  });
   const supportedFeatureManifestIds = input.continuityEvents.flatMap((event) =>
     canonicalAuthorityFeatureManifestRequirements(event).map(({ id }) => id),
   );
   const authorityReplay = new CanonicalAuthorityReplay(
     input.genesis,
     input.genesis.recordId,
-    initialAuthority,
-    supportedFeatureManifestIds,
+    input.initialAuthority,
+    [
+      ...input.initialAuthority.featureManifests.map(({ id }) => id),
+      ...supportedFeatureManifestIds,
+    ],
   );
   const pendingProofEvents = input.continuityEvents.filter(
     (event) => !bytesEqual(event.recordId, input.genesis.recordId),
@@ -207,16 +371,102 @@ async function replayContinuityProof(input: {
   return authorityReplay;
 }
 
+export interface CanonicalAuthorityDependencyResolver {
+  readonly resolveKeyEnvelope: (requirement: {
+    readonly keyEnvelopeId: Identifier<"KeyEnvelope">;
+    readonly keyEpochId: Identifier<"KeyEpoch">;
+  }) => Promise<Uint8Array>;
+  readonly resolveFeatureManifest: (requirement: {
+    readonly featureManifestId: Identifier<"FeatureManifest">;
+  }) => Promise<Uint8Array>;
+}
+
+async function resolveContinuityDependencies(input: {
+  readonly initialAuthority: CanonicalAuthorityState;
+  readonly baselineAuthority: CanonicalAuthorityState;
+  readonly baselineFeatureManifests: readonly CanonicalAuthorityFeatureManifest[];
+  readonly continuityEvents: readonly AuthenticatedVaultEvent[];
+  readonly resolver: CanonicalAuthorityDependencyResolver;
+  readonly resolvedFeatureManifestBytes: Map<string, Uint8Array>;
+}): Promise<void> {
+  const requirements = new Map<
+    string,
+    {
+      readonly keyEnvelopeId: Identifier<"KeyEnvelope">;
+      readonly keyEpochId: Identifier<"KeyEpoch">;
+    }
+  >();
+  const retain = (requirement: {
+    readonly keyEnvelopeId: Identifier<"KeyEnvelope">;
+    readonly keyEpochId: Identifier<"KeyEpoch">;
+  }): void => {
+    const requirementKey = identifierKey(requirement.keyEnvelopeId);
+    const prior = requirements.get(requirementKey);
+    if (prior !== undefined) {
+      same(prior.keyEpochId, requirement.keyEpochId, "Key Envelope requirement Epoch");
+      return;
+    }
+    requirements.set(requirementKey, {
+      keyEnvelopeId: requirement.keyEnvelopeId,
+      keyEpochId: requirement.keyEpochId,
+    });
+  };
+  for (const slot of input.initialAuthority.keyEnvelopeSlots) retain(slot);
+  for (const slot of input.baselineAuthority.keyEnvelopeSlots) retain(slot);
+  for (const event of input.continuityEvents) {
+    for (const requirement of canonicalAuthorityKeyEnvelopeRequirements(event)) {
+      retain(requirement);
+    }
+  }
+  const ordered = [...requirements.values()].sort((left, right) =>
+    compareBytes(left.keyEnvelopeId, right.keyEnvelopeId),
+  );
+  for (const requirement of ordered) {
+    await input.resolver.resolveKeyEnvelope(requirement);
+  }
+
+  const featureRequirements = new Map<string, CanonicalAuthorityFeatureManifest>();
+  const retainFeature = (requirement: CanonicalAuthorityFeatureManifest): void => {
+    const requirementKey = identifierKey(requirement.id);
+    const prior = featureRequirements.get(requirementKey);
+    if (prior !== undefined) {
+      same(prior.bytes, requirement.bytes, "Feature Manifest requirement bytes");
+      return;
+    }
+    featureRequirements.set(requirementKey, requirement);
+  };
+  for (const requirement of input.baselineFeatureManifests) retainFeature(requirement);
+  for (const event of input.continuityEvents) {
+    for (const requirement of canonicalAuthorityFeatureManifestRequirements(event)) {
+      retainFeature(requirement);
+    }
+  }
+  const orderedFeatures = [...featureRequirements.values()].sort((left, right) =>
+    compareBytes(left.id, right.id),
+  );
+  for (const requirement of orderedFeatures) {
+    const requirementKey = identifierKey(requirement.id);
+    let bytes = input.resolvedFeatureManifestBytes.get(requirementKey);
+    if (bytes === undefined) {
+      bytes = await input.resolver.resolveFeatureManifest({ featureManifestId: requirement.id });
+      input.resolvedFeatureManifestBytes.set(requirementKey, bytes);
+    }
+    same(featureManifestId(bytes), requirement.id, "Resolved Feature Manifest ID");
+    same(bytes, requirement.bytes, "Resolved Feature Manifest bytes");
+    decodeFeatureManifest(bytes);
+  }
+}
+
 export async function validateCurrentVaultAuthority(input: {
   readonly baseline: VaultBaseline;
-  readonly initialBaseline: VaultBaseline;
   readonly genesis: AuthenticatedVaultEvent;
   readonly continuityEvents: readonly AuthenticatedVaultEvent[];
   readonly replicaState: CanonicalReplicaState;
   readonly clientSecret: ClientSecretState | null;
   readonly epochSecret: EpochSecretState;
+  readonly dependencyResolver: CanonicalAuthorityDependencyResolver;
 }): Promise<void> {
-  const { baseline, initialBaseline, genesis, replicaState, clientSecret, epochSecret } = input;
+  const { baseline, genesis, replicaState, clientSecret, epochSecret } = input;
   same(epochSecret.vaultId, replicaState.vaultId, "Epoch Secret Vault ID");
   same(epochSecret.keyEpochId, replicaState.currentKeyEpochId, "Current Key Epoch ID");
   const genesisBody = exactMap(genesis.body, [0, 1, 2, 3, 4, 5, 6], "Genesis body");
@@ -225,31 +475,59 @@ export async function validateCurrentVaultAuthority(input: {
     "KeyEpoch",
     "Genesis Key Epoch ID",
   );
-  await validateInitialVaultAuthority({
-    baseline: initialBaseline,
+  const baselineBody = exactMap(baseline.body, [0, 1, 2, 3, 4, 5], "Current Baseline body");
+  const proofFeatureManifests = new Map<string, CanonicalAuthorityFeatureManifest>();
+  for (const event of input.continuityEvents) {
+    for (const requirement of canonicalAuthorityFeatureManifestRequirements(event)) {
+      const requirementKey = identifierKey(requirement.id);
+      const prior = proofFeatureManifests.get(requirementKey);
+      if (prior !== undefined) {
+        same(prior.bytes, requirement.bytes, "Continuity Feature Manifest bytes");
+      } else {
+        proofFeatureManifests.set(requirementKey, requirement);
+      }
+    }
+  }
+  const resolvedFeatureManifestBytes = new Map<string, Uint8Array>();
+  const baselineFeatureManifests: CanonicalAuthorityFeatureManifest[] = [];
+  for (const dependency of baseline.dependencies) {
+    if (dependency.type !== DEPENDENCY_TYPES.FeatureManifest) continue;
+    const dependencyKey = identifierKey(dependency.id);
+    const proofManifest = proofFeatureManifests.get(dependencyKey);
+    if (proofManifest !== undefined) {
+      baselineFeatureManifests.push(proofManifest);
+      continue;
+    }
+    const bytes = await input.dependencyResolver.resolveFeatureManifest({
+      featureManifestId: dependency.id as Identifier<"FeatureManifest">,
+    });
+    same(featureManifestId(bytes), dependency.id, "Baseline Feature Manifest ID");
+    resolvedFeatureManifestBytes.set(dependencyKey, bytes);
+    baselineFeatureManifests.push({
+      id: dependency.id as Identifier<"FeatureManifest">,
+      bytes,
+      manifest: decodeFeatureManifest(bytes),
+    });
+  }
+  const baselineAuthority = decodeCanonicalAuthorityCheckpoint({
+    vaultId: replicaState.vaultId,
+    checkpoint: mapValue(baselineBody, 3),
+    requiredFeatureSetId: baseline.requiredFeatureSetId,
+    featureManifests: baselineFeatureManifests,
+    lifecycle: 1,
+  });
+  const initialFeatureManifests = baselineFeatureManifests.filter(
+    ({ id }) => !proofFeatureManifests.has(identifierKey(id)),
+  );
+  const initialAuthority = await genesisAuthorityState({
+    vaultId: replicaState.vaultId,
     genesis,
-    replicaState: {
-      ...replicaState,
-      generationId: initialBaseline.generationId,
-      baselineId: initialBaseline.recordId,
-      currentKeyEpochId: initialKeyEpochId,
-      requiredFeatureSetId: initialBaseline.requiredFeatureSetId,
-      authoringClientCredentialId: null,
-      memberId: null,
-      lifecycle: 1,
-      adoption: null,
-    },
-    clientSecret: null,
-    epochSecret: {
-      ...epochSecret,
-      keyEpochId: initialKeyEpochId,
-      displayNumber: 0,
-    },
-    requireInitialReplicaState: false,
+    currentBaselineAuthority: baselineAuthority,
+    initialFeatureManifests,
   });
   const authorityReplay = await replayContinuityProof({
     vaultId: replicaState.vaultId,
-    initialBaseline,
+    initialAuthority,
     genesis,
     continuityEvents: input.continuityEvents,
   });
@@ -292,12 +570,46 @@ export async function validateCurrentVaultAuthority(input: {
 
   const adoption = replicaState.adoption;
   if (adoption === null) {
+    await validateInitialVaultAuthority({
+      baseline,
+      genesis,
+      replicaState: {
+        ...replicaState,
+        generationId: baseline.generationId,
+        baselineId: baseline.recordId,
+        currentKeyEpochId: initialKeyEpochId,
+        requiredFeatureSetId: baseline.requiredFeatureSetId,
+        authoringClientCredentialId: null,
+        memberId: null,
+        lifecycle: 1,
+        adoption: null,
+      },
+      clientSecret: null,
+      epochSecret: {
+        ...epochSecret,
+        keyEpochId: initialKeyEpochId,
+        displayNumber: 0,
+      },
+      featureManifestIds: baselineFeatureManifests.map(({ id }) => id),
+      requireInitialReplicaState: false,
+    });
     if (
       input.continuityEvents.some((event) => event.family === 3 && event.type === 1) ||
-      !bytesEqual(baseline.recordId, initialBaseline.recordId)
+      !bytesEqual(
+        baseline.recordId,
+        identifierValue(mapValue(genesisBody, 0), "VaultRecord", "Genesis Baseline ID"),
+      )
     ) {
       throw new TypeError("Initial Vault authority has an unexpected Vacuum boundary");
     }
+    await resolveContinuityDependencies({
+      initialAuthority,
+      baselineAuthority,
+      baselineFeatureManifests,
+      continuityEvents: input.continuityEvents,
+      resolver: input.dependencyResolver,
+      resolvedFeatureManifestBytes,
+    });
     return;
   }
   const vacuumEvents = input.continuityEvents.filter(
@@ -307,7 +619,7 @@ export async function validateCurrentVaultAuthority(input: {
     throw new TypeError("Vacuum Adoption has no authenticated boundary chain");
   }
 
-  let predecessorGenerationId = initialBaseline.generationId;
+  let predecessorGenerationId = genesis.generationId;
   const remaining = [...vacuumEvents];
   let latestBoundary:
     | {
@@ -465,6 +777,14 @@ export async function validateCurrentVaultAuthority(input: {
     ]),
     "Successor Baseline dependency closure",
   );
+  await resolveContinuityDependencies({
+    initialAuthority,
+    baselineAuthority,
+    baselineFeatureManifests,
+    continuityEvents: input.continuityEvents,
+    resolver: input.dependencyResolver,
+    resolvedFeatureManifestBytes,
+  });
 }
 
 export async function validateInitialVaultAuthority(input: {
@@ -473,6 +793,7 @@ export async function validateInitialVaultAuthority(input: {
   readonly replicaState: CanonicalReplicaState;
   readonly clientSecret: ClientSecretState | null;
   readonly epochSecret: EpochSecretState;
+  readonly featureManifestIds: readonly Identifier<"FeatureManifest">[];
   readonly requireInitialReplicaState?: boolean;
 }): Promise<void> {
   const { baseline, genesis, replicaState, clientSecret, epochSecret } = input;
@@ -703,7 +1024,13 @@ export async function validateInitialVaultAuthority(input: {
   }
   sameCanonical(
     dependencySet(baseline.dependencies),
-    dependencySet(vaultBaselineDependencyRequirements(baseline.body)),
+    dependencySet([
+      ...vaultBaselineDependencyRequirements(baseline.body),
+      ...input.featureManifestIds.map((id) => ({
+        type: DEPENDENCY_TYPES.FeatureManifest,
+        id,
+      })),
+    ]),
     "Initial Baseline dependency closure",
   );
 }

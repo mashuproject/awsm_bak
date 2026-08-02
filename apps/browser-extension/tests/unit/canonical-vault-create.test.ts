@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import { decodeRecoveryPhrase } from "../../src/crypto/canonical";
+import { openCompactItem } from "../../src/crypto/compact";
 import { DEPENDENCY_TYPES } from "../../src/domain/canonical/dependencies";
 import {
   EMPTY_REQUIRED_FEATURE_SET_ID,
+  encodeFeatureManifest,
+  featureManifestId,
   requiredFeatureSetId,
 } from "../../src/domain/canonical/features";
 import { identifier, keyEpochId } from "../../src/domain/canonical/identifiers";
@@ -84,6 +87,40 @@ describe("canonical local Vault creation", () => {
 
     expect(mapField(label, 0)).toBe("Field notes");
     expect(mapField(label, 1)).toEqual([labelCauseId]);
+  });
+
+  it("protects the exact initial Feature Manifest closure as Baseline dependencies", async () => {
+    const feature = {
+      featureKey: "awsm.test-initial",
+      revision: 1,
+      parameters: new Uint8Array([1, 2]),
+      requiredManifestIds: [],
+      incompatibleKeys: [],
+    } as const;
+    const bytes = encodeFeatureManifest(feature);
+    const created = await prepareCanonicalVaultCreation({
+      label: "Feature Vault",
+      assertedAt: 1,
+      featureManifests: [feature],
+    } as Parameters<typeof prepareCanonicalVaultCreation>[0]);
+
+    expect(created.baseline.requiredFeatureSetId).toEqual(requiredFeatureSetId([feature]));
+    expect(created.baseline.dependencies).toContainEqual({
+      type: DEPENDENCY_TYPES.FeatureManifest,
+      id: featureManifestId(bytes),
+    });
+    expect(created.featureManifests).toHaveLength(1);
+    const preparedManifest = created.featureManifests[0];
+    expect(preparedManifest?.id).toEqual(featureManifestId(bytes));
+    expect(preparedManifest?.bytes).toEqual(bytes);
+    await expect(
+      openCompactItem({
+        vaultId: created.ids.vaultId,
+        keyEpochId: created.secrets.keyEpoch.id,
+        keyEpochKey: created.secrets.keyEpoch.key,
+        envelopeBytes: preparedManifest?.envelope.bytes ?? new Uint8Array(),
+      }),
+    ).resolves.toMatchObject({ payloadType: 3, payloadBytes: bytes });
   });
 
   it("does not create a phantom label cause for an unnamed Vault", async () => {

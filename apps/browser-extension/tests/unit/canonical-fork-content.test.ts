@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import { DEPENDENCY_TYPES } from "../../src/domain/canonical/dependencies";
-import { advisoryExtensions } from "../../src/domain/canonical/features";
+import {
+  advisoryExtensions,
+  encodeFeatureManifest,
+  featureManifestId,
+  requiredFeatureSetId,
+} from "../../src/domain/canonical/features";
 import { identifier } from "../../src/domain/canonical/identifiers";
 import {
   ARTIFACT_OBJECT,
@@ -293,13 +298,21 @@ describe("canonical Fork Content checkpoint", () => {
       mapIdentifier: (kind, source) =>
         identifier(kind, new Uint8Array(32).fill((source[0] ?? 0) + 64)),
     });
-    const requiredFeatureSetId = filled("RequiredFeatureSet", 41);
+    const feature = {
+      featureKey: "awsm.test-fork",
+      revision: 1,
+      parameters: new Uint8Array(),
+      requiredManifestIds: [],
+      incompatibleKeys: [],
+    } as const;
+    const manifestId = featureManifestId(encodeFeatureManifest(feature));
+    const featureSetId = requiredFeatureSetId([feature]);
 
     const prepared = await prepareCanonicalVaultCreation({
       label: "Forked research",
       assertedAt: 42,
       initialContent: fork.content,
-      requiredFeatureSetId,
+      featureManifests: [feature],
     });
     const body = exactMap(prepared.baseline.body, [0, 1, 2, 3, 4, 5], "Fork Baseline body");
 
@@ -307,12 +320,13 @@ describe("canonical Fork Content checkpoint", () => {
     expect(encodeCanonicalValue(mapValue(body, 2))).toEqual(
       encodeCanonicalValue(fork.content.checkpoint),
     );
-    expect(prepared.baseline.requiredFeatureSetId).toEqual(requiredFeatureSetId);
-    expect(prepared.genesis.requiredFeatureSetId).toEqual(requiredFeatureSetId);
+    expect(prepared.baseline.requiredFeatureSetId).toEqual(featureSetId);
+    expect(prepared.genesis.requiredFeatureSetId).toEqual(featureSetId);
     expect(prepared.baseline.dependencies).toEqual(
       expect.arrayContaining([
         { type: DEPENDENCY_TYPES.KeyEnvelope, id: prepared.clientKeyEnvelope.id },
         { type: DEPENDENCY_TYPES.KeyEnvelope, id: prepared.recoveryKeyEnvelope.id },
+        { type: DEPENDENCY_TYPES.FeatureManifest, id: manifestId },
       ]),
     );
     expect(prepared.genesis.parentRecordIds).toEqual([]);

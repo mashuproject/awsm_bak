@@ -1,5 +1,4 @@
 import { sealCompactItem } from "../../crypto/compact";
-import { EMPTY_REQUIRED_FEATURE_SET_ID } from "../../domain/canonical/features";
 import { type Identifier, randomIdentifier } from "../../domain/canonical/identifiers";
 import {
   ARTIFACT_OBJECT,
@@ -73,9 +72,13 @@ export async function prepareCanonicalFork(input: {
   readonly destinationVaultId?: Identifier<"Vault">;
 }): Promise<PreparedCanonicalFork> {
   if (
-    !bytesEqual(input.replay.vault.replicaState.requiredFeatureSetId, EMPTY_REQUIRED_FEATURE_SET_ID)
+    !bytesEqual(
+      input.replay.vault.replicaState.requiredFeatureSetId,
+      input.replay.authority.requiredFeatureSetId,
+    ) ||
+    input.replay.authority.featureSetConflict !== null
   ) {
-    throw new TypeError("Fork source Required Feature Set Manifest closure is unavailable");
+    throw new TypeError("Fork source Required Feature Set is not unambiguous");
   }
   const state = deriveForkContentState(input.replay);
   const destinationVaultId = input.destinationVaultId ?? randomIdentifier("Vault");
@@ -168,7 +171,7 @@ export async function prepareCanonicalFork(input: {
     label: content.state.vaultLabel.value,
     assertedAt: input.assertedAt,
     initialContent: content.content,
-    requiredFeatureSetId: input.replay.vault.replicaState.requiredFeatureSetId,
+    featureManifests: input.replay.authority.featureManifests.map(({ manifest }) => manifest),
     deterministic: { ids: { vaultId: destinationVaultId } },
   });
   const artifacts: PreparedCanonicalForkArtifact[] = [];
