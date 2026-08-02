@@ -19,6 +19,43 @@ function reference(storageItemId: Identifier<"StorageItem">, locatorByte: number
 }
 
 describe("canonical pull-synchronization Job service", () => {
+  it("completes an empty fully validated inventory snapshot", async () => {
+    const commits: unknown[] = [];
+    const service = new CanonicalPullSynchronizationJobService(
+      {
+        commitExecutionMutation: async (commit: unknown) => {
+          commits.push(commit);
+        },
+      } as unknown as ConstructorParameters<typeof CanonicalPullSynchronizationJobService>[0],
+      NORMAL_STORAGE_REALM,
+    );
+    const previous = {
+      jobId: JOB_ID,
+      vaultId: filled("Vault", 1),
+      remoteId: REMOTE_ID,
+      realm: NORMAL_STORAGE_REALM,
+      stage: 2 as const,
+      state: 1 as const,
+      snapshotCursor: 3,
+      nextPosition: null,
+      attempt: 0,
+      retryAfterMs: null,
+      quarantineReferences: [],
+      progress: {
+        discoveredItemCount: 0,
+        downloadedItemCount: 0,
+        promotedItemCount: 0,
+        rejectedItemCount: 0,
+      },
+    };
+
+    await expect(service.completeValidation(previous)).resolves.toMatchObject({
+      stage: 3,
+      state: 3,
+    });
+    expect(commits).toHaveLength(1);
+  });
+
   it("finds the sole active local pull Job for one Vault and Remote", async () => {
     const vaultId = filled("Vault", 1);
     const active = {

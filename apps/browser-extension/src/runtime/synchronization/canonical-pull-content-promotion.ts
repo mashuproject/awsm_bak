@@ -22,7 +22,7 @@ type PullPromotionPort = Pick<CanonicalPullSynchronizationJobService, "promoteVa
 type QuarantineReader = {
   readonly readQuarantine: (input: {
     readonly remoteId: string;
-    readonly storageItemId: Uint8Array;
+    readonly storageItemId: Identifier<"StorageItem">;
   }) => Promise<Uint8Array | undefined>;
 };
 

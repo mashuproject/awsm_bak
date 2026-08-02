@@ -278,6 +278,17 @@ export class CanonicalPullSynchronizationJobService {
     return active[0];
   }
 
+  async readQuarantine(input: {
+    readonly remoteId: string;
+    readonly storageItemId: CanonicalQuarantineReference["storageItemId"];
+  }): Promise<Uint8Array | undefined> {
+    return this.storage.getBytes(this.realm, {
+      namespace: NAMESPACES.incomingQuarantine.key,
+      scopeKey: input.remoteId,
+      itemKey: identifierStorageKey(input.storageItemId),
+    });
+  }
+
   async recordQuarantine(input: {
     readonly previous: CanonicalPullSynchronizationJob;
     readonly next: CanonicalPullSynchronizationJob;
@@ -320,6 +331,24 @@ export class CanonicalPullSynchronizationJobService {
       expectedMutableItems: [item(input.previous, previousBytes)],
       mutableItems: [item(input.next, nextBytes)],
     });
+  }
+
+  async completeValidation(
+    previous: CanonicalPullSynchronizationJob,
+  ): Promise<CanonicalPullSynchronizationJob> {
+    if (
+      previous.stage !== 2 ||
+      previous.state !== 1 ||
+      previous.nextPosition !== null ||
+      previous.quarantineReferences.length !== 0 ||
+      previous.progress.downloadedItemCount !==
+        previous.progress.promotedItemCount + previous.progress.rejectedItemCount
+    ) {
+      throw new TypeError("Only an empty fully validated Synchronization Job can complete");
+    }
+    const next: CanonicalPullSynchronizationJob = { ...previous, stage: 3, state: 3 };
+    await this.checkpoint({ previous, next });
+    return next;
   }
 
   /**
