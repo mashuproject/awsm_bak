@@ -251,11 +251,11 @@ or the convergence plan if explicitly included.
 
 ## 5.1 Browser tests
 
-The Chromium IndexedDB integration suite executes only the twelve canonical storage, Recovery,
-Capture, Content, Complete Import, Hosted-pull, Artifact-hydration, and restart journeys. Its
-remaining old test-only harness implementation is not release evidence and requires separation and
-removal before v0.3. Delete tests whose sole purpose is old Device, Recovery Kit, Generation,
-server replacement, remote-proof, or compatibility behavior. Do not mechanically rename them.
+The Chromium IndexedDB integration suite and its harness execute only the twelve canonical storage,
+Recovery, Capture, Content, Complete Import, Hosted-pull, Artifact-hydration, and restart
+journeys. Old Device, Recovery Kit, Generation, server replacement, remote-proof, Search, Storage
+Relief, and compatibility scenarios are removed rather than compiled as unreachable release
+evidence.
 
 Start with the target golden, reducer, authority, recovery, Host, storage, Vacuum, Fork, and
 divergence matrix in `19-testing-strategy.md`. Preserve page-snapshot, Capture, browser permission,
