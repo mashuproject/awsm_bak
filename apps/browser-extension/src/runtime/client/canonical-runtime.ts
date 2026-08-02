@@ -37,6 +37,7 @@ export interface CanonicalClientVaultSummary {
   readonly vaultId: string;
   readonly label: string | null;
   readonly lifecycle: "Open" | "Closed";
+  readonly access: "Authoring" | "ReadOnly";
   readonly selected: boolean;
 }
 
@@ -286,6 +287,7 @@ export class CanonicalClientRuntime {
         vaultId: identifierStorageKey(entry.vaultId),
         label: entry.label,
         lifecycle: entry.lifecycle === 1 ? "Open" : "Closed",
+        access: entry.access,
         selected: entry.selected,
       })),
     };

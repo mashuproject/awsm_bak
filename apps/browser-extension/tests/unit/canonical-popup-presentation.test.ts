@@ -11,12 +11,26 @@ describe("canonical popup presentation", () => {
     expect(
       canonicalPopupPresentation({
         vaults: [
-          { vaultId: "a".repeat(64), label: "Research", lifecycle: "Open", selected: false },
+          {
+            vaultId: "a".repeat(64),
+            label: "Research",
+            lifecycle: "Open",
+            access: "Authoring",
+            selected: false,
+          },
         ],
       }),
     ).toEqual({
       kind: "SelectVault",
-      vaults: [{ vaultId: "a".repeat(64), label: "Research", lifecycle: "Open", selected: false }],
+      vaults: [
+        {
+          vaultId: "a".repeat(64),
+          label: "Research",
+          lifecycle: "Open",
+          access: "Authoring",
+          selected: false,
+        },
+      ],
     });
   });
 
@@ -26,7 +40,13 @@ describe("canonical popup presentation", () => {
         {
           selectedVaultId: "a".repeat(64),
           vaults: [
-            { vaultId: "a".repeat(64), label: "Research", lifecycle: "Open", selected: true },
+            {
+              vaultId: "a".repeat(64),
+              label: "Research",
+              lifecycle: "Open",
+              access: "Authoring",
+              selected: true,
+            },
           ],
         },
         { setupId: "setup-1", recoveryPhrase: "alpha beta gamma" },
@@ -50,11 +70,25 @@ describe("canonical popup presentation", () => {
     expect(
       canonicalPopupPresentation({
         selectedVaultId: "a".repeat(64),
-        vaults: [{ vaultId: "a".repeat(64), label: "Research", lifecycle: "Open", selected: true }],
+        vaults: [
+          {
+            vaultId: "a".repeat(64),
+            label: "Research",
+            lifecycle: "Open",
+            access: "Authoring",
+            selected: true,
+          },
+        ],
       }),
     ).toEqual({
       kind: "Capture",
-      vault: { vaultId: "a".repeat(64), label: "Research", lifecycle: "Open", selected: true },
+      vault: {
+        vaultId: "a".repeat(64),
+        label: "Research",
+        lifecycle: "Open",
+        access: "Authoring",
+        selected: true,
+      },
     });
   });
 
@@ -63,12 +97,50 @@ describe("canonical popup presentation", () => {
       canonicalPopupPresentation({
         selectedVaultId: "a".repeat(64),
         vaults: [
-          { vaultId: "a".repeat(64), label: "Research", lifecycle: "Closed", selected: true },
+          {
+            vaultId: "a".repeat(64),
+            label: "Research",
+            lifecycle: "Closed",
+            access: "Authoring",
+            selected: true,
+          },
         ],
       }),
     ).toEqual({
       kind: "ClosedVault",
-      vault: { vaultId: "a".repeat(64), label: "Research", lifecycle: "Closed", selected: true },
+      vault: {
+        vaultId: "a".repeat(64),
+        label: "Research",
+        lifecycle: "Closed",
+        access: "Authoring",
+        selected: true,
+      },
+    });
+  });
+
+  it("asks a readable Replica to recover local authoring access before Capture", () => {
+    expect(
+      canonicalPopupPresentation({
+        selectedVaultId: "a".repeat(64),
+        vaults: [
+          {
+            vaultId: "a".repeat(64),
+            label: "Research",
+            lifecycle: "Open",
+            access: "ReadOnly",
+            selected: true,
+          },
+        ],
+      }),
+    ).toEqual({
+      kind: "RecoverAccess",
+      vault: {
+        vaultId: "a".repeat(64),
+        label: "Research",
+        lifecycle: "Open",
+        access: "ReadOnly",
+        selected: true,
+      },
     });
   });
 });

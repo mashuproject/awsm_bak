@@ -130,10 +130,11 @@ function protocolError(): CanonicalPopupApplicationClientError {
 function decodeVaultSummary(value: unknown): CanonicalClientVaultSummary {
   if (
     !plainRecord(value) ||
-    !exactKeys(value, ["vaultId", "label", "lifecycle", "selected"]) ||
+    !exactKeys(value, ["vaultId", "label", "lifecycle", "access", "selected"]) ||
     !identifier(value.vaultId) ||
     !(value.label === null || typeof value.label === "string") ||
     !(value.lifecycle === "Open" || value.lifecycle === "Closed") ||
+    !(value.access === "Authoring" || value.access === "ReadOnly") ||
     typeof value.selected !== "boolean"
   ) {
     throw protocolError();
@@ -142,6 +143,7 @@ function decodeVaultSummary(value: unknown): CanonicalClientVaultSummary {
     vaultId: value.vaultId,
     label: value.label,
     lifecycle: value.lifecycle,
+    access: value.access,
     selected: value.selected,
   };
 }

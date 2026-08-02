@@ -14,7 +14,8 @@ export type CanonicalPopupPresentation =
   | { readonly kind: "ConfirmRecoveryPhrase"; readonly recoveryPhrase: string }
   | { readonly kind: "ResumeRecoveryPhrase"; readonly setupId: string }
   | { readonly kind: "Capture"; readonly vault: CanonicalClientVaultSummary }
-  | { readonly kind: "ClosedVault"; readonly vault: CanonicalClientVaultSummary };
+  | { readonly kind: "ClosedVault"; readonly vault: CanonicalClientVaultSummary }
+  | { readonly kind: "RecoverAccess"; readonly vault: CanonicalClientVaultSummary };
 
 export function canonicalPopupPresentation(
   state: CanonicalClientState,
@@ -36,5 +37,6 @@ export function canonicalPopupPresentation(
   }
   const vault = state.vaults.find(({ vaultId }) => vaultId === state.selectedVaultId);
   if (vault === undefined) throw new TypeError("Selected Vault is absent from the popup state.");
+  if (vault.access === "ReadOnly") return { kind: "RecoverAccess", vault };
   return vault.lifecycle === "Open" ? { kind: "Capture", vault } : { kind: "ClosedVault", vault };
 }

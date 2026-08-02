@@ -13,6 +13,7 @@ describe("canonical popup controller", () => {
             vaultId: "a".repeat(64),
             label: "Research",
             lifecycle: "Open" as const,
+            access: "Authoring" as const,
             selected: true,
           },
         ],
@@ -46,7 +47,15 @@ describe("canonical popup controller", () => {
     expect(render).toHaveBeenCalledWith({
       state: {
         selectedVaultId: "a".repeat(64),
-        vaults: [{ vaultId: "a".repeat(64), label: "Research", lifecycle: "Open", selected: true }],
+        vaults: [
+          {
+            vaultId: "a".repeat(64),
+            label: "Research",
+            lifecycle: "Open",
+            access: "Authoring",
+            selected: true,
+          },
+        ],
       },
       library: [
         {
@@ -77,7 +86,15 @@ describe("canonical popup controller", () => {
         .mockImplementationOnce(() => firstState)
         .mockResolvedValueOnce({
           selectedVaultId: "b".repeat(64),
-          vaults: [{ vaultId: "b".repeat(64), label: "Inbox", lifecycle: "Open", selected: true }],
+          vaults: [
+            {
+              vaultId: "b".repeat(64),
+              label: "Inbox",
+              lifecycle: "Open",
+              access: "Authoring",
+              selected: true,
+            },
+          ],
         }),
       listLibrary: vi.fn().mockResolvedValueOnce([
         {
@@ -109,7 +126,15 @@ describe("canonical popup controller", () => {
     expect(render).toHaveBeenLastCalledWith({
       state: {
         selectedVaultId: "b".repeat(64),
-        vaults: [{ vaultId: "b".repeat(64), label: "Inbox", lifecycle: "Open", selected: true }],
+        vaults: [
+          {
+            vaultId: "b".repeat(64),
+            label: "Inbox",
+            lifecycle: "Open",
+            access: "Authoring",
+            selected: true,
+          },
+        ],
       },
       library: [
         {
@@ -134,12 +159,26 @@ describe("canonical popup controller", () => {
         .mockResolvedValueOnce({
           selectedVaultId: "a".repeat(64),
           vaults: [
-            { vaultId: "a".repeat(64), label: "Research", lifecycle: "Open", selected: true },
+            {
+              vaultId: "a".repeat(64),
+              label: "Research",
+              lifecycle: "Open",
+              access: "Authoring",
+              selected: true,
+            },
           ],
         })
         .mockResolvedValueOnce({
           selectedVaultId: "b".repeat(64),
-          vaults: [{ vaultId: "b".repeat(64), label: "Inbox", lifecycle: "Open", selected: true }],
+          vaults: [
+            {
+              vaultId: "b".repeat(64),
+              label: "Inbox",
+              lifecycle: "Open",
+              access: "Authoring",
+              selected: true,
+            },
+          ],
         }),
       listLibrary: vi.fn(async () => []),
       subscribe: vi.fn(() => () => undefined),
@@ -156,7 +195,15 @@ describe("canonical popup controller", () => {
     expect(render).toHaveBeenNthCalledWith(2, {
       state: {
         selectedVaultId: "b".repeat(64),
-        vaults: [{ vaultId: "b".repeat(64), label: "Inbox", lifecycle: "Open", selected: true }],
+        vaults: [
+          {
+            vaultId: "b".repeat(64),
+            label: "Inbox",
+            lifecycle: "Open",
+            access: "Authoring",
+            selected: true,
+          },
+        ],
       },
       library: [],
     });

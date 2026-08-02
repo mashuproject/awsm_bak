@@ -61,6 +61,7 @@ export interface CreatedCanonicalVault {
 
 export interface CanonicalVaultDirectoryItem extends VaultDirectoryEntry {
   readonly lifecycle: 1 | 2;
+  readonly access: "Authoring" | "ReadOnly";
   readonly selected: boolean;
 }
 
@@ -402,9 +403,26 @@ export class CanonicalVaultService {
         );
         sameBytes(replicaState.vaultId, vaultId, "Replica Vault ID");
         sameBytes(replicaState.generationId, directory.generationId, "Directory Generation ID");
+        const access =
+          directory.selectedClientCredentialId === null &&
+          replicaState.authoringClientCredentialId === null &&
+          replicaState.memberId === null
+            ? "ReadOnly"
+            : directory.selectedClientCredentialId !== null &&
+                replicaState.authoringClientCredentialId !== null &&
+                replicaState.memberId !== null &&
+                bytesEqual(
+                  directory.selectedClientCredentialId,
+                  replicaState.authoringClientCredentialId,
+                )
+              ? "Authoring"
+              : (() => {
+                  throw new TypeError("Local authoring Client Credential state is inconsistent");
+                })();
         return {
           ...directory,
           lifecycle: replicaState.lifecycle,
+          access,
           selected: selected !== undefined && bytesEqual(selected, directory.vaultId),
         };
       }),

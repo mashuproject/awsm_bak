@@ -438,6 +438,54 @@ function renderClosedVault(view: CanonicalPopupView, content: DocumentFragment):
   content.append(settings);
 }
 
+function renderRecoverAccess(
+  presentation: Extract<
+    ReturnType<typeof canonicalPopupPresentation>,
+    { readonly kind: "RecoverAccess" }
+  >,
+  content: DocumentFragment,
+): void {
+  content.append(
+    element(
+      "p",
+      `Vault · ${displayVaultLabel(presentation.vault.label)}`,
+      "canonical-popup__context",
+    ),
+    element(
+      "p",
+      "This Client can read this Vault but cannot add new Events. Enter a Recovery Phrase to restore access for this Member on this Client.",
+      "canonical-popup__warning",
+    ),
+  );
+  const form = element("form", undefined, "canonical-popup__form");
+  const phraseLabel = element("label", "Recovery Phrase");
+  const phrase = element("textarea") as HTMLTextAreaElement;
+  phrase.autocomplete = "off";
+  phrase.required = true;
+  phrase.rows = 3;
+  phraseLabel.append(phrase);
+  const submit = element(
+    "button",
+    "Recover access",
+    "canonical-popup__primary",
+  ) as HTMLButtonElement;
+  submit.type = "submit";
+  form.append(phraseLabel, submit);
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    action(submit, async () => {
+      transientError = undefined;
+      await client.recoverMember({
+        expectedVaultId: presentation.vault.vaultId,
+        recoveryPhrase: phrase.value,
+      });
+      announcer.textContent = "Vault access recovered.";
+      await controller.refresh();
+    });
+  });
+  content.append(form);
+}
+
 function renderRecoveryPhraseReplacement(
   content: DocumentFragment,
   setup: Extract<
@@ -636,7 +684,9 @@ function popupHeading(presentation: ReturnType<typeof canonicalPopupPresentation
           ? "Protect your Vault"
           : presentation.kind === "ResumeRecoveryPhrase"
             ? "Resume Vault setup"
-            : "Vault is closed";
+            : presentation.kind === "ClosedVault"
+              ? "Vault is closed"
+              : "Recover Vault access";
   }
   switch (vaultScreen.kind) {
     case "Capture":
@@ -663,6 +713,7 @@ function render(view: CanonicalPopupView): void {
   if (presentation.kind === "SelectVault") renderVaultSelection(view, content);
   if (presentation.kind === "ConfirmRecoveryPhrase") renderRecoveryConfirmation(content);
   if (presentation.kind === "ResumeRecoveryPhrase") renderRecoveryResume(presentation, content);
+  if (presentation.kind === "RecoverAccess") renderRecoverAccess(presentation, content);
   if (presentation.kind === "Capture" || presentation.kind === "ClosedVault") {
     if (vaultScreen.kind === "Capture") {
       if (presentation.kind === "Capture") renderCapture(view, content);
