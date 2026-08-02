@@ -216,9 +216,10 @@ durable snapshot inventory/Quarantine, Host-locator retention, and local Compact
 For a non-adopted current Generation, it also validates one complete same-Generation Content DAG
 branch and its newly required Vault Object closure, then atomically promotes only those newly
 accepted Compact items with the exact pull Job and Replica state. Authority, Key-Epoch,
-Required-Feature, Vacuum/adoption, unsupported Object/hydration, retry, Remote-management UI, and
-shipped-background work remain Quarantined or unfinished; this foundation does not claim general
-multi-Remote convergence.
+Required-Feature, Vacuum/adoption, unsupported Object/hydration, Remote-management UI, and
+shipped-background work remain Quarantined or unfinished. Retryable opaque-Host transport failures
+now checkpoint bounded local retries without changing Vault state; this foundation still does not
+claim general multi-Remote convergence.
 
 ## 4.4 Account dashboard and public pages
 

@@ -48,6 +48,12 @@ A Client may separately materialize logical items at an authorized Remote by cre
 destination-specific opaque representations. That transport write does not make Synchronization a
 semantic push or grant the Host authority.
 
+Retryable opaque-Host transport failures wait in the local pull Job with bounded jittered backoff.
+The waiting clock, attempt count, and any terminal retry limit are local operational mechanics: they
+preserve the exact opaque snapshot and Quarantine input, but never advance a Vault Frontier or
+describe causality. An explicit refresh may resume an exhausted local Job; semantic or storage
+validation failures remain fail-closed rather than becoming transport retries.
+
 # Convergence
 
 Valid immutable Records and Objects union safely. Concurrent Event heads remain visible. Compatible

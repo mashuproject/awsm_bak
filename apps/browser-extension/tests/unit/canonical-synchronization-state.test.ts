@@ -96,6 +96,14 @@ describe("canonical synchronization state", () => {
     ).toEqual(value);
   });
 
+  it("round-trips an exhausted pull Job without discarding its resumable input", () => {
+    const value = { ...job(), state: 4 as const, attempt: 8, retryAfterMs: null };
+
+    expect(
+      decodeCanonicalPullSynchronizationJob(encodeCanonicalPullSynchronizationJob(value)),
+    ).toEqual(value);
+  });
+
   it("rejects a finished pull Job that still retains Quarantine or retry state", () => {
     expect(() =>
       encodeCanonicalPullSynchronizationJob({

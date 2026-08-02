@@ -13,6 +13,7 @@ import {
   CanonicalPullContentValidationService,
 } from "./canonical-pull-content-validation";
 import { CanonicalPullInventoryRunner } from "./canonical-pull-inventory-runner";
+import { nextCanonicalPullRetry, resumeCanonicalPullRetry } from "./canonical-pull-retry";
 import type { CanonicalPullSynchronizationJobService } from "./canonical-pull-synchronization-job-service";
 import { CanonicalPullValidationRunner } from "./canonical-pull-validation-runner";
 import type { CanonicalReplicaRemoteService } from "./canonical-remote-service";
@@ -38,6 +39,21 @@ type VaultPort = Pick<
   | "openVault"
   | "readResolvedOpaqueItem"
 >;
+
+function retryableHostDelay(error: unknown): number | null | undefined {
+  if (typeof error !== "object" || error === null || !("retryable" in error)) return undefined;
+  if (error.retryable !== true) return undefined;
+  if (!("retryAfterSeconds" in error) || error.retryAfterSeconds === null) return null;
+  if (
+    typeof error.retryAfterSeconds !== "number" ||
+    !Number.isSafeInteger(error.retryAfterSeconds) ||
+    error.retryAfterSeconds < 0 ||
+    error.retryAfterSeconds > Math.floor(Number.MAX_SAFE_INTEGER / 1_000)
+  ) {
+    throw new TypeError("Retryable Replica Host failure has an invalid retry delay");
+  }
+  return error.retryAfterSeconds * 1_000;
+}
 
 function contentBranchRoots(
   candidates: readonly CanonicalPulledCompactCandidate[],
@@ -75,12 +91,15 @@ export class CanonicalHostedPullService {
         readonly endpoint: string;
         readonly bearerToken: string;
       }) => Pick<CanonicalHostedReplicaHttp, "inventory" | "item">;
+      readonly now?: () => number;
+      readonly random?: () => number;
     },
   ) {}
 
   async pull(input: {
     readonly vaultId: Identifier<"Vault">;
     readonly remoteId: string;
+    readonly force?: boolean;
   }): Promise<CanonicalPullSynchronizationJob> {
     const { remote, bearerToken } = await this.dependencies.remotes.load(input);
     if (!remote.enabled) throw new TypeError("Cannot pull from a disabled Replica Remote");
@@ -90,21 +109,45 @@ export class CanonicalHostedPullService {
     let job =
       (await this.dependencies.jobs.findActive(input)) ??
       (await this.dependencies.jobs.create({ vaultId: input.vaultId, remoteId: input.remoteId }));
+    const nowMs = this.dependencies.now?.() ?? Date.now();
+    const resumed = resumeCanonicalPullRetry({
+      job,
+      nowMs,
+      force: input.force ?? false,
+    });
+    if (resumed !== job) {
+      await this.dependencies.jobs.checkpoint({ previous: job, next: resumed });
+      job = resumed;
+    }
+    if (job.state !== 1) return job;
     if (job.stage === 1) {
       const http =
         this.dependencies.createHttp?.({ endpoint: remote.endpoint, bearerToken }) ??
         new CanonicalHostedReplicaHttp({ endpoint: remote.endpoint, bearerToken });
-      job = await new CanonicalPullInventoryRunner({
-        inventory: http.inventory.bind(http),
-        item: http.item.bind(http),
-        checkpoint: this.dependencies.jobs.checkpoint.bind(this.dependencies.jobs),
-        recordQuarantine: this.dependencies.jobs.recordQuarantine.bind(this.dependencies.jobs),
-        hasStoredStorageItem: (storageItemId) =>
-          this.dependencies.vaults.hasVerifiedCompactStorageItem({
-            vaultId: input.vaultId,
-            storageItemId,
-          }),
-      }).run({ remote, job });
+      try {
+        job = await new CanonicalPullInventoryRunner({
+          inventory: http.inventory.bind(http),
+          item: http.item.bind(http),
+          checkpoint: this.dependencies.jobs.checkpoint.bind(this.dependencies.jobs),
+          recordQuarantine: this.dependencies.jobs.recordQuarantine.bind(this.dependencies.jobs),
+          hasStoredStorageItem: (storageItemId) =>
+            this.dependencies.vaults.hasVerifiedCompactStorageItem({
+              vaultId: input.vaultId,
+              storageItemId,
+            }),
+        }).run({ remote, job });
+      } catch (error) {
+        const hostRetryAfterMs = retryableHostDelay(error);
+        if (hostRetryAfterMs === undefined) throw error;
+        const next = nextCanonicalPullRetry({
+          previous: job,
+          nowMs,
+          random: this.dependencies.random ?? Math.random,
+          hostRetryAfterMs,
+        });
+        await this.dependencies.jobs.checkpoint({ previous: job, next });
+        return next;
+      }
     }
     if (job.stage !== 2 || job.state !== 1) return job;
 

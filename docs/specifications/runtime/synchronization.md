@@ -30,6 +30,16 @@ opaque locators, and safe aggregate progress. A Hosted Replica Remote retains th
 locator salt in Installation State. A Job checkpoint is local resumption state, never a delivery
 acknowledgement or portable Frontier.
 
+Only a classified retryable Host transport failure may move an active pull Job to local Waiting
+state. The first automatic retry uses a locally jittered 0.5 to 1.5 second delay; each later delay
+doubles, is bounded at five minutes, and a valid Host retry delay may lengthen it only within that
+same bound. Local operational time and jitter have no Vault or cross-Replica meaning. After eight
+automatic attempts, the Job is terminal Failed but retains its exact snapshot, page position,
+Quarantine references, and safe progress. Automatic triggers leave that state intact; an explicit
+refresh restarts the same Job at attempt zero. A non-retryable Host outcome and local validation or
+storage failure do not enter this retry path. Retrying never drops Quarantine, changes a Host
+snapshot, creates a new opaque representation, or changes accepted Vault state.
+
 # 3. Pull pipeline
 
 For each configured source Remote, the Client:

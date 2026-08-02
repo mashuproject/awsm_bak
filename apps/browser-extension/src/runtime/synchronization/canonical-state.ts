@@ -29,7 +29,9 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 
 const REMOTE_TRANSPORT_HOSTED_HTTP = 1 as const;
 const PULL_STAGES = [1, 2, 3] as const;
-const PULL_STATES = [1, 2, 3] as const;
+const PULL_STATES = [1, 2, 3, 4] as const;
+
+export const MAX_AUTOMATIC_PULL_RETRY_ATTEMPTS = 8;
 
 export interface CanonicalReplicaRemote {
   readonly remoteId: string;
@@ -228,6 +230,14 @@ function validatePullJob(job: CanonicalPullSynchronizationJob): CanonicalPullSyn
   }
   if (job.state === 2 && (job.attempt < 1 || job.retryAfterMs === null)) {
     throw new TypeError("A retryable Synchronization Job requires a retry attempt and time");
+  }
+  if (
+    job.state === 4 &&
+    (job.attempt !== MAX_AUTOMATIC_PULL_RETRY_ATTEMPTS ||
+      job.retryAfterMs !== null ||
+      job.stage === 3)
+  ) {
+    throw new TypeError("A failed Synchronization Job must retain its exhausted retry state");
   }
   const quarantine = quarantineReferences(job.quarantineReferences);
   const progress = progressValue(job.progress);
