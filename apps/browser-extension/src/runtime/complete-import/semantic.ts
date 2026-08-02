@@ -15,6 +15,7 @@ import {
   decodeVaultBaseline,
   decodeVaultEvent,
   type VaultBaseline,
+  verifyVaultEventSignature,
 } from "../../domain/canonical/record";
 import { decodeCanonicalValue } from "../../domain/canonical/value";
 import { bytesEqual } from "../../domain/hash";
@@ -38,6 +39,7 @@ import {
   type CompleteExportReachability,
   collectCompleteExportReachability,
 } from "../complete-export/reachability";
+import { initialVaultClientAuthority } from "../vault/canonical-open";
 
 const MAX_COMPACT_ENVELOPE_LENGTH = PORTABLE_COMPACT_CEILING + 4096 + 12;
 
@@ -240,6 +242,26 @@ export async function validateCompleteExportSemantics(input: {
     [...expectedInventory].some((candidate) => !actualInventory.has(candidate))
   ) {
     throw new TypeError("Complete Export reachable inventory is not exact");
+  }
+  const genesisCandidates = [...records.values()].filter(
+    (record): record is AuthenticatedVaultEvent =>
+      "family" in record && record.family === 1 && record.type === 1,
+  );
+  if (genesisCandidates.length !== 1) {
+    throw new TypeError("Complete Export must contain exactly one Genesis Event");
+  }
+  const genesis = genesisCandidates[0];
+  if (genesis === undefined) {
+    throw new TypeError("Complete Export must contain exactly one Genesis Event");
+  }
+  const initialClient = initialVaultClientAuthority(genesis);
+  same(
+    genesis.signerCredentialId,
+    initialClient.clientCredentialId,
+    "Genesis signer Credential ID",
+  );
+  if (!(await verifyVaultEventSignature(genesis, initialClient.signingPublicKey))) {
+    throw new TypeError("Vault Event signature is invalid");
   }
 
   const artifactStore: CanonicalArtifactStore = {

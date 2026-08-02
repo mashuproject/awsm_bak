@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
-
 import { sealArtifactFrames } from "../../src/crypto/artifact-stream";
+import { createClientCredentialKeys } from "../../src/crypto/canonical";
+import { sealCompactItem } from "../../src/crypto/compact";
 import { DEPENDENCY_TYPES } from "../../src/domain/canonical/dependencies";
 import { type Identifier, identifier, keyEpochId } from "../../src/domain/canonical/identifiers";
+import { signVaultEvent } from "../../src/domain/canonical/record";
 import { concatBytes } from "../../src/domain/canonical/transcript";
 import type {
   CanonicalArtifactStore,
@@ -159,6 +161,7 @@ async function packageFrom(input: {
   readonly creation: Creation;
   readonly stored: readonly StoredOpaque[];
   readonly frontierId: Identifier<"VaultRecord">;
+  readonly authorityFrontierId?: Identifier<"VaultRecord">;
 }) {
   const { creation, stored } = input;
   const opaqueItemInventory: CompleteExportOpaqueItem[] = stored.map((item) => {
@@ -182,7 +185,7 @@ async function packageFrom(input: {
       { type: DEPENDENCY_TYPES.VaultBaseline, id: creation.baseline.recordId },
     ],
     opaqueItemInventory,
-    continuityProofRoots: [creation.genesis.recordId],
+    continuityProofRoots: [input.authorityFrontierId ?? creation.genesis.recordId],
   };
   const manifest = decodeCompleteExportManifest(
     encodeCompleteExportManifest({
@@ -298,6 +301,33 @@ describe("canonical Complete Import semantic validation", () => {
     expect(validated.reachability.keyEnvelopeIds).toHaveLength(2);
     expect(validated.reachability.vaultObjectIds).toHaveLength(0);
     expect(validated.reachability.artifactIds).toHaveLength(0);
+  });
+
+  it("rejects a structurally reachable Genesis signed by an unrelated Credential", async () => {
+    const creation = await prepareCanonicalVaultCreation({ label: "Research", assertedAt: 1 });
+    const attacker = await createClientCredentialKeys();
+    const forgedGenesis = await signVaultEvent(creation.genesis, attacker.signingSecretKey);
+    const forgedEnvelope = await sealCompactItem({
+      vaultId: creation.ids.vaultId,
+      keyEpochId: creation.secrets.keyEpoch.id,
+      keyEpochKey: creation.secrets.keyEpoch.key,
+      payloadType: 1,
+      payloadBytes: forgedGenesis.bytes,
+    });
+    const fixture = await packageFrom({
+      creation,
+      frontierId: forgedGenesis.recordId,
+      authorityFrontierId: forgedGenesis.recordId,
+      stored: initialStored(creation).map((item) =>
+        item.namespace === 1 && key(item.logicalId) === key(creation.genesis.recordId)
+          ? { namespace: 1, logicalId: forgedGenesis.recordId, bytes: forgedEnvelope.bytes }
+          : item,
+      ),
+    });
+
+    await expect(validateCompleteExportSemantics(fixture)).rejects.toThrow(
+      "Vault Event signature is invalid",
+    );
   });
 
   it("rejects a Key Envelope mapping not committed by reachable Vault Records", async () => {
