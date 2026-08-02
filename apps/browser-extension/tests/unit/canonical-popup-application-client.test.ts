@@ -114,6 +114,21 @@ describe("canonical popup application client", () => {
         })
         .mockResolvedValueOnce({ setupId: "fork-setup", recoveryPhrase: "delta echo foxtrot" })
         .mockResolvedValueOnce({ vaultId: "1".repeat(64) })
+        .mockResolvedValueOnce(undefined)
+        .mockResolvedValueOnce({
+          memberId: "2".repeat(64),
+          clientCredentialId: "3".repeat(64),
+          eventRecordId: "4".repeat(64),
+        })
+        .mockResolvedValueOnce({
+          setupId: "replacement-setup",
+          recoveryPhrase: "golf hotel india",
+        })
+        .mockResolvedValueOnce({
+          recoveryCredentialId: "5".repeat(64),
+          revision: 1,
+          eventRecordId: "6".repeat(64),
+        })
         .mockResolvedValueOnce(undefined),
       subscribe: vi.fn(() => () => undefined),
     };
@@ -157,6 +172,30 @@ describe("canonical popup application client", () => {
       client.confirmVaultFork({ setupId: "fork-setup", recoveryPhrase: "delta echo foxtrot" }),
     ).resolves.toEqual({ vaultId: "1".repeat(64) });
     await expect(client.cancelVaultFork("fork-setup")).resolves.toBeUndefined();
+    await expect(
+      client.recoverMember({ expectedVaultId: "a".repeat(64), recoveryPhrase: "alpha beta gamma" }),
+    ).resolves.toEqual({
+      memberId: "2".repeat(64),
+      clientCredentialId: "3".repeat(64),
+      eventRecordId: "4".repeat(64),
+    });
+    await expect(client.beginRecoveryPhraseReplacement("a".repeat(64))).resolves.toEqual({
+      setupId: "replacement-setup",
+      recoveryPhrase: "golf hotel india",
+    });
+    await expect(
+      client.confirmRecoveryPhraseReplacement({
+        setupId: "replacement-setup",
+        recoveryPhrase: "golf hotel india",
+      }),
+    ).resolves.toEqual({
+      recoveryCredentialId: "5".repeat(64),
+      revision: 1,
+      eventRecordId: "6".repeat(64),
+    });
+    await expect(
+      client.cancelRecoveryPhraseReplacement("replacement-setup"),
+    ).resolves.toBeUndefined();
 
     expect(transport.request.mock.calls).toEqual([
       [{ type: "BeginVaultCreation", expectedVaultId: null, label: "Research" }],
@@ -169,6 +208,22 @@ describe("canonical popup application client", () => {
       [{ type: "BeginVaultFork", expectedVaultId: "a".repeat(64) }],
       [{ type: "ConfirmVaultFork", setupId: "fork-setup", recoveryPhrase: "delta echo foxtrot" }],
       [{ type: "CancelVaultFork", setupId: "fork-setup" }],
+      [
+        {
+          type: "RecoverMember",
+          expectedVaultId: "a".repeat(64),
+          recoveryPhrase: "alpha beta gamma",
+        },
+      ],
+      [{ type: "BeginRecoveryPhraseReplacement", expectedVaultId: "a".repeat(64) }],
+      [
+        {
+          type: "ConfirmRecoveryPhraseReplacement",
+          setupId: "replacement-setup",
+          recoveryPhrase: "golf hotel india",
+        },
+      ],
+      [{ type: "CancelRecoveryPhraseReplacement", setupId: "replacement-setup" }],
     ]);
   });
 });

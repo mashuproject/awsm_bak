@@ -31,6 +31,18 @@ export type CanonicalApplicationRequest =
       readonly recoveryPhrase: string;
     }
   | { readonly type: "CancelVaultFork"; readonly setupId: string }
+  | {
+      readonly type: "RecoverMember";
+      readonly expectedVaultId: string;
+      readonly recoveryPhrase: string;
+    }
+  | { readonly type: "BeginRecoveryPhraseReplacement"; readonly expectedVaultId: string }
+  | {
+      readonly type: "ConfirmRecoveryPhraseReplacement";
+      readonly setupId: string;
+      readonly recoveryPhrase: string;
+    }
+  | { readonly type: "CancelRecoveryPhraseReplacement"; readonly setupId: string }
   | { readonly type: "CloseVault"; readonly expectedVaultId: string }
   | { readonly type: "VacuumVault"; readonly expectedVaultId: string }
   | { readonly type: "ListLibrary"; readonly expectedVaultId: string };
@@ -46,6 +58,10 @@ type CanonicalApplicationRuntime = Pick<
   | "beginVaultFork"
   | "confirmVaultFork"
   | "cancelVaultFork"
+  | "recoverMember"
+  | "beginRecoveryPhraseReplacement"
+  | "confirmRecoveryPhraseReplacement"
+  | "cancelRecoveryPhraseReplacement"
   | "closeVault"
   | "vacuumVault"
   | "listLibrary"
@@ -165,6 +181,38 @@ export function decodeCanonicalApplicationRequest(value: unknown): CanonicalAppl
         return { type: value.type, setupId: value.setupId };
       }
       break;
+    case "RecoverMember":
+      if (
+        exactKeys(value, ["type", "expectedVaultId", "recoveryPhrase"]) &&
+        text(value.expectedVaultId) &&
+        text(value.recoveryPhrase)
+      ) {
+        return {
+          type: value.type,
+          expectedVaultId: value.expectedVaultId,
+          recoveryPhrase: value.recoveryPhrase,
+        };
+      }
+      break;
+    case "BeginRecoveryPhraseReplacement":
+      if (exactKeys(value, ["type", "expectedVaultId"]) && text(value.expectedVaultId)) {
+        return { type: value.type, expectedVaultId: value.expectedVaultId };
+      }
+      break;
+    case "ConfirmRecoveryPhraseReplacement":
+      if (
+        exactKeys(value, ["type", "setupId", "recoveryPhrase"]) &&
+        text(value.setupId) &&
+        text(value.recoveryPhrase)
+      ) {
+        return { type: value.type, setupId: value.setupId, recoveryPhrase: value.recoveryPhrase };
+      }
+      break;
+    case "CancelRecoveryPhraseReplacement":
+      if (exactKeys(value, ["type", "setupId"]) && text(value.setupId)) {
+        return { type: value.type, setupId: value.setupId };
+      }
+      break;
     case "CloseVault":
       if (exactKeys(value, ["type", "expectedVaultId"]) && text(value.expectedVaultId)) {
         return { type: value.type, expectedVaultId: value.expectedVaultId };
@@ -259,6 +307,31 @@ export class CanonicalApplication {
         );
       case "CancelVaultFork":
         return this.mutate(() => this.runtime.cancelVaultFork(request.setupId));
+      case "RecoverMember":
+        return this.mutate(() =>
+          this.runtime.recoverMember({
+            expectedVaultId: request.expectedVaultId,
+            recoveryPhrase: request.recoveryPhrase,
+            commandId: this.createCaptureCommandId(),
+            assertedAt: this.now(),
+          }),
+        );
+      case "BeginRecoveryPhraseReplacement":
+        return this.mutate(() =>
+          this.runtime.beginRecoveryPhraseReplacement({
+            expectedVaultId: request.expectedVaultId,
+            assertedAt: this.now(),
+          }),
+        );
+      case "ConfirmRecoveryPhraseReplacement":
+        return this.mutate(() =>
+          this.runtime.confirmRecoveryPhraseReplacement({
+            setupId: request.setupId,
+            recoveryPhrase: request.recoveryPhrase,
+          }),
+        );
+      case "CancelRecoveryPhraseReplacement":
+        return this.mutate(() => this.runtime.cancelRecoveryPhraseReplacement(request.setupId));
       case "CloseVault":
         return this.mutate(() =>
           this.runtime.closeVault({

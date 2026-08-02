@@ -40,6 +40,27 @@ export interface CanonicalPopupApplicationClient extends CanonicalPopupClient {
     readonly recoveryPhrase: string;
   }): Promise<{ readonly vaultId: string }>;
   cancelVaultFork(setupId: string): Promise<void>;
+  recoverMember(input: {
+    readonly expectedVaultId: string;
+    readonly recoveryPhrase: string;
+  }): Promise<{
+    readonly memberId: string;
+    readonly clientCredentialId: string;
+    readonly eventRecordId: string;
+  }>;
+  beginRecoveryPhraseReplacement(expectedVaultId: string): Promise<{
+    readonly setupId: string;
+    readonly recoveryPhrase: string;
+  }>;
+  confirmRecoveryPhraseReplacement(input: {
+    readonly setupId: string;
+    readonly recoveryPhrase: string;
+  }): Promise<{
+    readonly recoveryCredentialId: string;
+    readonly revision: number;
+    readonly eventRecordId: string;
+  }>;
+  cancelRecoveryPhraseReplacement(setupId: string): Promise<void>;
   selectVault(input: {
     readonly expectedVaultId: string | null;
     readonly vaultId: string;
@@ -292,6 +313,50 @@ function decodeVaultVacuumed(value: unknown): {
   };
 }
 
+function decodeMemberRecovered(value: unknown): {
+  readonly memberId: string;
+  readonly clientCredentialId: string;
+  readonly eventRecordId: string;
+} {
+  if (
+    !plainRecord(value) ||
+    !exactKeys(value, ["memberId", "clientCredentialId", "eventRecordId"]) ||
+    !identifier(value.memberId) ||
+    !identifier(value.clientCredentialId) ||
+    !identifier(value.eventRecordId)
+  ) {
+    throw protocolError();
+  }
+  return {
+    memberId: value.memberId,
+    clientCredentialId: value.clientCredentialId,
+    eventRecordId: value.eventRecordId,
+  };
+}
+
+function decodeRecoveryPhraseReplaced(value: unknown): {
+  readonly recoveryCredentialId: string;
+  readonly revision: number;
+  readonly eventRecordId: string;
+} {
+  if (
+    !plainRecord(value) ||
+    !exactKeys(value, ["recoveryCredentialId", "revision", "eventRecordId"]) ||
+    !identifier(value.recoveryCredentialId) ||
+    typeof value.revision !== "number" ||
+    !Number.isSafeInteger(value.revision) ||
+    value.revision < 0 ||
+    !identifier(value.eventRecordId)
+  ) {
+    throw protocolError();
+  }
+  return {
+    recoveryCredentialId: value.recoveryCredentialId,
+    revision: value.revision,
+    eventRecordId: value.eventRecordId,
+  };
+}
+
 function assertNullableVaultId(value: string | null): void {
   if (value !== null && !identifier(value))
     throw new TypeError("Popup expected Vault ID is invalid.");
@@ -362,6 +427,39 @@ export function createCanonicalPopupApplicationClient(
     async cancelVaultFork(setupId) {
       assertText(setupId, "setup ID");
       const value = await transport.request({ type: "CancelVaultFork", setupId });
+      if (value !== undefined) throw protocolError();
+    },
+    async recoverMember(input) {
+      if (!identifier(input.expectedVaultId)) throw new TypeError("Popup Vault ID is invalid.");
+      assertText(input.recoveryPhrase, "Recovery Phrase");
+      return decodeMemberRecovered(
+        await transport.request({
+          type: "RecoverMember",
+          expectedVaultId: input.expectedVaultId,
+          recoveryPhrase: input.recoveryPhrase,
+        }),
+      );
+    },
+    async beginRecoveryPhraseReplacement(expectedVaultId) {
+      if (!identifier(expectedVaultId)) throw new TypeError("Popup Vault ID is invalid.");
+      return decodeVaultCreation(
+        await transport.request({ type: "BeginRecoveryPhraseReplacement", expectedVaultId }),
+      );
+    },
+    async confirmRecoveryPhraseReplacement(input) {
+      assertText(input.setupId, "setup ID");
+      assertText(input.recoveryPhrase, "Recovery Phrase");
+      return decodeRecoveryPhraseReplaced(
+        await transport.request({
+          type: "ConfirmRecoveryPhraseReplacement",
+          setupId: input.setupId,
+          recoveryPhrase: input.recoveryPhrase,
+        }),
+      );
+    },
+    async cancelRecoveryPhraseReplacement(setupId) {
+      assertText(setupId, "setup ID");
+      const value = await transport.request({ type: "CancelRecoveryPhraseReplacement", setupId });
       if (value !== undefined) throw protocolError();
     },
     async selectVault(input) {

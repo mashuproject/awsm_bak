@@ -17,6 +17,10 @@ describe("canonical application", () => {
       beginVaultFork: vi.fn(),
       confirmVaultFork: vi.fn(),
       cancelVaultFork: vi.fn(),
+      recoverMember: vi.fn(),
+      beginRecoveryPhraseReplacement: vi.fn(),
+      confirmRecoveryPhraseReplacement: vi.fn(),
+      cancelRecoveryPhraseReplacement: vi.fn(),
     };
     const application = new CanonicalApplication(runtime, () => 1234);
 
@@ -60,6 +64,10 @@ describe("canonical application", () => {
       beginVaultFork: vi.fn(),
       confirmVaultFork: vi.fn(),
       cancelVaultFork: vi.fn(),
+      recoverMember: vi.fn(),
+      beginRecoveryPhraseReplacement: vi.fn(),
+      confirmRecoveryPhraseReplacement: vi.fn(),
+      cancelRecoveryPhraseReplacement: vi.fn(),
     };
     const application = new CanonicalApplication(runtime, () => 1234);
     const expectedVaultId = "a".repeat(64);
@@ -100,6 +108,10 @@ describe("canonical application", () => {
       beginVaultFork: vi.fn(),
       confirmVaultFork: vi.fn(),
       cancelVaultFork: vi.fn(),
+      recoverMember: vi.fn(),
+      beginRecoveryPhraseReplacement: vi.fn(),
+      confirmRecoveryPhraseReplacement: vi.fn(),
+      cancelRecoveryPhraseReplacement: vi.fn(),
     };
     const capturePage = {
       captureActivePage: vi.fn().mockResolvedValue({
@@ -221,6 +233,85 @@ describe("canonical application", () => {
     ).rejects.toThrow(/Unsupported application Command/u);
   });
 
+  it("keeps member Recovery and phrase replacement on exact application Commands", async () => {
+    const runtime = {
+      recoverMember: vi.fn().mockResolvedValue({
+        memberId: "a".repeat(64),
+        clientCredentialId: "b".repeat(64),
+        eventRecordId: "c".repeat(64),
+      }),
+      beginRecoveryPhraseReplacement: vi.fn().mockResolvedValue({
+        setupId: "replacement-setup",
+        recoveryPhrase: "delta echo foxtrot",
+      }),
+      confirmRecoveryPhraseReplacement: vi.fn().mockResolvedValue({
+        recoveryCredentialId: "d".repeat(64),
+        revision: 1,
+        eventRecordId: "e".repeat(64),
+      }),
+      cancelRecoveryPhraseReplacement: vi.fn().mockResolvedValue(undefined),
+    };
+    const application = new CanonicalApplication(
+      runtime as never,
+      () => 1234,
+      undefined,
+      () => "command",
+    );
+    const expectedVaultId = "a".repeat(64);
+
+    await expect(
+      application.handle({
+        type: "RecoverMember",
+        expectedVaultId,
+        recoveryPhrase: "alpha beta gamma",
+      }),
+    ).resolves.toEqual({
+      memberId: "a".repeat(64),
+      clientCredentialId: "b".repeat(64),
+      eventRecordId: "c".repeat(64),
+    });
+    await expect(
+      application.handle({ type: "BeginRecoveryPhraseReplacement", expectedVaultId }),
+    ).resolves.toEqual({ setupId: "replacement-setup", recoveryPhrase: "delta echo foxtrot" });
+    await expect(
+      application.handle({
+        type: "ConfirmRecoveryPhraseReplacement",
+        setupId: "replacement-setup",
+        recoveryPhrase: "delta echo foxtrot",
+      }),
+    ).resolves.toEqual({
+      recoveryCredentialId: "d".repeat(64),
+      revision: 1,
+      eventRecordId: "e".repeat(64),
+    });
+    await expect(
+      application.handle({ type: "CancelRecoveryPhraseReplacement", setupId: "replacement-setup" }),
+    ).resolves.toBeUndefined();
+    expect(runtime.recoverMember).toHaveBeenCalledWith({
+      expectedVaultId,
+      recoveryPhrase: "alpha beta gamma",
+      commandId: "command",
+      assertedAt: 1234,
+    });
+    expect(runtime.beginRecoveryPhraseReplacement).toHaveBeenCalledWith({
+      expectedVaultId,
+      assertedAt: 1234,
+    });
+    expect(runtime.confirmRecoveryPhraseReplacement).toHaveBeenCalledWith({
+      setupId: "replacement-setup",
+      recoveryPhrase: "delta echo foxtrot",
+    });
+    expect(runtime.cancelRecoveryPhraseReplacement).toHaveBeenCalledWith("replacement-setup");
+    await expect(
+      application.handle({
+        type: "RecoverMember",
+        expectedVaultId,
+        recoveryPhrase: "alpha",
+        extra: true,
+      }),
+    ).rejects.toThrow(/Unsupported application Command/u);
+  });
+
   it("publishes one invalidation after a successful application mutation", async () => {
     const runtime = {
       state: vi.fn(),
@@ -235,6 +326,10 @@ describe("canonical application", () => {
       beginVaultFork: vi.fn(),
       confirmVaultFork: vi.fn(),
       cancelVaultFork: vi.fn(),
+      recoverMember: vi.fn(),
+      beginRecoveryPhraseReplacement: vi.fn(),
+      confirmRecoveryPhraseReplacement: vi.fn(),
+      cancelRecoveryPhraseReplacement: vi.fn(),
     };
     const invalidated = vi.fn();
     const application = new CanonicalApplication(
