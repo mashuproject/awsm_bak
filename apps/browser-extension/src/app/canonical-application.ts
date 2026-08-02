@@ -24,6 +24,8 @@ export type CanonicalApplicationRequest =
       readonly expectedVaultId: string;
       readonly tabId?: number;
     }
+  | { readonly type: "CloseVault"; readonly expectedVaultId: string }
+  | { readonly type: "VacuumVault"; readonly expectedVaultId: string }
   | { readonly type: "ListLibrary"; readonly expectedVaultId: string };
 
 type CanonicalApplicationRuntime = Pick<
@@ -34,6 +36,8 @@ type CanonicalApplicationRuntime = Pick<
   | "cancelVaultCreation"
   | "selectVault"
   | "capture"
+  | "closeVault"
+  | "vacuumVault"
   | "listLibrary"
 >;
 
@@ -132,6 +136,16 @@ export function decodeCanonicalApplicationRequest(value: unknown): CanonicalAppl
         return { type: value.type, expectedVaultId: value.expectedVaultId, tabId: value.tabId };
       }
       break;
+    case "CloseVault":
+      if (exactKeys(value, ["type", "expectedVaultId"]) && text(value.expectedVaultId)) {
+        return { type: value.type, expectedVaultId: value.expectedVaultId };
+      }
+      break;
+    case "VacuumVault":
+      if (exactKeys(value, ["type", "expectedVaultId"]) && text(value.expectedVaultId)) {
+        return { type: value.type, expectedVaultId: value.expectedVaultId };
+      }
+      break;
     case "ListLibrary":
       if (exactKeys(value, ["type", "expectedVaultId"]) && text(value.expectedVaultId)) {
         return { type: value.type, expectedVaultId: value.expectedVaultId };
@@ -200,6 +214,22 @@ export class CanonicalApplication {
           }),
         );
       }
+      case "CloseVault":
+        return this.mutate(() =>
+          this.runtime.closeVault({
+            expectedVaultId: request.expectedVaultId,
+            commandId: this.createCaptureCommandId(),
+            assertedAt: this.now(),
+          }),
+        );
+      case "VacuumVault":
+        return this.mutate(() =>
+          this.runtime.vacuumVault({
+            expectedVaultId: request.expectedVaultId,
+            commandId: this.createCaptureCommandId(),
+            assertedAt: this.now(),
+          }),
+        );
       case "ListLibrary":
         return this.runtime.listLibrary(request.expectedVaultId);
     }

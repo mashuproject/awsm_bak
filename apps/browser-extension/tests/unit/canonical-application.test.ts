@@ -12,6 +12,8 @@ describe("canonical application", () => {
       selectVault: vi.fn(),
       listLibrary: vi.fn(),
       capture: vi.fn(),
+      closeVault: vi.fn(),
+      vacuumVault: vi.fn(),
     };
     const application = new CanonicalApplication(runtime, () => 1234);
 
@@ -50,6 +52,8 @@ describe("canonical application", () => {
       selectVault: vi.fn().mockResolvedValue({ selectedVaultId: "b".repeat(64), vaults: [] }),
       listLibrary: vi.fn().mockResolvedValue([]),
       capture: vi.fn(),
+      closeVault: vi.fn(),
+      vacuumVault: vi.fn(),
     };
     const application = new CanonicalApplication(runtime, () => 1234);
     const expectedVaultId = "a".repeat(64);
@@ -85,6 +89,8 @@ describe("canonical application", () => {
       selectVault: vi.fn(),
       listLibrary: vi.fn(),
       capture: vi.fn().mockResolvedValue({ bundleId: "b".repeat(64) }),
+      closeVault: vi.fn(),
+      vacuumVault: vi.fn(),
     };
     const capturePage = {
       captureActivePage: vi.fn().mockResolvedValue({
@@ -119,6 +125,48 @@ describe("canonical application", () => {
     });
   });
 
+  it("authors Vault closure and Vacuum through exact lifecycle Commands", async () => {
+    const runtime = {
+      closeVault: vi.fn().mockResolvedValue({ eventRecordId: "c".repeat(64) }),
+      vacuumVault: vi.fn().mockResolvedValue({
+        predecessorGenerationId: "a".repeat(64),
+        successorGenerationId: "b".repeat(64),
+        vacuumEventRecordId: "c".repeat(64),
+        successorBaselineId: "d".repeat(64),
+      }),
+    };
+    const application = new CanonicalApplication(
+      runtime as never,
+      () => 1234,
+      undefined,
+      () => "command",
+    );
+    const expectedVaultId = "a".repeat(64);
+
+    await expect(application.handle({ type: "CloseVault", expectedVaultId })).resolves.toEqual({
+      eventRecordId: "c".repeat(64),
+    });
+    await expect(application.handle({ type: "VacuumVault", expectedVaultId })).resolves.toEqual({
+      predecessorGenerationId: "a".repeat(64),
+      successorGenerationId: "b".repeat(64),
+      vacuumEventRecordId: "c".repeat(64),
+      successorBaselineId: "d".repeat(64),
+    });
+    expect(runtime.closeVault).toHaveBeenCalledWith({
+      expectedVaultId,
+      commandId: "command",
+      assertedAt: 1234,
+    });
+    expect(runtime.vacuumVault).toHaveBeenCalledWith({
+      expectedVaultId,
+      commandId: "command",
+      assertedAt: 1234,
+    });
+    await expect(
+      application.handle({ type: "CloseVault", expectedVaultId, extra: true }),
+    ).rejects.toThrow(/Unsupported application Command/u);
+  });
+
   it("publishes one invalidation after a successful application mutation", async () => {
     const runtime = {
       state: vi.fn(),
@@ -128,6 +176,8 @@ describe("canonical application", () => {
       selectVault: vi.fn().mockResolvedValue({ selectedVaultId: "b".repeat(64), vaults: [] }),
       listLibrary: vi.fn(),
       capture: vi.fn(),
+      closeVault: vi.fn(),
+      vacuumVault: vi.fn(),
     };
     const invalidated = vi.fn();
     const application = new CanonicalApplication(
