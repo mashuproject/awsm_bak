@@ -297,16 +297,6 @@ test("creates the canonical storage-relief stores without a schema upgrade", asy
   });
 });
 
-test("persists canonical local-only Library preferences in the fresh schema", async ({ page }) => {
-  await expect(scenario(page, "ui-preferences")).resolves.toEqual({
-    databaseVersion: 1,
-    storePresent: true,
-    defaults: { version: 1, sort: "CapturedNewest", view: "Grid" },
-    restored: { version: 1, sort: "TitleAscending", view: "List" },
-    keys: ["library"],
-  });
-});
-
 test("persists encrypted keyword Search rows and rejects authenticated-header tampering", async ({
   page,
 }) => {

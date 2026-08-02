@@ -115,9 +115,10 @@ pending Prepared Data.
 
 ## 3.5 Client and browser surfaces
 
-`src/app/background.ts`, `src/app/client.ts`, `src/app/protocol.ts`, Chrome and Firefox Host
-adapters, and WXT entrypoints carry current messages and workflow orchestration. Replace all old
-wire shapes and ensure adapters submit Commands rather than author Events.
+The active WXT background, popup, and Library use the strict canonical application boundary.
+Browser adapters submit canonical Commands rather than author Events. The superseded
+`src/app/background.ts`, `src/app/client.ts`, and `src/app/protocol.ts` boundary is removed; it is
+not retained as an adapter or fallback route.
 
 Update popup, Library, Vault-management, synchronization, Search, and Storage Relief views plus
 accessible status helpers. Add trusted Client surfaces for:
@@ -158,10 +159,12 @@ appearing in that already-open Library without reload, live second-popup reconci
 disclosures, and retained readable Capture after Closure.
 
 Search, export/import, synchronization, availability, member and invitation management, Capture
-detail, and conflict-resolution surfaces still require canonical replacements. The old
-synchronization-setup entrypoint is removed rather than left as a broken compatibility route. Its
-disconnected old orchestration source and tests still require deletion with their canonical
-replacement before v0.3 is complete.
+detail, and conflict-resolution surfaces still require canonical replacements. The obsolete
+synchronization-setup entrypoint is removed rather than left as a broken compatibility route. The
+retired direct application protocol, its Library-preferences and direct popup/Library view helpers,
+and their sole-contract tests are also removed. Remaining disconnected experimental source and
+browser journeys, including old Search, synchronization, and offscreen paths, require a separate
+audit and canonical replacement or deletion before v0.3 is complete.
 
 # 4. Replica Host impact
 

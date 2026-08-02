@@ -31,7 +31,6 @@ import {
   type ServerSwitchReplicaPromotion,
   type StoredBundleDescriptorObjectV1,
   type StoredObjectV1,
-  UiPreferencesRepository,
   vaultKey,
   vaultSingletonKey,
 } from "../../../src/drivers/indexeddb";
@@ -6673,38 +6672,6 @@ async function storageReliefSchemaScenario(): Promise<unknown> {
   return result;
 }
 
-async function uiPreferencesScenario(): Promise<unknown> {
-  const databaseName = `awsm-ui-preferences-${crypto.randomUUID()}`;
-  const repository = new UiPreferencesRepository(databaseName);
-  const defaults = await repository.getLibraryPreferences();
-  await repository.replaceLibraryPreferences({
-    version: 1,
-    sort: "TitleAscending",
-    view: "List",
-  });
-  const restored = await new UiPreferencesRepository(databaseName).getLibraryPreferences();
-  const database = await new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open(databaseName);
-    request.addEventListener("success", () => resolve(request.result), { once: true });
-    request.addEventListener("error", () => reject(request.error), { once: true });
-  });
-  const transaction = database.transaction("ui_preferences", "readonly");
-  const keys = await new Promise<IDBValidKey[]>((resolve, reject) => {
-    const request = transaction.objectStore("ui_preferences").getAllKeys();
-    request.addEventListener("success", () => resolve(request.result), { once: true });
-    request.addEventListener("error", () => reject(request.error), { once: true });
-  });
-  const result = {
-    databaseVersion: database.version,
-    storePresent: database.objectStoreNames.contains("ui_preferences"),
-    defaults,
-    restored,
-    keys,
-  };
-  database.close();
-  return result;
-}
-
 async function searchKeywordPersistenceScenario(): Promise<unknown> {
   const databaseName = `awsm-search-${crypto.randomUUID()}`;
   const repository = new IndexedDbSearchRepository(databaseName);
@@ -8328,171 +8295,167 @@ async function run(): Promise<void> {
                 ? await canonicalVaultInitializationScenario()
                 : scenario === "canonical-storage"
                   ? await canonicalStorageScenario()
-                  : scenario === "ui-preferences"
-                    ? await uiPreferencesScenario()
-                    : scenario === "search-keyword-persistence"
-                      ? await searchKeywordPersistenceScenario()
-                      : scenario === "search-keyword-atomic-commit"
-                        ? await searchKeywordAtomicCommitScenario()
-                        : scenario === "search-semantic-atomic-commit"
-                          ? await searchSemanticAtomicCommitScenario()
-                          : scenario === "search-index-lease"
-                            ? await searchIndexLeaseScenario()
-                            : scenario === "search-index-failure-resume"
-                              ? await searchIndexFailureResumeScenario()
-                              : scenario === "search-keyword-indexer"
-                                ? await searchKeywordIndexerScenario()
-                                : scenario === "search-local-minilm-inference"
-                                  ? await localMiniLmInferenceScenario()
-                                  : scenario === "search-local-model-cache"
-                                    ? await searchLocalModelCacheScenario()
-                                    : scenario === "storage-relief-fault-matrix"
-                                      ? await storageReliefFaultMatrixScenario()
-                                      : scenario === "detached-authority-atomicity"
-                                        ? await detachedAuthorityAtomicityScenario()
-                                        : scenario === "storage-relief-runner"
-                                          ? await storageReliefRunnerScenario()
-                                          : scenario === "storage-relief-lease"
-                                            ? await storageReliefLeaseScenario()
-                                            : scenario === "storage-relief-persistence"
-                                              ? await storageReliefPersistenceScenario()
-                                              : scenario === "storage-relief-schema"
-                                                ? await storageReliefSchemaScenario()
-                                                : scenario === "account-persistence"
-                                                  ? await accountPersistenceScenario()
-                                                  : scenario === "account-scope-isolation"
-                                                    ? await accountScopeIsolationScenario()
-                                                    : scenario === "server-switch-promotion"
-                                                      ? await serverSwitchPromotionScenario()
-                                                      : scenario ===
-                                                          "server-switch-replica-promotion-atomicity"
-                                                        ? await serverSwitchReplicaPromotionAtomicityScenario()
-                                                        : scenario === "server-switch-persistence"
-                                                          ? await serverSwitchPersistenceScenario()
-                                                          : scenario === "vault"
-                                                            ? await vaultScenario()
-                                                            : scenario === "workspace"
-                                                              ? await workspaceScenario()
-                                                              : scenario === "atomic-vault-create"
-                                                                ? await atomicVaultCreateScenario()
-                                                                : scenario ===
-                                                                    "atomic-vault-create-failures"
-                                                                  ? await atomicVaultCreateFailureScenario()
+                  : scenario === "search-keyword-persistence"
+                    ? await searchKeywordPersistenceScenario()
+                    : scenario === "search-keyword-atomic-commit"
+                      ? await searchKeywordAtomicCommitScenario()
+                      : scenario === "search-semantic-atomic-commit"
+                        ? await searchSemanticAtomicCommitScenario()
+                        : scenario === "search-index-lease"
+                          ? await searchIndexLeaseScenario()
+                          : scenario === "search-index-failure-resume"
+                            ? await searchIndexFailureResumeScenario()
+                            : scenario === "search-keyword-indexer"
+                              ? await searchKeywordIndexerScenario()
+                              : scenario === "search-local-minilm-inference"
+                                ? await localMiniLmInferenceScenario()
+                                : scenario === "search-local-model-cache"
+                                  ? await searchLocalModelCacheScenario()
+                                  : scenario === "storage-relief-fault-matrix"
+                                    ? await storageReliefFaultMatrixScenario()
+                                    : scenario === "detached-authority-atomicity"
+                                      ? await detachedAuthorityAtomicityScenario()
+                                      : scenario === "storage-relief-runner"
+                                        ? await storageReliefRunnerScenario()
+                                        : scenario === "storage-relief-lease"
+                                          ? await storageReliefLeaseScenario()
+                                          : scenario === "storage-relief-persistence"
+                                            ? await storageReliefPersistenceScenario()
+                                            : scenario === "storage-relief-schema"
+                                              ? await storageReliefSchemaScenario()
+                                              : scenario === "account-persistence"
+                                                ? await accountPersistenceScenario()
+                                                : scenario === "account-scope-isolation"
+                                                  ? await accountScopeIsolationScenario()
+                                                  : scenario === "server-switch-promotion"
+                                                    ? await serverSwitchPromotionScenario()
+                                                    : scenario ===
+                                                        "server-switch-replica-promotion-atomicity"
+                                                      ? await serverSwitchReplicaPromotionAtomicityScenario()
+                                                      : scenario === "server-switch-persistence"
+                                                        ? await serverSwitchPersistenceScenario()
+                                                        : scenario === "vault"
+                                                          ? await vaultScenario()
+                                                          : scenario === "workspace"
+                                                            ? await workspaceScenario()
+                                                            : scenario === "atomic-vault-create"
+                                                              ? await atomicVaultCreateScenario()
+                                                              : scenario ===
+                                                                  "atomic-vault-create-failures"
+                                                                ? await atomicVaultCreateFailureScenario()
+                                                                : scenario === "atomic-vault-select"
+                                                                  ? await atomicVaultSelectScenario()
                                                                   : scenario ===
-                                                                      "atomic-vault-select"
-                                                                    ? await atomicVaultSelectScenario()
+                                                                      "atomic-vault-select-failures"
+                                                                    ? await atomicVaultSelectFailureScenario()
                                                                     : scenario ===
-                                                                        "atomic-vault-select-failures"
-                                                                      ? await atomicVaultSelectFailureScenario()
+                                                                        "atomic-vault-rename"
+                                                                      ? await atomicVaultRenameScenario()
                                                                       : scenario ===
-                                                                          "atomic-vault-rename"
-                                                                        ? await atomicVaultRenameScenario()
+                                                                          "atomic-vault-rename-failures"
+                                                                        ? await atomicVaultRenameFailureScenario()
                                                                         : scenario ===
-                                                                            "atomic-vault-rename-failures"
-                                                                          ? await atomicVaultRenameFailureScenario()
-                                                                          : scenario ===
-                                                                              "vault-record-isolation"
-                                                                            ? await vaultRecordIsolationScenario()
+                                                                            "vault-record-isolation"
+                                                                          ? await vaultRecordIsolationScenario()
+                                                                          : scenario === "immutable"
+                                                                            ? await immutableScenario()
                                                                             : scenario ===
-                                                                                "immutable"
-                                                                              ? await immutableScenario()
+                                                                                "vault-isolation"
+                                                                              ? await vaultIsolationScenario()
                                                                               : scenario ===
-                                                                                  "vault-isolation"
-                                                                                ? await vaultIsolationScenario()
+                                                                                  "capture-job-vault-isolation"
+                                                                                ? await captureJobVaultIsolationScenario()
                                                                                 : scenario ===
-                                                                                    "capture-job-vault-isolation"
-                                                                                  ? await captureJobVaultIsolationScenario()
+                                                                                    "event-vault-mismatch"
+                                                                                  ? await eventVaultMismatchScenario()
                                                                                   : scenario ===
-                                                                                      "event-vault-mismatch"
-                                                                                    ? await eventVaultMismatchScenario()
+                                                                                      "atomic"
+                                                                                    ? await atomicScenario()
                                                                                     : scenario ===
-                                                                                        "atomic"
-                                                                                      ? await atomicScenario()
+                                                                                        "rollback"
+                                                                                      ? await rollbackScenario()
                                                                                       : scenario ===
-                                                                                          "rollback"
-                                                                                        ? await rollbackScenario()
+                                                                                          "stale-epoch-replay-commit"
+                                                                                        ? await staleEpochReplayCommitScenario()
                                                                                         : scenario ===
-                                                                                            "stale-epoch-replay-commit"
-                                                                                          ? await staleEpochReplayCommitScenario()
+                                                                                            "vault-replacement-persistence"
+                                                                                          ? await vaultReplacementPersistenceScenario()
                                                                                           : scenario ===
-                                                                                              "vault-replacement-persistence"
-                                                                                            ? await vaultReplacementPersistenceScenario()
+                                                                                              "vault-replacement-hidden-stage"
+                                                                                            ? await vaultReplacementHiddenStageScenario()
                                                                                             : scenario ===
-                                                                                                "vault-replacement-hidden-stage"
-                                                                                              ? await vaultReplacementHiddenStageScenario()
+                                                                                                "vault-replacement-promotion"
+                                                                                              ? await vaultReplacementPromotionScenario()
                                                                                               : scenario ===
-                                                                                                  "vault-replacement-promotion"
-                                                                                                ? await vaultReplacementPromotionScenario()
+                                                                                                  "projection"
+                                                                                                ? await projectionScenario()
                                                                                                 : scenario ===
-                                                                                                    "projection"
-                                                                                                  ? await projectionScenario()
+                                                                                                    "interruption"
+                                                                                                  ? await interruptionScenario()
                                                                                                   : scenario ===
-                                                                                                      "interruption"
-                                                                                                    ? await interruptionScenario()
+                                                                                                      "dismissal"
+                                                                                                    ? await dismissalScenario()
                                                                                                     : scenario ===
-                                                                                                        "dismissal"
-                                                                                                      ? await dismissalScenario()
+                                                                                                        "library-state"
+                                                                                                      ? await libraryStateScenario()
                                                                                                       : scenario ===
-                                                                                                          "library-state"
-                                                                                                        ? await libraryStateScenario()
+                                                                                                          "vacuum-rollback"
+                                                                                                        ? await vacuumRollbackScenario()
                                                                                                         : scenario ===
-                                                                                                            "vacuum-rollback"
-                                                                                                          ? await vacuumRollbackScenario()
+                                                                                                            "vacuum-availability-cleanup"
+                                                                                                          ? await vacuumAvailabilityCleanupScenario()
                                                                                                           : scenario ===
-                                                                                                              "vacuum-availability-cleanup"
-                                                                                                            ? await vacuumAvailabilityCleanupScenario()
+                                                                                                              "vacuum-cas-conflict"
+                                                                                                            ? await vacuumCasConflictScenario()
                                                                                                             : scenario ===
-                                                                                                                "vacuum-cas-conflict"
-                                                                                                              ? await vacuumCasConflictScenario()
+                                                                                                                "vacuum-lease"
+                                                                                                              ? await vacuumLeaseScenario()
                                                                                                               : scenario ===
-                                                                                                                  "vacuum-lease"
-                                                                                                                ? await vacuumLeaseScenario()
+                                                                                                                  "synchronized-vacuum-journal"
+                                                                                                                ? await synchronizedVacuumJournalScenario()
                                                                                                                 : scenario ===
-                                                                                                                    "synchronized-vacuum-journal"
-                                                                                                                  ? await synchronizedVacuumJournalScenario()
+                                                                                                                    "collection-operation"
+                                                                                                                  ? await collectionOperationScenario()
                                                                                                                   : scenario ===
-                                                                                                                      "collection-operation"
-                                                                                                                    ? await collectionOperationScenario()
+                                                                                                                      "management-busy"
+                                                                                                                    ? await managementBusyScenario()
                                                                                                                     : scenario ===
-                                                                                                                        "management-busy"
-                                                                                                                      ? await managementBusyScenario()
+                                                                                                                        "export-lease"
+                                                                                                                      ? await exportLeaseScenario()
                                                                                                                       : scenario ===
-                                                                                                                          "export-lease"
-                                                                                                                        ? await exportLeaseScenario()
+                                                                                                                          "import-lease"
+                                                                                                                        ? await importLeaseScenario()
                                                                                                                         : scenario ===
-                                                                                                                            "import-lease"
-                                                                                                                          ? await importLeaseScenario()
+                                                                                                                            "artifact-store"
+                                                                                                                          ? await artifactStoreScenario()
                                                                                                                           : scenario ===
-                                                                                                                              "artifact-store"
-                                                                                                                            ? await artifactStoreScenario()
+                                                                                                                              "import-source-staging"
+                                                                                                                            ? await importSourceStagingScenario()
                                                                                                                             : scenario ===
-                                                                                                                                "import-source-staging"
-                                                                                                                              ? await importSourceStagingScenario()
+                                                                                                                                "import-job-lifecycle"
+                                                                                                                              ? await importJobLifecycleScenario()
                                                                                                                               : scenario ===
-                                                                                                                                  "import-job-lifecycle"
-                                                                                                                                ? await importJobLifecycleScenario()
+                                                                                                                                  "atomic-vault-import"
+                                                                                                                                ? await atomicVaultImportScenario()
                                                                                                                                 : scenario ===
-                                                                                                                                    "atomic-vault-import"
-                                                                                                                                  ? await atomicVaultImportScenario()
+                                                                                                                                    "atomic-stale-discard"
+                                                                                                                                  ? await atomicStaleDiscardScenario()
                                                                                                                                   : scenario ===
-                                                                                                                                      "atomic-stale-discard"
-                                                                                                                                    ? await atomicStaleDiscardScenario()
+                                                                                                                                      "remote-reconciliation-fence"
+                                                                                                                                    ? await remoteReconciliationFenceScenario()
                                                                                                                                     : scenario ===
-                                                                                                                                        "remote-reconciliation-fence"
-                                                                                                                                      ? await remoteReconciliationFenceScenario()
+                                                                                                                                        "stale-discard-restart"
+                                                                                                                                      ? await staleDiscardRestartScenario()
                                                                                                                                       : scenario ===
-                                                                                                                                          "stale-discard-restart"
-                                                                                                                                        ? await staleDiscardRestartScenario()
+                                                                                                                                          "canonical-member-recovery"
+                                                                                                                                        ? await canonicalMemberRecoveryScenario()
                                                                                                                                         : scenario ===
-                                                                                                                                            "canonical-member-recovery"
-                                                                                                                                          ? await canonicalMemberRecoveryScenario()
-                                                                                                                                          : scenario ===
-                                                                                                                                              "canonical-complete-import"
-                                                                                                                                            ? await canonicalCompleteImportScenario()
-                                                                                                                                            : {
-                                                                                                                                                error:
-                                                                                                                                                  "unknown scenario",
-                                                                                                                                              };
+                                                                                                                                            "canonical-complete-import"
+                                                                                                                                          ? await canonicalCompleteImportScenario()
+                                                                                                                                          : {
+                                                                                                                                              error:
+                                                                                                                                                "unknown scenario",
+                                                                                                                                            };
   const output = document.querySelector("#result");
   if (output !== null) {
     output.textContent = JSON.stringify(result);
