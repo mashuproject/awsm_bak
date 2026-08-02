@@ -70,6 +70,7 @@ test("runs the canonical local Vault ceremony through a packaged extension", asy
     await assertInteractiveTargets(first);
     await expectReadableContrast(first);
     await first.evaluate(() => window.scrollTo(0, 0));
+    await expect(first.locator(".canonical-popup__brand")).toBeInViewport();
     await first.screenshot({
       path: testInfo.outputPath("canonical-popup-create.png"),
     });
@@ -184,8 +185,18 @@ test("runs the canonical local Vault ceremony through a packaged extension", asy
     await first.screenshot({
       path: testInfo.outputPath("canonical-popup-closure.png"),
     });
-    await first.getByRole("button", { name: "Cancel closure" }).click();
-    await expect(first.getByRole("heading", { name: "Vault settings" })).toBeVisible();
+    await first.getByRole("button", { name: "Confirm closure" }).click();
+    await expect(first.getByRole("heading", { name: "Vault is closed" })).toBeVisible();
+    await expect(first.getByRole("button", { name: "Archive this page" })).toHaveCount(0);
+    await expect(first.getByText("This Vault is closed.")).toBeVisible();
+    await expect(first.getByRole("button", { name: "Vault settings" })).toBeVisible();
+    await assertInteractiveTargets(first);
+    await expectReadableContrast(first);
+    await first.evaluate(() => window.scrollTo(0, 0));
+    await expect(first.locator(".canonical-popup__brand")).toBeInViewport();
+    await first.screenshot({
+      path: testInfo.outputPath("canonical-popup-closed.png"),
+    });
   } finally {
     await client.context.close();
   }

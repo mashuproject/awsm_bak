@@ -36,6 +36,7 @@ import { CanonicalVacuumService } from "../vault/canonical-vacuum-service";
 export interface CanonicalClientVaultSummary {
   readonly vaultId: string;
   readonly label: string | null;
+  readonly lifecycle: "Open" | "Closed";
   readonly selected: boolean;
 }
 
@@ -284,6 +285,7 @@ export class CanonicalClientRuntime {
       vaults: directory.map((entry) => ({
         vaultId: identifierStorageKey(entry.vaultId),
         label: entry.label,
+        lifecycle: entry.lifecycle === 1 ? "Open" : "Closed",
         selected: entry.selected,
       })),
     };

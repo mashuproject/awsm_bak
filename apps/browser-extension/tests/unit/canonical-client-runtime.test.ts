@@ -43,6 +43,7 @@ function fixture() {
         generationId,
         label: "First",
         selectedClientCredentialId: clientCredentialId,
+        lifecycle: 1,
         selected: true,
       },
       {
@@ -50,6 +51,7 @@ function fixture() {
         generationId,
         label: null,
         selectedClientCredentialId: clientCredentialId,
+        lifecycle: 2,
         selected: false,
       },
     ]),
@@ -137,8 +139,18 @@ describe("canonical Client Runtime", () => {
     await expect(runtime.state()).resolves.toEqual({
       selectedVaultId: identifierStorageKey(firstVaultId),
       vaults: [
-        { vaultId: identifierStorageKey(firstVaultId), label: "First", selected: true },
-        { vaultId: identifierStorageKey(secondVaultId), label: null, selected: false },
+        {
+          vaultId: identifierStorageKey(firstVaultId),
+          label: "First",
+          lifecycle: "Open",
+          selected: true,
+        },
+        {
+          vaultId: identifierStorageKey(secondVaultId),
+          label: null,
+          lifecycle: "Closed",
+          selected: false,
+        },
       ],
     });
   });

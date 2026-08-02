@@ -60,6 +60,7 @@ export interface CreatedCanonicalVault {
 }
 
 export interface CanonicalVaultDirectoryItem extends VaultDirectoryEntry {
+  readonly lifecycle: 1 | 2;
   readonly selected: boolean;
 }
 
@@ -386,8 +387,24 @@ export class CanonicalVaultService {
           }),
         );
         sameBytes(directory.vaultId, vaultId, "Vault Directory identity");
+        const replicaState = decodeCanonicalReplicaState(
+          await openWrappedLocalState({
+            wrappingKey,
+            domain: "awsm.local.replica-state",
+            vaultId,
+            identity: directory.generationId,
+            wrappedBytes: await this.requireBytes({
+              namespace: NAMESPACES.replicaState.key,
+              scopeKey: identifierStorageKey(vaultId),
+              itemKey: "current",
+            }),
+          }),
+        );
+        sameBytes(replicaState.vaultId, vaultId, "Replica Vault ID");
+        sameBytes(replicaState.generationId, directory.generationId, "Directory Generation ID");
         return {
           ...directory,
+          lifecycle: replicaState.lifecycle,
           selected: selected !== undefined && bytesEqual(selected, directory.vaultId),
         };
       }),

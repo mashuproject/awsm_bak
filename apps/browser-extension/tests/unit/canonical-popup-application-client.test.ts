@@ -13,8 +13,8 @@ describe("canonical popup application client", () => {
         .mockResolvedValueOnce({
           selectedVaultId: "a".repeat(64),
           vaults: [
-            { vaultId: "a".repeat(64), label: "Research", selected: true },
-            { vaultId: "b".repeat(64), label: null, selected: false },
+            { vaultId: "a".repeat(64), label: "Research", lifecycle: "Open", selected: true },
+            { vaultId: "b".repeat(64), label: null, lifecycle: "Closed", selected: false },
           ],
         })
         .mockResolvedValueOnce([
@@ -36,8 +36,8 @@ describe("canonical popup application client", () => {
     await expect(client.state()).resolves.toEqual({
       selectedVaultId: "a".repeat(64),
       vaults: [
-        { vaultId: "a".repeat(64), label: "Research", selected: true },
-        { vaultId: "b".repeat(64), label: null, selected: false },
+        { vaultId: "a".repeat(64), label: "Research", lifecycle: "Open", selected: true },
+        { vaultId: "b".repeat(64), label: null, lifecycle: "Closed", selected: false },
       ],
     });
     await expect(client.listLibrary("a".repeat(64))).resolves.toEqual([
@@ -59,7 +59,7 @@ describe("canonical popup application client", () => {
     const client = createCanonicalPopupApplicationClient({
       request: vi.fn().mockResolvedValue({
         selectedVaultId: "a".repeat(64),
-        vaults: [{ vaultId: "b".repeat(64), label: null, selected: true }],
+        vaults: [{ vaultId: "b".repeat(64), label: null, lifecycle: "Open", selected: true }],
       }),
       subscribe: vi.fn(() => () => undefined),
     });
@@ -102,7 +102,7 @@ describe("canonical popup application client", () => {
         .mockResolvedValueOnce(null)
         .mockResolvedValueOnce({
           selectedVaultId: "a".repeat(64),
-          vaults: [{ vaultId: "a".repeat(64), label: null, selected: true }],
+          vaults: [{ vaultId: "a".repeat(64), label: null, lifecycle: "Open", selected: true }],
         })
         .mockResolvedValueOnce({ bundleId: "b".repeat(64) })
         .mockResolvedValueOnce({ eventRecordId: "c".repeat(64) })
@@ -148,7 +148,7 @@ describe("canonical popup application client", () => {
       client.selectVault({ expectedVaultId: null, vaultId: "a".repeat(64) }),
     ).resolves.toEqual({
       selectedVaultId: "a".repeat(64),
-      vaults: [{ vaultId: "a".repeat(64), label: null, selected: true }],
+      vaults: [{ vaultId: "a".repeat(64), label: null, lifecycle: "Open", selected: true }],
     });
     await expect(
       client.captureActivePage({ expectedVaultId: "a".repeat(64), tabId: 4 }),

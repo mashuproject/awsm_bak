@@ -345,7 +345,10 @@ function renderCapture(view: CanonicalPopupView, content: DocumentFragment): voi
 
 function renderVaultSettings(view: CanonicalPopupView, content: DocumentFragment): void {
   const presentation = canonicalPopupPresentation(view.state);
-  if (presentation.kind !== "Capture") throw new Error("Vault settings require a selected Vault.");
+  if (presentation.kind !== "Capture" && presentation.kind !== "ClosedVault") {
+    throw new Error("Vault settings require a selected Vault.");
+  }
+  const closed = presentation.kind === "ClosedVault";
   content.append(
     element(
       "p",
@@ -354,21 +357,13 @@ function renderVaultSettings(view: CanonicalPopupView, content: DocumentFragment
     ),
     element(
       "p",
-      "Recovery, Fork, Vacuum, and closure affect this Vault. Your Host Account does not grant access to its contents.",
+      closed
+        ? "This Vault is closed. Existing data remains readable here, and you can Fork its current state into a new Vault."
+        : "Recovery, Fork, Vacuum, and closure affect this Vault. Your Host Account does not grant access to its contents.",
       "canonical-popup__warning",
     ),
   );
   const actions = element("div", undefined, "canonical-popup__management");
-  const replace = element("button", "Change Recovery Phrase") as HTMLButtonElement;
-  replace.type = "button";
-  replace.addEventListener("click", () => {
-    action(replace, async () => {
-      transientError = undefined;
-      const setup = await client.beginRecoveryPhraseReplacement(presentation.vault.vaultId);
-      vaultScreen = { kind: "RecoveryPhraseReplacement", setup };
-      await controller.refresh();
-    });
-  });
   const fork = element("button", "Fork this Vault") as HTMLButtonElement;
   fork.type = "button";
   fork.addEventListener("click", () => {
@@ -379,26 +374,68 @@ function renderVaultSettings(view: CanonicalPopupView, content: DocumentFragment
       await controller.refresh();
     });
   });
-  const vacuum = element("button", "Vacuum this Vault") as HTMLButtonElement;
-  vacuum.type = "button";
-  vacuum.addEventListener("click", () => {
-    vaultScreen = { kind: "VacuumConfirmation" };
-    render(view);
-  });
-  const close = element("button", "Close Vault", "canonical-popup__danger") as HTMLButtonElement;
-  close.type = "button";
-  close.addEventListener("click", () => {
-    vaultScreen = { kind: "ClosureConfirmation" };
-    render(view);
-  });
-  const back = element("button", "Back to archive", "canonical-popup__quiet") as HTMLButtonElement;
+  const back = element("button", "Back to Vault", "canonical-popup__quiet") as HTMLButtonElement;
   back.type = "button";
   back.addEventListener("click", () => {
     vaultScreen = { kind: "Capture" };
     render(view);
   });
-  actions.append(replace, fork, vacuum, close, back);
+  if (!closed) {
+    const replace = element("button", "Change Recovery Phrase") as HTMLButtonElement;
+    replace.type = "button";
+    replace.addEventListener("click", () => {
+      action(replace, async () => {
+        transientError = undefined;
+        const setup = await client.beginRecoveryPhraseReplacement(presentation.vault.vaultId);
+        vaultScreen = { kind: "RecoveryPhraseReplacement", setup };
+        await controller.refresh();
+      });
+    });
+    const vacuum = element("button", "Vacuum this Vault") as HTMLButtonElement;
+    vacuum.type = "button";
+    vacuum.addEventListener("click", () => {
+      vaultScreen = { kind: "VacuumConfirmation" };
+      render(view);
+    });
+    const close = element("button", "Close Vault", "canonical-popup__danger") as HTMLButtonElement;
+    close.type = "button";
+    close.addEventListener("click", () => {
+      vaultScreen = { kind: "ClosureConfirmation" };
+      render(view);
+    });
+    actions.append(replace, fork, vacuum, close, back);
+  } else {
+    actions.append(fork, back);
+  }
   content.append(actions);
+}
+
+function renderClosedVault(view: CanonicalPopupView, content: DocumentFragment): void {
+  const presentation = canonicalPopupPresentation(view.state);
+  if (presentation.kind !== "ClosedVault") throw new Error("Closed Vault state is invalid.");
+  content.append(
+    element(
+      "p",
+      `Vault · ${displayVaultLabel(presentation.vault.label)}`,
+      "canonical-popup__context",
+    ),
+    element(
+      "p",
+      "This Vault is closed. You can still read what is available locally, or Fork its current state into a new Vault.",
+      "canonical-popup__warning",
+    ),
+  );
+  const settings = element(
+    "button",
+    "Vault settings",
+    "canonical-popup__quiet",
+  ) as HTMLButtonElement;
+  settings.type = "button";
+  settings.addEventListener("click", () => {
+    vaultScreen = { kind: "Settings" };
+    render(view);
+  });
+  content.append(settings);
 }
 
 function renderRecoveryPhraseReplacement(
@@ -580,7 +617,7 @@ function renderClosureConfirmation(view: CanonicalPopupView, content: DocumentFr
     action(confirm, async () => {
       transientError = undefined;
       await client.closeVault(presentation.vault.vaultId);
-      vaultScreen = { kind: "Settings" };
+      vaultScreen = { kind: "Capture" };
       announcer.textContent = "Vault closed.";
       await controller.refresh();
     });
@@ -597,7 +634,9 @@ function popupHeading(presentation: ReturnType<typeof canonicalPopupPresentation
         ? "Choose a Vault"
         : presentation.kind === "ConfirmRecoveryPhrase"
           ? "Protect your Vault"
-          : "Resume Vault setup";
+          : presentation.kind === "ResumeRecoveryPhrase"
+            ? "Resume Vault setup"
+            : "Vault is closed";
   }
   switch (vaultScreen.kind) {
     case "Capture":
@@ -624,8 +663,11 @@ function render(view: CanonicalPopupView): void {
   if (presentation.kind === "SelectVault") renderVaultSelection(view, content);
   if (presentation.kind === "ConfirmRecoveryPhrase") renderRecoveryConfirmation(content);
   if (presentation.kind === "ResumeRecoveryPhrase") renderRecoveryResume(presentation, content);
-  if (presentation.kind === "Capture") {
-    if (vaultScreen.kind === "Capture") renderCapture(view, content);
+  if (presentation.kind === "Capture" || presentation.kind === "ClosedVault") {
+    if (vaultScreen.kind === "Capture") {
+      if (presentation.kind === "Capture") renderCapture(view, content);
+      if (presentation.kind === "ClosedVault") renderClosedVault(view, content);
+    }
     if (vaultScreen.kind === "Settings") renderVaultSettings(view, content);
     if (vaultScreen.kind === "RecoveryPhraseReplacement") {
       renderRecoveryPhraseReplacement(content, vaultScreen.setup);

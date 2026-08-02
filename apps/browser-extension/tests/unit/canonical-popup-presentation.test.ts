@@ -10,11 +10,13 @@ describe("canonical popup presentation", () => {
   it("requires a Vault selection before Capture when no Vault is selected", () => {
     expect(
       canonicalPopupPresentation({
-        vaults: [{ vaultId: "a".repeat(64), label: "Research", selected: false }],
+        vaults: [
+          { vaultId: "a".repeat(64), label: "Research", lifecycle: "Open", selected: false },
+        ],
       }),
     ).toEqual({
       kind: "SelectVault",
-      vaults: [{ vaultId: "a".repeat(64), label: "Research", selected: false }],
+      vaults: [{ vaultId: "a".repeat(64), label: "Research", lifecycle: "Open", selected: false }],
     });
   });
 
@@ -23,7 +25,9 @@ describe("canonical popup presentation", () => {
       canonicalPopupPresentation(
         {
           selectedVaultId: "a".repeat(64),
-          vaults: [{ vaultId: "a".repeat(64), label: "Research", selected: true }],
+          vaults: [
+            { vaultId: "a".repeat(64), label: "Research", lifecycle: "Open", selected: true },
+          ],
         },
         { setupId: "setup-1", recoveryPhrase: "alpha beta gamma" },
       ),
@@ -46,11 +50,25 @@ describe("canonical popup presentation", () => {
     expect(
       canonicalPopupPresentation({
         selectedVaultId: "a".repeat(64),
-        vaults: [{ vaultId: "a".repeat(64), label: "Research", selected: true }],
+        vaults: [{ vaultId: "a".repeat(64), label: "Research", lifecycle: "Open", selected: true }],
       }),
     ).toEqual({
       kind: "Capture",
-      vault: { vaultId: "a".repeat(64), label: "Research", selected: true },
+      vault: { vaultId: "a".repeat(64), label: "Research", lifecycle: "Open", selected: true },
+    });
+  });
+
+  it("presents a selected closed Vault without offering Capture", () => {
+    expect(
+      canonicalPopupPresentation({
+        selectedVaultId: "a".repeat(64),
+        vaults: [
+          { vaultId: "a".repeat(64), label: "Research", lifecycle: "Closed", selected: true },
+        ],
+      }),
+    ).toEqual({
+      kind: "ClosedVault",
+      vault: { vaultId: "a".repeat(64), label: "Research", lifecycle: "Closed", selected: true },
     });
   });
 });
