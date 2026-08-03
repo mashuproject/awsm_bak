@@ -174,6 +174,14 @@ describe("canonical Remote materialization ledger", () => {
       >[0],
       NORMAL_STORAGE_REALM,
     );
+    await expect(
+      service.find({
+        vaultId: entry.vaultId,
+        remoteId: entry.remoteId,
+        logicalNamespace: entry.logicalNamespace,
+        logicalId: entry.logicalId,
+      }),
+    ).resolves.toBeNull();
     await service.prepare({ entry, bytes: envelope.bytes });
 
     await expect(

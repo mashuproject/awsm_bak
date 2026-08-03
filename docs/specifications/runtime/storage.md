@@ -107,6 +107,12 @@ ledger `Confirmed` and deletes its Prepared Data. The ledger never enters Vault 
 neither current Host retention nor global redundancy, and is removed only with its local Remote
 configuration.
 
+The current Compact materializer uses that ledger only after authenticating its local Vault view.
+It stores independently randomized destination representations for the reachable Record, Object,
+Feature Manifest, and Key Envelope closure. It intentionally does not place Streamable Artifact
+wrappers there merely because their authenticated Objects are reachable; those heavy wrappers are
+eligible for separate on-demand hydration.
+
 A pull Synchronization Job retains one canonical Quarantine reference for every downloaded opaque
 item: its Opaque Storage Item ID and the exact 32-byte locator supplied by that Remote's inventory.
 The outer bytes stay in Remote-scoped Quarantine under the same Storage Item ID. A checkpoint may

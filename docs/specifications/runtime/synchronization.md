@@ -93,6 +93,16 @@ Data only while `Prepared`. The Client may mark it `Confirmed` only after an exa
 automatic rewrapping but does not prove that the Host retains data, that another Replica exists, or
 that a Remote is fresh.
 
+The current destination materializer first authenticates the local accepted Generation and derives
+its complete Compact closure: Vault Records, Vault Objects, Feature Manifests, and Key Envelopes.
+It re-seals each Compact payload with a locally held Key Epoch key. For a Key Envelope, it re-wraps
+the unchanged logical plaintext for the exact authoritative Recovery or Client Credential target
+and requires the resulting logical Key Envelope ID to match. It orders work by logical namespace
+and ID, derives only the Remote-local opaque locator for the Host request, and uses the ledger for
+every admission and retry. Streamable Artifact wrappers remain intentionally sparse: explicit
+Artifact hydration may retrieve them later. This local destination materialization is neither a
+push-based synchronization direction nor evidence that the Hosted Replica is complete.
+
 # 4. DAG convergence
 
 Synchronization unions valid immutable Records and Objects. Concurrent Events remain sibling DAG

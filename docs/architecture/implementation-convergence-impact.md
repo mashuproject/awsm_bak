@@ -239,8 +239,13 @@ Remote-management UI, shipped activation, and general multi-Remote convergence r
 or unfinished. Retryable opaque-Host transport failures now checkpoint bounded local retries
 without changing Vault state. One local coordinator pulls configured Remotes sequentially and
 isolates an individual Remote failure, while rejecting corrupt local Remote scope/identity before a
-channel call. Remote onboarding, destination materialization, Authority and Generation proof, and
-shipped activation remain unfinished.
+channel call. The Runtime can now authenticate its local accepted Generation and materialize the
+entire reachable Compact closure to one writable Hosted Replica through independently randomized
+outer items and the durable Remote Materialization Ledger. It re-wraps Key Envelopes only to their
+authoritative Credential targets, preserves their logical IDs, retries an ambiguous admission with
+the same prepared bytes, and deliberately leaves Streamable Artifact wrappers sparse for explicit
+hydration. Remote onboarding, Remote-management UI, shipped activation, and general multi-Remote
+convergence remain unfinished.
 
 ## 4.4 Account dashboard and public pages
 

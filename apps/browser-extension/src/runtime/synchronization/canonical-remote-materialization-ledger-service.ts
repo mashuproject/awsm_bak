@@ -91,7 +91,7 @@ export class CanonicalRemoteMaterializationLedgerService {
     });
   }
 
-  async load(input: {
+  async find(input: {
     readonly vaultId: CanonicalRemoteMaterializationLedgerEntry["vaultId"];
     readonly remoteId: string;
     readonly logicalNamespace: CanonicalRemoteMaterializationLedgerEntry["logicalNamespace"];
@@ -99,7 +99,7 @@ export class CanonicalRemoteMaterializationLedgerService {
   }): Promise<{
     readonly entry: CanonicalRemoteMaterializationLedgerEntry;
     readonly bytes: Uint8Array | null;
-  }> {
+  } | null> {
     const wrappingKey = await this.storage.getOrCreateInstallationWrappingKey(this.realm);
     const key = {
       namespace: NAMESPACES.remoteMaterializationLedger.key,
@@ -107,9 +107,7 @@ export class CanonicalRemoteMaterializationLedgerService {
       itemKey: itemKey(input),
     };
     const wrappedBytes = await this.storage.getBytes(this.realm, key);
-    if (wrappedBytes === undefined) {
-      throw new TypeError("Remote materialization ledger is unavailable");
-    }
+    if (wrappedBytes === undefined) return null;
     const entry = decodeCanonicalRemoteMaterializationLedgerEntry(
       await openWrappedLocalState({
         wrappingKey,
@@ -147,6 +145,20 @@ export class CanonicalRemoteMaterializationLedgerService {
       throw new TypeError("Remote materialization ledger does not match its prepared outer bytes");
     }
     return { entry, bytes: envelope.bytes };
+  }
+
+  async load(input: {
+    readonly vaultId: CanonicalRemoteMaterializationLedgerEntry["vaultId"];
+    readonly remoteId: string;
+    readonly logicalNamespace: CanonicalRemoteMaterializationLedgerEntry["logicalNamespace"];
+    readonly logicalId: Uint8Array;
+  }): Promise<{
+    readonly entry: CanonicalRemoteMaterializationLedgerEntry;
+    readonly bytes: Uint8Array | null;
+  }> {
+    const found = await this.find(input);
+    if (found === null) throw new TypeError("Remote materialization ledger is unavailable");
+    return found;
   }
 
   async confirm(input: {

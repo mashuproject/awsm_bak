@@ -722,6 +722,10 @@ Remote-scoped opaque Prepared Data. An accepted `stored` or `already_present` re
 that local record to `Confirmed` and retires its Prepared Data. It prevents automatic rewrapping
 after ambiguous transport outcomes but is neither Host inventory evidence nor portable Vault state.
 
+The current materializer uses the ledger for the authenticated Compact closure and deliberately
+leaves Streamable Artifact wrappers sparse for later explicit hydration. A `Confirmed` entry is not
+a claim that the Host still retains bytes or that the Hosted Replica is complete.
+
 ## Channel Principal
 
 The Host-local subject authenticated by a Channel Authenticator. It may be an Account, bearer-token
