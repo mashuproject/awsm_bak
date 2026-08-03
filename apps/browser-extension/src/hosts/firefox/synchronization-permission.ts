@@ -44,8 +44,18 @@ export async function requestFirefoxSynchronizationPermission(
   api: FirefoxSynchronizationPermissionApi,
   originPattern: string,
 ): Promise<boolean> {
+  return requestFirefoxSynchronizationPermissions(api, [originPattern]);
+}
+
+export async function requestFirefoxSynchronizationPermissions(
+  api: FirefoxSynchronizationPermissionApi,
+  originPatterns: readonly string[],
+): Promise<boolean> {
+  const origins = [...new Set(originPatterns)].toSorted();
+  if (origins.length === 0)
+    throw new TypeError("At least one Firefox synchronization origin is required");
   return api.request({
-    origins: [originPattern],
+    origins,
     data_collection: FIREFOX_SYNCHRONIZATION_DATA_CATEGORIES,
   });
 }

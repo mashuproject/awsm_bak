@@ -259,7 +259,9 @@ authoritative Credential targets, preserves their logical IDs, retries an ambigu
 the same prepared bytes, and deliberately leaves Streamable Artifact wrappers sparse for explicit
 hydration. The shipped popup now offers explicit per-Remote Compact materialization after a
 Host-permission gesture; it is deliberately named and implemented separately from pull
-synchronization. Remote editing, disable/delete controls, receiver-initiated pull activation, and
+synchronization. It also exposes an explicit receiver-initiated check of every enabled Remote,
+obtaining all needed Host permissions in one direct gesture before the serial local pull
+coordinator runs. Remote editing, disable/delete controls, Artifact-hydration activation, and
 general multi-Remote convergence remain unfinished.
 
 ## 4.4 Account dashboard and public pages

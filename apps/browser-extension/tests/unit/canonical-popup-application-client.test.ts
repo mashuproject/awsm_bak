@@ -208,6 +208,24 @@ describe("canonical popup application client", () => {
     });
   });
 
+  it("checks selected-Vault Hosted Replicas and accepts only their local outcomes", async () => {
+    const transport = {
+      request: vi.fn().mockResolvedValue([
+        { remoteId: "019fa62e-a653-7f63-b2bf-94e7ed5e46ca", status: "Completed" },
+        { remoteId: "019fa62e-a653-7f63-b2bf-94e7ed5e46cb", status: "Failed" },
+      ]),
+      subscribe: vi.fn(() => () => undefined),
+    };
+    const client = createCanonicalPopupApplicationClient(transport);
+    const expectedVaultId = "a".repeat(64);
+
+    await expect(client.pullHostedReplicas(expectedVaultId)).resolves.toEqual([
+      { remoteId: "019fa62e-a653-7f63-b2bf-94e7ed5e46ca", status: "Completed" },
+      { remoteId: "019fa62e-a653-7f63-b2bf-94e7ed5e46cb", status: "Failed" },
+    ]);
+    expect(transport.request).toHaveBeenCalledWith({ type: "PullHostedReplicas", expectedVaultId });
+  });
+
   it("sends only canonical popup mutations and validates their outcomes", async () => {
     const transport = {
       request: vi

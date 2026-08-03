@@ -6,6 +6,7 @@ import { identifierStorageKey } from "../../src/drivers/indexeddb/canonical-data
 import type { CanonicalArtifactStore } from "../../src/runtime/artifact/canonical-store";
 import type { CanonicalHostedCompactMaterializationService } from "../../src/runtime/synchronization/canonical-hosted-compact-materialization";
 import type { CanonicalHostedReplicaSetupService } from "../../src/runtime/synchronization/canonical-hosted-replica-setup";
+import type { CanonicalMultiRemotePullService } from "../../src/runtime/synchronization/canonical-multi-remote-pull-service";
 import type { CanonicalReplicaRemoteService } from "../../src/runtime/synchronization/canonical-remote-service";
 import type { CanonicalReplicaRemote } from "../../src/runtime/synchronization/canonical-state";
 import type { CanonicalVaultService } from "../../src/runtime/vault/canonical-service";
@@ -73,6 +74,9 @@ describe("canonical background", () => {
         alreadyConfirmedCompactItemCount: 2,
       }),
     } as Pick<CanonicalHostedCompactMaterializationService, "materialize">;
+    const multiRemotePull = {
+      pull: vi.fn().mockResolvedValue([{ remoteId: remote.remoteId, status: "Completed" }]),
+    } as Pick<CanonicalMultiRemotePullService, "pull">;
     const application = createCanonicalBackgroundApplication({
       vaults,
       artifacts: {} as CanonicalArtifactStore,
@@ -80,6 +84,7 @@ describe("canonical background", () => {
       remotes,
       hostedReplicaSetup,
       hostedCompactMaterializer,
+      multiRemotePull,
     });
     const expectedVaultId = identifierStorageKey(vaultId);
 
@@ -108,5 +113,9 @@ describe("canonical background", () => {
       vaultId,
       remoteId: remote.remoteId,
     });
+    await expect(
+      application.handle({ type: "PullHostedReplicas", expectedVaultId }),
+    ).resolves.toEqual([{ remoteId: remote.remoteId, status: "Completed" }]);
+    expect(multiRemotePull.pull).toHaveBeenCalledWith({ vaultId });
   });
 });

@@ -4,6 +4,7 @@ import {
   firefoxServerPermissionPattern,
   hasFirefoxSynchronizationPermission,
   requestFirefoxSynchronizationPermission,
+  requestFirefoxSynchronizationPermissions,
 } from "../../src/hosts/firefox/synchronization-permission";
 
 const origin = "https://sync.example.test/*";
@@ -60,6 +61,21 @@ describe("Firefox synchronization permission", () => {
     expect(request).toHaveBeenCalledOnce();
     expect(request).toHaveBeenCalledWith({
       origins: [origin],
+      data_collection: FIREFOX_SYNCHRONIZATION_DATA_CATEGORIES,
+    });
+  });
+
+  it("requests all selected Hosted Replica origins in one user gesture", async () => {
+    const request = vi.fn(async () => true);
+    await expect(
+      requestFirefoxSynchronizationPermissions({ getAll: async () => ({}), request }, [
+        origin,
+        "https://archive.example.test/*",
+        origin,
+      ]),
+    ).resolves.toBe(true);
+    expect(request).toHaveBeenCalledWith({
+      origins: ["https://archive.example.test/*", origin],
       data_collection: FIREFOX_SYNCHRONIZATION_DATA_CATEGORIES,
     });
   });

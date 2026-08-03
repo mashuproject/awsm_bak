@@ -14,6 +14,7 @@ describe("canonical application", () => {
       listRemotes: vi.fn(),
       createHostedReplica: vi.fn(),
       materializeHostedReplica: vi.fn(),
+      pullHostedReplicas: vi.fn(),
       capture: vi.fn(),
       closeVault: vi.fn(),
       vacuumVault: vi.fn(),
@@ -64,6 +65,7 @@ describe("canonical application", () => {
       listRemotes: vi.fn(),
       createHostedReplica: vi.fn(),
       materializeHostedReplica: vi.fn(),
+      pullHostedReplicas: vi.fn(),
       capture: vi.fn(),
       closeVault: vi.fn(),
       vacuumVault: vi.fn(),
@@ -174,6 +176,28 @@ describe("canonical application", () => {
     ).rejects.toThrow(/Unsupported application Command/u);
   });
 
+  it("checks selected-Vault Hosted Replicas only through an exact Command", async () => {
+    const runtime = {
+      pullHostedReplicas: vi.fn().mockResolvedValue([
+        { remoteId: "019fa62e-a653-7f63-b2bf-94e7ed5e46ca", status: "Completed" },
+        { remoteId: "019fa62e-a653-7f63-b2bf-94e7ed5e46cb", status: "Failed" },
+      ]),
+    };
+    const application = new CanonicalApplication(runtime as never);
+    const expectedVaultId = "a".repeat(64);
+
+    await expect(
+      application.handle({ type: "PullHostedReplicas", expectedVaultId }),
+    ).resolves.toEqual([
+      { remoteId: "019fa62e-a653-7f63-b2bf-94e7ed5e46ca", status: "Completed" },
+      { remoteId: "019fa62e-a653-7f63-b2bf-94e7ed5e46cb", status: "Failed" },
+    ]);
+    expect(runtime.pullHostedReplicas).toHaveBeenCalledWith(expectedVaultId);
+    await expect(
+      application.handle({ type: "PullHostedReplicas", expectedVaultId, extra: true }),
+    ).rejects.toThrow(/Unsupported application Command/u);
+  });
+
   it("collects a browser page only through the canonical capture Host before authoring it", async () => {
     const runtime = {
       state: vi.fn(),
@@ -185,6 +209,7 @@ describe("canonical application", () => {
       listRemotes: vi.fn(),
       createHostedReplica: vi.fn(),
       materializeHostedReplica: vi.fn(),
+      pullHostedReplicas: vi.fn(),
       capture: vi.fn().mockResolvedValue({ bundleId: "b".repeat(64) }),
       closeVault: vi.fn(),
       vacuumVault: vi.fn(),
@@ -406,6 +431,7 @@ describe("canonical application", () => {
       listRemotes: vi.fn(),
       createHostedReplica: vi.fn(),
       materializeHostedReplica: vi.fn(),
+      pullHostedReplicas: vi.fn(),
       capture: vi.fn(),
       closeVault: vi.fn(),
       vacuumVault: vi.fn(),

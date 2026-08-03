@@ -2,6 +2,7 @@ import type { CanonicalApplicationRequest } from "../app/canonical-application";
 import type {
   CanonicalClientLibraryItem,
   CanonicalClientRemoteMaterializationSummary,
+  CanonicalClientRemotePullSummary,
   CanonicalClientRemoteSummary,
   CanonicalClientState,
   CanonicalClientVaultSummary,
@@ -90,6 +91,7 @@ export interface CanonicalPopupApplicationClient extends CanonicalPopupClient {
     readonly expectedVaultId: string;
     readonly remoteId: string;
   }): Promise<CanonicalClientRemoteMaterializationSummary>;
+  pullHostedReplicas(expectedVaultId: string): Promise<readonly CanonicalClientRemotePullSummary[]>;
 }
 
 function plainRecord(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -336,6 +338,29 @@ function decodeHostedReplicaMaterialization(
     retriedCompactItemCount: value.retriedCompactItemCount,
     alreadyConfirmedCompactItemCount: value.alreadyConfirmedCompactItemCount,
   };
+}
+
+function decodeHostedReplicaPull(value: unknown): readonly CanonicalClientRemotePullSummary[] {
+  if (!Array.isArray(value)) throw protocolError();
+  const results = value.map((result) => {
+    if (
+      !plainRecord(result) ||
+      !exactKeys(result, ["remoteId", "status"]) ||
+      !setupId(result.remoteId) ||
+      typeof result.status !== "string" ||
+      !["Disabled", "Failed", "Active", "Completed", "Waiting"].includes(result.status)
+    ) {
+      throw protocolError();
+    }
+    return {
+      remoteId: result.remoteId,
+      status: result.status as CanonicalClientRemotePullSummary["status"],
+    };
+  });
+  if (new Set(results.map(({ remoteId }) => remoteId)).size !== results.length) {
+    throw protocolError();
+  }
+  return results;
 }
 
 function decodeVaultCreation(value: unknown): {
@@ -636,6 +661,12 @@ export function createCanonicalPopupApplicationClient(
           expectedVaultId: input.expectedVaultId,
           remoteId: input.remoteId,
         }),
+      );
+    },
+    async pullHostedReplicas(expectedVaultId) {
+      if (!identifier(expectedVaultId)) throw new TypeError("Popup Vault ID is invalid.");
+      return decodeHostedReplicaPull(
+        await transport.request({ type: "PullHostedReplicas", expectedVaultId }),
       );
     },
   };

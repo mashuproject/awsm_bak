@@ -22,6 +22,7 @@ import type {
 import { type CanonicalSearchCoverage, CanonicalSearchService } from "../search/canonical-service";
 import type { CanonicalHostedCompactMaterializationService } from "../synchronization/canonical-hosted-compact-materialization";
 import type { CanonicalHostedReplicaSetupService } from "../synchronization/canonical-hosted-replica-setup";
+import type { CanonicalMultiRemotePullService } from "../synchronization/canonical-multi-remote-pull-service";
 import type { CanonicalReplicaRemoteService } from "../synchronization/canonical-remote-service";
 import type { CanonicalReplicaRemote } from "../synchronization/canonical-state";
 import { type CanonicalForkCeremony, CanonicalForkService } from "../vault/canonical-fork-service";
@@ -57,6 +58,11 @@ export interface CanonicalClientRemoteMaterializationSummary {
   readonly materializedCompactItemCount: number;
   readonly retriedCompactItemCount: number;
   readonly alreadyConfirmedCompactItemCount: number;
+}
+
+export interface CanonicalClientRemotePullSummary {
+  readonly remoteId: string;
+  readonly status: "Disabled" | "Failed" | "Active" | "Completed" | "Waiting";
 }
 
 export interface CanonicalClientState {
@@ -279,6 +285,7 @@ export class CanonicalClientRuntime {
         CanonicalHostedCompactMaterializationService,
         "materialize"
       >;
+      readonly multiRemotePull?: Pick<CanonicalMultiRemotePullService, "pull">;
     } = {},
   ) {}
 
@@ -575,6 +582,23 @@ export class CanonicalClientRuntime {
       vaultId: identifierFromStorageKey("Vault", input.expectedVaultId),
       remoteId: input.remoteId,
     });
+  }
+
+  async pullHostedReplicas(
+    expectedVaultId: string,
+  ): Promise<readonly CanonicalClientRemotePullSummary[]> {
+    await this.assertExpectedVault(expectedVaultId);
+    if (this.remoteManagement.multiRemotePull === undefined) {
+      throw runtimeError(
+        "HOSTED_REPLICA_PULL_UNAVAILABLE",
+        "Hosted Replica checks are unavailable in this Client.",
+      );
+    }
+    return (
+      await this.remoteManagement.multiRemotePull.pull({
+        vaultId: identifierFromStorageKey("Vault", expectedVaultId),
+      })
+    ).map(({ remoteId, status }) => ({ remoteId, status }));
   }
 
   async search(input: {

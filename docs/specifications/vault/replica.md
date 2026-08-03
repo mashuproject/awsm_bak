@@ -105,6 +105,11 @@ sends opaque encrypted Records, Objects, Feature Manifests, and Key Envelopes on
 Artifact wrappers remain on demand. That destination write is not pull synchronization and does
 not establish an origin or prove that the Host retains a complete Vault.
 
+The current popup separately exposes an explicit check of every enabled Hosted Replica. Before it
+starts, the Client validates and requests every selected Host origin in one direct user gesture;
+the receiver-side coordinator then pulls Remotes serially and reports only local operational
+outcomes. This check never turns a Host Wake Hint or automatic retry into a permission prompt.
+
 Synchronization is initiated as a pull by the receiving Client. A Host may send an untrusted Wake
 Hint that causes a Client to pull, but does not push authoritative Vault state. Pull may occur on
 open, explicit refresh, a local schedule, network reconnection, or after a hint. No Remote is an

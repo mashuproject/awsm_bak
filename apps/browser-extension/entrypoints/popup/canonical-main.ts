@@ -6,7 +6,7 @@ import {
 } from "../../src/app/canonical-application-client";
 import {
   firefoxServerPermissionPattern,
-  requestFirefoxSynchronizationPermission,
+  requestFirefoxSynchronizationPermissions,
 } from "../../src/hosts/firefox/synchronization-permission";
 import {
   type CanonicalPopupApplicationClient,
@@ -101,40 +101,45 @@ function action(button: HTMLButtonElement, operation: () => Promise<void>): void
     });
 }
 
-async function requestHostedReplicaPermission(endpoint: string): Promise<void> {
-  let parsed: URL;
+function hostedReplicaOriginPattern(endpoint: string): string {
   try {
-    parsed = new URL(endpoint);
+    const parsed = new URL(endpoint);
+    if (
+      parsed.protocol !== "https:" ||
+      parsed.username.length !== 0 ||
+      parsed.password.length !== 0 ||
+      parsed.search.length !== 0 ||
+      parsed.hash.length !== 0 ||
+      parsed.href !== endpoint
+    ) {
+      throw new TypeError("Hosted Replica endpoint is noncanonical");
+    }
+    return firefoxServerPermissionPattern(endpoint);
   } catch {
     throw new CanonicalApplicationClientError(
       "HOSTED_REPLICA_ENDPOINT_INVALID",
       "Enter a canonical HTTPS Replica Host address.",
     );
   }
-  if (
-    parsed.protocol !== "https:" ||
-    parsed.username.length !== 0 ||
-    parsed.password.length !== 0 ||
-    parsed.search.length !== 0 ||
-    parsed.hash.length !== 0 ||
-    parsed.href !== endpoint
-  ) {
-    throw new CanonicalApplicationClientError(
-      "HOSTED_REPLICA_ENDPOINT_INVALID",
-      "Enter a canonical HTTPS Replica Host address.",
-    );
-  }
-  const originPattern = firefoxServerPermissionPattern(endpoint);
+}
+
+async function requestHostedReplicaPermissions(endpoints: readonly string[]): Promise<void> {
+  const originPatterns = [...new Set(endpoints.map(hostedReplicaOriginPattern))].toSorted();
+  if (originPatterns.length === 0) return;
   const firefox = browser.runtime.getManifest().browser_specific_settings?.gecko !== undefined;
   const granted = firefox
-    ? await requestFirefoxSynchronizationPermission(browser.permissions, originPattern)
-    : await browser.permissions.request({ origins: [originPattern] });
+    ? await requestFirefoxSynchronizationPermissions(browser.permissions, originPatterns)
+    : await browser.permissions.request({ origins: originPatterns });
   if (!granted) {
     throw new CanonicalApplicationClientError(
       "HOST_PERMISSION_DENIED",
       "Allow access to this Replica Host before connecting it.",
     );
   }
+}
+
+async function requestHostedReplicaPermission(endpoint: string): Promise<void> {
+  await requestHostedReplicaPermissions([endpoint]);
 }
 
 function heading(subtitle: string): DocumentFragment {
@@ -526,6 +531,29 @@ function renderHostedReplicas(view: CanonicalPopupView, content: DocumentFragmen
       list.append(item);
     }
     section.append(list);
+  }
+  const enabledRemotes = view.remotes.filter((remote) => remote.enabled);
+  if (enabledRemotes.length > 0) {
+    const pull = element("button", "Check Hosted Replicas") as HTMLButtonElement;
+    pull.type = "button";
+    pull.addEventListener("click", () => {
+      action(pull, async () => {
+        transientError = undefined;
+        await requestHostedReplicaPermissions(enabledRemotes.map((remote) => remote.endpoint));
+        const results = await client.pullHostedReplicas(expectedVaultId);
+        const completed = results.filter((result) => result.status === "Completed").length;
+        const waiting = results.filter((result) => result.status === "Waiting").length;
+        const failed = results.filter((result) => result.status === "Failed").length;
+        announcer.textContent = [
+          `Checked ${results.length} Hosted Replica${results.length === 1 ? "" : "s"}.`,
+          ...(completed === 0 ? [] : [`${completed} completed.`]),
+          ...(waiting === 0 ? [] : [`${waiting} waiting to retry.`]),
+          ...(failed === 0 ? [] : [`${failed} unavailable.`]),
+        ].join(" ");
+        await controller.refresh();
+      });
+    });
+    section.append(pull);
   }
   const connect = element(
     "button",

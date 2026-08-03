@@ -11,6 +11,7 @@ import type { CanonicalLibraryProjectionService } from "../../src/runtime/librar
 import type { CanonicalSearchService } from "../../src/runtime/search/canonical-service";
 import type { CanonicalHostedCompactMaterializationService } from "../../src/runtime/synchronization/canonical-hosted-compact-materialization";
 import type { CanonicalHostedReplicaSetupService } from "../../src/runtime/synchronization/canonical-hosted-replica-setup";
+import type { CanonicalMultiRemotePullService } from "../../src/runtime/synchronization/canonical-multi-remote-pull-service";
 import type { CanonicalReplicaRemoteService } from "../../src/runtime/synchronization/canonical-remote-service";
 import type { CanonicalReplicaRemote } from "../../src/runtime/synchronization/canonical-state";
 import type { CanonicalForkService } from "../../src/runtime/vault/canonical-fork-service";
@@ -28,6 +29,7 @@ function fixture(
       CanonicalHostedCompactMaterializationService,
       "materialize"
     >;
+    readonly multiRemotePull?: Pick<CanonicalMultiRemotePullService, "pull">;
   } = {},
 ) {
   const firstVaultId = randomIdentifier("Vault");
@@ -149,6 +151,23 @@ function fixture(
 }
 
 describe("canonical Client Runtime", () => {
+  it("checks every selected-Vault Hosted Replica through the receiver-side pull coordinator", async () => {
+    const multiRemotePull = {
+      pull: vi.fn().mockResolvedValue([
+        { remoteId: "019fa62e-a653-7f63-b2bf-94e7ed5e46ca", status: "Completed" },
+        { remoteId: "019fa62e-a653-7f63-b2bf-94e7ed5e46cb", status: "Waiting", progress: {} },
+      ]),
+    };
+    const { runtime, firstVaultId: selectedVaultId } = fixture({ multiRemotePull });
+    const expectedVaultId = identifierStorageKey(selectedVaultId);
+
+    await expect(runtime.pullHostedReplicas(expectedVaultId)).resolves.toEqual([
+      { remoteId: "019fa62e-a653-7f63-b2bf-94e7ed5e46ca", status: "Completed" },
+      { remoteId: "019fa62e-a653-7f63-b2bf-94e7ed5e46cb", status: "Waiting" },
+    ]);
+    expect(multiRemotePull.pull).toHaveBeenCalledWith({ vaultId: selectedVaultId });
+  });
+
   it("materializes only the selected Vault's Compact closure to an explicit Remote", async () => {
     const remoteId = "019fa62e-a653-7f63-b2bf-94e7ed5e46ca";
     const hostedCompactMaterializer = {

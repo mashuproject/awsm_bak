@@ -15,7 +15,10 @@ import { CanonicalClientRuntime } from "../runtime/client/canonical-runtime";
 import { CanonicalLibraryProjectionService } from "../runtime/library/canonical-projection";
 import { CanonicalReplayService } from "../runtime/projection/canonical-replay";
 import { CanonicalHostedCompactMaterializationService } from "../runtime/synchronization/canonical-hosted-compact-materialization";
+import { CanonicalHostedPullService } from "../runtime/synchronization/canonical-hosted-pull-service";
 import { CanonicalHostedReplicaSetupService } from "../runtime/synchronization/canonical-hosted-replica-setup";
+import { CanonicalMultiRemotePullService } from "../runtime/synchronization/canonical-multi-remote-pull-service";
+import { CanonicalPullSynchronizationJobService } from "../runtime/synchronization/canonical-pull-synchronization-job-service";
 import { CanonicalRemoteMaterializationLedgerService } from "../runtime/synchronization/canonical-remote-materialization-ledger-service";
 import { CanonicalReplicaRemoteService } from "../runtime/synchronization/canonical-remote-service";
 import { CanonicalVaultService } from "../runtime/vault/canonical-service";
@@ -38,6 +41,7 @@ export interface CanonicalBackgroundApplicationOptions {
     CanonicalHostedCompactMaterializationService,
     "materialize"
   >;
+  readonly multiRemotePull?: Pick<CanonicalMultiRemotePullService, "pull">;
 }
 
 export function createCanonicalBackgroundApplication(
@@ -69,6 +73,7 @@ export function createCanonicalBackgroundApplication(
       ...(input.hostedCompactMaterializer === undefined
         ? {}
         : { hostedCompactMaterializer: input.hostedCompactMaterializer }),
+      ...(input.multiRemotePull === undefined ? {} : { multiRemotePull: input.multiRemotePull }),
     },
   );
   return new CanonicalApplication(
@@ -97,6 +102,15 @@ export function startCanonicalBackground(): void {
     replays: new CanonicalReplayService(vaults),
     ledger: new CanonicalRemoteMaterializationLedgerService(storage, NORMAL_STORAGE_REALM),
   });
+  const hostedPull = new CanonicalHostedPullService({
+    remotes,
+    vaults,
+    jobs: new CanonicalPullSynchronizationJobService(storage, NORMAL_STORAGE_REALM),
+  });
+  const multiRemotePull = new CanonicalMultiRemotePullService({
+    list: remotes.list.bind(remotes),
+    pull: hostedPull.pull.bind(hostedPull),
+  });
   const application = createCanonicalBackgroundApplication({
     vaults,
     artifacts: new CanonicalOpfsArtifactStore(),
@@ -104,6 +118,7 @@ export function startCanonicalBackground(): void {
     remotes,
     hostedReplicaSetup: new CanonicalHostedReplicaSetupService({ remotes }),
     hostedCompactMaterializer,
+    multiRemotePull,
     notifyStateChanged: () =>
       browser.runtime.sendMessage(CANONICAL_APPLICATION_STATE_CHANGED).catch(() => undefined),
   });
