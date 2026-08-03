@@ -58,7 +58,7 @@ RSpec.describe "Plan 16 product site", type: :request do
     expect(response.body).to include(
       "Host-local access and quota records for Hosted Replicas",
       "opaque encrypted item bytes",
-      "other Client installations",
+      "cannot decrypt the items",
       "no analytics"
     )
     expect(response.body).not_to include("Device certificates", "remote embedding endpoint")
