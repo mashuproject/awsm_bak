@@ -612,19 +612,20 @@ async function canonicalHostedPullScenario(): Promise<unknown> {
     });
     const pulled = await new CanonicalHostedPullService({
       remotes: {
-        load: async () => ({
-          remote: {
-            remoteId,
-            vaultId: created.vaultId,
-            name: "Fixture host",
-            endpoint: "https://host.example/",
-            hostedReplicaHandle: id("106"),
-            locatorSalt,
-            enabled: true,
-            inventoryPageSize: 100,
-          },
-          bearerToken: "fixture-channel-token",
-        }),
+        withLoaded: async (_input, operation) =>
+          operation({
+            remote: {
+              remoteId,
+              vaultId: created.vaultId,
+              name: "Fixture host",
+              endpoint: "https://host.example/",
+              hostedReplicaHandle: id("106"),
+              locatorSalt,
+              enabled: true,
+              inventoryPageSize: 100,
+            },
+            bearerToken: "fixture-channel-token",
+          }),
       },
       vaults,
       jobs,
@@ -875,7 +876,7 @@ async function canonicalHostedArtifactHydrationScenario(): Promise<unknown> {
         kind: 5,
         logicalId: artifactId(object),
       });
-      const restartedChannel = await new CanonicalReplicaRemoteService(
+      const restartedRemotes = new CanonicalReplicaRemoteService(
         restartedStorage,
         NORMAL_STORAGE_REALM,
         {
@@ -886,7 +887,11 @@ async function canonicalHostedArtifactHydrationScenario(): Promise<unknown> {
             },
           }),
         },
-      ).load({ vaultId: created.vaultId, remoteId });
+      );
+      const restartedChannel = await restartedRemotes.withLoaded(
+        { vaultId: created.vaultId, remoteId },
+        async (loaded) => loaded,
+      );
       return {
         hydrated:
           hydrated.remoteId === remoteId &&

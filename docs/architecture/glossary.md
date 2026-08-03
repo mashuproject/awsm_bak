@@ -717,6 +717,12 @@ is excluded from newly started materialization, pull, and Artifact-hydration wor
 to cancel work already in flight or changing its Host Account, Channel Authenticator, Grant, or
 stored opaque bytes.
 
+Removing a Replica Remote removes only that Client's local connection. After disclosing pending
+local work, the Client waits for already-started channel work, rejects new channel work, and
+atomically removes the Remote configuration, Channel Authenticator, Remote Materialization Ledger,
+Prepared Data, pull Job, and Quarantine scoped to it. It does not contact a Replica Host, revoke a
+Grant, delete a Hosted Replica, or claim that the Host has retained or discarded any bytes.
+
 ## Remote Materialization Ledger
 
 Installation-wrapped local Execution State for one Replica Remote and protected logical item.

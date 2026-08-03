@@ -68,6 +68,7 @@ type CanonicalPopupVaultScreen =
   | { readonly kind: "HostedMemberRecovery" }
   | { readonly kind: "HostedReplicaSetup" }
   | { readonly kind: "HostedReplicaRename"; readonly remoteId: string }
+  | { readonly kind: "HostedReplicaRetirement"; readonly remoteId: string }
   | { readonly kind: "VacuumConfirmation" }
   | { readonly kind: "ClosureConfirmation" };
 
@@ -607,6 +608,17 @@ function renderHostedReplicas(view: CanonicalPopupView, content: DocumentFragmen
         });
       });
       actions.append(toggle);
+      const retire = element(
+        "button",
+        "Remove Remote from this Client",
+        "canonical-popup__danger",
+      ) as HTMLButtonElement;
+      retire.type = "button";
+      retire.addEventListener("click", () => {
+        vaultScreen = { kind: "HostedReplicaRetirement", remoteId: remote.remoteId };
+        render(view);
+      });
+      actions.append(retire);
       item.append(actions);
       list.append(item);
     }
@@ -707,6 +719,55 @@ function renderHostedReplicaRename(view: CanonicalPopupView, content: DocumentFr
     });
   });
   content.append(form);
+}
+
+function renderHostedReplicaRetirement(view: CanonicalPopupView, content: DocumentFragment): void {
+  const expectedVaultId = view.state.selectedVaultId;
+  const screen = vaultScreen;
+  if (expectedVaultId === undefined || screen.kind !== "HostedReplicaRetirement") {
+    throw new Error("Hosted Replica removal requires a selected Vault.");
+  }
+  const remote = view.remotes.find(({ remoteId }) => remoteId === screen.remoteId);
+  if (remote === undefined) {
+    throw new Error("Hosted Replica is no longer configured on this Client.");
+  }
+  content.append(
+    element(
+      "p",
+      "This only removes this Client’s local connection. It does not contact the Replica Host or delete its stored bytes.",
+      "canonical-popup__warning",
+    ),
+    element(
+      "p",
+      "AWSM removes this Remote’s local channel credential, materialization retry state, pull checkpoints, and untrusted downloaded data. Any channel operation already underway finishes before removal.",
+      "canonical-popup__muted",
+    ),
+  );
+  const actions = element("div", undefined, "canonical-popup__actions");
+  const cancel = element("button", "Cancel Remote removal") as HTMLButtonElement;
+  cancel.type = "button";
+  cancel.addEventListener("click", () => {
+    vaultScreen = { kind: "Settings" };
+    render(view);
+  });
+  const confirm = element(
+    "button",
+    "Remove local Remote",
+    "canonical-popup__danger",
+  ) as HTMLButtonElement;
+  confirm.type = "button";
+  confirm.addEventListener("click", () => {
+    action(confirm, async () => {
+      transientError = undefined;
+      await client.retireRemote({ expectedVaultId, remoteId: remote.remoteId });
+      vaultScreen = { kind: "Settings" };
+      announcer.textContent =
+        "Hosted Replica removed from this Client. The Replica Host was not contacted.";
+      await controller.refresh();
+    });
+  });
+  actions.append(cancel, confirm);
+  content.append(actions);
 }
 
 function renderHostedReplicaSetup(view: CanonicalPopupView, content: DocumentFragment): void {
@@ -1086,6 +1147,8 @@ function popupHeading(presentation: ReturnType<typeof canonicalPopupPresentation
       return "Connect a Hosted Replica";
     case "HostedReplicaRename":
       return "Rename Hosted Replica";
+    case "HostedReplicaRetirement":
+      return "Remove Hosted Replica from this Client";
     case "VacuumConfirmation":
       return "Vacuum this Vault?";
     case "ClosureConfirmation":
@@ -1118,6 +1181,9 @@ function render(view: CanonicalPopupView): void {
     if (vaultScreen.kind === "Fork") renderVaultFork(content, vaultScreen.setup);
     if (vaultScreen.kind === "HostedReplicaSetup") renderHostedReplicaSetup(view, content);
     if (vaultScreen.kind === "HostedReplicaRename") renderHostedReplicaRename(view, content);
+    if (vaultScreen.kind === "HostedReplicaRetirement") {
+      renderHostedReplicaRetirement(view, content);
+    }
     if (vaultScreen.kind === "VacuumConfirmation") renderVacuumConfirmation(view, content);
     if (vaultScreen.kind === "ClosureConfirmation") renderClosureConfirmation(view, content);
   }

@@ -34,19 +34,20 @@ describe("canonical Hosted pull retry", () => {
     let nowMs = 10_000;
     const service = new CanonicalHostedPullService({
       remotes: {
-        load: async () => ({
-          remote: {
-            remoteId: REMOTE_ID,
-            vaultId: VAULT_ID,
-            name: "Host",
-            endpoint: "https://host.example/",
-            hostedReplicaHandle: "019fa62e-a653-7f63-b2bf-94e7ed5e46cc",
-            locatorSalt: new Uint8Array(32).fill(1),
-            enabled: true,
-            inventoryPageSize: 100,
-          },
-          bearerToken: "channel-token",
-        }),
+        withLoaded: async (_input, operation) =>
+          operation({
+            remote: {
+              remoteId: REMOTE_ID,
+              vaultId: VAULT_ID,
+              name: "Host",
+              endpoint: "https://host.example/",
+              hostedReplicaHandle: "019fa62e-a653-7f63-b2bf-94e7ed5e46cc",
+              locatorSalt: new Uint8Array(32).fill(1),
+              enabled: true,
+              inventoryPageSize: 100,
+            },
+            bearerToken: "channel-token",
+          }),
       },
       vaults: {
         hasVerifiedCompactStorageItem: async () => false,

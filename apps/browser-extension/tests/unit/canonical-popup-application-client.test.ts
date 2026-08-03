@@ -192,7 +192,12 @@ describe("canonical popup application client", () => {
       request: vi
         .fn()
         .mockResolvedValueOnce({ ...remote, enabled: true })
-        .mockResolvedValueOnce(remote),
+        .mockResolvedValueOnce(remote)
+        .mockResolvedValueOnce({
+          materializationLedgerCount: 1,
+          pullJobCount: 2,
+          quarantinedItemCount: 3,
+        }),
       subscribe: vi.fn(() => () => undefined),
     };
     const client = createCanonicalPopupApplicationClient(transport);
@@ -212,6 +217,13 @@ describe("canonical popup application client", () => {
         enabled: false,
       }),
     ).resolves.toEqual(remote);
+    await expect(
+      client.retireRemote({ expectedVaultId, remoteId: remote.remoteId }),
+    ).resolves.toEqual({
+      materializationLedgerCount: 1,
+      pullJobCount: 2,
+      quarantinedItemCount: 3,
+    });
     expect(transport.request).toHaveBeenNthCalledWith(1, {
       type: "RenameRemote",
       expectedVaultId,
@@ -223,6 +235,11 @@ describe("canonical popup application client", () => {
       expectedVaultId,
       remoteId: remote.remoteId,
       enabled: false,
+    });
+    expect(transport.request).toHaveBeenNthCalledWith(3, {
+      type: "RetireRemote",
+      expectedVaultId,
+      remoteId: remote.remoteId,
     });
   });
 

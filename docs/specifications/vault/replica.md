@@ -104,13 +104,21 @@ materialization, pull, or Artifact-hydration operation through it; an operation 
 the local update may finish. Resuming restores the same local Remote configuration and Channel
 Authenticator for future operations.
 
-The current popup lists non-secret local Remote summaries, offers local rename and pause/resume,
-and offers setup after an explicit Host-permission gesture. Creating a Hosted Replica does not
-itself synchronize or materialize Vault data. A separate explicit popup action may materialize the
-current Compact closure to one enabled Hosted Replica after the same Host-permission gesture. It
-sends opaque encrypted Records, Objects, Feature Manifests, and Key Envelopes only; Streamable
-Artifact wrappers remain on demand. That destination write is not pull synchronization and does
-not establish an origin or prove that the Host retains a complete Vault.
+A Client MAY explicitly remove a Remote from that Client. After a clear pending-work disclosure, it
+first rejects newly started Remote channel work and lets already-started local work finish. One
+conditional local transaction then removes the Remote configuration and Channel Authenticator along
+with every Remote-scoped materialization ledger, prepared outgoing item, pull Job, and Quarantine
+item. Removal is neither a Host request nor a Grant revocation: it does not delete Host-held bytes,
+change an Account, alter membership, or make any statement about Host retention.
+
+The current popup lists non-secret local Remote summaries, offers local rename, pause/resume, and
+explicit local removal, and offers setup after an explicit Host-permission gesture. Removal asks for
+confirmation and names its local-only boundary; it never requests Host permission. Creating a
+Hosted Replica does not itself synchronize or materialize Vault data. A separate explicit popup
+action may materialize the current Compact closure to one enabled Hosted Replica after the same
+Host-permission gesture. It sends opaque encrypted Records, Objects, Feature Manifests, and Key
+Envelopes only; Streamable Artifact wrappers remain on demand. That destination write is not pull
+synchronization and does not establish an origin or prove that the Host retains a complete Vault.
 
 The current popup separately exposes an explicit check of every enabled Hosted Replica. Before it
 starts, the Client validates and requests every selected Host origin in one direct user gesture;

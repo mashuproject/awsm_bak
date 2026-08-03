@@ -84,7 +84,7 @@ function contentBranchRoots(
 export class CanonicalHostedPullService {
   constructor(
     private readonly dependencies: {
-      readonly remotes: Pick<CanonicalReplicaRemoteService, "load">;
+      readonly remotes: Pick<CanonicalReplicaRemoteService, "withLoaded">;
       readonly vaults: VaultPort;
       readonly jobs: PullJobPort;
       readonly createHttp?: (input: {
@@ -101,98 +101,101 @@ export class CanonicalHostedPullService {
     readonly remoteId: string;
     readonly force?: boolean;
   }): Promise<CanonicalPullSynchronizationJob> {
-    const { remote, bearerToken } = await this.dependencies.remotes.load(input);
-    if (!remote.enabled) throw new TypeError("Cannot pull from a disabled Replica Remote");
-    if (remote.remoteId !== input.remoteId || !bytesEqual(remote.vaultId, input.vaultId)) {
-      throw new TypeError("Configured Replica Remote does not match the requested Vault");
-    }
-    let job =
-      (await this.dependencies.jobs.findActive(input)) ??
-      (await this.dependencies.jobs.create({ vaultId: input.vaultId, remoteId: input.remoteId }));
-    const nowMs = this.dependencies.now?.() ?? Date.now();
-    const resumed = resumeCanonicalPullRetry({
-      job,
-      nowMs,
-      force: input.force ?? false,
-    });
-    if (resumed !== job) {
-      await this.dependencies.jobs.checkpoint({ previous: job, next: resumed });
-      job = resumed;
-    }
-    if (job.state !== 1) return job;
-    if (job.stage === 1) {
-      const http =
-        this.dependencies.createHttp?.({ endpoint: remote.endpoint, bearerToken }) ??
-        new CanonicalHostedReplicaHttp({ endpoint: remote.endpoint, bearerToken });
-      try {
-        job = await new CanonicalPullInventoryRunner({
-          inventory: http.inventory.bind(http),
-          item: http.item.bind(http),
-          checkpoint: this.dependencies.jobs.checkpoint.bind(this.dependencies.jobs),
-          recordQuarantine: this.dependencies.jobs.recordQuarantine.bind(this.dependencies.jobs),
-          hasStoredStorageItem: (storageItemId) =>
-            this.dependencies.vaults.hasVerifiedCompactStorageItem({
-              vaultId: input.vaultId,
-              storageItemId,
-            }),
-        }).run({ remote, job });
-      } catch (error) {
-        const hostRetryAfterMs = retryableHostDelay(error);
-        if (hostRetryAfterMs === undefined) throw error;
-        const next = nextCanonicalPullRetry({
-          previous: job,
-          nowMs,
-          random: this.dependencies.random ?? Math.random,
-          hostRetryAfterMs,
-        });
-        await this.dependencies.jobs.checkpoint({ previous: job, next });
-        return next;
+    return this.dependencies.remotes.withLoaded(input, async ({ remote, bearerToken }) => {
+      if (!remote.enabled) throw new TypeError("Cannot pull from a disabled Replica Remote");
+      if (remote.remoteId !== input.remoteId || !bytesEqual(remote.vaultId, input.vaultId)) {
+        throw new TypeError("Configured Replica Remote does not match the requested Vault");
       }
-    }
-    if (job.stage !== 2 || job.state !== 1) return job;
-
-    const initialVault = await this.dependencies.vaults.openVault(input.vaultId);
-    const epochSecrets = await this.dependencies.vaults.listEpochSecrets(initialVault);
-    try {
-      const validated = await new CanonicalPullValidationRunner({
-        readQuarantine: this.dependencies.jobs.readQuarantine.bind(this.dependencies.jobs),
-      }).run({ remote, job, epochSecrets });
-      const rootRecordIds = contentBranchRoots(validated.candidates);
-      if (rootRecordIds.length === 0) {
-        return job.quarantineReferences.length === 0
-          ? this.dependencies.jobs.completeValidation(job)
-          : job;
+      let job =
+        (await this.dependencies.jobs.findActive(input)) ??
+        (await this.dependencies.jobs.create({ vaultId: input.vaultId, remoteId: input.remoteId }));
+      const nowMs = this.dependencies.now?.() ?? Date.now();
+      const resumed = resumeCanonicalPullRetry({
+        job,
+        nowMs,
+        force: input.force ?? false,
+      });
+      if (resumed !== job) {
+        await this.dependencies.jobs.checkpoint({ previous: job, next: resumed });
+        job = resumed;
       }
-      let result = job;
-      for (const rootRecordId of rootRecordIds) {
-        const vault = await this.dependencies.vaults.openVault(input.vaultId);
-        let contentValidation: CanonicalPullContentValidation;
+      if (job.state !== 1) return job;
+      if (job.stage === 1) {
+        const http =
+          this.dependencies.createHttp?.({ endpoint: remote.endpoint, bearerToken }) ??
+          new CanonicalHostedReplicaHttp({ endpoint: remote.endpoint, bearerToken });
         try {
-          contentValidation = await new CanonicalPullContentValidationService(
-            new CanonicalReplayService(this.dependencies.vaults as never),
-            { readQuarantine: this.dependencies.jobs.readQuarantine.bind(this.dependencies.jobs) },
-          ).validate({
-            remoteId: remote.remoteId,
-            vault,
-            candidates: validated.candidates,
-            rootRecordIds: [rootRecordId],
-          });
+          job = await new CanonicalPullInventoryRunner({
+            inventory: http.inventory.bind(http),
+            item: http.item.bind(http),
+            checkpoint: this.dependencies.jobs.checkpoint.bind(this.dependencies.jobs),
+            recordQuarantine: this.dependencies.jobs.recordQuarantine.bind(this.dependencies.jobs),
+            hasStoredStorageItem: (storageItemId) =>
+              this.dependencies.vaults.hasVerifiedCompactStorageItem({
+                vaultId: input.vaultId,
+                storageItemId,
+              }),
+          }).run({ remote, job });
         } catch (error) {
-          if (error instanceof TypeError) continue;
-          throw error;
+          const hostRetryAfterMs = retryableHostDelay(error);
+          if (hostRetryAfterMs === undefined) throw error;
+          const next = nextCanonicalPullRetry({
+            previous: job,
+            nowMs,
+            random: this.dependencies.random ?? Math.random,
+            hostRetryAfterMs,
+          });
+          await this.dependencies.jobs.checkpoint({ previous: job, next });
+          return next;
         }
-        if (contentValidation.acceptedCandidates.length === 0) continue;
-        result = await new CanonicalPullContentPromotionService(this.dependencies.jobs).promote({
-          vault,
-          previous: result,
-          validation: contentValidation,
-          readQuarantine: this.dependencies.jobs.readQuarantine.bind(this.dependencies.jobs),
-        });
-        if (result.stage !== 2 || result.state !== 1) break;
       }
-      return result;
-    } finally {
-      await Promise.all(epochSecrets.map(({ key }) => wipe(key)));
-    }
+      if (job.stage !== 2 || job.state !== 1) return job;
+
+      const initialVault = await this.dependencies.vaults.openVault(input.vaultId);
+      const epochSecrets = await this.dependencies.vaults.listEpochSecrets(initialVault);
+      try {
+        const validated = await new CanonicalPullValidationRunner({
+          readQuarantine: this.dependencies.jobs.readQuarantine.bind(this.dependencies.jobs),
+        }).run({ remote, job, epochSecrets });
+        const rootRecordIds = contentBranchRoots(validated.candidates);
+        if (rootRecordIds.length === 0) {
+          return job.quarantineReferences.length === 0
+            ? this.dependencies.jobs.completeValidation(job)
+            : job;
+        }
+        let result = job;
+        for (const rootRecordId of rootRecordIds) {
+          const vault = await this.dependencies.vaults.openVault(input.vaultId);
+          let contentValidation: CanonicalPullContentValidation;
+          try {
+            contentValidation = await new CanonicalPullContentValidationService(
+              new CanonicalReplayService(this.dependencies.vaults as never),
+              {
+                readQuarantine: this.dependencies.jobs.readQuarantine.bind(this.dependencies.jobs),
+              },
+            ).validate({
+              remoteId: remote.remoteId,
+              vault,
+              candidates: validated.candidates,
+              rootRecordIds: [rootRecordId],
+            });
+          } catch (error) {
+            if (error instanceof TypeError) continue;
+            throw error;
+          }
+          if (contentValidation.acceptedCandidates.length === 0) continue;
+          result = await new CanonicalPullContentPromotionService(this.dependencies.jobs).promote({
+            vault,
+            previous: result,
+            validation: contentValidation,
+            readQuarantine: this.dependencies.jobs.readQuarantine.bind(this.dependencies.jobs),
+          });
+          if (result.stage !== 2 || result.state !== 1) break;
+        }
+        return result;
+      } finally {
+        await Promise.all(epochSecrets.map(({ key }) => wipe(key)));
+      }
+    });
   }
 }

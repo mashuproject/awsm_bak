@@ -166,19 +166,20 @@ describe("canonical Hosted pull service", () => {
     const promoted: unknown[] = [];
     const service = new CanonicalHostedPullService({
       remotes: {
-        load: async () => ({
-          remote: {
-            remoteId: REMOTE_ID,
-            vaultId: creation.ids.vaultId,
-            name: "Host",
-            endpoint: "https://host.example/",
-            hostedReplicaHandle: "019fa62e-a653-7f63-b2bf-94e7ed5e46cc",
-            locatorSalt: LOCATOR_SALT,
-            enabled: true,
-            inventoryPageSize: 100,
-          },
-          bearerToken: "channel-token",
-        }),
+        withLoaded: async (_input, operation) =>
+          operation({
+            remote: {
+              remoteId: REMOTE_ID,
+              vaultId: creation.ids.vaultId,
+              name: "Host",
+              endpoint: "https://host.example/",
+              hostedReplicaHandle: "019fa62e-a653-7f63-b2bf-94e7ed5e46cc",
+              locatorSalt: LOCATOR_SALT,
+              enabled: true,
+              inventoryPageSize: 100,
+            },
+            bearerToken: "channel-token",
+          }),
       },
       vaults: local,
       jobs: {

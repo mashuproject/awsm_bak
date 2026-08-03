@@ -71,6 +71,9 @@ At least two independent Client implementations or profiles and two isolated Hos
 - pull-only discovery, duplicate/delayed/lost Wake Hints, and cursor reset;
 - randomized destination rewrapping and exact-byte mirror correlation;
 - immutable admission, ambiguous retry, range reads, resume, quotas, and races;
+- explicit local Remote retirement: atomic credential/configuration and pending-work cleanup,
+  in-flight channel fencing, no Host request, live multi-surface update, and retained Host bytes
+  recoverable by another Client;
 - Accounts and other Channel Principals separated from Vault members;
 - several Accounts granted to one Hosted Replica and one Account granted to several;
 - a local peer or headless Host with no Account model;

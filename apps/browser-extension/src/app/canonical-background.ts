@@ -39,7 +39,7 @@ export interface CanonicalBackgroundApplicationOptions {
   readonly createCaptureCommandId?: () => string;
   readonly notifyStateChanged?: () => void | Promise<void>;
   readonly remotes?: Pick<CanonicalReplicaRemoteService, "list"> &
-    Partial<Pick<CanonicalReplicaRemoteService, "update">>;
+    Partial<Pick<CanonicalReplicaRemoteService, "update" | "retire">>;
   readonly hostedReplicaSetup?: Pick<CanonicalHostedReplicaSetupService, "create">;
   readonly hostedCompactMaterializer?: Pick<
     CanonicalHostedCompactMaterializationService,

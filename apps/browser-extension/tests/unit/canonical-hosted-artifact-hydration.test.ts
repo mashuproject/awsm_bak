@@ -260,11 +260,11 @@ describe("canonical Hosted Artifact hydration", () => {
     const service = new CanonicalHostedArtifactHydrationService({
       remotes: {
         list: async () => [expectedRemote, corruptRemote, unavailableRemote, inaccessibleRemote],
-        load: async ({ remoteId }) => {
+        withLoaded: async ({ remoteId }, operation) => {
           if (remoteId === inaccessibleRemote.remoteId) {
             throw new TypeError("Remote channel is unavailable");
           }
-          return {
+          return operation({
             remote:
               remoteId === unavailableRemote.remoteId
                 ? unavailableRemote
@@ -272,7 +272,7 @@ describe("canonical Hosted Artifact hydration", () => {
                   ? corruptRemote
                   : expectedRemote,
             bearerToken: "channel-token",
-          };
+          });
         },
       },
       vaults: {

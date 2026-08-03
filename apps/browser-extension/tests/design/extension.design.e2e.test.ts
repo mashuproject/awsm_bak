@@ -188,6 +188,28 @@ test("renders the canonical local-Vault and Library surfaces", async ({
       mask: [popup.getByText(proxy.endpoint, { exact: true })],
     });
 
+    await popup.getByRole("button", { name: "Remove Remote from this Client" }).click();
+    await expect(
+      popup.getByRole("heading", { name: "Remove Hosted Replica from this Client" }),
+    ).toBeVisible();
+    await expect(
+      popup.getByText(
+        "This only removes this Client’s local connection. It does not contact the Replica Host or delete its stored bytes.",
+      ),
+    ).toBeVisible();
+    await assertInteractiveTargets(popup);
+    await expectReadableContrast(popup);
+    await expect(popup).toHaveScreenshot("popup-hosted-replica-retirement.png", { fullPage: true });
+    await popup.setViewportSize({ width: 360, height: 700 });
+    await assertInteractiveTargets(popup);
+    await expectReadableContrast(popup);
+    await expect(popup).toHaveScreenshot("popup-hosted-replica-retirement-narrow.png", {
+      fullPage: true,
+    });
+    await popup.setViewportSize({ width: 400, height: 700 });
+    await popup.getByRole("button", { name: "Cancel Remote removal" }).click();
+    await expect(popup.getByRole("heading", { name: "Vault settings" })).toBeVisible();
+
     await popup.getByRole("button", { name: "Rename Hosted Replica" }).click();
     await expect(popup.getByRole("heading", { name: "Rename Hosted Replica" })).toBeVisible();
     await expect(popup.getByLabel("Connection name")).toHaveValue("Design archive");

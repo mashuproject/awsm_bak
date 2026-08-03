@@ -71,10 +71,13 @@ type VaultPort = {
 
 type RemotePort = {
   list(vaultId: Identifier<"Vault">): Promise<readonly CanonicalReplicaRemote[]>;
-  load(input: {
-    readonly vaultId: Identifier<"Vault">;
-    readonly remoteId: string;
-  }): Promise<{ readonly remote: CanonicalReplicaRemote; readonly bearerToken: string }>;
+  withLoaded<T>(
+    input: { readonly vaultId: Identifier<"Vault">; readonly remoteId: string },
+    operation: (loaded: {
+      readonly remote: CanonicalReplicaRemote;
+      readonly bearerToken: string;
+    }) => Promise<T>,
+  ): Promise<T>;
 };
 
 type HttpPort = Pick<CanonicalHostedReplicaHttp, "inventory" | "item">;
@@ -304,87 +307,102 @@ export class CanonicalHostedArtifactHydrationService {
         left.remoteId.localeCompare(right.remoteId),
       )) {
         if (!configured.enabled) continue;
-        let loaded: { readonly remote: CanonicalReplicaRemote; readonly bearerToken: string };
+        let operationStarted = false;
+        let hydrated:
+          | {
+              readonly artifactId: Identifier<"Artifact">;
+              readonly storageItemId: Identifier<"StorageItem">;
+              readonly remoteId: string;
+            }
+          | undefined;
         try {
-          loaded = await this.dependencies.remotes.load({
-            vaultId: input.vaultId,
-            remoteId: configured.remoteId,
-          });
-        } catch {
-          // A locally unavailable channel must not prevent another configured Remote from serving the Artifact.
-          continue;
-        }
-        const { remote, bearerToken } = loaded;
-        if (
-          !bytesEqual(remote.vaultId, input.vaultId) ||
-          remote.remoteId !== configured.remoteId ||
-          remote.endpoint !== configured.endpoint ||
-          remote.hostedReplicaHandle !== configured.hostedReplicaHandle ||
-          !bytesEqual(remote.locatorSalt, configured.locatorSalt) ||
-          remote.enabled !== configured.enabled ||
-          remote.inventoryPageSize !== configured.inventoryPageSize
-        ) {
-          throw new TypeError(
-            "Loaded Replica Remote does not match Artifact hydration configuration",
-          );
-        }
-        let http: HttpPort;
-        let candidates: readonly CanonicalOpaqueInventoryItem[];
-        try {
-          http =
-            this.dependencies.createHttp?.({ endpoint: remote.endpoint, bearerToken }) ??
-            new CanonicalHostedReplicaHttp({ endpoint: remote.endpoint, bearerToken });
-          candidates = await artifactCandidates({ http, remote, artifactId: input.artifactId });
-        } catch {
-          // An unavailable or malformed Remote must not prevent another configured Remote from serving the Artifact.
-          continue;
-        }
-        for (const candidate of candidates) {
-          const downloaded = await downloadVerifiedArtifactCandidate({
-            artifacts: this.dependencies.artifacts,
-            http,
-            remote,
-            candidate,
-            artifactId: input.artifactId,
-            object,
-            epochs,
-          });
-          if (downloaded === undefined) continue;
-          const resolution: ArtifactResolution = {
-            vaultId: input.vaultId,
-            kind: 5,
-            logicalId: input.artifactId,
-            storageItemId: downloaded.storageItemId,
-            keyEpochId: downloaded.epoch.keyEpochId,
-            availability: 1,
-          };
-          const nextResolution = await prepareWrappedLocalStateItem({
-            ...item,
-            wrappingKey: vault.installationWrappingKey,
-            domain: "awsm.local.logical-resolution",
-            context: canonicalLocalStorageContext(input.vaultId, input.artifactId),
-            bytes: encodeLogicalResolution(resolution),
-          });
-          await this.dependencies.vaults.storage.commitReplicaMutation({
-            realm: this.dependencies.vaults.realm,
-            expectedReplicaState: vault.replicaStateStorageBytes,
-            ...(existingBytes === undefined
-              ? { expectedAbsentItems: [item] }
-              : { expectedMutableItems: [{ ...item, bytes: existingBytes }] }),
-            nextReplicaState: {
-              namespace: NAMESPACES.replicaState.key,
-              scopeKey: identifierStorageKey(input.vaultId),
-              itemKey: "current",
-              bytes: vault.replicaStateStorageBytes,
+          hydrated = await this.dependencies.remotes.withLoaded(
+            { vaultId: input.vaultId, remoteId: configured.remoteId },
+            async ({ remote, bearerToken }) => {
+              operationStarted = true;
+              if (
+                !bytesEqual(remote.vaultId, input.vaultId) ||
+                remote.remoteId !== configured.remoteId ||
+                remote.endpoint !== configured.endpoint ||
+                remote.hostedReplicaHandle !== configured.hostedReplicaHandle ||
+                !bytesEqual(remote.locatorSalt, configured.locatorSalt) ||
+                remote.enabled !== configured.enabled ||
+                remote.inventoryPageSize !== configured.inventoryPageSize
+              ) {
+                throw new TypeError(
+                  "Loaded Replica Remote does not match Artifact hydration configuration",
+                );
+              }
+              let http: HttpPort;
+              let candidates: readonly CanonicalOpaqueInventoryItem[];
+              try {
+                http =
+                  this.dependencies.createHttp?.({ endpoint: remote.endpoint, bearerToken }) ??
+                  new CanonicalHostedReplicaHttp({ endpoint: remote.endpoint, bearerToken });
+                candidates = await artifactCandidates({
+                  http,
+                  remote,
+                  artifactId: input.artifactId,
+                });
+              } catch {
+                // An unavailable or malformed Remote must not prevent another configured Remote from serving the Artifact.
+                return undefined;
+              }
+              for (const candidate of candidates) {
+                const downloaded = await downloadVerifiedArtifactCandidate({
+                  artifacts: this.dependencies.artifacts,
+                  http,
+                  remote,
+                  candidate,
+                  artifactId: input.artifactId,
+                  object,
+                  epochs,
+                });
+                if (downloaded === undefined) continue;
+                const resolution: ArtifactResolution = {
+                  vaultId: input.vaultId,
+                  kind: 5,
+                  logicalId: input.artifactId,
+                  storageItemId: downloaded.storageItemId,
+                  keyEpochId: downloaded.epoch.keyEpochId,
+                  availability: 1,
+                };
+                const nextResolution = await prepareWrappedLocalStateItem({
+                  ...item,
+                  wrappingKey: vault.installationWrappingKey,
+                  domain: "awsm.local.logical-resolution",
+                  context: canonicalLocalStorageContext(input.vaultId, input.artifactId),
+                  bytes: encodeLogicalResolution(resolution),
+                });
+                await this.dependencies.vaults.storage.commitReplicaMutation({
+                  realm: this.dependencies.vaults.realm,
+                  expectedReplicaState: vault.replicaStateStorageBytes,
+                  ...(existingBytes === undefined
+                    ? { expectedAbsentItems: [item] }
+                    : { expectedMutableItems: [{ ...item, bytes: existingBytes }] }),
+                  nextReplicaState: {
+                    namespace: NAMESPACES.replicaState.key,
+                    scopeKey: identifierStorageKey(input.vaultId),
+                    itemKey: "current",
+                    bytes: vault.replicaStateStorageBytes,
+                  },
+                  mutableItems: [nextResolution],
+                });
+                return {
+                  artifactId: input.artifactId,
+                  storageItemId: downloaded.storageItemId,
+                  remoteId: remote.remoteId,
+                };
+              }
+              return undefined;
             },
-            mutableItems: [nextResolution],
-          });
-          return {
-            artifactId: input.artifactId,
-            storageItemId: downloaded.storageItemId,
-            remoteId: remote.remoteId,
-          };
+          );
+        } catch (error) {
+          // A locally unavailable channel must not prevent another configured Remote from serving the Artifact.
+          if (operationStarted) throw error;
+          continue;
         }
+        if (hydrated !== undefined) return hydrated;
       }
       throw Object.assign(new Error("No configured Replica Host could supply this Capture."), {
         id: "ARTIFACT_REMOTE_UNAVAILABLE",

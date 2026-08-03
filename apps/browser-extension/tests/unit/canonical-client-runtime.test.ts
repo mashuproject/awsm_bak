@@ -233,6 +233,11 @@ describe("canonical Client Runtime", () => {
         ...(input.name === undefined ? {} : { name: input.name }),
         ...(input.enabled === undefined ? {} : { enabled: input.enabled }),
       })),
+      retire: vi.fn(async () => ({
+        materializationLedgerCount: 1,
+        pullJobCount: 2,
+        quarantinedItemCount: 3,
+      })),
     };
     const hostedReplicaSetup = { create: vi.fn(async () => configured) };
     const { runtime, firstVaultId: selectedVaultId } = fixture({ remotes, hostedReplicaSetup });
@@ -311,6 +316,17 @@ describe("canonical Client Runtime", () => {
       vaultId: selectedVaultId,
       remoteId: configured.remoteId,
       enabled: false,
+    });
+    await expect(
+      runtime.retireRemote({ expectedVaultId, remoteId: configured.remoteId }),
+    ).resolves.toEqual({
+      materializationLedgerCount: 1,
+      pullJobCount: 2,
+      quarantinedItemCount: 3,
+    });
+    expect(remotes.retire).toHaveBeenCalledWith({
+      vaultId: selectedVaultId,
+      remoteId: configured.remoteId,
     });
   });
 

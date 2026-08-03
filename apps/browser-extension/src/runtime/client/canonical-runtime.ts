@@ -25,7 +25,10 @@ import type { CanonicalHostedCompactMaterializationService } from "../synchroniz
 import type { CanonicalHostedMemberRecoveryService } from "../synchronization/canonical-hosted-member-recovery";
 import type { CanonicalHostedReplicaSetupService } from "../synchronization/canonical-hosted-replica-setup";
 import type { CanonicalMultiRemotePullService } from "../synchronization/canonical-multi-remote-pull-service";
-import type { CanonicalReplicaRemoteService } from "../synchronization/canonical-remote-service";
+import type {
+  CanonicalRemoteRetirementSummary,
+  CanonicalReplicaRemoteService,
+} from "../synchronization/canonical-remote-service";
 import type { CanonicalReplicaRemote } from "../synchronization/canonical-state";
 import { type CanonicalForkCeremony, CanonicalForkService } from "../vault/canonical-fork-service";
 import { CanonicalLifecycleService } from "../vault/canonical-lifecycle-service";
@@ -66,6 +69,8 @@ export interface CanonicalClientRemotePullSummary {
   readonly remoteId: string;
   readonly status: "Disabled" | "Failed" | "Active" | "Completed" | "Waiting";
 }
+
+export interface CanonicalClientRemoteRetirementSummary extends CanonicalRemoteRetirementSummary {}
 
 export interface CanonicalClientArtifactHydrationSummary {
   readonly artifactId: string;
@@ -288,7 +293,7 @@ export class CanonicalClientRuntime {
     > = new CanonicalRecoveryReplacementService(vaults),
     private readonly remoteManagement: {
       readonly remotes?: Pick<CanonicalReplicaRemoteService, "list"> &
-        Partial<Pick<CanonicalReplicaRemoteService, "update">>;
+        Partial<Pick<CanonicalReplicaRemoteService, "update" | "retire">>;
       readonly hostedReplicaSetup?: Pick<CanonicalHostedReplicaSetupService, "create">;
       readonly hostedCompactMaterializer?: Pick<
         CanonicalHostedCompactMaterializationService,
@@ -595,6 +600,23 @@ export class CanonicalClientRuntime {
     readonly enabled: boolean;
   }): Promise<CanonicalClientRemoteSummary> {
     return this.updateRemote(input, { enabled: input.enabled });
+  }
+
+  async retireRemote(input: {
+    readonly expectedVaultId: string;
+    readonly remoteId: string;
+  }): Promise<CanonicalClientRemoteRetirementSummary> {
+    await this.assertExpectedVault(input.expectedVaultId);
+    if (this.remoteManagement.remotes?.retire === undefined) {
+      throw runtimeError(
+        "REMOTE_MANAGEMENT_UNAVAILABLE",
+        "Remote management is unavailable in this Client.",
+      );
+    }
+    return this.remoteManagement.remotes.retire({
+      vaultId: identifierFromStorageKey("Vault", input.expectedVaultId),
+      remoteId: input.remoteId,
+    });
   }
 
   private async updateRemote(

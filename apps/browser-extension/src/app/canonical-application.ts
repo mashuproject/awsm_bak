@@ -67,6 +67,11 @@ export type CanonicalApplicationRequest =
       readonly enabled: boolean;
     }
   | {
+      readonly type: "RetireRemote";
+      readonly expectedVaultId: string;
+      readonly remoteId: string;
+    }
+  | {
       readonly type: "CreateHostedReplica";
       readonly expectedVaultId: string;
       readonly endpoint: string;
@@ -108,6 +113,7 @@ type CanonicalApplicationRuntime = Pick<
   | "listRemotes"
   | "renameRemote"
   | "setRemoteEnabled"
+  | "retireRemote"
   | "createHostedReplica"
   | "materializeHostedReplica"
   | "pullHostedReplicas"
@@ -327,6 +333,19 @@ export function decodeCanonicalApplicationRequest(value: unknown): CanonicalAppl
         };
       }
       break;
+    case "RetireRemote":
+      if (
+        exactKeys(value, ["type", "expectedVaultId", "remoteId"]) &&
+        text(value.expectedVaultId) &&
+        text(value.remoteId)
+      ) {
+        return {
+          type: value.type,
+          expectedVaultId: value.expectedVaultId,
+          remoteId: value.remoteId,
+        };
+      }
+      break;
     case "CreateHostedReplica":
       if (
         exactKeys(value, ["type", "expectedVaultId", "endpoint", "name", "username", "password"]) &&
@@ -518,6 +537,10 @@ export class CanonicalApplication {
       case "SetRemoteEnabled": {
         const { type: _type, ...input } = request;
         return this.mutate(() => this.runtime.setRemoteEnabled(input));
+      }
+      case "RetireRemote": {
+        const { type: _type, ...input } = request;
+        return this.mutate(() => this.runtime.retireRemote(input));
       }
       case "CreateHostedReplica": {
         const { type: _type, ...input } = request;

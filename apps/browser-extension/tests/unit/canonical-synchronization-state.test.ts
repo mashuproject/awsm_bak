@@ -367,6 +367,258 @@ describe("canonical synchronization state", () => {
     ]);
   });
 
+  it("retires one local Remote and its channel credential in one atomic local commit", async () => {
+    const key = await crypto.subtle.generateKey({ name: "AES-KW", length: 256 }, false, [
+      "wrapKey",
+      "unwrapKey",
+    ]);
+    const commits: unknown[] = [];
+    const stored = new Map<string, Uint8Array>();
+    const storageKey = (namespace: string, scopeKey: string, itemKey: string) =>
+      `${namespace}\u0000${scopeKey}\u0000${itemKey}`;
+    const storage = {
+      getOrCreateInstallationWrappingKey: async () => key,
+      getBytes: async (
+        _realm: unknown,
+        item: { readonly namespace: string; readonly scopeKey: string; readonly itemKey: string },
+      ) => stored.get(storageKey(item.namespace, item.scopeKey, item.itemKey)),
+      listBytes: async (_realm: unknown, namespace: string, scopeKey: string) =>
+        [...stored.entries()]
+          .map(([key, bytes]) => {
+            const [storedNamespace, storedScopeKey, itemKey] = key.split("\u0000");
+            return { storedNamespace, storedScopeKey, itemKey, bytes };
+          })
+          .filter(
+            ({ storedNamespace, storedScopeKey }) =>
+              storedNamespace === namespace && storedScopeKey === scopeKey,
+          )
+          .map(({ itemKey, bytes }) => ({
+            realmKey: "Normal:default",
+            namespace,
+            scopeKey,
+            itemKey,
+            bytes,
+          })),
+      commitInstallationMutation: async (commit: {
+        readonly mutableItems?: readonly {
+          readonly namespace: string;
+          readonly scopeKey: string;
+          readonly itemKey: string;
+          readonly bytes: Uint8Array;
+        }[];
+      }) => {
+        for (const item of commit.mutableItems ?? []) {
+          stored.set(storageKey(item.namespace, item.scopeKey, item.itemKey), item.bytes);
+        }
+      },
+      commitRemoteRetirement: async (commit: {
+        readonly deletedItems: readonly {
+          readonly namespace: string;
+          readonly scopeKey: string;
+          readonly itemKey: string;
+        }[];
+      }) => {
+        commits.push(commit);
+        for (const item of commit.deletedItems) {
+          stored.delete(storageKey(item.namespace, item.scopeKey, item.itemKey));
+        }
+      },
+    };
+    const service = new CanonicalReplicaRemoteService(
+      storage as unknown as ConstructorParameters<typeof CanonicalReplicaRemoteService>[0],
+      NORMAL_STORAGE_REALM,
+    );
+    const value = remote();
+
+    await service.configure({ remote: value, bearerToken: "opaque-bearer-token" });
+    const ledger = materializationLedger();
+    const quarantine = job().quarantineReferences[0];
+    if (quarantine === undefined) throw new TypeError("fixture Job needs one quarantine reference");
+    stored.set(
+      storageKey(
+        NAMESPACES.remoteMaterializationLedger.key,
+        value.remoteId,
+        `${ledger.logicalNamespace}:${identifierStorageKey(filled("VaultRecord", 2))}`,
+      ),
+      new Uint8Array([1]),
+    );
+    stored.set(
+      storageKey(
+        NAMESPACES.preparedOutgoingItem.key,
+        value.remoteId,
+        identifierStorageKey(ledger.storageItemId),
+      ),
+      new Uint8Array([2]),
+    );
+    stored.set(
+      storageKey(
+        NAMESPACES.incomingQuarantine.key,
+        value.remoteId,
+        identifierStorageKey(quarantine.storageItemId),
+      ),
+      new Uint8Array([3]),
+    );
+    const pullJob = job();
+    stored.set(
+      storageKey(
+        NAMESPACES.pullSynchronizationJob.key,
+        identifierStorageKey(value.vaultId),
+        pullJob.jobId,
+      ),
+      encodeCanonicalPullSynchronizationJob(pullJob),
+    );
+
+    await expect(
+      service.retire({ vaultId: value.vaultId, remoteId: value.remoteId }),
+    ).resolves.toEqual({
+      materializationLedgerCount: 1,
+      pullJobCount: 1,
+      quarantinedItemCount: 1,
+    });
+
+    expect(commits).toEqual([
+      expect.objectContaining({
+        realm: NORMAL_STORAGE_REALM,
+        vaultId: value.vaultId,
+        remoteId: value.remoteId,
+      }),
+    ]);
+    const retirement = commits[0] as {
+      readonly deletedItems: readonly {
+        readonly namespace: string;
+        readonly scopeKey: string;
+        readonly itemKey: string;
+      }[];
+    };
+    expect(retirement.deletedItems).toEqual(
+      expect.arrayContaining([
+        {
+          namespace: NAMESPACES.replicaRemote.key,
+          scopeKey: identifierStorageKey(value.vaultId),
+          itemKey: value.remoteId,
+        },
+        {
+          namespace: NAMESPACES.remoteChannelCredential.key,
+          scopeKey: value.remoteId,
+          itemKey: "bearer",
+        },
+        {
+          namespace: NAMESPACES.remoteMaterializationLedger.key,
+          scopeKey: value.remoteId,
+          itemKey: `${ledger.logicalNamespace}:${identifierStorageKey(filled("VaultRecord", 2))}`,
+        },
+        {
+          namespace: NAMESPACES.preparedOutgoingItem.key,
+          scopeKey: value.remoteId,
+          itemKey: identifierStorageKey(ledger.storageItemId),
+        },
+        {
+          namespace: NAMESPACES.incomingQuarantine.key,
+          scopeKey: value.remoteId,
+          itemKey: identifierStorageKey(quarantine.storageItemId),
+        },
+        {
+          namespace: NAMESPACES.pullSynchronizationJob.key,
+          scopeKey: identifierStorageKey(value.vaultId),
+          itemKey: pullJob.jobId,
+        },
+      ]),
+    );
+    await expect(service.list(value.vaultId)).resolves.toEqual([]);
+  });
+
+  it("waits for local channel work before retirement and rejects a new channel use", async () => {
+    const key = await crypto.subtle.generateKey({ name: "AES-KW", length: 256 }, false, [
+      "wrapKey",
+      "unwrapKey",
+    ]);
+    const stored = new Map<string, Uint8Array>();
+    const storageKey = (namespace: string, scopeKey: string, itemKey: string) =>
+      `${namespace}\u0000${scopeKey}\u0000${itemKey}`;
+    const storage = {
+      getOrCreateInstallationWrappingKey: async () => key,
+      getBytes: async (
+        _realm: unknown,
+        item: { readonly namespace: string; readonly scopeKey: string; readonly itemKey: string },
+      ) => stored.get(storageKey(item.namespace, item.scopeKey, item.itemKey)),
+      listBytes: async (_realm: unknown, namespace: string, scopeKey: string) =>
+        [...stored.entries()]
+          .map(([key, bytes]) => {
+            const [storedNamespace, storedScopeKey, itemKey] = key.split("\u0000");
+            return { storedNamespace, storedScopeKey, itemKey, bytes };
+          })
+          .filter(
+            ({ storedNamespace, storedScopeKey }) =>
+              storedNamespace === namespace && storedScopeKey === scopeKey,
+          )
+          .map(({ itemKey, bytes }) => ({
+            realmKey: "Normal:default",
+            namespace,
+            scopeKey,
+            itemKey,
+            bytes,
+          })),
+      commitInstallationMutation: async (commit: {
+        readonly mutableItems?: readonly {
+          readonly namespace: string;
+          readonly scopeKey: string;
+          readonly itemKey: string;
+          readonly bytes: Uint8Array;
+        }[];
+      }) => {
+        for (const item of commit.mutableItems ?? []) {
+          stored.set(storageKey(item.namespace, item.scopeKey, item.itemKey), item.bytes);
+        }
+      },
+      commitRemoteRetirement: async (commit: {
+        readonly deletedItems: readonly {
+          readonly namespace: string;
+          readonly scopeKey: string;
+          readonly itemKey: string;
+        }[];
+      }) => {
+        for (const item of commit.deletedItems) {
+          stored.delete(storageKey(item.namespace, item.scopeKey, item.itemKey));
+        }
+      },
+    };
+    const service = new CanonicalReplicaRemoteService(
+      storage as unknown as ConstructorParameters<typeof CanonicalReplicaRemoteService>[0],
+      NORMAL_STORAGE_REALM,
+    );
+    const value = remote();
+    await service.configure({ remote: value, bearerToken: "opaque-bearer-token" });
+
+    let release: (() => void) | undefined;
+    const completion = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let markStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const active = service.withLoaded(
+      { vaultId: value.vaultId, remoteId: value.remoteId },
+      async () => {
+        markStarted?.();
+        await completion;
+      },
+    );
+    await started;
+
+    const retirement = service.retire({ vaultId: value.vaultId, remoteId: value.remoteId });
+    await expect(
+      service.withLoaded(
+        { vaultId: value.vaultId, remoteId: value.remoteId },
+        async () => undefined,
+      ),
+    ).rejects.toThrow(/being removed/u);
+    release?.();
+    await active;
+    await retirement;
+    await expect(service.list(value.vaultId)).resolves.toEqual([]);
+  });
+
   it("lists only selected-Vault Remotes and rotates an expired Host session through credential CAS", async () => {
     const key = await crypto.subtle.generateKey({ name: "AES-KW", length: 256 }, false, [
       "wrapKey",
@@ -472,10 +724,9 @@ describe("canonical synchronization state", () => {
     await service.configure({ remote: value, bearerToken: "opaque-bearer-token" });
 
     await expect(service.list(value.vaultId)).resolves.toEqual([value]);
-    await expect(service.load({ vaultId: value.vaultId, remoteId: REMOTE_ID })).resolves.toEqual({
-      remote: value,
-      bearerToken: "opaque-bearer-token",
-    });
+    await expect(
+      service.withLoaded({ vaultId: value.vaultId, remoteId: REMOTE_ID }, async (loaded) => loaded),
+    ).resolves.toEqual({ remote: value, bearerToken: "opaque-bearer-token" });
     await expect(service.list(filled("Vault", 9))).resolves.toEqual([]);
 
     const sessionRemote = {
@@ -496,8 +747,14 @@ describe("canonical synchronization state", () => {
     });
 
     const concurrentLoads = Promise.all([
-      service.load({ vaultId: sessionRemote.vaultId, remoteId: sessionRemote.remoteId }),
-      service.load({ vaultId: sessionRemote.vaultId, remoteId: sessionRemote.remoteId }),
+      service.withLoaded(
+        { vaultId: sessionRemote.vaultId, remoteId: sessionRemote.remoteId },
+        async (loaded) => loaded,
+      ),
+      service.withLoaded(
+        { vaultId: sessionRemote.vaultId, remoteId: sessionRemote.remoteId },
+        async (loaded) => loaded,
+      ),
     ]);
     await refreshStarted;
     expect(refreshes).toBe(1);
@@ -507,7 +764,10 @@ describe("canonical synchronization state", () => {
       { remote: sessionRemote, bearerToken: "fresh-access-token" },
     ]);
     await expect(
-      service.load({ vaultId: sessionRemote.vaultId, remoteId: sessionRemote.remoteId }),
+      service.withLoaded(
+        { vaultId: sessionRemote.vaultId, remoteId: sessionRemote.remoteId },
+        async (loaded) => loaded,
+      ),
     ).resolves.toEqual({ remote: sessionRemote, bearerToken: "fresh-access-token" });
     expect(refreshes).toBe(1);
   });

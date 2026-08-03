@@ -103,6 +103,11 @@ every admission and retry. Streamable Artifact wrappers remain intentionally spa
 Artifact hydration may retrieve them later. This local destination materialization is neither a
 push-based synchronization direction nor evidence that the Hosted Replica is complete.
 
+Before explicit local Remote removal, the Client fences new materialization, pull, and Artifact
+hydration work through that Remote and lets any already-started operation finish. It then atomically
+removes only local Remote state, including retry/recovery artifacts and untrusted Quarantine. The
+operation is not a synchronization direction, Host request, Grant revocation, or Host-data deletion.
+
 # 4. DAG convergence
 
 Synchronization unions valid immutable Records and Objects. Concurrent Events remain sibling DAG

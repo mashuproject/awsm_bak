@@ -176,6 +176,24 @@ test("recovers a fresh local Client from a real opaque Hosted Replica without sa
     );
     await ownerPopup.getByRole("button", { name: "Resume Remote" }).click();
     await expect(ownerPopup.getByText("Available", { exact: true })).toBeVisible();
+    await ownerPopup.getByRole("button", { name: "Remove Remote from this Client" }).click();
+    await expect(
+      ownerPopup.getByRole("heading", { name: "Remove Hosted Replica from this Client" }),
+    ).toBeVisible();
+    await expect(
+      ownerPopup.getByText(
+        "This only removes this Client’s local connection. It does not contact the Replica Host or delete its stored bytes.",
+      ),
+    ).toBeVisible();
+    await ownerPopup.getByRole("button", { name: "Remove local Remote" }).click();
+    await expect(ownerPopup.getByRole("heading", { name: "Vault settings" })).toBeVisible();
+    await expect(ownerPopup.getByText("proof host renamed", { exact: true })).toHaveCount(0);
+    await expect(
+      mirroredOwnerPopup.getByText("No Hosted Replicas are configured on this Client."),
+    ).toBeVisible();
+    await expect(ownerPopup.locator("#announcer")).toHaveText(
+      "Hosted Replica removed from this Client. The Replica Host was not contacted.",
+    );
 
     const recoveredPopup = await popup(recovered);
     await recoveredPopup.getByRole("button", { name: "Recover a Hosted Vault" }).click();

@@ -187,7 +187,7 @@ async function sealedBytes(input: {
 export class CanonicalHostedCompactMaterializationService {
   constructor(
     private readonly dependencies: {
-      readonly remotes: Pick<CanonicalReplicaRemoteService, "load">;
+      readonly remotes: Pick<CanonicalReplicaRemoteService, "withLoaded">;
       readonly replays: ReplayPort;
       readonly ledger: LedgerPort;
       readonly createHttp?: (input: {
@@ -206,90 +206,93 @@ export class CanonicalHostedCompactMaterializationService {
     readonly retriedCompactItemCount: number;
     readonly alreadyConfirmedCompactItemCount: number;
   }> {
-    const { remote, bearerToken } = await this.dependencies.remotes.load(input);
-    if (!remote.enabled) throw new TypeError("Cannot materialize to a disabled Replica Remote");
-    if (remote.remoteId !== input.remoteId || !bytesEqual(remote.vaultId, input.vaultId)) {
-      throw new TypeError("Configured Replica Remote does not match the requested Vault");
-    }
-    const replay = await this.dependencies.replays.replay(input.vaultId);
-    same(replay.vault.replicaState.vaultId, input.vaultId, "Materialized Vault ID");
-    const epochs = await this.dependencies.replays.vaults.listEpochSecrets(replay.vault);
-    try {
-      const targets = await this.targets(replay.vault, replay.authority);
-      const epochById = new Map(epochs.map((epoch) => [key(epoch.keyEpochId), epoch]));
-      if (epochById.size !== epochs.length) {
-        throw new TypeError("Local Key Epoch inventory repeats an identity");
+    return this.dependencies.remotes.withLoaded(input, async ({ remote, bearerToken }) => {
+      if (!remote.enabled) throw new TypeError("Cannot materialize to a disabled Replica Remote");
+      if (remote.remoteId !== input.remoteId || !bytesEqual(remote.vaultId, input.vaultId)) {
+        throw new TypeError("Configured Replica Remote does not match the requested Vault");
       }
-      const http =
-        this.dependencies.createHttp?.({ endpoint: remote.endpoint, bearerToken }) ??
-        new CanonicalHostedReplicaHttp({ endpoint: remote.endpoint, bearerToken });
-      let materializedCompactItemCount = 0;
-      let retriedCompactItemCount = 0;
-      let alreadyConfirmedCompactItemCount = 0;
-      for (const target of targets) {
-        const locator = await deriveHostedReplicaOpaqueLocator({
-          locatorSalt: remote.locatorSalt,
-          logicalNamespace: target.logicalNamespace as HostedReplicaLogicalNamespace,
-          logicalId: target.logicalId,
-        });
-        const existing = await this.dependencies.ledger.find({
-          vaultId: input.vaultId,
-          remoteId: input.remoteId,
-          logicalNamespace: target.logicalNamespace,
-          logicalId: target.logicalId,
-        });
-        if (existing !== null) {
-          if (!bytesEqual(existing.entry.locator, locator)) {
-            throw new TypeError("Remote materialization ledger locator does not match this Remote");
-          }
-          if (existing.entry.state === "Confirmed") {
-            alreadyConfirmedCompactItemCount += 1;
+      const replay = await this.dependencies.replays.replay(input.vaultId);
+      same(replay.vault.replicaState.vaultId, input.vaultId, "Materialized Vault ID");
+      const epochs = await this.dependencies.replays.vaults.listEpochSecrets(replay.vault);
+      try {
+        const targets = await this.targets(replay.vault, replay.authority);
+        const epochById = new Map(epochs.map((epoch) => [key(epoch.keyEpochId), epoch]));
+        if (epochById.size !== epochs.length) {
+          throw new TypeError("Local Key Epoch inventory repeats an identity");
+        }
+        const http =
+          this.dependencies.createHttp?.({ endpoint: remote.endpoint, bearerToken }) ??
+          new CanonicalHostedReplicaHttp({ endpoint: remote.endpoint, bearerToken });
+        let materializedCompactItemCount = 0;
+        let retriedCompactItemCount = 0;
+        let alreadyConfirmedCompactItemCount = 0;
+        for (const target of targets) {
+          const locator = await deriveHostedReplicaOpaqueLocator({
+            locatorSalt: remote.locatorSalt,
+            logicalNamespace: target.logicalNamespace as HostedReplicaLogicalNamespace,
+            logicalId: target.logicalId,
+          });
+          const existing = await this.dependencies.ledger.find({
+            vaultId: input.vaultId,
+            remoteId: input.remoteId,
+            logicalNamespace: target.logicalNamespace,
+            logicalId: target.logicalId,
+          });
+          if (existing !== null) {
+            if (!bytesEqual(existing.entry.locator, locator)) {
+              throw new TypeError(
+                "Remote materialization ledger locator does not match this Remote",
+              );
+            }
+            if (existing.entry.state === "Confirmed") {
+              alreadyConfirmedCompactItemCount += 1;
+              continue;
+            }
+            if (existing.bytes === null) {
+              throw new TypeError("Prepared Remote materialization has no retry bytes");
+            }
+            const admission = await http.admitCompact({
+              replicaHandle: remote.hostedReplicaHandle,
+              locator,
+              bytes: existing.bytes,
+            });
+            await this.dependencies.ledger.confirm({ entry: existing.entry, admission });
+            retriedCompactItemCount += 1;
             continue;
           }
-          if (existing.bytes === null) {
-            throw new TypeError("Prepared Remote materialization has no retry bytes");
-          }
+          const sealed = await sealedBytes({ target, vaultId: input.vaultId, epochs: epochById });
+          const envelope = decodeOpaqueEnvelope(sealed.bytes);
+          const entry: CanonicalRemoteMaterializationLedgerEntry = {
+            vaultId: input.vaultId,
+            remoteId: input.remoteId,
+            logicalNamespace: target.logicalNamespace,
+            logicalId: target.logicalId,
+            keyEpochId: sealed.keyEpochId,
+            locator,
+            storageItemId: envelope.storageItemId,
+            byteLength: envelope.bytes.byteLength,
+            byteDigest: await sha256(envelope.bytes),
+            state: "Prepared",
+          };
+          await this.dependencies.ledger.prepare({ entry, bytes: envelope.bytes });
           const admission = await http.admitCompact({
             replicaHandle: remote.hostedReplicaHandle,
             locator,
-            bytes: existing.bytes,
+            bytes: envelope.bytes,
           });
-          await this.dependencies.ledger.confirm({ entry: existing.entry, admission });
-          retriedCompactItemCount += 1;
-          continue;
+          await this.dependencies.ledger.confirm({ entry, admission });
+          materializedCompactItemCount += 1;
         }
-        const sealed = await sealedBytes({ target, vaultId: input.vaultId, epochs: epochById });
-        const envelope = decodeOpaqueEnvelope(sealed.bytes);
-        const entry: CanonicalRemoteMaterializationLedgerEntry = {
-          vaultId: input.vaultId,
+        return {
           remoteId: input.remoteId,
-          logicalNamespace: target.logicalNamespace,
-          logicalId: target.logicalId,
-          keyEpochId: sealed.keyEpochId,
-          locator,
-          storageItemId: envelope.storageItemId,
-          byteLength: envelope.bytes.byteLength,
-          byteDigest: await sha256(envelope.bytes),
-          state: "Prepared",
+          materializedCompactItemCount,
+          retriedCompactItemCount,
+          alreadyConfirmedCompactItemCount,
         };
-        await this.dependencies.ledger.prepare({ entry, bytes: envelope.bytes });
-        const admission = await http.admitCompact({
-          replicaHandle: remote.hostedReplicaHandle,
-          locator,
-          bytes: envelope.bytes,
-        });
-        await this.dependencies.ledger.confirm({ entry, admission });
-        materializedCompactItemCount += 1;
+      } finally {
+        await Promise.all(epochs.map(({ key: epochKey }) => wipe(epochKey)));
       }
-      return {
-        remoteId: input.remoteId,
-        materializedCompactItemCount,
-        retriedCompactItemCount,
-        alreadyConfirmedCompactItemCount,
-      };
-    } finally {
-      await Promise.all(epochs.map(({ key: epochKey }) => wipe(epochKey)));
-    }
+    });
   }
 
   private async targets(

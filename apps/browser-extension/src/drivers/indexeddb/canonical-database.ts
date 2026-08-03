@@ -86,6 +86,20 @@ export interface ExecutionMutationCommit {
   readonly deletedItems?: readonly Omit<NamespaceBytes, "bytes">[];
 }
 
+/**
+ * Removes one Installation-local Replica Remote and every local execution artifact scoped to it.
+ * This is a dedicated cross-family transaction; ordinary Installation and Execution mutations
+ * remain deliberately separate.
+ */
+export interface RemoteRetirementCommit {
+  readonly realm: StorageRealm;
+  readonly vaultId: Identifier<"Vault">;
+  readonly remoteId: string;
+  readonly expectedRemote: NamespaceBytes;
+  readonly expectedCredential: NamespaceBytes;
+  readonly deletedItems: readonly Omit<NamespaceBytes, "bytes">[];
+}
+
 type StorageKey = [string, NamespaceKey, string, string];
 
 function requestValue<T>(request: IDBRequest<T>): Promise<T> {
@@ -820,6 +834,112 @@ export class CanonicalIndexedDb {
           .put(Uint8Array.from(item.bytes), storageKey(input.realm, item));
       }
       for (const item of deletedItems) {
+        transaction
+          .objectStore(descriptor(item.namespace).family)
+          .delete(storageKey(input.realm, item));
+      }
+      await transactionDone(transaction);
+    } catch (error) {
+      abortTransaction(transaction);
+      throw storageError(error);
+    }
+  }
+
+  async commitRemoteRetirement(input: RemoteRetirementCommit): Promise<void> {
+    const vaultKey = identifierStorageKey(input.vaultId);
+    const remote = input.expectedRemote;
+    const credential = input.expectedCredential;
+    if (
+      remote.namespace !== NAMESPACES.replicaRemote.key ||
+      remote.scopeKey !== vaultKey ||
+      remote.itemKey !== input.remoteId
+    ) {
+      throw new TypeError("Remote retirement configuration is outside the selected Vault");
+    }
+    if (
+      credential.namespace !== NAMESPACES.remoteChannelCredential.key ||
+      credential.scopeKey !== input.remoteId ||
+      credential.itemKey !== "bearer"
+    ) {
+      throw new TypeError("Remote retirement credential does not match its Remote");
+    }
+    assertBytes(remote);
+    assertBytes(credential);
+
+    const remoteKey = {
+      namespace: remote.namespace,
+      scopeKey: remote.scopeKey,
+      itemKey: remote.itemKey,
+    };
+    const credentialKey = {
+      namespace: credential.namespace,
+      scopeKey: credential.scopeKey,
+      itemKey: credential.itemKey,
+    };
+    const hasDeletion = (expected: Omit<NamespaceBytes, "bytes">): boolean =>
+      input.deletedItems.some(
+        (candidate) =>
+          candidate.namespace === expected.namespace &&
+          candidate.scopeKey === expected.scopeKey &&
+          candidate.itemKey === expected.itemKey,
+      );
+    if (!hasDeletion(remoteKey) || !hasDeletion(credentialKey)) {
+      throw new TypeError(
+        "Remote retirement must remove its configuration and credential together",
+      );
+    }
+
+    const remoteScopedNamespaces = new Set<NamespaceKey>([
+      NAMESPACES.remoteMaterializationLedger.key,
+      NAMESPACES.preparedOutgoingItem.key,
+      NAMESPACES.incomingQuarantine.key,
+    ]);
+    for (const item of input.deletedItems) {
+      if (
+        item.namespace === NAMESPACES.replicaRemote.key &&
+        item.scopeKey === vaultKey &&
+        item.itemKey === input.remoteId
+      ) {
+        continue;
+      }
+      if (
+        item.namespace === NAMESPACES.remoteChannelCredential.key &&
+        item.scopeKey === input.remoteId &&
+        item.itemKey === "bearer"
+      ) {
+        continue;
+      }
+      if (remoteScopedNamespaces.has(item.namespace) && item.scopeKey === input.remoteId) {
+        continue;
+      }
+      if (item.namespace === NAMESPACES.pullSynchronizationJob.key && item.scopeKey === vaultKey) {
+        continue;
+      }
+      throw new TypeError("Remote retirement attempts to remove state outside its local Remote");
+    }
+    assertUniqueItems(input.realm, input.deletedItems);
+
+    const families = [
+      ...familyNames([remote, credential]),
+      ...input.deletedItems.map((item) => descriptor(item.namespace).family),
+    ];
+    const database = await this.databasePromise;
+    const transaction = database.transaction([...new Set(families)], "readwrite");
+    try {
+      for (const expected of [remote, credential]) {
+        const stored = await requestValue(
+          transaction
+            .objectStore(descriptor(expected.namespace).family)
+            .get(storageKey(input.realm, expected)),
+        );
+        if (!(stored instanceof Uint8Array) || !bytesEqual(stored, expected.bytes)) {
+          throw new CanonicalStorageError(
+            "STORAGE_CONTEXT_CHANGED",
+            "Replica Remote state changed before local removal.",
+          );
+        }
+      }
+      for (const item of input.deletedItems) {
         transaction
           .objectStore(descriptor(item.namespace).family)
           .delete(storageKey(input.realm, item));

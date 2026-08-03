@@ -107,6 +107,13 @@ ledger `Confirmed` and deletes its Prepared Data. The ledger never enters Vault 
 neither current Host retention nor global redundancy, and is removed only with its local Remote
 configuration.
 
+Explicit local Remote removal is one conditional cross-family transaction. It compares the exact
+encrypted Remote configuration and Channel Authenticator, then deletes those records together with
+every Remote-scoped Materialization Ledger, Prepared Outgoing Item, incoming Quarantine item, and
+the selected Vault's pull Jobs for that Remote. The Client first fences new local channel work and
+waits for in-flight work it already started. This transaction never invokes a Host API and therefore
+does not revoke a Grant or prove anything about bytes retained by a Hosted Replica.
+
 The current Compact materializer uses that ledger only after authenticating its local Vault view.
 It stores independently randomized destination representations for the reachable Record, Object,
 Feature Manifest, and Key Envelope closure. It intentionally does not place Streamable Artifact

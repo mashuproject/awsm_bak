@@ -14,6 +14,7 @@ describe("canonical application", () => {
       listRemotes: vi.fn(),
       renameRemote: vi.fn(),
       setRemoteEnabled: vi.fn(),
+      retireRemote: vi.fn(),
       createHostedReplica: vi.fn(),
       materializeHostedReplica: vi.fn(),
       pullHostedReplicas: vi.fn(),
@@ -69,6 +70,7 @@ describe("canonical application", () => {
       listRemotes: vi.fn(),
       renameRemote: vi.fn(),
       setRemoteEnabled: vi.fn(),
+      retireRemote: vi.fn(),
       createHostedReplica: vi.fn(),
       materializeHostedReplica: vi.fn(),
       pullHostedReplicas: vi.fn(),
@@ -162,6 +164,11 @@ describe("canonical application", () => {
     const runtime = {
       renameRemote: vi.fn().mockResolvedValue({ ...renamed, enabled: true }),
       setRemoteEnabled: vi.fn().mockResolvedValue(renamed),
+      retireRemote: vi.fn().mockResolvedValue({
+        materializationLedgerCount: 1,
+        pullJobCount: 2,
+        quarantinedItemCount: 3,
+      }),
     };
     const invalidated = vi.fn();
     const application = new CanonicalApplication(
@@ -189,6 +196,17 @@ describe("canonical application", () => {
         enabled: false,
       }),
     ).resolves.toEqual(renamed);
+    await expect(
+      application.handle({
+        type: "RetireRemote",
+        expectedVaultId,
+        remoteId: renamed.remoteId,
+      }),
+    ).resolves.toEqual({
+      materializationLedgerCount: 1,
+      pullJobCount: 2,
+      quarantinedItemCount: 3,
+    });
     expect(runtime.renameRemote).toHaveBeenCalledWith({
       expectedVaultId,
       remoteId: renamed.remoteId,
@@ -199,7 +217,11 @@ describe("canonical application", () => {
       remoteId: renamed.remoteId,
       enabled: false,
     });
-    expect(invalidated).toHaveBeenCalledTimes(2);
+    expect(runtime.retireRemote).toHaveBeenCalledWith({
+      expectedVaultId,
+      remoteId: renamed.remoteId,
+    });
+    expect(invalidated).toHaveBeenCalledTimes(3);
     await expect(
       application.handle({
         type: "SetRemoteEnabled",
@@ -301,6 +323,7 @@ describe("canonical application", () => {
       listRemotes: vi.fn(),
       renameRemote: vi.fn(),
       setRemoteEnabled: vi.fn(),
+      retireRemote: vi.fn(),
       createHostedReplica: vi.fn(),
       materializeHostedReplica: vi.fn(),
       pullHostedReplicas: vi.fn(),
@@ -572,6 +595,7 @@ describe("canonical application", () => {
       listRemotes: vi.fn(),
       renameRemote: vi.fn(),
       setRemoteEnabled: vi.fn(),
+      retireRemote: vi.fn(),
       createHostedReplica: vi.fn(),
       materializeHostedReplica: vi.fn(),
       pullHostedReplicas: vi.fn(),

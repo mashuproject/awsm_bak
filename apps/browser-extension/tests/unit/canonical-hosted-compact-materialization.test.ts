@@ -86,7 +86,13 @@ async function fixture(options: { readonly rejectFirstAdmission?: boolean } = {}
   let reject = options.rejectFirstAdmission ?? false;
   const service = new CanonicalHostedCompactMaterializationService({
     remotes: {
-      load: async () => ({ remote, bearerToken: "channel-token" }),
+      withLoaded: async <T>(
+        _input: unknown,
+        operation: (loaded: {
+          readonly remote: typeof remote;
+          readonly bearerToken: string;
+        }) => Promise<T>,
+      ): Promise<T> => operation({ remote, bearerToken: "channel-token" }),
     },
     replays: {
       replay: async () => ({

@@ -4,6 +4,7 @@ import type {
   CanonicalClientLibraryItem,
   CanonicalClientRemoteMaterializationSummary,
   CanonicalClientRemotePullSummary,
+  CanonicalClientRemoteRetirementSummary,
   CanonicalClientRemoteSummary,
   CanonicalClientState,
   CanonicalClientVaultSummary,
@@ -102,6 +103,10 @@ export interface CanonicalPopupApplicationClient extends CanonicalPopupClient {
     readonly remoteId: string;
     readonly enabled: boolean;
   }): Promise<CanonicalClientRemoteSummary>;
+  retireRemote(input: {
+    readonly expectedVaultId: string;
+    readonly remoteId: string;
+  }): Promise<CanonicalClientRemoteRetirementSummary>;
   createHostedReplica(input: {
     readonly expectedVaultId: string;
     readonly endpoint: string;
@@ -338,6 +343,23 @@ function decodeRemotes(value: unknown): readonly CanonicalClientRemoteSummary[] 
   if (new Set(remotes.map(({ remoteId }) => remoteId)).size !== remotes.length)
     throw protocolError();
   return remotes;
+}
+
+function decodeRemoteRetirement(value: unknown): CanonicalClientRemoteRetirementSummary {
+  if (
+    !plainRecord(value) ||
+    !exactKeys(value, ["materializationLedgerCount", "pullJobCount", "quarantinedItemCount"]) ||
+    !nonnegativeInteger(value.materializationLedgerCount) ||
+    !nonnegativeInteger(value.pullJobCount) ||
+    !nonnegativeInteger(value.quarantinedItemCount)
+  ) {
+    throw protocolError();
+  }
+  return {
+    materializationLedgerCount: value.materializationLedgerCount,
+    pullJobCount: value.pullJobCount,
+    quarantinedItemCount: value.quarantinedItemCount,
+  };
 }
 
 function decodeHostedReplicaMaterialization(
@@ -626,6 +648,17 @@ export function createCanonicalPopupApplicationClient(
           expectedVaultId: input.expectedVaultId,
           remoteId: input.remoteId,
           enabled: input.enabled,
+        }),
+      );
+    },
+    async retireRemote(input) {
+      if (!identifier(input.expectedVaultId)) throw new TypeError("Popup Vault ID is invalid.");
+      if (!setupId(input.remoteId)) throw new TypeError("Popup Hosted Replica ID is invalid.");
+      return decodeRemoteRetirement(
+        await transport.request({
+          type: "RetireRemote",
+          expectedVaultId: input.expectedVaultId,
+          remoteId: input.remoteId,
         }),
       );
     },
