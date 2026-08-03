@@ -219,12 +219,13 @@ remains.
 
 `docs/specifications/protocol/http-api.openapi.yaml`, its initializer, Committee validation,
 `spec/contracts/openapi_spec.rb`, and Rails request specs now form one executable contract. Browser
-synchronization now has a strict Hosted HTTP adapter plus Installation-wrapped Remote credentials,
-durable snapshot inventory/Quarantine, Host-locator retention, and local Compact classification.
-The browser can strictly exchange a transient username/password for the reference Host's
-installation-wrapped rotating session credential and conditionally replace it after local access
-expiry; it does not retain the password or derive Vault authority from that session. Remote
-onboarding and management remain unfinished.
+synchronization now has a strict Hosted HTTP adapter that creates and lists Host-local Hosted
+Replicas, admits locally verified Compact outer items with only their opaque locators, and combines
+with Installation-wrapped Remote credentials, durable snapshot inventory/Quarantine, Host-locator
+retention, and local Compact classification. The browser can strictly exchange a transient
+username/password for the reference Host's installation-wrapped rotating session credential and
+conditionally replace it after local access expiry; it does not retain the password or derive Vault
+authority from that session. Remote onboarding and management remain unfinished.
 For a non-adopted current Generation, it also validates one complete same-Generation Content DAG
 branch and its newly required Vault Object closure, then atomically promotes only those newly
 accepted Compact items with the exact pull Job and Replica state. A repository-tested Runtime
