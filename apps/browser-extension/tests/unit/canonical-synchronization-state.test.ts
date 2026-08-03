@@ -325,6 +325,10 @@ describe("canonical synchronization state", () => {
     const refreshGate = new Promise<void>((resolve) => {
       releaseRefresh = resolve;
     });
+    let markRefreshStarted: (() => void) | undefined;
+    const refreshStarted = new Promise<void>((resolve) => {
+      markRefreshStarted = resolve;
+    });
     const service = new CanonicalReplicaRemoteService(
       storage as unknown as ConstructorParameters<typeof CanonicalReplicaRemoteService>[0],
       NORMAL_STORAGE_REALM,
@@ -334,6 +338,7 @@ describe("canonical synchronization state", () => {
           refresh: async ({ refreshToken }: { readonly refreshToken: string }) => {
             refreshes += 1;
             expect(refreshToken).toBe("expired-refresh-token");
+            markRefreshStarted?.();
             await refreshGate;
             return {
               username: "archive_reader",
@@ -378,7 +383,7 @@ describe("canonical synchronization state", () => {
       service.load({ vaultId: sessionRemote.vaultId, remoteId: sessionRemote.remoteId }),
       service.load({ vaultId: sessionRemote.vaultId, remoteId: sessionRemote.remoteId }),
     ]);
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await refreshStarted;
     expect(refreshes).toBe(1);
     releaseRefresh?.();
     await expect(concurrentLoads).resolves.toEqual([
