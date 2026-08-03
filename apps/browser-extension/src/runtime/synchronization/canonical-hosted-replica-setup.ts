@@ -14,11 +14,63 @@ const REQUIRED_CAPABILITIES = [
   "awsm.replica.item.write",
 ] as const;
 
+function hasRequiredCapabilities(summary: CanonicalHostedReplicaSummary): boolean {
+  return REQUIRED_CAPABILITIES.every((capability) => summary.capabilities.includes(capability));
+}
+
 function requireUsableReplica(summary: CanonicalHostedReplicaSummary): void {
   for (const capability of REQUIRED_CAPABILITIES) {
     if (!summary.capabilities.includes(capability)) {
-      throw new TypeError(`New Hosted Replica is missing ${capability} access`);
+      throw new TypeError(`Hosted Replica is missing ${capability} access`);
     }
+  }
+}
+
+/** A transient Host session and its currently selectable opaque Hosted Replicas. */
+export class CanonicalHostedReplicaAttachmentCeremony {
+  private active = true;
+
+  constructor(
+    readonly replicas: readonly CanonicalHostedReplicaSummary[],
+    private readonly input: {
+      readonly vaultId: Identifier<"Vault">;
+      readonly endpoint: string;
+      readonly name: string;
+      readonly remoteId: string;
+      readonly session: CanonicalHostedReplicaSession;
+      readonly configure: (input: {
+        readonly remote: CanonicalReplicaRemote;
+        readonly session: CanonicalHostedReplicaSession;
+      }) => Promise<void>;
+    },
+  ) {}
+
+  async confirm(replicaHandle: string): Promise<CanonicalReplicaRemote> {
+    this.assertActive();
+    const selected = this.replicas.find((replica) => replica.replicaHandle === replicaHandle);
+    if (selected === undefined) throw new TypeError("Selected Hosted Replica is unavailable");
+    this.active = false;
+    const remote: CanonicalReplicaRemote = {
+      remoteId: this.input.remoteId,
+      vaultId: this.input.vaultId,
+      name: this.input.name,
+      endpoint: this.input.endpoint,
+      hostedReplicaHandle: selected.replicaHandle,
+      locatorSalt: selected.locatorSalt,
+      enabled: true,
+      inventoryPageSize: 100,
+    };
+    await this.input.configure({ remote, session: this.input.session });
+    return remote;
+  }
+
+  cancel(): void {
+    this.active = false;
+  }
+
+  private assertActive(): void {
+    if (!this.active)
+      throw new Error("The Hosted Replica attachment ceremony is no longer active.");
   }
 }
 
@@ -36,7 +88,7 @@ export class CanonicalHostedReplicaSetupService {
       readonly createReplicaHttp?: (input: {
         readonly endpoint: string;
         readonly bearerToken: string;
-      }) => Pick<CanonicalHostedReplicaHttp, "createReplica">;
+      }) => Pick<CanonicalHostedReplicaHttp, "createReplica" | "listReplicas">;
       readonly createRemoteId?: () => string;
     },
   ) {}
@@ -76,6 +128,51 @@ export class CanonicalHostedReplicaSetupService {
     };
     await this.dependencies.remotes.configureHostedSession({ remote, session });
     return remote;
+  }
+
+  /**
+   * Signs into one Host and retains the rotating session only until the user chooses one of that
+   * Account's existing authorized Hosted Replicas. Nothing is persisted until confirmation.
+   */
+  async beginAttachment(input: {
+    readonly vaultId: Identifier<"Vault">;
+    readonly endpoint: string;
+    readonly name: string;
+    readonly username: string;
+    readonly password: string;
+  }): Promise<CanonicalHostedReplicaAttachmentCeremony> {
+    const remoteId = this.dependencies.createRemoteId?.() ?? crypto.randomUUID();
+    this.validateLocalConfiguration(input, remoteId);
+    const session = await (
+      this.dependencies.createSessionHttp?.({ endpoint: input.endpoint }) ??
+      new CanonicalHostedReplicaSessionHttp({ endpoint: input.endpoint })
+    ).signIn({ username: input.username, password: input.password });
+    this.sameUsername(session, input.username);
+    const replicas = (
+      await (
+        this.dependencies.createReplicaHttp?.({
+          endpoint: input.endpoint,
+          bearerToken: session.accessToken,
+        }) ??
+        new CanonicalHostedReplicaHttp({
+          endpoint: input.endpoint,
+          bearerToken: session.accessToken,
+        })
+      ).listReplicas()
+    )
+      .filter(hasRequiredCapabilities)
+      .toSorted((left, right) => left.replicaHandle.localeCompare(right.replicaHandle));
+    if (replicas.length === 0) {
+      throw new TypeError("This Account has no existing Hosted Replica with full sync access");
+    }
+    return new CanonicalHostedReplicaAttachmentCeremony(replicas, {
+      vaultId: input.vaultId,
+      endpoint: input.endpoint,
+      name: input.name,
+      remoteId,
+      session,
+      configure: this.dependencies.remotes.configureHostedSession.bind(this.dependencies.remotes),
+    });
   }
 
   private validateLocalConfiguration(

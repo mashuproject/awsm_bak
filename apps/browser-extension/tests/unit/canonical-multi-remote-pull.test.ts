@@ -69,6 +69,63 @@ describe("canonical multi-Remote pull", () => {
     ]);
   });
 
+  it("continues one explicit check while an active Remote pull makes durable progress", async () => {
+    const progress = [
+      {
+        stage: 2 as const,
+        state: 1 as const,
+        progress: {
+          discoveredItemCount: 2,
+          downloadedItemCount: 2,
+          promotedItemCount: 0,
+          rejectedItemCount: 0,
+        },
+      },
+      {
+        stage: 2 as const,
+        state: 1 as const,
+        progress: {
+          discoveredItemCount: 2,
+          downloadedItemCount: 2,
+          promotedItemCount: 1,
+          rejectedItemCount: 0,
+        },
+      },
+      {
+        stage: 3 as const,
+        state: 3 as const,
+        progress: {
+          discoveredItemCount: 2,
+          downloadedItemCount: 2,
+          promotedItemCount: 2,
+          rejectedItemCount: 0,
+        },
+      },
+    ];
+    const service = new CanonicalMultiRemotePullService({
+      list: async () => [remote("019fa62e-a653-7f63-b2bf-94e7ed5e46cd")],
+      pull: async () => {
+        const next = progress.shift();
+        if (next === undefined) throw new TypeError("unexpected additional pull");
+        return next;
+      },
+    });
+
+    await expect(service.pull({ vaultId: VAULT_ID })).resolves.toEqual([
+      {
+        remoteId: "019fa62e-a653-7f63-b2bf-94e7ed5e46cd",
+        status: "Completed",
+        progress: {
+          discoveredItemCount: 2,
+          downloadedItemCount: 2,
+          promotedItemCount: 2,
+          rejectedItemCount: 0,
+        },
+      },
+    ]);
+    expect(progress).toEqual([]);
+  });
+
   it("fails closed on a Remote outside the selected Vault", async () => {
     const service = new CanonicalMultiRemotePullService({
       list: async () => [

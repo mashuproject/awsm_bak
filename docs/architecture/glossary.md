@@ -674,11 +674,18 @@ availability. A Replica is authoritative storage, not a Materialization.
 A client Replica with every encrypted Object wrapper reachable from its active Generation present
 and verified locally.
 
+## Sparse Replica
+
+A Replica that retains an authenticated compact closure but intentionally lacks one or more eligible
+heavy Artifact wrappers. It can expose the authenticated Capture metadata and truthfully report the
+wrapper unavailable locally. A Sparse Replica need not yet have a configured retrieval channel.
+
 ## On-demand Replica
 
 A logically complete client Replica that retains authoritative inventory, compact operational
 records, history, keys, and Replica Safety State while intentionally leaving eligible heavy
-Artifact wrappers Evicted for retrieval when needed.
+Artifact wrappers Evicted for retrieval when needed. It is a Sparse Replica with a configured
+retrieval channel.
 
 ## Hosted Replica
 
@@ -722,6 +729,11 @@ local work, the Client waits for already-started channel work, rejects new chann
 atomically removes the Remote configuration, Channel Authenticator, Remote Materialization Ledger,
 Prepared Data, pull Job, and Quarantine scoped to it. It does not contact a Replica Host, revoke a
 Grant, delete a Hosted Replica, or claim that the Host has retained or discarded any bytes.
+
+A Client may create a new Hosted Replica or attach one Remote to an existing Account-authorized
+Hosted Replica. Attachment is a transient sign-in, opaque summary selection, and local configuration
+commit; it sends no Vault identity and does not prove that the selected Host contains the selected
+Vault. The resulting Remote gains no portable authority.
 
 ## Remote Materialization Ledger
 

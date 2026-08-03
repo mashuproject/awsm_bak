@@ -82,22 +82,22 @@ Chrome-managed storage.
 
 ## First Launch
 
-Open AWSM from its toolbar icon. Choose a compatible self-hosted Coordination Server if you want
-synchronization while keeping Vault content end-to-end encrypted, or continue without
-synchronization. AWSM does not currently advertise a hosted service.
+Open AWSM from its toolbar icon, name and create a local Vault, then write down its Recovery Phrase.
+You can later choose to create or attach a Hosted Replica on a compatible Replica Host. The Host
+Account identifies you to that Host only; it does not unlock or identify your Vault.
 
 ## Upgrade Safely
 
-1. Create an encrypted Complete Export before replacing the installed extension files.
-2. Download and verify the new Release, then extract it into a separate temporary directory.
-3. Preserve the original permanent installation path. Changing the path may create a different
+1. Download and verify the new Release, then extract it into a separate temporary directory.
+2. Preserve the original permanent installation path. Changing the path may create a different
    extension identity with separate browser storage.
-4. Replace the contents of the original installation directory with the newly extracted contents.
-5. Confirm that `manifest.json` remains at the root of that directory.
-6. Open `chrome://extensions` and select **Reload** on AWSM.
+3. Replace the contents of the original installation directory with the newly extracted contents.
+4. Confirm that `manifest.json` remains at the root of that directory.
+5. Open `chrome://extensions` and select **Reload** on AWSM.
 
-AWSM is pre-release software. Do not assume that downgrades or data created by a different
-pre-release version are compatible.
+AWSM is pre-release software. Do not assume that an interrupted install, browser-profile loss, or
+replacement with a different build preserves local data. Keep the Recovery Phrase safe and retain
+any Replica Host access you rely on before replacing an installation.
 
 ## Troubleshooting
 

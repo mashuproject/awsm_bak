@@ -63,6 +63,52 @@ function stream(bytes: Uint8Array): ReadableStream<Uint8Array> {
 }
 
 describe("canonical pull inventory runner", () => {
+  it("checkpoints validation after storing the last new Compact item from a one-page Host inventory", async () => {
+    const compact = encodeOpaqueEnvelope({
+      storageClass: 1,
+      protectionParameters: new Uint8Array(64).fill(31),
+      payload: new Uint8Array(16).fill(32),
+    });
+    const recordQuarantine = vi.fn().mockResolvedValue(undefined);
+    const checkpoint = vi.fn().mockResolvedValue(undefined);
+    const runner = new CanonicalPullInventoryRunner({
+      inventory: vi.fn().mockResolvedValue(page(7, null, [item(compact)])),
+      item: vi.fn().mockResolvedValue(stream(compact.bytes)),
+      hasStoredStorageItem: async () => false,
+      recordQuarantine,
+      checkpoint,
+    });
+
+    await expect(
+      runner.run({
+        remote: {
+          remoteId: REMOTE_ID,
+          hostedReplicaHandle: REPLICA_HANDLE,
+          inventoryPageSize: 100,
+          enabled: true,
+        },
+        job: job(),
+      }),
+    ).resolves.toMatchObject({
+      snapshotCursor: 7,
+      nextPosition: null,
+      stage: 2,
+      quarantineReferences: [
+        {
+          storageItemId: compact.storageItemId,
+          locator: new Uint8Array(32).fill(compact.storageItemId[0] ?? 0),
+        },
+      ],
+      progress: {
+        discoveredItemCount: 1,
+        downloadedItemCount: 1,
+      },
+    });
+    expect(recordQuarantine).toHaveBeenCalledOnce();
+    expect(checkpoint).toHaveBeenCalledOnce();
+    expect(checkpoint.mock.calls[0]?.[0].next).toMatchObject({ stage: 2 });
+  });
+
   it("holds one Host snapshot while it fetches only unknown Compact items into durable Quarantine", async () => {
     const known = encodeOpaqueEnvelope({
       storageClass: 1,

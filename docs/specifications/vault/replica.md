@@ -104,6 +104,15 @@ materialization, pull, or Artifact-hydration operation through it; an operation 
 the local update may finish. Resuming restores the same local Remote configuration and Channel
 Authenticator for future operations.
 
+A Client MAY instead attach a Remote to an existing Account-authorized Hosted Replica. It signs in
+transiently, lists only Host-local opaque Replica summaries, filters for the same required
+inventory-read, item-read, and item-write capabilities, and asks the user to choose one. The Host
+summary identifies only its Hosted Replica handle, locator salt, capabilities, quota, and stored
+byte count. The selection persists one local Remote and its rotated session only after confirmation;
+it sends no Vault ID, Record identity, or plaintext. The Client does not infer that the chosen
+Hosted Replica contains the selected Vault. It must explicitly pull and locally validate any data
+after attachment. Cancellation, failure, or Client loss leaves no saved Remote or password.
+
 A Client MAY explicitly remove a Remote from that Client. After a clear pending-work disclosure, it
 first rejects newly started Remote channel work and lets already-started local work finish. One
 conditional local transaction then removes the Remote configuration and Channel Authenticator along
@@ -144,6 +153,13 @@ An On-demand Replica retains the complete Continuity Proof, enough authoritative
 protected resolution state, and retrieval configuration to discover and request missing wrappers.
 Missing local bytes remain part of the Vault when another reachable Replica can supply them; the
 local Replica does not pretend they are present.
+
+Hosted recovery may activate a Sparse Replica from an authenticated Compact closure without a
+Streamable Artifact wrapper. It validates and installs the current Records, Objects, Feature
+Manifests, Key Envelopes, and Recovery enrollment state, but installs no invented Artifact
+Resolution for omitted wrappers. Capture metadata remains readable and the wrapper is reported
+unavailable locally. A later explicit Remote attachment and hydration may retrieve it; a Complete
+Export remains a distinct, complete interchange artifact and still requires every reachable wrapper.
 
 Storage Relief may remove a locally available heavy wrapper after a clear warning. A Client cannot
 prove global redundancy without centralized peer inventory and therefore neither blocks relief nor

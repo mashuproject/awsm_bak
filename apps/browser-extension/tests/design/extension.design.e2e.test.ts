@@ -171,6 +171,27 @@ test("renders the canonical local-Vault and Library surfaces", async ({
     await popup.getByRole("button", { name: "Cancel Hosted Replica setup" }).click();
     await expect(popup.getByRole("heading", { name: "Vault settings" })).toBeVisible();
 
+    await popup.getByRole("button", { name: "Use existing Hosted Replica" }).click();
+    await expect(
+      popup.getByRole("heading", { name: "Use an existing Hosted Replica" }),
+    ).toBeVisible();
+    await expect(popup.getByLabel("Hosted Replica address")).toBeVisible();
+    await expect(popup.getByLabel("Connection name")).toBeVisible();
+    await expect(popup.getByLabel("Account username")).toBeVisible();
+    await expect(popup.getByLabel("Account password")).toBeVisible();
+    await assertInteractiveTargets(popup);
+    await expectReadableContrast(popup);
+    await expect(popup).toHaveScreenshot("popup-hosted-replica-attachment.png", { fullPage: true });
+    await popup.setViewportSize({ width: 360, height: 700 });
+    await assertInteractiveTargets(popup);
+    await expectReadableContrast(popup);
+    await expect(popup).toHaveScreenshot("popup-hosted-replica-attachment-narrow.png", {
+      fullPage: true,
+    });
+    await popup.setViewportSize({ width: 400, height: 700 });
+    await popup.getByRole("button", { name: "Cancel existing Hosted Replica" }).click();
+    await expect(popup.getByRole("heading", { name: "Vault settings" })).toBeVisible();
+
     await popup.getByRole("button", { name: "Connect Hosted Replica" }).click();
     await popup.getByLabel("Hosted Replica address").fill(proxy.endpoint);
     await popup.getByLabel("Connection name").fill("Design archive");
@@ -187,6 +208,27 @@ test("renders the canonical local-Vault and Library surfaces", async ({
       fullPage: true,
       mask: [popup.getByText(proxy.endpoint, { exact: true })],
     });
+
+    await popup.getByRole("button", { name: "Use existing Hosted Replica" }).click();
+    await popup.getByLabel("Hosted Replica address").fill(proxy.endpoint);
+    await popup.getByLabel("Connection name").fill("Recovered design archive");
+    await popup.getByLabel("Account username").fill(account.username);
+    await popup.getByLabel("Account password").fill(account.password);
+    await popup.getByRole("button", { name: "Show existing Hosted Replicas" }).click();
+    await expect(popup.getByRole("heading", { name: "Choose a Hosted Replica" })).toBeVisible();
+    await expect(popup.getByRole("button", { name: /^Use Hosted Replica/ })).toBeVisible();
+    await assertInteractiveTargets(popup);
+    await expectReadableContrast(popup);
+    await expect(popup).toHaveScreenshot("popup-hosted-replica-selection.png", { fullPage: true });
+    await popup.setViewportSize({ width: 360, height: 700 });
+    await assertInteractiveTargets(popup);
+    await expectReadableContrast(popup);
+    await expect(popup).toHaveScreenshot("popup-hosted-replica-selection-narrow.png", {
+      fullPage: true,
+    });
+    await popup.setViewportSize({ width: 400, height: 700 });
+    await popup.getByRole("button", { name: "Cancel Hosted Replica selection" }).click();
+    await expect(popup.getByRole("heading", { name: "Vault settings" })).toBeVisible();
 
     await popup.getByRole("button", { name: "Remove Remote from this Client" }).click();
     await expect(

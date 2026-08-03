@@ -67,6 +67,13 @@ type CanonicalPopupVaultScreen =
     }
   | { readonly kind: "HostedMemberRecovery" }
   | { readonly kind: "HostedReplicaSetup" }
+  | { readonly kind: "HostedReplicaAttachment" }
+  | {
+      readonly kind: "HostedReplicaAttachmentSelection";
+      readonly setup: Awaited<
+        ReturnType<CanonicalPopupApplicationClient["beginHostedReplicaAttachment"]>
+      >;
+    }
   | { readonly kind: "HostedReplicaRename"; readonly remoteId: string }
   | { readonly kind: "HostedReplicaRetirement"; readonly remoteId: string }
   | { readonly kind: "VacuumConfirmation" }
@@ -651,6 +658,17 @@ function renderHostedReplicas(view: CanonicalPopupView, content: DocumentFragmen
     });
     section.append(pull);
   }
+  const useExisting = element(
+    "button",
+    "Use existing Hosted Replica",
+    "canonical-popup__hosted-action",
+  ) as HTMLButtonElement;
+  useExisting.type = "button";
+  useExisting.addEventListener("click", () => {
+    vaultScreen = { kind: "HostedReplicaAttachment" };
+    render(view);
+  });
+  section.append(useExisting);
   const connect = element(
     "button",
     "Connect Hosted Replica",
@@ -848,6 +866,147 @@ function renderHostedReplicaSetup(view: CanonicalPopupView, content: DocumentFra
     });
   });
   content.append(form);
+}
+
+function renderHostedReplicaAttachment(view: CanonicalPopupView, content: DocumentFragment): void {
+  const presentation = canonicalPopupPresentation(view.state);
+  if (presentation.kind !== "Capture" && presentation.kind !== "ClosedVault") {
+    throw new Error("Hosted Replica attachment requires a selected Vault.");
+  }
+  content.append(
+    element(
+      "p",
+      "Sign in to list Hosted Replicas this Account can access. AWSM saves only the local connection you select.",
+      "canonical-popup__warning",
+    ),
+  );
+  const form = element("form", undefined, "canonical-popup__form");
+  const endpointLabel = element("label", "Hosted Replica address");
+  const endpoint = element("input") as HTMLInputElement;
+  endpoint.type = "url";
+  endpoint.autocomplete = "off";
+  endpoint.placeholder = "https://sync.example/";
+  endpoint.required = true;
+  endpointLabel.append(endpoint);
+  const nameLabel = element("label", "Connection name");
+  const name = element("input") as HTMLInputElement;
+  name.autocomplete = "off";
+  name.maxLength = 256;
+  name.value = `${displayVaultLabel(presentation.vault.label)} hosted`;
+  name.required = true;
+  nameLabel.append(name);
+  const usernameLabel = element("label", "Account username");
+  const username = element("input") as HTMLInputElement;
+  username.autocomplete = "username";
+  username.maxLength = 256;
+  username.required = true;
+  usernameLabel.append(username);
+  const passwordLabel = element("label", "Account password");
+  const password = element("input") as HTMLInputElement;
+  password.type = "password";
+  password.autocomplete = "current-password";
+  password.maxLength = 1024;
+  password.required = true;
+  passwordLabel.append(password);
+  const actions = element("div", undefined, "canonical-popup__actions");
+  const cancel = element("button", "Cancel existing Hosted Replica") as HTMLButtonElement;
+  cancel.type = "button";
+  cancel.addEventListener("click", () => {
+    password.value = "";
+    vaultScreen = { kind: "Settings" };
+    render(view);
+  });
+  const submit = element(
+    "button",
+    "Show existing Hosted Replicas",
+    "canonical-popup__primary",
+  ) as HTMLButtonElement;
+  submit.type = "submit";
+  actions.append(cancel, submit);
+  form.append(endpointLabel, nameLabel, usernameLabel, passwordLabel, actions);
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    action(submit, async () => {
+      try {
+        transientError = undefined;
+        await requestHostedReplicaPermission(endpoint.value);
+        const setup = await client.beginHostedReplicaAttachment({
+          expectedVaultId: presentation.vault.vaultId,
+          endpoint: endpoint.value,
+          name: name.value,
+          username: username.value,
+          password: password.value,
+        });
+        vaultScreen = { kind: "HostedReplicaAttachmentSelection", setup };
+        render(view);
+      } finally {
+        password.value = "";
+      }
+    });
+  });
+  content.append(form);
+}
+
+function displayHostedReplicaChoice(replicaHandle: string, storedBytes: number): string {
+  return `Hosted Replica …${replicaHandle.slice(-8)}. ${storedBytes.toLocaleString()} bytes stored.`;
+}
+
+function renderHostedReplicaAttachmentSelection(
+  view: CanonicalPopupView,
+  content: DocumentFragment,
+): void {
+  const expectedVaultId = view.state.selectedVaultId;
+  const screen = vaultScreen;
+  if (expectedVaultId === undefined || screen.kind !== "HostedReplicaAttachmentSelection") {
+    throw new Error("Hosted Replica selection requires a selected Vault.");
+  }
+  const setup = screen.setup;
+  if (setup.replicas.length === 0) throw new Error("Hosted Replica selection has no candidates.");
+  content.append(
+    element(
+      "p",
+      "The Host cannot tell which Vault each opaque Hosted Replica contains. Choose a connection, then check it. AWSM validates any received Vault data locally.",
+      "canonical-popup__warning",
+    ),
+  );
+  const choices = element("div", undefined, "canonical-popup__choices");
+  for (const replica of setup.replicas) {
+    const choose = element(
+      "button",
+      `Use ${displayHostedReplicaChoice(replica.replicaHandle, replica.storedBytes)}`,
+    ) as HTMLButtonElement;
+    choose.type = "button";
+    choose.addEventListener("click", () => {
+      action(choose, async () => {
+        transientError = undefined;
+        await client.confirmHostedReplicaAttachment({
+          expectedVaultId,
+          setupId: setup.setupId,
+          replicaHandle: replica.replicaHandle,
+        });
+        vaultScreen = { kind: "Settings" };
+        announcer.textContent =
+          "Hosted Replica connected locally. Check it to retrieve available Vault data.";
+        await controller.refresh();
+      });
+    });
+    choices.append(choose);
+  }
+  const cancel = element(
+    "button",
+    "Cancel Hosted Replica selection",
+    "canonical-popup__quiet",
+  ) as HTMLButtonElement;
+  cancel.type = "button";
+  cancel.addEventListener("click", () => {
+    action(cancel, async () => {
+      transientError = undefined;
+      await client.cancelHostedReplicaAttachment(setup.setupId);
+      vaultScreen = { kind: "Settings" };
+      render(view);
+    });
+  });
+  content.append(choices, cancel);
 }
 
 function renderClosedVault(view: CanonicalPopupView, content: DocumentFragment): void {
@@ -1145,6 +1304,10 @@ function popupHeading(presentation: ReturnType<typeof canonicalPopupPresentation
       return "Recover a Hosted Vault";
     case "HostedReplicaSetup":
       return "Connect a Hosted Replica";
+    case "HostedReplicaAttachment":
+      return "Use an existing Hosted Replica";
+    case "HostedReplicaAttachmentSelection":
+      return "Choose a Hosted Replica";
     case "HostedReplicaRename":
       return "Rename Hosted Replica";
     case "HostedReplicaRetirement":
@@ -1180,6 +1343,12 @@ function render(view: CanonicalPopupView): void {
     }
     if (vaultScreen.kind === "Fork") renderVaultFork(content, vaultScreen.setup);
     if (vaultScreen.kind === "HostedReplicaSetup") renderHostedReplicaSetup(view, content);
+    if (vaultScreen.kind === "HostedReplicaAttachment") {
+      renderHostedReplicaAttachment(view, content);
+    }
+    if (vaultScreen.kind === "HostedReplicaAttachmentSelection") {
+      renderHostedReplicaAttachmentSelection(view, content);
+    }
     if (vaultScreen.kind === "HostedReplicaRename") renderHostedReplicaRename(view, content);
     if (vaultScreen.kind === "HostedReplicaRetirement") {
       renderHostedReplicaRetirement(view, content);

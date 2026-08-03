@@ -6,14 +6,11 @@ import { wipe } from "../../crypto/sodium";
 import { DEPENDENCY_TYPES } from "../../domain/canonical/dependencies";
 import { decodeFeatureManifest } from "../../domain/canonical/features";
 import type { Identifier } from "../../domain/canonical/identifiers";
-import { ARTIFACT_OBJECT, artifactId } from "../../domain/canonical/object";
 import type { AuthenticatedVaultEvent, VaultBaseline } from "../../domain/canonical/record";
 import { exactMap, identifierValue, mapValue, oneOfCodes } from "../../domain/canonical/schema";
 import { bytesEqual } from "../../domain/hash";
 import { identifierStorageKey } from "../../drivers/indexeddb/canonical-database";
 import { COMPACT_STORAGE_CLASS, decodeOpaqueEnvelope } from "../../storage/opaque-envelope";
-import type { CanonicalArtifactStore } from "../artifact/canonical-store";
-import { verifyCanonicalArtifactRepresentation } from "../artifact/canonical-verify";
 import {
   type CompleteExportManifestInput,
   type CompleteExportOpaqueItem,
@@ -524,6 +521,7 @@ export class CanonicalHostedRecoveryClosureService {
         const validated = await validateCompleteExportSemantics({
           manifest,
           keyInventory,
+          artifactInventory: "Sparse",
           source: {
             openOpaque: async (item) => {
               const downloaded = inventory.compact.get(identifierStorageKey(item.storageItemId));
@@ -729,67 +727,6 @@ export class CanonicalHostedRecoveryClosureService {
         throw new TypeError("Recovery closure Feature Manifest is unavailable");
       }
       await add(4, id, feature.keyEpochId);
-    }
-    for (const requiredArtifactId of input.reachability.artifactIds) {
-      const object = [...input.objects.values()].find(
-        (candidate) =>
-          candidate.object.objectType === ARTIFACT_OBJECT &&
-          bytesEqual(artifactId(candidate.object), requiredArtifactId),
-      );
-      if (object === undefined) {
-        throw new TypeError("Recovery closure Artifact Object is unavailable");
-      }
-      const epoch = uniqueCandidate(
-        input.epochSecrets.filter(({ keyEpochId }) => bytesEqual(keyEpochId, object.keyEpochId)),
-        "Recovery closure Artifact Key Epoch is unavailable",
-      );
-      const references = await findHostedReplicaOpaqueReferences({
-        locatorSalt: input.replica.locatorSalt,
-        logicalNamespace: 5,
-        logicalId: requiredArtifactId,
-        references: [...input.inventory.items.values()],
-      });
-      const reference = uniqueCandidate(
-        references,
-        "Recovery closure Artifact representation is unavailable",
-      );
-      if (reference.storageClass !== 2) {
-        throw new TypeError("Recovery closure Artifact representation is not Streamable");
-      }
-      const store: CanonicalArtifactStore = {
-        prepare: async () => {
-          throw new TypeError("Recovery closure never prepares Artifact representations");
-        },
-        has: async (storageItemId) => bytesEqual(storageItemId, reference.storageItemId),
-        open: async (storageItemId) => {
-          same(storageItemId, reference.storageItemId, "Recovery closure Artifact Storage Item ID");
-          return input.http.item({
-            replicaHandle: input.replica.replicaHandle,
-            storageItemId: reference.storageItemId,
-            byteLength: reference.byteLength,
-          });
-        },
-        remove: async () => undefined,
-      };
-      const verified = await verifyCanonicalArtifactRepresentation({
-        store,
-        storageItemId: reference.storageItemId,
-        object: object.object,
-        keyEpochId: epoch.keyEpochId,
-        keyEpochKey: epoch.key,
-        writePlaintext: async () => undefined,
-      });
-      if (verified.byteLength !== reference.byteLength) {
-        throw new TypeError("Recovery closure Artifact length disagrees with Host inventory");
-      }
-      entries.push({
-        namespace: 5,
-        logicalId: requiredArtifactId,
-        storageItemId: reference.storageItemId,
-        keyEpochId: epoch.keyEpochId,
-        byteLength: verified.byteLength,
-        byteDigest: verified.byteDigest,
-      });
     }
     return entries.toSorted(
       (left, right) =>

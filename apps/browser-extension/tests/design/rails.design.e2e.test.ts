@@ -94,7 +94,7 @@ test("keeps installation guidance complete with and without JavaScript", async (
   await expect(page).toHaveScreenshot("install-firefox.png", {
     fullPage: true,
   });
-  await expect(page.getByText("What can the Coordination Server see?")).toBeVisible();
+  await expect(page.getByText("What can a Replica Host see?")).toBeVisible();
   await expect(
     page.getByText("Why do I need both an Account password and a Recovery Phrase?"),
   ).toBeVisible();
@@ -140,32 +140,26 @@ test("renders trust, Account, validation, and design-reference surfaces", async 
   }
 
   await page.goto("/glossary");
-  await page.locator('.glossary-index a[href="#complete-export"]').hover();
-  await expect(page.locator("#complete-export")).toHaveCSS(
-    "background-color",
-    "rgb(244, 235, 216)",
-  );
+  await page.locator('.glossary-index a[href="#capture"]').hover();
+  await expect(page.locator("#capture")).toHaveCSS("background-color", "rgb(244, 235, 216)");
   await page.mouse.move(0, 0);
-  await expect(page.locator("#complete-export")).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await expect(page.locator("#capture")).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
 
   await page.goto("/");
-  await page.locator('a.term-link[href="/glossary#complete-export"]').click();
-  await expect(page).toHaveURL(/\/glossary#complete-export$/);
+  await page.locator('a.term-link[href="/glossary#capture"]').click();
+  await expect(page).toHaveURL(/\/glossary#capture$/);
   await expect
     .poll(async () => {
       const stickyHeaderBottom = await page.locator(".site-header").evaluate((element) => {
         return element.getBoundingClientRect().bottom;
       });
-      const definitionTop = await page.locator("#complete-export").evaluate((element) => {
+      const definitionTop = await page.locator("#capture").evaluate((element) => {
         return element.getBoundingClientRect().top;
       });
       return definitionTop > stickyHeaderBottom && definitionTop < stickyHeaderBottom + 64;
     })
     .toBe(true);
-  await expect(page.locator("#complete-export")).toHaveCSS(
-    "background-color",
-    "rgb(255, 240, 184)",
-  );
+  await expect(page.locator("#capture")).toHaveCSS("background-color", "rgb(255, 240, 184)");
 
   await page.goto("/sign_up");
   await expect(page.getByRole("heading", { name: "Create your Account" })).toBeVisible();

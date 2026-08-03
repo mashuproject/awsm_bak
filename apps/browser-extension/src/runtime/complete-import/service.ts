@@ -546,8 +546,14 @@ export class CanonicalCompleteImportService {
     readonly source: CompleteImportPreparedSource;
     readonly recoveryPhrase: string;
     readonly assertedAt: number | bigint;
+    readonly artifactInventory?: "Complete" | "Sparse";
   }): Promise<RecoveredCompleteImport> {
-    const validated = await validateCompleteExportSemantics(input);
+    const validated = await validateCompleteExportSemantics({
+      ...input,
+      ...(input.artifactInventory === undefined
+        ? {}
+        : { artifactInventory: input.artifactInventory }),
+    });
     const result = await this.activateValidatedUnknown({
       validated,
       source: input.source,

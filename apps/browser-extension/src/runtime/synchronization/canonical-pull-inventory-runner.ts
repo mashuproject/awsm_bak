@@ -202,6 +202,7 @@ export class CanonicalPullInventoryRunner {
         nextPosition: page.nextPosition,
       });
       if (
+        next.stage !== job.stage ||
         next.snapshotCursor !== job.snapshotCursor ||
         !same(next.nextPosition, job.nextPosition)
       ) {

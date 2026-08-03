@@ -164,13 +164,18 @@ function requireExactDependencies(
   }
 }
 
-function reachableInventoryKeys(reachability: CompleteExportReachability): Set<string> {
+function reachableInventoryKeys(
+  reachability: CompleteExportReachability,
+  artifactInventory: "Complete" | "Sparse",
+): Set<string> {
   return new Set([
     ...reachability.recordIds.map((id) => `1:${key(id)}`),
     ...reachability.keyEnvelopeIds.map((id) => `2:${key(id)}`),
     ...reachability.vaultObjectIds.map((id) => `3:${key(id)}`),
     ...reachability.featureManifestIds.map((id) => `4:${key(id)}`),
-    ...reachability.artifactIds.map((id) => `5:${key(id)}`),
+    ...(artifactInventory === "Complete"
+      ? reachability.artifactIds.map((id) => `5:${key(id)}`)
+      : []),
   ]);
 }
 
@@ -417,7 +422,10 @@ export async function validateCompleteExportSemantics(input: {
   readonly manifest: CompleteExportManifest;
   readonly keyInventory: CompleteExportKeyInventory;
   readonly source: CompleteImportPreparedSource;
+  /** A thin Replica authenticates Capture metadata while leaving heavy wrappers on demand. */
+  readonly artifactInventory?: "Complete" | "Sparse";
 }): Promise<ValidatedCompleteExportSemantics> {
+  const artifactInventory = input.artifactInventory ?? "Complete";
   const manifest = decodeCompleteExportManifest(encodeCompleteExportManifest(input.manifest));
   const keyInventory = decodeCompleteExportKeyInventory(
     encodeCompleteExportKeyInventory(input.keyInventory),
@@ -516,7 +524,7 @@ export async function validateCompleteExportSemantics(input: {
       loadFeatureManifest: async (id) => features.get(key(id)),
     });
     requireExactDependencies(manifest.typedLogicalRoots, reachability.typedLogicalRoots);
-    const expectedInventory = reachableInventoryKeys(reachability);
+    const expectedInventory = reachableInventoryKeys(reachability, artifactInventory);
     const actualInventory = new Set(
       manifest.opaqueItemInventory.map((item) => `${item.namespace}:${key(item.logicalId)}`),
     );
@@ -560,44 +568,46 @@ export async function validateCompleteExportSemantics(input: {
       keyEnvelopes,
     });
 
-    const artifactStore: CanonicalArtifactStore = {
-      prepare: async () => {
-        throw new TypeError("Complete Import semantic validation never prepares Artifacts");
-      },
-      open: async (storageItemId) => {
-        const item = itemsByStorageId.get(key(storageItemId));
-        if (item === undefined) throw new TypeError("Prepared Artifact wrapper is unavailable");
-        return input.source.openOpaque(item);
-      },
-      has: async (storageItemId) => itemsByStorageId.has(key(storageItemId)),
-      remove: async () => undefined,
-    };
-    for (const id of reachability.artifactIds) {
-      const object = [...objects.values()].find(
-        (candidate) =>
-          candidate.objectType === ARTIFACT_OBJECT && bytesEqual(artifactId(candidate), id),
-      );
-      const item = manifest.opaqueItemInventory.find(
-        (candidate) => candidate.namespace === 5 && bytesEqual(candidate.logicalId, id),
-      );
-      if (object === undefined || item === undefined) {
-        throw new TypeError("Complete Export reachable Artifact inventory is incomplete");
+    if (artifactInventory === "Complete") {
+      const artifactStore: CanonicalArtifactStore = {
+        prepare: async () => {
+          throw new TypeError("Complete Import semantic validation never prepares Artifacts");
+        },
+        open: async (storageItemId) => {
+          const item = itemsByStorageId.get(key(storageItemId));
+          if (item === undefined) throw new TypeError("Prepared Artifact wrapper is unavailable");
+          return input.source.openOpaque(item);
+        },
+        has: async (storageItemId) => itemsByStorageId.has(key(storageItemId)),
+        remove: async () => undefined,
+      };
+      for (const id of reachability.artifactIds) {
+        const object = [...objects.values()].find(
+          (candidate) =>
+            candidate.objectType === ARTIFACT_OBJECT && bytesEqual(artifactId(candidate), id),
+        );
+        const item = manifest.opaqueItemInventory.find(
+          (candidate) => candidate.namespace === 5 && bytesEqual(candidate.logicalId, id),
+        );
+        if (object === undefined || item === undefined) {
+          throw new TypeError("Complete Export reachable Artifact inventory is incomplete");
+        }
+        const epochKey = epochKeys.get(key(item.keyEpochId));
+        if (epochKey === undefined)
+          throw new TypeError("Complete Export omits an Artifact Epoch Key");
+        const verified = await verifyCanonicalArtifactRepresentation({
+          store: artifactStore,
+          storageItemId: item.storageItemId,
+          object,
+          keyEpochId: item.keyEpochId,
+          keyEpochKey: epochKey,
+          writePlaintext: async () => undefined,
+        });
+        if (verified.byteLength !== item.byteLength) {
+          throw new TypeError("Complete Import Artifact wrapper length does not match");
+        }
+        same(verified.byteDigest, item.byteDigest, "Complete Import Artifact wrapper digest");
       }
-      const epochKey = epochKeys.get(key(item.keyEpochId));
-      if (epochKey === undefined)
-        throw new TypeError("Complete Export omits an Artifact Epoch Key");
-      const verified = await verifyCanonicalArtifactRepresentation({
-        store: artifactStore,
-        storageItemId: item.storageItemId,
-        object,
-        keyEpochId: item.keyEpochId,
-        keyEpochKey: epochKey,
-        writePlaintext: async () => undefined,
-      });
-      if (verified.byteLength !== item.byteLength) {
-        throw new TypeError("Complete Import Artifact wrapper length does not match");
-      }
-      same(verified.byteDigest, item.byteDigest, "Complete Import Artifact wrapper digest");
     }
 
     return {

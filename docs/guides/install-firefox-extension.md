@@ -22,26 +22,25 @@ Continue only when the command reports `OK`.
 1. Open the downloaded XPI in Firefox.
 2. Review Firefox's installation prompt.
 3. Select **Add**.
-4. Open AWSM from the toolbar and either continue without synchronization or connect a compatible
-   Coordination Server.
+4. Open AWSM from the toolbar, name and create a local Vault, and write down its Recovery Phrase.
 
 The signed add-on persists across Firefox restarts. Use a normal browsing window; Firefox Private
 Browsing is not a supported Capture or storage environment.
 
 ## Synchronization permission
 
-Local Vault creation, Capture, Library, MHTML download, Export, and Import do not require
-data-transmission permission. When you choose synchronization, Firefox asks in one native prompt
-for the selected server origin and these optional data categories:
+Local Vault creation, Capture, and locally available Library content do not require data-transmission
+permission. When you choose a Replica Host, Firefox asks in one native prompt for the selected Host
+origin and these optional data categories:
 
 - website content;
 - browsing activity;
 - authentication information; and
 - personally identifying information.
 
-AWSM requests them because an encrypted synchronized Vault can contain those data classes. Denying
-or later revoking the permission prevents Coordination Server traffic while local features remain
-available. Reapprove synchronization from the popup or Library settings to resume.
+AWSM requests them because encrypted Vault data can contain those data classes. Denying or later
+revoking the permission prevents that Host channel from operating while local features remain
+available. Reapprove the selected Host from the popup to resume.
 
 ## MHTML
 
@@ -52,12 +51,14 @@ claim Firefox can render MHTML natively; use a compatible offline viewer when ne
 
 AWSM does not currently provide AMO-managed automatic updates. Check the
 [latest GitHub Release](https://github.com/mashuproject/awsm_bak/releases/latest), verify its
-checksum, and install the newer signed XPI with the same extension ID to upgrade. Firefox preserves
-extension storage during an ordinary upgrade, but creating a Complete Vault Export first is
-recommended.
+checksum, and install the newer signed XPI with the same extension ID to upgrade. Firefox ordinarily
+preserves extension storage during an upgrade, but do not rely on an interrupted install or a removed
+browser profile to preserve local data. Keep the Recovery Phrase safe and retain any Replica Host
+access you rely on.
 
 Remove AWSM from `about:addons` under **Extensions**. Removing the extension can remove its local
-browser storage; export any Vault you need before uninstalling.
+browser storage. A Recovery Phrase can recover a Vault only where an accessible Replica still has
+the required encrypted items.
 
 ## Troubleshooting
 

@@ -27,7 +27,9 @@ function fixture(
   options: {
     readonly remotes?: Pick<CanonicalReplicaRemoteService, "list"> &
       Partial<Pick<CanonicalReplicaRemoteService, "update">>;
-    readonly hostedReplicaSetup?: Pick<CanonicalHostedReplicaSetupService, "create">;
+    readonly hostedReplicaSetup?: Partial<
+      Pick<CanonicalHostedReplicaSetupService, "create" | "beginAttachment">
+    >;
     readonly hostedCompactMaterializer?: Pick<
       CanonicalHostedCompactMaterializationService,
       "materialize"
@@ -221,6 +223,79 @@ describe("canonical Client Runtime", () => {
     expect(hostedCompactMaterializer.materialize).toHaveBeenCalledWith({
       vaultId: selectedVaultId,
       remoteId,
+    });
+  });
+
+  it("attaches one selected authorized Hosted Replica through a transient ceremony", async () => {
+    const remote: CanonicalReplicaRemote = {
+      remoteId: "019fa62e-a653-7f63-b2bf-94e7ed5e46ca",
+      vaultId: randomIdentifier("Vault"),
+      name: "Existing hosted copy",
+      endpoint: "https://sync.example.test/",
+      hostedReplicaHandle: "019fa62e-a653-7f63-b2bf-94e7ed5e46cb",
+      locatorSalt: new Uint8Array(32).fill(8),
+      enabled: true,
+      inventoryPageSize: 100,
+    };
+    const ceremony = {
+      replicas: [
+        {
+          replicaHandle: remote.hostedReplicaHandle,
+          locatorSalt: new Uint8Array(32).fill(8),
+          capabilities: [
+            "awsm.replica.inventory.read",
+            "awsm.replica.item.read",
+            "awsm.replica.item.write",
+          ],
+          quotaBytes: null,
+          storedBytes: 4_096,
+        },
+      ],
+      confirm: vi.fn(async () => remote),
+      cancel: vi.fn(),
+    };
+    const hostedReplicaSetup = {
+      beginAttachment: vi.fn(async () => ceremony),
+    };
+    const { runtime, firstVaultId: selectedVaultId } = fixture({
+      hostedReplicaSetup: hostedReplicaSetup as never,
+    });
+    const expectedVaultId = identifierStorageKey(selectedVaultId);
+
+    await expect(
+      runtime.beginHostedReplicaAttachment({
+        expectedVaultId,
+        endpoint: remote.endpoint,
+        name: remote.name,
+        username: "archive_reader",
+        password: "correct horse battery staple",
+      }),
+    ).resolves.toEqual({
+      setupId: "setup-1",
+      replicas: [{ replicaHandle: remote.hostedReplicaHandle, storedBytes: 4_096 }],
+    });
+    expect(hostedReplicaSetup.beginAttachment).toHaveBeenCalledWith({
+      vaultId: selectedVaultId,
+      endpoint: remote.endpoint,
+      name: remote.name,
+      username: "archive_reader",
+      password: "correct horse battery staple",
+    });
+    await expect(
+      runtime.confirmHostedReplicaAttachment({
+        expectedVaultId,
+        setupId: "setup-1",
+        replicaHandle: remote.hostedReplicaHandle,
+      }),
+    ).resolves.toEqual({
+      remoteId: remote.remoteId,
+      name: remote.name,
+      endpoint: remote.endpoint,
+      enabled: true,
+    });
+    expect(ceremony.confirm).toHaveBeenCalledWith(remote.hostedReplicaHandle);
+    await expect(runtime.cancelHostedReplicaAttachment("setup-1")).rejects.toMatchObject({
+      id: "HOSTED_REPLICA_ATTACHMENT_NOT_FOUND",
     });
   });
 

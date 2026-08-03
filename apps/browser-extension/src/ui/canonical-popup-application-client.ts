@@ -1,6 +1,7 @@
 import type { CanonicalApplicationRequest } from "../app/canonical-application";
 import type {
   CanonicalClientArtifactHydrationSummary,
+  CanonicalClientHostedReplicaAttachmentCandidate,
   CanonicalClientLibraryItem,
   CanonicalClientRemoteMaterializationSummary,
   CanonicalClientRemotePullSummary,
@@ -114,6 +115,22 @@ export interface CanonicalPopupApplicationClient extends CanonicalPopupClient {
     readonly username: string;
     readonly password: string;
   }): Promise<CanonicalClientRemoteSummary>;
+  beginHostedReplicaAttachment(input: {
+    readonly expectedVaultId: string;
+    readonly endpoint: string;
+    readonly name: string;
+    readonly username: string;
+    readonly password: string;
+  }): Promise<{
+    readonly setupId: string;
+    readonly replicas: readonly CanonicalClientHostedReplicaAttachmentCandidate[];
+  }>;
+  confirmHostedReplicaAttachment(input: {
+    readonly expectedVaultId: string;
+    readonly setupId: string;
+    readonly replicaHandle: string;
+  }): Promise<CanonicalClientRemoteSummary>;
+  cancelHostedReplicaAttachment(setupId: string): Promise<void>;
   materializeHostedReplica(input: {
     readonly expectedVaultId: string;
     readonly remoteId: string;
@@ -343,6 +360,38 @@ function decodeRemotes(value: unknown): readonly CanonicalClientRemoteSummary[] 
   if (new Set(remotes.map(({ remoteId }) => remoteId)).size !== remotes.length)
     throw protocolError();
   return remotes;
+}
+
+function decodeHostedReplicaAttachment(value: unknown): {
+  readonly setupId: string;
+  readonly replicas: readonly CanonicalClientHostedReplicaAttachmentCandidate[];
+} {
+  if (
+    !plainRecord(value) ||
+    !exactKeys(value, ["setupId", "replicas"]) ||
+    !setupId(value.setupId) ||
+    !Array.isArray(value.replicas)
+  ) {
+    throw protocolError();
+  }
+  const replicas = value.replicas.map((replica) => {
+    if (
+      !plainRecord(replica) ||
+      !exactKeys(replica, ["replicaHandle", "storedBytes"]) ||
+      !setupId(replica.replicaHandle) ||
+      !nonnegativeInteger(replica.storedBytes)
+    ) {
+      throw protocolError();
+    }
+    return { replicaHandle: replica.replicaHandle, storedBytes: replica.storedBytes };
+  });
+  if (
+    replicas.length === 0 ||
+    new Set(replicas.map(({ replicaHandle }) => replicaHandle)).size !== replicas.length
+  ) {
+    throw protocolError();
+  }
+  return { setupId: value.setupId, replicas };
 }
 
 function decodeRemoteRetirement(value: unknown): CanonicalClientRemoteRetirementSummary {
@@ -804,6 +853,42 @@ export function createCanonicalPopupApplicationClient(
           password: input.password,
         }),
       );
+    },
+    async beginHostedReplicaAttachment(input) {
+      assertHostedReplicaSetup(input);
+      return decodeHostedReplicaAttachment(
+        await transport.request({
+          type: "BeginHostedReplicaAttachment",
+          expectedVaultId: input.expectedVaultId,
+          endpoint: input.endpoint,
+          name: input.name,
+          username: input.username,
+          password: input.password,
+        }),
+      );
+    },
+    async confirmHostedReplicaAttachment(input) {
+      if (!identifier(input.expectedVaultId)) throw new TypeError("Popup Vault ID is invalid.");
+      if (!setupId(input.setupId)) throw new TypeError("Popup Hosted Replica setup ID is invalid.");
+      if (!setupId(input.replicaHandle))
+        throw new TypeError("Popup Hosted Replica handle is invalid.");
+      return decodeRemoteSummary(
+        await transport.request({
+          type: "ConfirmHostedReplicaAttachment",
+          expectedVaultId: input.expectedVaultId,
+          setupId: input.setupId,
+          replicaHandle: input.replicaHandle,
+        }),
+      );
+    },
+    async cancelHostedReplicaAttachment(attachmentSetupId) {
+      if (!setupId(attachmentSetupId))
+        throw new TypeError("Popup Hosted Replica setup ID is invalid.");
+      const value = await transport.request({
+        type: "CancelHostedReplicaAttachment",
+        setupId: attachmentSetupId,
+      });
+      if (value !== null) throw protocolError();
     },
     async materializeHostedReplica(input) {
       if (!identifier(input.expectedVaultId)) throw new TypeError("Popup Vault ID is invalid.");

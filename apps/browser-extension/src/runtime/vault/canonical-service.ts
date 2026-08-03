@@ -795,6 +795,34 @@ export class CanonicalVaultService {
     return resolution;
   }
 
+  async findLogicalResolution(input: {
+    readonly vault: PersistedOpenedCanonicalVault;
+    readonly kind: LogicalResolution["kind"];
+    readonly logicalId: Uint8Array;
+  }): Promise<LogicalResolution | null> {
+    const vaultKey = identifierStorageKey(input.vault.replicaState.vaultId);
+    const logicalKey = identifierStorageKey(input.logicalId as Identifier<"VaultRecord">);
+    const wrapped = await this.storage.getBytes(this.realm, {
+      namespace: NAMESPACES.logicalResolution.key,
+      scopeKey: vaultKey,
+      itemKey: `${input.kind}:${logicalKey}`,
+    });
+    if (wrapped === undefined) return null;
+    const resolution = decodeLogicalResolution(
+      await openWrappedLocalState({
+        wrappingKey: input.vault.installationWrappingKey,
+        domain: "awsm.local.logical-resolution",
+        vaultId: input.vault.replicaState.vaultId,
+        identity: input.logicalId,
+        wrappedBytes: wrapped,
+      }),
+    );
+    sameBytes(resolution.vaultId, input.vault.replicaState.vaultId, "Resolution Vault ID");
+    if (resolution.kind !== input.kind) throw new TypeError("Logical Resolution kind is invalid");
+    sameBytes(resolution.logicalId, input.logicalId, "Resolution logical ID");
+    return resolution;
+  }
+
   async openResolvedCompactItem(input: {
     readonly vault: PersistedOpenedCanonicalVault;
     readonly kind: 1 | 3 | 4;

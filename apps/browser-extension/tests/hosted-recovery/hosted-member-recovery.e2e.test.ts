@@ -8,6 +8,7 @@ import { startEphemeralHttpsProxy } from "./https-proxy";
 
 const extensionBuildPath = resolve(process.env.AWSM_EXTENSION_BUILD ?? ".output/chrome-mv3-e2e");
 const proofOrigin = "http://127.0.0.1:3300/";
+const proofOriginTwo = "http://127.0.0.1:3301/";
 
 interface PackagedExtension {
   readonly context: Awaited<ReturnType<typeof chromium.launchPersistentContext>>;
@@ -44,12 +45,12 @@ async function popup(client: PackagedExtension): Promise<Page> {
   return page;
 }
 
-async function captureFixture(): Promise<{ readonly url: string; close(): Promise<void> }> {
+async function captureFixture(
+  title = "Recovered capture",
+): Promise<{ readonly url: string; close(): Promise<void> }> {
   const server = createServer((_request, response) => {
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-    response.end(
-      "<!doctype html><title>Recovered capture</title><main>Fresh credential proof.</main>",
-    );
+    response.end(`<!doctype html><title>${title}</title><main>Fresh credential proof.</main>`);
   });
   await new Promise<void>((resolveServer, rejectServer) => {
     server.once("error", rejectServer);
@@ -100,13 +101,13 @@ async function captureActivePage(popupPage: Page, activePage: Page): Promise<voi
   }, activePage.url());
 }
 
-async function createHostAccount(): Promise<{
+async function createHostAccount(origin = proofOrigin): Promise<{
   readonly username: string;
   readonly password: string;
 }> {
   const username = `recovery_${randomUUID().replaceAll("-", "").slice(0, 20)}`;
   const password = `hosted recovery proof ${randomUUID()}`;
-  const response = await fetch(new URL("sign_up", proofOrigin), {
+  const response = await fetch(new URL("sign_up", origin), {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
@@ -126,10 +127,14 @@ test("recovers a fresh local Client from a real opaque Hosted Replica without sa
   test.setTimeout(120_000);
   expect(browserName).toBe("chromium");
   const proxy = await startEphemeralHttpsProxy({ origin: proofOrigin });
+  const secondProxy = await startEphemeralHttpsProxy({ origin: proofOriginTwo });
   const account = await createHostAccount();
+  const secondAccount = await createHostAccount(proofOriginTwo);
   const owner = await packagedExtension(testInfo, "owner");
   const recovered = await packagedExtension(testInfo, "recovered");
+  const secondHostReader = await packagedExtension(testInfo, "second-host-reader");
   const fixture = await captureFixture();
+  const withheldFixture = await captureFixture("Withheld from first Host");
   try {
     const ownerPopup = await popup(owner);
     await ownerPopup.getByLabel("Vault name").fill("Hosted recovery proof");
@@ -195,6 +200,39 @@ test("recovers a fresh local Client from a real opaque Hosted Replica without sa
       "Hosted Replica removed from this Client. The Replica Host was not contacted.",
     );
 
+    await ownerPopup.getByRole("button", { name: "Back to Vault" }).click();
+    const ownerActivePage = await owner.context.newPage();
+    await ownerActivePage.goto(withheldFixture.url);
+    await captureActivePage(ownerPopup, ownerActivePage);
+    await ownerPopup.getByRole("button", { name: "Archive this page" }).click();
+    await expect(ownerPopup.getByText("Withheld from first Host", { exact: true })).toBeVisible();
+    await ownerPopup.getByRole("button", { name: "Vault settings" }).click();
+    await ownerPopup.getByRole("button", { name: "Connect Hosted Replica" }).click();
+    await ownerPopup.getByLabel("Hosted Replica address").fill(secondProxy.endpoint);
+    await ownerPopup.getByLabel("Connection name").fill("withholding host");
+    await ownerPopup.getByLabel("Account username").fill(secondAccount.username);
+    await ownerPopup.getByLabel("Account password").fill(secondAccount.password);
+    await ownerPopup.getByRole("button", { name: "Connect Hosted Replica", exact: true }).click();
+    const secondRemote = ownerPopup.locator("li").filter({ hasText: "withholding host" });
+    await secondRemote.getByRole("button", { name: "Store compact Vault state" }).click();
+    await expect(ownerPopup.locator("#announcer")).toHaveText(
+      "Compact Vault state stored. Large Capture artifacts remain on demand.",
+    );
+
+    const secondHostReaderPopup = await popup(secondHostReader);
+    await secondHostReaderPopup.getByRole("button", { name: "Recover a Hosted Vault" }).click();
+    await secondHostReaderPopup.getByLabel("Hosted Replica address").fill(secondProxy.endpoint);
+    await secondHostReaderPopup.getByLabel("Account username").fill(secondAccount.username);
+    await secondHostReaderPopup.getByLabel("Account password").fill(secondAccount.password);
+    await secondHostReaderPopup.getByLabel("Recovery Phrase").fill(phrase);
+    await secondHostReaderPopup.getByRole("button", { name: "Recover Hosted Vault" }).click();
+    await expect(
+      secondHostReaderPopup.getByRole("heading", { name: "Archive this page" }),
+    ).toBeVisible();
+    await expect(
+      secondHostReaderPopup.getByText("Withheld from first Host", { exact: true }),
+    ).toBeVisible();
+
     const recoveredPopup = await popup(recovered);
     await recoveredPopup.getByRole("button", { name: "Recover a Hosted Vault" }).click();
     await recoveredPopup.getByLabel("Hosted Replica address").fill(proxy.endpoint);
@@ -204,6 +242,9 @@ test("recovers a fresh local Client from a real opaque Hosted Replica without sa
     await recoveredPopup.getByRole("button", { name: "Recover Hosted Vault" }).click();
     await expect(recoveredPopup.getByRole("heading", { name: "Archive this page" })).toBeVisible();
     await expect(recoveredPopup.getByText("Vault · Hosted recovery proof")).toBeVisible();
+    await expect(recoveredPopup.getByText("Withheld from first Host", { exact: true })).toHaveCount(
+      0,
+    );
     await expect(recoveredPopup.getByLabel("Account password")).toHaveCount(0);
     await expect(recoveredPopup.getByLabel("Recovery Phrase")).toHaveCount(0);
 
@@ -217,9 +258,33 @@ test("recovers a fresh local Client from a real opaque Hosted Replica without sa
     await expect(
       recoveredPopup.getByText("No Hosted Replicas are configured on this Client."),
     ).toBeVisible();
+    await recoveredPopup.getByRole("button", { name: "Use existing Hosted Replica" }).click();
+    await recoveredPopup.getByLabel("Hosted Replica address").fill(secondProxy.endpoint);
+    await recoveredPopup.getByLabel("Connection name").fill("withholding host");
+    await recoveredPopup.getByLabel("Account username").fill(secondAccount.username);
+    await recoveredPopup.getByLabel("Account password").fill(secondAccount.password);
+    await recoveredPopup.getByRole("button", { name: "Show existing Hosted Replicas" }).click();
+    await expect(
+      recoveredPopup.getByRole("heading", { name: "Choose a Hosted Replica" }),
+    ).toBeVisible();
+    await recoveredPopup.getByRole("button", { name: /^Use Hosted Replica/u }).click();
+    await expect(recoveredPopup.getByRole("heading", { name: "Vault settings" })).toBeVisible();
+    await expect(recoveredPopup.getByText("withholding host", { exact: true })).toBeVisible();
+    await recoveredPopup.getByRole("button", { name: "Check Hosted Replicas" }).click();
+    await expect(recoveredPopup.locator("#announcer")).toContainText("Checked 1 Hosted Replica.");
+    await recoveredPopup.getByRole("button", { name: "Back to Vault" }).click();
+    await expect(
+      recoveredPopup.getByText("Withheld from first Host", { exact: true }),
+    ).toBeVisible();
   } finally {
-    await Promise.all([owner.context.close(), recovered.context.close()]);
+    await Promise.all([
+      owner.context.close(),
+      recovered.context.close(),
+      secondHostReader.context.close(),
+    ]);
     await fixture.close();
+    await withheldFixture.close();
     await proxy.close();
+    await secondProxy.close();
   }
 });

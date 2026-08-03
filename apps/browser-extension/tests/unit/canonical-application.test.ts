@@ -16,6 +16,9 @@ describe("canonical application", () => {
       setRemoteEnabled: vi.fn(),
       retireRemote: vi.fn(),
       createHostedReplica: vi.fn(),
+      beginHostedReplicaAttachment: vi.fn(),
+      confirmHostedReplicaAttachment: vi.fn(),
+      cancelHostedReplicaAttachment: vi.fn(),
       materializeHostedReplica: vi.fn(),
       pullHostedReplicas: vi.fn(),
       hydrateArtifact: vi.fn(),
@@ -72,6 +75,9 @@ describe("canonical application", () => {
       setRemoteEnabled: vi.fn(),
       retireRemote: vi.fn(),
       createHostedReplica: vi.fn(),
+      beginHostedReplicaAttachment: vi.fn(),
+      confirmHostedReplicaAttachment: vi.fn(),
+      cancelHostedReplicaAttachment: vi.fn(),
       materializeHostedReplica: vi.fn(),
       pullHostedReplicas: vi.fn(),
       hydrateArtifact: vi.fn(),
@@ -151,6 +157,77 @@ describe("canonical application", () => {
     });
     await expect(
       application.handle({ type: "ListRemotes", expectedVaultId, extra: true }),
+    ).rejects.toThrow(/Unsupported application Command/u);
+  });
+
+  it("attaches an existing Hosted Replica only through an exact transient selection ceremony", async () => {
+    const runtime = {
+      beginHostedReplicaAttachment: vi.fn().mockResolvedValue({
+        setupId: "019fa62e-a653-7f63-b2bf-94e7ed5e46cd",
+        replicas: [
+          {
+            replicaHandle: "019fa62e-a653-7f63-b2bf-94e7ed5e46cb",
+            storedBytes: 4_096,
+          },
+        ],
+      }),
+      confirmHostedReplicaAttachment: vi.fn().mockResolvedValue({
+        remoteId: "019fa62e-a653-7f63-b2bf-94e7ed5e46ca",
+        name: "Existing hosted copy",
+        endpoint: "https://sync.example.test/",
+        enabled: true,
+      }),
+      cancelHostedReplicaAttachment: vi.fn().mockResolvedValue(undefined),
+    };
+    const invalidated = vi.fn();
+    const application = new CanonicalApplication(
+      runtime as never,
+      undefined,
+      undefined,
+      undefined,
+      invalidated,
+    );
+    const expectedVaultId = "a".repeat(64);
+    const setupId = "019fa62e-a653-7f63-b2bf-94e7ed5e46cd";
+    const replicaHandle = "019fa62e-a653-7f63-b2bf-94e7ed5e46cb";
+
+    await expect(
+      application.handle({
+        type: "BeginHostedReplicaAttachment",
+        expectedVaultId,
+        endpoint: "https://sync.example.test/",
+        name: "Existing hosted copy",
+        username: "archive_reader",
+        password: "correct horse battery staple",
+      }),
+    ).resolves.toEqual({ setupId, replicas: [{ replicaHandle, storedBytes: 4_096 }] });
+    await expect(
+      application.handle({
+        type: "ConfirmHostedReplicaAttachment",
+        expectedVaultId,
+        setupId,
+        replicaHandle,
+      }),
+    ).resolves.toMatchObject({ remoteId: "019fa62e-a653-7f63-b2bf-94e7ed5e46ca" });
+    await expect(
+      application.handle({ type: "CancelHostedReplicaAttachment", setupId }),
+    ).resolves.toBeUndefined();
+    expect(runtime.beginHostedReplicaAttachment).toHaveBeenCalledWith({
+      expectedVaultId,
+      endpoint: "https://sync.example.test/",
+      name: "Existing hosted copy",
+      username: "archive_reader",
+      password: "correct horse battery staple",
+    });
+    expect(runtime.confirmHostedReplicaAttachment).toHaveBeenCalledWith({
+      expectedVaultId,
+      setupId,
+      replicaHandle,
+    });
+    expect(runtime.cancelHostedReplicaAttachment).toHaveBeenCalledWith(setupId);
+    expect(invalidated).toHaveBeenCalledTimes(3);
+    await expect(
+      application.handle({ type: "CancelHostedReplicaAttachment", setupId, extra: true }),
     ).rejects.toThrow(/Unsupported application Command/u);
   });
 
@@ -325,6 +402,9 @@ describe("canonical application", () => {
       setRemoteEnabled: vi.fn(),
       retireRemote: vi.fn(),
       createHostedReplica: vi.fn(),
+      beginHostedReplicaAttachment: vi.fn(),
+      confirmHostedReplicaAttachment: vi.fn(),
+      cancelHostedReplicaAttachment: vi.fn(),
       materializeHostedReplica: vi.fn(),
       pullHostedReplicas: vi.fn(),
       hydrateArtifact: vi.fn(),
@@ -597,6 +677,9 @@ describe("canonical application", () => {
       setRemoteEnabled: vi.fn(),
       retireRemote: vi.fn(),
       createHostedReplica: vi.fn(),
+      beginHostedReplicaAttachment: vi.fn(),
+      confirmHostedReplicaAttachment: vi.fn(),
+      cancelHostedReplicaAttachment: vi.fn(),
       materializeHostedReplica: vi.fn(),
       pullHostedReplicas: vi.fn(),
       hydrateArtifact: vi.fn(),

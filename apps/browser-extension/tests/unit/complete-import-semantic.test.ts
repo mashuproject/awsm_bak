@@ -617,6 +617,37 @@ describe("canonical Complete Import semantic validation", () => {
     expect(validated.reachability.artifactIds).toHaveLength(1);
   });
 
+  it("allows a sparse trusted recovery source to omit reachable Artifact wrappers", async () => {
+    const fixture = await capturedVaultPackage();
+    const opaqueItemInventory = fixture.manifest.opaqueItemInventory.filter(
+      ({ namespace }) => namespace !== 5,
+    );
+    const manifestInput: CompleteExportManifestInput = {
+      ...fixture.manifest,
+      opaqueItemInventory,
+    };
+    const manifest = decodeCompleteExportManifest(
+      encodeCompleteExportManifest({
+        format: 1,
+        ...manifestInput,
+        stateDigest: completeExportStateDigest(manifestInput),
+      }),
+    );
+
+    await expect(validateCompleteExportSemantics({ ...fixture, manifest })).rejects.toThrow(
+      /reachable inventory/u,
+    );
+    await expect(
+      validateCompleteExportSemantics({
+        ...fixture,
+        manifest,
+        artifactInventory: "Sparse",
+      }),
+    ).resolves.toMatchObject({
+      reachability: { artifactIds: [expect.any(Uint8Array)] },
+    });
+  });
+
   it("classifies an authenticated same-Generation descendant without trusting timestamps", async () => {
     const creation = await prepareCanonicalVaultCreation({ label: "Research", assertedAt: 1 });
     const initial = await packageFrom({

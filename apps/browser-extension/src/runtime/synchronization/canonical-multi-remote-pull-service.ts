@@ -4,6 +4,16 @@ import type { CanonicalPullSynchronizationJob, CanonicalReplicaRemote } from "./
 
 type PullJobSummary = Pick<CanonicalPullSynchronizationJob, "stage" | "state" | "progress">;
 
+function progressed(previous: PullJobSummary, next: PullJobSummary): boolean {
+  return (
+    previous.stage !== next.stage ||
+    previous.progress.discoveredItemCount !== next.progress.discoveredItemCount ||
+    previous.progress.downloadedItemCount !== next.progress.downloadedItemCount ||
+    previous.progress.promotedItemCount !== next.progress.promotedItemCount ||
+    previous.progress.rejectedItemCount !== next.progress.rejectedItemCount
+  );
+}
+
 export type CanonicalMultiRemotePullResult =
   | {
       readonly remoteId: string;
@@ -63,9 +73,22 @@ export class CanonicalMultiRemotePullService {
         continue;
       }
       try {
-        const result = status(
-          await this.dependencies.pull({ vaultId: input.vaultId, remoteId: remote.remoteId }),
-        );
+        let job = await this.dependencies.pull({
+          vaultId: input.vaultId,
+          remoteId: remote.remoteId,
+        });
+        while (job.state === 1) {
+          const next = await this.dependencies.pull({
+            vaultId: input.vaultId,
+            remoteId: remote.remoteId,
+          });
+          if (!progressed(job, next)) {
+            job = next;
+            break;
+          }
+          job = next;
+        }
+        const result = status(job);
         results.push({ ...result, remoteId: remote.remoteId });
       } catch {
         results.push({ remoteId: remote.remoteId, status: "Failed" });

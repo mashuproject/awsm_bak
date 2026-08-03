@@ -39,7 +39,7 @@
           <%= link_to "How it works", "#how-it-works", class: "awsm-button awsm-button--secondary" %>
         </div>
         <ul class="hero__assurances" aria-label="AWSM preservation features">
-          <li>Freedom through <%= link_to "Complete Export", glossary_path(anchor: "complete-export"), class: "term-link", data: { turbo: false } %></li>
+          <li>Local-first by default</li>
           <li>Ownership through your encrypted <%= link_to "Vault", glossary_path(anchor: "vault"), class: "term-link", data: { turbo: false } %></li>
           <li>Offline access to local <%= link_to "Captures", glossary_path(anchor: "capture"), class: "term-link", data: { turbo: false } %></li>
         </ul>
@@ -95,8 +95,8 @@
           </article>
           <article class="awsm-card comparison__card comparison__card--awsm">
             <p class="eyebrow">AWSM Vault</p>
-            <h3>Keeps your Vault portable</h3>
-            <p>Locally available content works offline, while Complete Export and verified Import keep the Vault portable.</p>
+            <h3>Keeps your Vault under your control</h3>
+            <p>Locally available content works offline. You choose whether to add an opaque Hosted Replica.</p>
           </article>
         </div>
       </div>
@@ -108,38 +108,37 @@
       <p class="eyebrow">What works today</p>
       <h2 class="section-heading">A working archive on your device.</h2>
       <p class="section-lede">
-        Capture useful HTTP(S) pages, return to them offline, organize them into Collections, and
-        move a complete Vault with verified Export and Import.
+        Capture useful HTTP(S) pages into an encrypted local Vault. Recover with your Recovery Phrase.
+        Add an opaque Hosted Replica only when you choose.
       </p>
       <div class="card-grid">
-        <article class="awsm-card story-card"><h3>Save the page</h3><p>The authoritative page snapshot stays with the Capture, not with a fragile address.</p></article>
+        <article class="awsm-card story-card"><h3>Capture a page locally. Keep control of the Vault.</h3><p>The authoritative page snapshot stays with the Capture, not with a fragile address.</p></article>
         <article class="awsm-card story-card"><h3>Use it offline</h3><p>Your local encrypted Vault remains useful without a network connection or Account.</p></article>
-        <article class="awsm-card story-card"><h3>Take your Vault with you</h3><p>Complete Export and verified Import keep your Vault portable beyond one browser installation.</p></article>
+        <article class="awsm-card story-card"><h3>Attach a Hosted Replica when you choose.</h3><p>An Account identifies you only to that Host. AWSM checks received encrypted data locally.</p></article>
       </div>
     </div>
   </section>
 
   <section class="story-section story-section--cobalt" id="optional-sync">
     <div class="site-container">
-      <p class="eyebrow">Synchronization is optional. Encryption is not.</p>
-      <h2 class="section-heading">Synchronize across browsers. Keep control of the keys.</h2>
+      <p class="eyebrow">Optional synchronization. Local validation.</p>
+      <h2 class="section-heading">Optional synchronization through opaque Replicas.</h2>
       <p class="section-lede">
-        If you enable synchronization, Vault content stays end-to-end encrypted. The Account
-        identifies a client for synchronization, quotas, and future billing. The Recovery Phrase
-        remains client-held and enrolls another certified browser into the same encrypted Vault.
-        The Coordination Server cannot decrypt Vault content.
+        A Host Account identifies you only to that Host for access and quotas. It does not identify a
+        Vault Member or decrypt a Vault. The Recovery Phrase remains client-held, and the client
+        validates data it retrieves.
       </p>
       <div class="flow-diagram" aria-label="AWSM synchronization trust flow">
         <div class="flow-node"><strong>Web page</strong><span>captured locally</span></div>
         <div class="flow-node"><%= keeper_image %><strong>Local Vault</strong><span>encrypted and usable offline</span></div>
-        <div class="flow-node"><span class="flow-node__opaque"></span><strong>Opaque package</strong><span>no readable title or page content</span></div>
-        <div class="flow-node flow-node--server"><span class="flow-node__courier" aria-hidden="true"></span><strong>Coordination Server</strong><span>routes sealed encrypted packages; cannot open them</span></div>
-        <div class="flow-node"><%= keeper_image variant: "keeper-protected" %><strong>Another browser</strong><span>Account + Recovery Phrase</span></div>
+        <div class="flow-node"><span class="flow-node__opaque"></span><strong>Opaque item</strong><span>no readable title or page content</span></div>
+        <div class="flow-node flow-node--server"><span class="flow-node__courier" aria-hidden="true"></span><strong>Replica Host</strong><span>stores opaque bytes; cannot open them</span></div>
+        <div class="flow-node"><%= keeper_image variant: "keeper-protected" %><strong>Local validation</strong><span>the client checks received data</span></div>
       </div>
       <div class="sync-setup">
         <p>
-          To add another browser, choose the hosted Coordination Server or one you self-host. Save
-          and confirm the Recovery Phrase before using it with the Account on another browser.
+          To use a Host, create an Account there, then explicitly create or attach a Hosted Replica in
+          the extension. The extension sends no Vault ID and locally validates the data it retrieves.
         </p>
         <% if @registration_enabled %>
           <%= link_to "Create an Account on this server", sign_up_path, class: "awsm-button awsm-button--secondary" %>
@@ -158,9 +157,8 @@
       </div>
       <div>
         <p>
-          Local use requires no Account. Synchronization is optional. The server stores opaque
-          encrypted records and necessary operational metadata, while Complete Export avoids
-          provider lock-in.
+          Local use requires no Account. Synchronization is optional. A Host stores opaque encrypted
+          items and necessary operational metadata; it does not receive Vault decryption keys.
         </p>
         <p>
           The AWSM source code is available under the AGPL, and the Coordination Server can be
@@ -199,7 +197,7 @@
             <ol>
               <li>Download the latest Release and verify its published checksum.</li>
               <li>Load the unpacked extension using the browser's extension developer mode.</li>
-              <li>Choose <strong>Continue without sync</strong> and create a local Vault.</li>
+              <li>Open AWSM, create a local Vault, and write the Recovery Phrase down.</li>
               <li>Open an HTTP(S) page and archive it from the AWSM popup.</li>
             </ol>
             <div class="button-row">
@@ -213,7 +211,7 @@
             <ol>
               <li>Download the signed XPI and matching checksum from the latest Release.</li>
               <li>Verify the checksum, then open the XPI in Firefox and approve installation.</li>
-              <li>Choose <strong>Continue without sync</strong> and create a local Vault, or explicitly connect a compatible Coordination Server.</li>
+              <li>Open AWSM, create a local Vault, and write the Recovery Phrase down.</li>
               <li>Open an HTTP(S) page and archive it from the AWSM popup.</li>
             </ol>
             <div class="button-row">
@@ -233,15 +231,15 @@
       <h2 class="section-heading">Know what AWSM does. And what it doesn't.</h2>
       <div class="faq-list">
         <article class="faq-item"><h3>How is AWSM different from a bookmark manager?</h3><p>A bookmark manager keeps an address. AWSM keeps an authoritative browser-independent snapshot of the page with its Capture. Other useful representations are best-effort.</p></article>
-        <article class="faq-item"><h3>Why not just use the Wayback Machine?</h3><p>The Wayback Machine preserves public web history. AWSM gives you a personal copy of what matters, available offline and portable with a Complete Export. It also works for private research, account-only documents, bank statements, and anything else that should never enter a public archive. Every Capture stays in your encrypted Vault. If you choose synchronization, the Coordination Server receives sealed encrypted data, not the contents of your Capture.</p></article>
-        <article class="faq-item"><h3>Can I use AWSM without creating an Account?</h3><p>Yes. Capture, Library, local encrypted Vaults, and Export/Import work locally. An Account is needed only for optional synchronization.</p></article>
-        <article class="faq-item"><h3>What can the Coordination Server see?</h3><p>It stores encrypted opaque records and operational metadata, but does not receive the Vault decryption keys.</p></article>
-        <article class="faq-item"><h3>Why do I need both an Account password and a Recovery Phrase?</h3><p>The Account password proves identity to one Coordination Server. The Recovery Phrase is client-held Vault recovery material. They are separate secrets.</p></article>
-        <article class="faq-item"><h3>What happens when I lose internet access?</h3><p>The local Library and locally available Capture content remain usable offline. Synchronization waits for connectivity.</p></article>
+        <article class="faq-item"><h3>Why not just use the Wayback Machine?</h3><p>The Wayback Machine preserves public web history. AWSM gives you a personal copy of what matters, available offline. It also works for private research, account-only documents, bank statements, and anything else that should never enter a public archive. Every Capture stays in your encrypted Vault. If you choose synchronization, a Replica Host receives opaque encrypted items, not Capture contents.</p></article>
+        <article class="faq-item"><h3>Can I use AWSM without creating an Account?</h3><p>Yes. Capture, the local Library, and local encrypted Vaults work without an Account. An Account is needed only when you choose to use a particular Replica Host.</p></article>
+        <article class="faq-item"><h3>What can a Replica Host see?</h3><p>It stores opaque encrypted items and operational metadata, but does not receive Vault decryption keys.</p></article>
+        <article class="faq-item"><h3>Why do I need both an Account password and a Recovery Phrase?</h3><p>The Account password proves identity to one Replica Host. The Recovery Phrase is client-held Vault recovery material. They are separate secrets.</p></article>
+        <article class="faq-item"><h3>What happens when I lose internet access?</h3><p>The local Library and locally available Capture content remain usable offline. Optional synchronization waits for connectivity.</p></article>
         <article class="faq-item"><h3>Where can I install AWSM today?</h3><p>Chrome has a downloadable unpacked preview. Desktop Linux Firefox Stable and ESR have an unlisted Mozilla-signed beta distributed through the GitHub Release. It is not a public AMO listing and does not claim AMO-managed updates.</p></article>
-        <article class="faq-item"><h3>Can I host synchronization myself?</h3><p>Yes. A self-hosted Coordination Server still sees operational metadata and controls its own access logs.</p></article>
-        <article class="faq-item"><h3>How do I take my archive with me?</h3><p>Complete Export and verified Import provide a portable preservation path outside one browser installation.</p></article>
-        <article class="faq-item"><h3>Can AWSM search or summarize what I save?</h3><p>AWSM provides private per-Vault keyword Search. Optional semantic Search uses either a model downloaded after your explicit action or a remote embedding endpoint you configure after a separate plaintext disclosure. AI-generated summaries are not a shipped feature.</p></article>
+        <article class="faq-item"><h3>Can I host synchronization myself?</h3><p>Yes. A self-hosted Replica Host still sees operational metadata and controls its own access logs.</p></article>
+        <article class="faq-item"><h3>How do I use a Hosted Replica?</h3><p>Create an Account on that Host, then explicitly create or attach a Hosted Replica from the extension. The Host Account grants access to that Host; it is not Vault membership.</p></article>
+        <article class="faq-item"><h3>Can AWSM search or summarize what I save?</h3><p>AI-generated summaries are not a shipped feature. Search and other derived local views remain separate from the Vault’s encrypted Capture data.</p></article>
       </div>
     </div>
   </section>

@@ -83,7 +83,7 @@ export interface CanonicalLibraryCapture {
   readonly adapter: string;
   readonly artifactObjectId: Identifier<"VaultObject">;
   readonly artifactId: Identifier<"Artifact">;
-  readonly artifactStorageItemId: Identifier<"StorageItem">;
+  readonly artifactStorageItemId: Identifier<"StorageItem"> | null;
   readonly artifactAvailableLocally: boolean;
   readonly lifecycle: 1 | 2;
 }
@@ -872,13 +872,15 @@ export class CanonicalLibraryProjectionService {
         }
         const artifactObject = await loadObject(fields.primaryArtifactObjectId);
         const logicalArtifactId = artifactId(artifactObject);
-        const resolution = await this.vaults.readLogicalResolution({
+        const resolution = await this.vaults.findLogicalResolution({
           vault,
           kind: 5,
           logicalId: logicalArtifactId,
         });
         const available =
-          resolution.availability === 1 && (await this.artifacts.has(resolution.storageItemId));
+          resolution !== null &&
+          resolution.availability === 1 &&
+          (await this.artifacts.has(resolution.storageItemId));
         const lifecycle = reduceCausalScalar(
           lifecycleFacts.filter((fact) => bytesEqual(fact.bundleId, registration.bundleId)),
           replay.graph,
@@ -903,7 +905,7 @@ export class CanonicalLibraryProjectionService {
           adapter: fields.adapter,
           artifactObjectId: artifactObject.objectId,
           artifactId: logicalArtifactId,
-          artifactStorageItemId: resolution.storageItemId,
+          artifactStorageItemId: resolution?.storageItemId ?? null,
           artifactAvailableLocally: available,
         };
       }),
@@ -1068,16 +1070,18 @@ export class CanonicalLibraryProjectionService {
   ): Promise<CanonicalLibraryProjection> {
     const captures = await Promise.all(
       projection.captures.map(async (capture) => {
-        const resolution = await this.vaults.readLogicalResolution({
+        const resolution = await this.vaults.findLogicalResolution({
           vault,
           kind: 5,
           logicalId: capture.artifactId,
         });
         const artifactAvailableLocally =
-          resolution.availability === 1 && (await this.artifacts.has(resolution.storageItemId));
+          resolution !== null &&
+          resolution.availability === 1 &&
+          (await this.artifacts.has(resolution.storageItemId));
         return {
           ...capture,
-          artifactStorageItemId: resolution.storageItemId,
+          artifactStorageItemId: resolution?.storageItemId ?? null,
           artifactAvailableLocally,
         };
       }),
@@ -1261,7 +1265,9 @@ export function decodeCanonicalLibraryProjection(bytes: Uint8Array): CanonicalLi
       adapter: textValue(mapValue(capture, 14), "Capture adapter"),
       artifactObjectId: identifierValue(mapValue(capture, 15), "VaultObject"),
       artifactId: identifierValue(mapValue(capture, 16), "Artifact"),
-      artifactStorageItemId: identifierValue(mapValue(capture, 17), "StorageItem"),
+      artifactStorageItemId: nullable(mapValue(capture, 17), (value) =>
+        identifierValue(value, "StorageItem"),
+      ),
       artifactAvailableLocally: booleanValue(mapValue(capture, 18), "Artifact availability"),
       lifecycle: oneOfCodes(mapValue(capture, 19), [1, 2] as const, "Capture lifecycle"),
     };

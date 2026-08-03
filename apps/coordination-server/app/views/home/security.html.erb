@@ -10,11 +10,11 @@
   <div class="prose-stack">
     <section><h2>Account password</h2><p>The server receives the Account password over the protected connection and verifies it against a password digest. It identifies the Account for Host sessions and quotas. It cannot decrypt a Vault.</p></section>
     <section><h2>Public-page caching</h2><p>The landing, privacy, security, and glossary pages contain one anonymous representation with no Account data, CSRF token, or session cookie. A shared CDN may cache only those exact successful pages. Signed-in presentation is requested privately and is never shared-cache content.</p></section>
-    <section><h2>Search boundary</h2><p>Search materializations are encrypted, rebuildable, local-only, and excluded from synchronization and Vault packages. The optional local model is hash-verified before use and disables network fallback during inference. Remote embedding providers are not part of the current canonical application surface.</p></section>
+    <section><h2>Derived local-view boundary</h2><p>Derived local views are encrypted, rebuildable, and excluded from opaque Host items and Vault packages. AWSM does not currently ship a user-facing AI feature or a remote embedding-provider integration.</p></section>
     <section><h2>Recovery Phrase</h2><p>The 12-word Recovery Phrase remains client-held. A Client uses it to recover local Vault access and enroll a fresh Client Credential. AWSM cannot recover it for you.</p></section>
     <section><h2>Encrypted synchronization</h2><p>A Replica Host stores opaque encrypted items and enforces its own protocol and operational rules. It does not interpret captured titles, page text, screenshots, or Vault keys.</p></section>
     <section><h2>Host Access Grant and future protection</h2><p>Revoking a Host Access Grant prevents future Host operations through that Grant. It cannot erase plaintext or keys already present in a Client installation. Vault authority changes and Key Epoch transitions remain client-held; AWSM does not promise remote wipe.</p></section>
-    <section><h2>Backups and portability</h2><p>Synchronization is not a substitute for a Complete Export. Keep a verified Export and the Recovery Phrase in appropriate, separate safe places.</p></section>
+    <section><h2>Replica availability</h2><p>Synchronization does not guarantee redundancy or remote retention. Keep the Recovery Phrase safe, and do not perform storage relief unless you understand the risk of losing items that no other Replica retains.</p></section>
     <section><h2>Technical detail</h2><p><%= link_to "Read the current security model", public_product_links[:security_model] %> for the formal trust assumptions and known boundaries.</p></section>
   </div>
 </main>

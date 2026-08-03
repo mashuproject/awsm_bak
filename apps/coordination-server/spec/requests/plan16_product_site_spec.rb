@@ -13,12 +13,12 @@ RSpec.describe "Plan 16 product site", type: :request do
       "Get AWSM",
       "A bookmark points back. A Capture stays with you.",
       "Keeps the Capture together",
-      "Take your Vault with you",
       "What works today",
+      "Capture a page locally. Keep control of the Vault.",
+      "Attach a Hosted Replica when you choose.",
+      "Optional synchronization through opaque Replicas.",
       "Why not just use the Wayback Machine?",
       "Mozilla-signed Linux beta",
-      "private per-Vault keyword Search",
-      "Continue without sync",
       "Sign in"
     )
     expect(response.body).not_to include(
@@ -33,9 +33,12 @@ RSpec.describe "Plan 16 product site", type: :request do
 
     document = Nokogiri::HTML(response.body)
     expect(document.css("#optional-sync .section-heading").map(&:text)).to eq(
-      [ "Synchronize across browsers. Keep control of the keys." ]
+      [ "Optional synchronization through opaque Replicas." ]
     )
-    expect(document.at_css("#install-awsm").text).not_to match(/synchronization|another browser/i)
+    expect(document.at_css("#install-awsm").text).not_to match(
+      /synchronization|another browser|continue without sync/i
+    )
+    expect(response.body).not_to include("verified Export and Import", "private per-Vault keyword Search")
   end
 
   it "shows the server origin and registration state without creating a global signup conversion" do

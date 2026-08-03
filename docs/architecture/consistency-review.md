@@ -156,23 +156,27 @@ rendering of the tracked canonical glossary as implementation work, preventing a
 definition source without pretending that behavior exists today.
 
 Subsequent repository work has implemented canonical browser and Replica Host foundations. In
-particular, selected readable-Replica Recovery now verifies the complete
-authenticated authority state, matches phrase-derived public keys before phrase-authorized opaque
-Envelope access, enrolls a fresh same-member Client atomically, and follows it with a
-confirmation-gated all-head Recovery replacement. Focused real-crypto tests and a real Chromium
-IndexedDB restart prove that narrow path. The Rails Host now has a destructive opaque-only schema,
-Host-local Account/Grant dashboard, strict OpenAPI, immutable item and snapshot-inventory
-operations, bounded read/range verification, resumable Streamable promotion and cleanup, Wake
-Hints, Grant revocation, and durable reaping. These proofs do not yet establish phrase-only
-discovery without a known Vault, packaged Client management, multi-Remote withholding, an
-independent Host implementation, or any live deployment.
+particular, selected readable-Replica Recovery now verifies the authenticated compact authority
+state, matches phrase-derived public keys before phrase-authorized opaque Envelope access, enrolls a
+fresh same-member Client atomically, and follows it with a confirmation-gated all-head Recovery
+replacement. It intentionally establishes a Sparse Replica when Streamable Artifact wrappers are
+absent, rather than claiming a complete export or local Artifact availability. Focused real-crypto
+tests and a real Chromium IndexedDB restart prove that narrow path. The Rails Host now has a
+destructive opaque-only schema, Host-local Account/Grant dashboard, strict OpenAPI, immutable item
+and snapshot-inventory operations, bounded read/range verification, resumable Streamable promotion
+and cleanup, Wake Hints, Grant revocation, and durable reaping. The packaged Chromium proof also
+uses two isolated Hosts to show a fresh recovered Client lacks a later Capture before attachment and
+obtains it only after attaching and pulling the second Host. These repository proofs do not establish
+phrase-only discovery without a known Vault, an independent Host implementation, full Authority
+branch convergence, global freshness, or any live deployment.
 
 # 8. Deliberately future work
 
 Foundational Vault semantics are no longer Roadmap questions. Genuine product or Host-policy work
 remains forward-looking, including:
 
-- Client adoption of the canonical opaque Host transport and multi-Remote pull;
+- Authority, Key-Epoch, Required-Feature, and Vacuum/adoption synchronization beyond the current
+  same-Generation Content branch path;
 - independent Host adapters and direct peer transport;
 - Host-local billing/resource responsibility, grace, suspension, and reaping policy;
 - optional former-member Recovery Snapshots;

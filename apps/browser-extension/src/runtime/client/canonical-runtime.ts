@@ -23,7 +23,10 @@ import { type CanonicalSearchCoverage, CanonicalSearchService } from "../search/
 import type { CanonicalHostedArtifactHydrationService } from "../synchronization/canonical-hosted-artifact-hydration";
 import type { CanonicalHostedCompactMaterializationService } from "../synchronization/canonical-hosted-compact-materialization";
 import type { CanonicalHostedMemberRecoveryService } from "../synchronization/canonical-hosted-member-recovery";
-import type { CanonicalHostedReplicaSetupService } from "../synchronization/canonical-hosted-replica-setup";
+import type {
+  CanonicalHostedReplicaAttachmentCeremony,
+  CanonicalHostedReplicaSetupService,
+} from "../synchronization/canonical-hosted-replica-setup";
 import type { CanonicalMultiRemotePullService } from "../synchronization/canonical-multi-remote-pull-service";
 import type {
   CanonicalRemoteRetirementSummary,
@@ -71,6 +74,11 @@ export interface CanonicalClientRemotePullSummary {
 }
 
 export interface CanonicalClientRemoteRetirementSummary extends CanonicalRemoteRetirementSummary {}
+
+export interface CanonicalClientHostedReplicaAttachmentCandidate {
+  readonly replicaHandle: string;
+  readonly storedBytes: number;
+}
 
 export interface CanonicalClientArtifactHydrationSummary {
   readonly artifactId: string;
@@ -201,6 +209,11 @@ interface PendingRecoveryReplacement {
   readonly ceremony: CanonicalRecoveryReplacementCeremony;
 }
 
+interface PendingHostedReplicaAttachment {
+  readonly expectedVaultId: string;
+  readonly ceremony: CanonicalHostedReplicaAttachmentCeremony;
+}
+
 function runtimeError(id: string, message: string): Error {
   return Object.assign(new Error(message), { id });
 }
@@ -257,6 +270,10 @@ export class CanonicalClientRuntime {
   private readonly pendingVaultCreations = new Map<string, PendingVaultCreation>();
   private readonly pendingVaultForks = new Map<string, PendingVaultFork>();
   private readonly pendingRecoveryReplacements = new Map<string, PendingRecoveryReplacement>();
+  private readonly pendingHostedReplicaAttachments = new Map<
+    string,
+    PendingHostedReplicaAttachment
+  >();
 
   constructor(
     readonly vaults: CanonicalVaultService,
@@ -294,7 +311,9 @@ export class CanonicalClientRuntime {
     private readonly remoteManagement: {
       readonly remotes?: Pick<CanonicalReplicaRemoteService, "list"> &
         Partial<Pick<CanonicalReplicaRemoteService, "update" | "retire">>;
-      readonly hostedReplicaSetup?: Pick<CanonicalHostedReplicaSetupService, "create">;
+      readonly hostedReplicaSetup?: Partial<
+        Pick<CanonicalHostedReplicaSetupService, "create" | "beginAttachment">
+      >;
       readonly hostedCompactMaterializer?: Pick<
         CanonicalHostedCompactMaterializationService,
         "materialize"
@@ -647,7 +666,7 @@ export class CanonicalClientRuntime {
     readonly password: string;
   }): Promise<CanonicalClientRemoteSummary> {
     await this.assertExpectedVault(input.expectedVaultId);
-    if (this.remoteManagement.hostedReplicaSetup === undefined) {
+    if (this.remoteManagement.hostedReplicaSetup?.create === undefined) {
       throw runtimeError(
         "HOSTED_REPLICA_SETUP_UNAVAILABLE",
         "Hosted Replica setup is unavailable in this Client.",
@@ -661,6 +680,73 @@ export class CanonicalClientRuntime {
       password: input.password,
     });
     return this.remoteSummary(remote);
+  }
+
+  async beginHostedReplicaAttachment(input: {
+    readonly expectedVaultId: string;
+    readonly endpoint: string;
+    readonly name: string;
+    readonly username: string;
+    readonly password: string;
+  }): Promise<{
+    readonly setupId: string;
+    readonly replicas: readonly CanonicalClientHostedReplicaAttachmentCandidate[];
+  }> {
+    await this.assertExpectedVault(input.expectedVaultId);
+    if (this.remoteManagement.hostedReplicaSetup?.beginAttachment === undefined) {
+      throw runtimeError(
+        "HOSTED_REPLICA_ATTACHMENT_UNAVAILABLE",
+        "Hosted Replica attachment is unavailable in this Client.",
+      );
+    }
+    const setupId = this.createSetupId();
+    if (this.hasPendingSetup(setupId)) {
+      throw runtimeError(
+        "HOSTED_REPLICA_ATTACHMENT_CONFLICT",
+        "The Hosted Replica attachment setup ID is not unique.",
+      );
+    }
+    const ceremony = await this.remoteManagement.hostedReplicaSetup.beginAttachment({
+      vaultId: identifierFromStorageKey("Vault", input.expectedVaultId),
+      endpoint: input.endpoint,
+      name: input.name,
+      username: input.username,
+      password: input.password,
+    });
+    this.pendingHostedReplicaAttachments.set(setupId, {
+      expectedVaultId: input.expectedVaultId,
+      ceremony,
+    });
+    return {
+      setupId,
+      replicas: ceremony.replicas.map(({ replicaHandle, storedBytes }) => ({
+        replicaHandle,
+        storedBytes,
+      })),
+    };
+  }
+
+  async confirmHostedReplicaAttachment(input: {
+    readonly expectedVaultId: string;
+    readonly setupId: string;
+    readonly replicaHandle: string;
+  }): Promise<CanonicalClientRemoteSummary> {
+    const pending = this.requirePendingHostedReplicaAttachment(input.setupId);
+    await this.assertExpectedVault(input.expectedVaultId);
+    if (pending.expectedVaultId !== input.expectedVaultId) {
+      throw runtimeError(
+        "HOSTED_REPLICA_ATTACHMENT_CONTEXT_CHANGED",
+        "The selected Vault changed before Hosted Replica attachment.",
+      );
+    }
+    this.pendingHostedReplicaAttachments.delete(input.setupId);
+    return this.remoteSummary(await pending.ceremony.confirm(input.replicaHandle));
+  }
+
+  async cancelHostedReplicaAttachment(setupId: string): Promise<void> {
+    const pending = this.requirePendingHostedReplicaAttachment(setupId);
+    this.pendingHostedReplicaAttachments.delete(setupId);
+    pending.ceremony.cancel();
   }
 
   async materializeHostedReplica(input: {
@@ -2052,11 +2138,23 @@ export class CanonicalClientRuntime {
     return pending;
   }
 
+  private requirePendingHostedReplicaAttachment(setupId: string): PendingHostedReplicaAttachment {
+    const pending = this.pendingHostedReplicaAttachments.get(setupId);
+    if (pending === undefined) {
+      throw runtimeError(
+        "HOSTED_REPLICA_ATTACHMENT_NOT_FOUND",
+        "The Hosted Replica attachment ceremony is unavailable.",
+      );
+    }
+    return pending;
+  }
+
   private hasPendingSetup(setupId: string): boolean {
     return (
       this.pendingVaultCreations.has(setupId) ||
       this.pendingVaultForks.has(setupId) ||
-      this.pendingRecoveryReplacements.has(setupId)
+      this.pendingRecoveryReplacements.has(setupId) ||
+      this.pendingHostedReplicaAttachments.has(setupId)
     );
   }
 

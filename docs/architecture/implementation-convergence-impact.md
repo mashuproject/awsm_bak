@@ -156,29 +156,35 @@ authorship. The unscoped Host-inventory primitive now scans bounded opaque Compa
 only phrase-openable Recovery Envelope candidates. Its in-memory closure verifier then re-reads one
 source Host snapshot, checks outer metadata and locators, derives every phrase-owned Epoch, assigns
 every reachable Record, Object, Feature Manifest, and Key Envelope to its authenticated Epoch,
-selects the current Baseline from its signed Vacuum chain, and verifies every reachable Streamable
-Artifact frame before matching the phrase keys to an effective Recovery Credential. The verifier
-retains no local Replica state and does not itself activate a Vault. Withholding/freshness proof
-across Remotes, multi-Client conflict journeys, and full multi-member management remain target work.
+selects the current Baseline from its signed Vacuum chain, and matches the phrase keys to an
+effective Recovery Credential. Its Hosted closure is deliberately Compact-only: Streamable Artifact
+wrappers are not required or verified at recovery time. The verifier retains no local Replica state
+and does not itself activate a Vault. Multi-Client conflict journeys and full multi-member
+management remain target work.
 
 The Complete Import substrate atomically activates Hosted recovery after revalidating an exact
-complete closure: it prepares the fresh Client enrollment and commits the authenticated closure,
-enrollment Event, Client Envelopes, and installation-wrapped secrets in one initial local
-transaction. An incorrect phrase reaches no local Vault commit. The Hosted recovery coordinator
-uses only a transient Account session to scan, authenticate, and re-read one opaque closure; it
+authenticated Compact closure: it prepares the fresh Client enrollment and commits the authenticated
+closure, enrollment Event, Client Envelopes, and installation-wrapped secrets in one initial local
+transaction. An incorrect phrase reaches no local Vault commit. The Hosted recovery coordinator uses
+only a transient Account session to scan, authenticate, and re-read one opaque closure; it
 deduplicates same-Replica Recovery Envelopes and rejects divergent authenticated closures before
-activation. It persists neither that session nor a Remote. The shipped first-use popup exposes this
-as **Recover a Hosted Vault**: a direct user action supplies a canonical HTTPS Host address,
+activation. It persists neither that session nor a Remote. Streamable Artifact wrappers are
+intentionally absent from this recovery closure, so the resulting Replica is sparse and reports
+those wrappers unavailable rather than inventing a Resolution. The shipped first-use popup exposes
+this as **Recover a Hosted Vault**: a direct user action supplies a canonical HTTPS Host address,
 username, password, and Recovery Phrase, requests only that Host permission, and clears the entered
-password and phrase when the attempt ends. The UI states that recovery creates a fresh local Client
-Credential and that the Host is not saved as a Remote. Binding a recovered Replica to an existing
-Host channel remains a separate future operation rather than an implicit side effect of Recovery.
-One local packaged-Chromium Host proof creates a disposable Account and Vault, materializes its
-Compact closure to the real Rails opaque-storage API, then recovers that closure through the real
-HTTPS Host adapter in a separate fresh browser profile. It verifies immediate Capture under the
-fresh Client Credential and verifies that the recovered profile lists no configured Remote. The
-loopback TLS terminator is test-only; this is repository evidence for that narrow Host path, not
-evidence about a deployed Host or multi-Remote convergence.
+password and phrase when the attempt ends. Recovery creates a fresh local Client Credential but does
+not implicitly save a Remote.
+
+The selected Vault may subsequently attach an existing Account-authorized Hosted Replica through a
+separate transient-sign-in and opaque-summary selection ceremony. It retains only the selected local
+Remote and rotated Host session after confirmation; the Host receives no Vault identity and neither
+selection nor attachment asserts that it contains the Vault. A real packaged Chromium proof uses two
+isolated Rails Hosts: the first lacks a later Capture, the second stores it, a fresh Client recovers
+from the first without a Remote, then attaches and explicitly pulls the second. It proves the
+withheld Capture is absent before attachment and accepted locally afterwards. The loopback TLS
+terminator is test-only; this is repository evidence for that narrow content-convergence path, not
+evidence about a deployed Host, full authority-branch convergence, or global freshness.
 
 The shipped background, popup, and Library now use only the canonical application boundary. They
 support local Vault creation and selection, first-use Hosted recovery, Recovery Phrase confirmation
@@ -262,14 +268,14 @@ Replica, requires the current pull/materialization capabilities, and atomically 
 Remote configuration plus rotated session without retaining the password. It validates the local
 Remote configuration before Host access, preventing malformed input from prompting for an unrelated
 Host or leaving a Host-side Replica. The shipped popup now lists non-secret local Remote summaries,
-creates a Hosted Replica only after an explicit Host permission request, and supports local-only
-rename and pause/resume through an encrypted Remote-config CAS. Those controls make no Host request
-and never rewrite the channel credential; pausing blocks newly started channel work without
-claiming to cancel an operation already in flight. Explicit local Remote removal fences new local
-channel work, waits for existing local channel work, and atomically removes the local Remote
-configuration, channel credential, ledger, prepared output, pull Job, and Quarantine without a Host
-request. Hosted Replica creation does not itself synchronize data. General multi-Remote convergence
-remains unfinished.
+creates a Hosted Replica or attaches an existing one only after an explicit Host permission request,
+and supports local-only rename and pause/resume through an encrypted Remote-config CAS. Attachment
+lists only Host-local opaque summaries and persists nothing until the user chooses one. Those controls
+make no Host request after setup and never rewrite the channel credential; pausing blocks newly
+started channel work without claiming to cancel an operation already in flight. Explicit local Remote
+removal fences new local channel work, waits for existing local channel work, and atomically removes
+the local Remote configuration, channel credential, ledger, prepared output, pull Job, and Quarantine
+without a Host request. Hosted Replica creation or attachment does not itself synchronize data.
 For a non-adopted current Generation, it also validates one complete same-Generation Content DAG
 branch and its newly required Vault Object closure, then atomically promotes only those newly
 accepted Compact items with the exact pull Job and Replica state. A repository-tested Runtime
@@ -282,11 +288,13 @@ unavailable Capture. That direct action requests enabled configured Host origins
 work; Library reads recompute Artifact availability from the current local Resolution and wrapper
 presence rather than trusting a cached Materialization. A real Chromium IndexedDB/OPFS restart
 proof uses the actual protected Remote configuration service. Authority, Key-Epoch,
-Required-Feature, Vacuum/adoption, and general multi-Remote convergence remain Quarantined or
-unfinished. Retryable opaque-Host transport failures now
+Required-Feature and Vacuum/adoption branches remain Quarantined or unfinished. Retryable opaque-Host
+transport failures now
 checkpoint bounded local retries without changing Vault state. One local coordinator pulls
 configured Remotes sequentially and isolates an individual Remote failure, while rejecting corrupt
-local Remote scope/identity before a channel call. The Runtime can now authenticate its local
+local Remote scope/identity before a channel call. One explicit check continues the same durable Job
+while its stage or aggregate progress advances, including the final inventory-to-validation
+checkpoint. The Runtime can now authenticate its local
 accepted Generation and materialize the
 entire reachable Compact closure to one writable Hosted Replica through independently randomized
 outer items and the durable Remote Materialization Ledger. It re-wraps Key Envelopes only to their
@@ -296,8 +304,10 @@ hydration. The shipped popup now offers explicit per-Remote Compact materializat
 Host-permission gesture; it is deliberately named and implemented separately from pull
 synchronization. It also exposes an explicit receiver-initiated check of every enabled Remote,
 obtaining all needed Host permissions in one direct gesture before the serial local pull
-coordinator runs. Local-only rename, pause/resume, and destructive local Remote removal are
-implemented; general multi-Remote convergence remains unfinished.
+coordinator runs. The current same-Generation Content branch path has real two-Host withholding
+evidence; Authority, Key-Epoch, Required-Feature, and Vacuum/adoption candidates remain deliberately
+unpromoted pending their own validators. Local-only rename, pause/resume, and destructive local
+Remote removal are implemented.
 
 ## 4.4 Account dashboard and public pages
 

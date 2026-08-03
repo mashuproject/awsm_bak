@@ -30,6 +30,12 @@ opaque locators, and safe aggregate progress. A Hosted Replica Remote retains th
 locator salt in Installation State. A Job checkpoint is local resumption state, never a delivery
 acknowledgement or portable Frontier.
 
+One explicit check MAY continue the same active Job while each invocation makes a durable stage or
+aggregate-progress transition. It stops when the Job reaches a terminal or waiting state, or when a
+further invocation makes no durable progress. In particular, persisting newly quarantined items and
+advancing from inventory to validation are separate durable transitions; neither may be lost when
+the final inventory page also contains new items.
+
 Only a classified retryable Host transport failure may move an active pull Job to local Waiting
 state. The first automatic retry uses a locally jittered 0.5 to 1.5 second delay; each later delay
 doubles, is bounded at five minutes, and a valid Host retry delay may lengthen it only within that
@@ -157,6 +163,12 @@ gesture before any channel call. A refreshed Library read evaluates its Artifact
 local wrapper presence again rather than trusting a Frontier-bound cached availability flag, so
 Storage Relief and successful hydration each become visible through the ordinary state
 invalidation flow.
+
+Hosted recovery is a Compact-closure activation path, not a Complete Export import. It may establish
+a Sparse Replica that lacks every Streamable Artifact wrapper while still authenticating the compact
+Records, Objects, Feature Manifests, Key Envelopes, and Recovery enrollment it receives. It must not
+invent a missing Artifact Resolution or claim local availability. Complete Export validation remains
+strict and requires every reachable Artifact wrapper.
 
 # 8. CAP and consistency
 

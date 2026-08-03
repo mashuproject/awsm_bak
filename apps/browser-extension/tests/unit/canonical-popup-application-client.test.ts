@@ -181,6 +181,58 @@ describe("canonical popup application client", () => {
     });
   });
 
+  it("keeps existing Hosted Replica attachment transient until one opaque replica is selected", async () => {
+    const expectedVaultId = "a".repeat(64);
+    const setupId = "019fa62e-a653-7f63-b2bf-94e7ed5e46cd";
+    const replicaHandle = "019fa62e-a653-7f63-b2bf-94e7ed5e46cb";
+    const transport = {
+      request: vi
+        .fn()
+        .mockResolvedValueOnce({ setupId, replicas: [{ replicaHandle, storedBytes: 4_096 }] })
+        .mockResolvedValueOnce({
+          remoteId: "019fa62e-a653-7f63-b2bf-94e7ed5e46ca",
+          name: "Existing hosted copy",
+          endpoint: "https://sync.example.test/",
+          enabled: true,
+        })
+        .mockResolvedValueOnce(null),
+      subscribe: vi.fn(() => () => undefined),
+    };
+    const client = createCanonicalPopupApplicationClient(transport);
+
+    await expect(
+      client.beginHostedReplicaAttachment({
+        expectedVaultId,
+        endpoint: "https://sync.example.test/",
+        name: "Existing hosted copy",
+        username: "archive_reader",
+        password: "correct horse battery staple",
+      }),
+    ).resolves.toEqual({ setupId, replicas: [{ replicaHandle, storedBytes: 4_096 }] });
+    await expect(
+      client.confirmHostedReplicaAttachment({ expectedVaultId, setupId, replicaHandle }),
+    ).resolves.toMatchObject({ remoteId: "019fa62e-a653-7f63-b2bf-94e7ed5e46ca" });
+    await expect(client.cancelHostedReplicaAttachment(setupId)).resolves.toBeUndefined();
+    expect(transport.request).toHaveBeenNthCalledWith(1, {
+      type: "BeginHostedReplicaAttachment",
+      expectedVaultId,
+      endpoint: "https://sync.example.test/",
+      name: "Existing hosted copy",
+      username: "archive_reader",
+      password: "correct horse battery staple",
+    });
+    expect(transport.request).toHaveBeenNthCalledWith(2, {
+      type: "ConfirmHostedReplicaAttachment",
+      expectedVaultId,
+      setupId,
+      replicaHandle,
+    });
+    expect(transport.request).toHaveBeenNthCalledWith(3, {
+      type: "CancelHostedReplicaAttachment",
+      setupId,
+    });
+  });
+
   it("renames and pauses a Hosted Replica through exact local commands", async () => {
     const remote = {
       remoteId: "019fa62e-a653-7f63-b2bf-94e7ed5e46ca",

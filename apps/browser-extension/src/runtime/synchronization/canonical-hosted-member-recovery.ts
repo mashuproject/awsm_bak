@@ -27,6 +27,7 @@ type CompleteImportPort = {
     readonly source: CompleteImportPreparedSource;
     readonly recoveryPhrase: string;
     readonly assertedAt: number | bigint;
+    readonly artifactInventory?: "Complete" | "Sparse";
   }) => Promise<RecoveredCompleteImport>;
 };
 
@@ -145,6 +146,7 @@ export class CanonicalHostedMemberRecoveryService {
         },
         recoveryPhrase: input.recoveryPhrase,
         assertedAt: input.assertedAt,
+        artifactInventory: "Sparse",
       });
     } finally {
       await Promise.all(authenticated.map((closure) => wipeHostedRecoveryClosure(closure)));

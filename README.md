@@ -17,12 +17,12 @@ Account registration remains deployment-specific.
 
 ### Download AWSM for Chrome or Firefox
 
-> **[Download the Chrome ZIP (v0.2.0)](https://github.com/mashuproject/awsm_bak/releases/download/v0.2.0/awsm-chrome-v0.2.0.zip)**
+> **[Download the Chrome ZIP (v0.3.0)](https://github.com/mashuproject/awsm_bak/releases/download/v0.3.0/awsm-chrome-v0.3.0.zip)**
 >
-> [Chrome SHA-256 checksum](https://github.com/mashuproject/awsm_bak/releases/download/v0.2.0/awsm-chrome-v0.2.0.zip.sha256) ·
-> **[Download the Mozilla-signed Firefox XPI (v0.2.0)](https://github.com/mashuproject/awsm_bak/releases/download/v0.2.0/awsm-firefox-v0.2.0.xpi)**
+> [Chrome SHA-256 checksum](https://github.com/mashuproject/awsm_bak/releases/download/v0.3.0/awsm-chrome-v0.3.0.zip.sha256) ·
+> **[Download the Mozilla-signed Firefox XPI (v0.3.0)](https://github.com/mashuproject/awsm_bak/releases/download/v0.3.0/awsm-firefox-v0.3.0.xpi)**
 > ·
-> [Firefox SHA-256 checksum](https://github.com/mashuproject/awsm_bak/releases/download/v0.2.0/awsm-firefox-v0.2.0.xpi.sha256) ·
+> [Firefox SHA-256 checksum](https://github.com/mashuproject/awsm_bak/releases/download/v0.3.0/awsm-firefox-v0.3.0.xpi.sha256) ·
 > [View the latest Release](https://github.com/mashuproject/awsm_bak/releases/latest) ·
 > [Chrome guide](docs/guides/install-chrome-extension.md) ·
 > [Firefox guide](docs/guides/install-firefox-extension.md)
@@ -34,7 +34,7 @@ core local archive.
 1. Download the Chrome ZIP and matching `.sha256` file using the links above.
 2. Verify and install the ZIP using the
    [Chrome extension installation guide](docs/guides/install-chrome-extension.md).
-3. Open AWSM, select **Continue without sync**, and create a local Vault.
+3. Open AWSM, create a local Vault, and write down its Recovery Phrase.
 4. Open any HTTP or HTTPS page and select **Archive this page**.
 
 For a guided walkthrough, continue with [Try a Capture](#try-a-capture) and
@@ -52,40 +52,34 @@ applications are not currently packaged or tested.
 
 The browser extension currently supports:
 
-- local-only setup with no Account or server;
-- webpage capture from active HTTP and HTTPS tabs;
-- immutable Captures containing an AWSM-native web-page snapshot plus a full-page screenshot,
-  thumbnail, extracted text, and structured content when each best-effort representation succeeds;
-- an encrypted local Vault backed by browser-local storage;
-- offline Library browsing, screenshot viewing, text and structure inspection, and MHTML download;
-- multiple local Vaults, Vault locking and renaming, Collections, deletion, restoration, and Vault
-  Vacuum;
-- a responsive Library with Archive and Deleted navigation, Newest/Oldest/Title sorting, and
-  device-local Grid or Compact List presentation preferences;
-- private per-Vault keyword Search, plus optional semantic Search using either an explicitly
-  downloaded local English model or an explicitly configured remote embedding endpoint;
-- passphrase-protected Complete Vault Export and Import; and
-- optional Account authentication and synchronization of an encrypted Vault Replica through a
-  compatible self-hosted Coordination Server in Chrome and Firefox.
+- local-only Vault creation with a client-held Recovery Phrase;
+- Capture of an active HTTP or HTTPS page into encrypted local Vault storage;
+- multiple local Vaults, selection, recent-Capture browsing, Closure, Vacuum, and Fork workflows;
+- Recovery Phrase replacement and same-member recovery on a fresh Client Credential;
+- encrypted, browser-local Vault Records, Objects, and large Capture Artifacts;
+- optional username-based Account sign-in to a compatible opaque Replica Host, with no email
+  address required;
+- creation or local attachment of a Hosted Replica, explicit Compact-closure materialization, and
+  receiver-initiated checks of enabled Hosted Replicas; and
+- explicit hydration of an available large Capture Artifact after a configured Hosted Replica
+  supplies and the Client verifies it.
 
-The browser-independent page snapshot is the authoritative primary Capture Artifact. Chrome and
-Firefox can derive and download MHTML from it on demand; MHTML is not stored as authoritative Vault
-state or rendered inside the Library. The full-page screenshot is previewed in the Capture detail
-view, while extracted text and structured content can be inspected there.
+The trusted extension validates all Vault semantics locally. A Replica Host stores opaque encrypted
+bytes and Host-local Account, Grant, quota, and operational data; it does not receive Vault IDs,
+decryption keys, page titles, or Capture content. Hosted recovery creates a Sparse Replica from the
+authenticated Compact closure, so Capture metadata can be available before a large Artifact wrapper
+is retrieved.
 
-The Mozilla-signed Firefox Linux beta supports local Vaults, Capture, Library, Search, MHTML,
-Export, Import, and synchronization. Enabling synchronization requests Firefox's native optional
-permissions for website content, browsing activity, authentication information, personally
-identifying information, and the selected server origin. Denial or revocation leaves local
-features available and prevents server traffic. Install and upgrade it from the verified XPI in
-the GitHub Release; it is not a searchable AMO listing and does not claim AMO-managed updates.
+The Mozilla-signed Firefox Linux beta is distributed through the GitHub Release, not a public AMO
+listing, and AWSM does not claim AMO-managed automatic updates. The release proof covers the
+repository-pinned Firefox Stable and ESR versions on desktop Linux. Chrome and Firefox each request
+only the permissions needed for Capture and an explicitly selected Host origin; denying optional
+Host permission leaves local Vault work available and prevents that Host channel call.
 
-AI-generated summaries, tags, classifications, annotations, and folders are not implemented
-user-facing features. Search materializations are encrypted, rebuildable, local-only, and excluded
-from synchronization and Vault packages. Keyword Search remains available offline. The optional
-local semantic model downloads only after user action and then works offline; a remote embedding
-provider receives Capture passages and submitted queries only after a separate explicit disclosure
-and exact endpoint permission.
+Current limits are intentional: direct peer and headless transports, complete Authority-branch
+synchronization, global freshness claims, automatic redundancy tracking, and user-facing AI
+features are not shipped in this release. See the living specifications for the broader canonical
+model and its currently unimplemented branches.
 
 The Coordination Server root is the public AWSM product and installation guide on hosted and
 self-hosted deployments. Its privacy, security, setup, and Account pages are evergreen product
@@ -99,10 +93,10 @@ request.
 
 ## Architecture direction
 
-The living architecture and formal specifications describe AWSM's next canonical foundation, not
-additional behavior claimed for the current v0.2.0 extension or server. In that target model, a
-Vault is location-independent and may have zero or more local, peer, headless, or Hosted Replicas;
-trusted Clients pull and validate opaque immutable items without one privileged origin.
+The living architecture and formal specifications describe the canonical foundation implemented by
+the current extension and Replica Host. A Vault is location-independent and may have zero or more
+local, peer, headless, or Hosted Replicas; trusted Clients pull and validate opaque immutable items
+without one privileged origin.
 
 Portable Vault membership uses per-member Recovery Phrases and Client Credentials. Administrator
 roles govern shared Vault coordination but do not create a different decryption class. Host
@@ -110,11 +104,8 @@ Accounts remain username-based local access identities with no email and no intr
 to a Vault Member. The Account dashboard manages the Host channel and storage, not a duplicate web
 Vault.
 
-The current implementation still contains an earlier single-user Device, Recovery Kit,
-Generation-aware server, and one-synchronized-Vault-per-Account experiment. A later implementation
-effort will replace those pre-release formats, schemas, APIs, fixtures, and development/staging data
-with the canonical design. It will not add compatibility readers or migration paths for discarded
-experiments. See the [living PRD](docs/plans/01-mvp-prd.md),
+The release carries one canonical pre-release design. It has no compatibility readers, migrations,
+or fallback paths for discarded experiments. See the [living PRD](docs/plans/01-mvp-prd.md),
 [system overview](docs/architecture/01-system-overview.md), and
 [consistency review](docs/architecture/consistency-review.md).
 
@@ -145,8 +136,7 @@ Load the build in Chrome:
 3. Select **Load unpacked**.
 4. Choose `apps/browser-extension/.output/chrome-mv3`.
 5. Pin AWSM from Chrome's Extensions menu.
-6. Open AWSM and select **Continue without sync**.
-7. Name and create a local Vault.
+6. Open AWSM, name and create a local Vault, and write down its Recovery Phrase.
 
 AWSM is now ready to capture without an Account or Coordination Server. For installation from a
 [GitHub Release](https://github.com/mashuproject/awsm_bak/releases/latest), download the latest Chrome ZIP

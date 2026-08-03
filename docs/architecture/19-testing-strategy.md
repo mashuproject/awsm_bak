@@ -183,17 +183,20 @@ are never test evidence by themselves. Convergence work begins with failing targ
 black-box scenarios, removes superseded fixtures and compatibility expectations, and updates public
 claims only after real proof. The current local opaque-Host proofs cover session rotation, bounded
 Grant isolation and revocation, verified compact-envelope admission, cross-process opaque reads,
-and process stop/restart continuity. The packaged Chromium Hosted-recovery proof additionally
-creates one disposable Host Account and Vault, explicitly materializes the authenticated Compact
-closure, and recovers it through the real HTTPS Host adapter into a fresh browser profile. It proves
-the recovered Client can immediately Capture and that recovery did not configure a Remote. The
-same packaged Chromium lane also proves local Remote rename and pause/resume after real setup and
-materialization, including that a paused Remote no longer offers materialization. The rendered
-design lane verifies the management surface and the primary and narrow rename form for contrast,
-interactive target size, and snapshot regression. Two concurrently open popups prove a local pause
-reconciles through the ordinary invalidation path without either popup reloading. The loopback TLS
-terminator is test-only. These are repository evidence, not evidence of a named deployment,
-Firefox behavior, or complete end-to-end Client synchronization.
+and process stop/restart continuity. The packaged Chromium Hosted-recovery proof additionally creates
+one disposable Host Account and Vault, explicitly materializes the authenticated Compact closure,
+and recovers it through the real HTTPS Host adapter into a fresh browser profile. It proves the
+recovered Client can immediately Capture and that recovery does not configure a Remote. The same
+lane uses a second isolated Host to prove a later Capture is withheld by the first Host, directly
+recoverable from the second, absent from the fresh Client before attachment, and accepted after an
+explicit existing-Hosted-Replica attachment and pull. It also proves local Remote rename and
+pause/resume after real setup and materialization, including that a paused Remote no longer offers
+materialization. The rendered design lane verifies the management and attachment/selection surfaces
+at primary and narrow widths for contrast, interactive target size, and snapshot regression. Two
+concurrently open popups prove a local pause reconciles through the ordinary invalidation path
+without either popup reloading. The loopback TLS terminator is test-only. These are repository
+evidence, not evidence of a named deployment, Firefox behavior, full Authority-branch
+synchronization, or global freshness.
 
 # Invariants
 

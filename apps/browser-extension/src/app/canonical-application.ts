@@ -80,6 +80,21 @@ export type CanonicalApplicationRequest =
       readonly password: string;
     }
   | {
+      readonly type: "BeginHostedReplicaAttachment";
+      readonly expectedVaultId: string;
+      readonly endpoint: string;
+      readonly name: string;
+      readonly username: string;
+      readonly password: string;
+    }
+  | {
+      readonly type: "ConfirmHostedReplicaAttachment";
+      readonly expectedVaultId: string;
+      readonly setupId: string;
+      readonly replicaHandle: string;
+    }
+  | { readonly type: "CancelHostedReplicaAttachment"; readonly setupId: string }
+  | {
       readonly type: "MaterializeHostedReplica";
       readonly expectedVaultId: string;
       readonly remoteId: string;
@@ -115,6 +130,9 @@ type CanonicalApplicationRuntime = Pick<
   | "setRemoteEnabled"
   | "retireRemote"
   | "createHostedReplica"
+  | "beginHostedReplicaAttachment"
+  | "confirmHostedReplicaAttachment"
+  | "cancelHostedReplicaAttachment"
   | "materializeHostedReplica"
   | "pullHostedReplicas"
   | "hydrateArtifact"
@@ -365,6 +383,45 @@ export function decodeCanonicalApplicationRequest(value: unknown): CanonicalAppl
         };
       }
       break;
+    case "BeginHostedReplicaAttachment":
+      if (
+        exactKeys(value, ["type", "expectedVaultId", "endpoint", "name", "username", "password"]) &&
+        text(value.expectedVaultId) &&
+        text(value.endpoint) &&
+        text(value.name) &&
+        text(value.username) &&
+        text(value.password)
+      ) {
+        return {
+          type: value.type,
+          expectedVaultId: value.expectedVaultId,
+          endpoint: value.endpoint,
+          name: value.name,
+          username: value.username,
+          password: value.password,
+        };
+      }
+      break;
+    case "ConfirmHostedReplicaAttachment":
+      if (
+        exactKeys(value, ["type", "expectedVaultId", "setupId", "replicaHandle"]) &&
+        text(value.expectedVaultId) &&
+        text(value.setupId) &&
+        text(value.replicaHandle)
+      ) {
+        return {
+          type: value.type,
+          expectedVaultId: value.expectedVaultId,
+          setupId: value.setupId,
+          replicaHandle: value.replicaHandle,
+        };
+      }
+      break;
+    case "CancelHostedReplicaAttachment":
+      if (exactKeys(value, ["type", "setupId"]) && text(value.setupId)) {
+        return { type: value.type, setupId: value.setupId };
+      }
+      break;
     case "MaterializeHostedReplica":
       if (
         exactKeys(value, ["type", "expectedVaultId", "remoteId"]) &&
@@ -546,6 +603,16 @@ export class CanonicalApplication {
         const { type: _type, ...input } = request;
         return this.mutate(() => this.runtime.createHostedReplica(input));
       }
+      case "BeginHostedReplicaAttachment": {
+        const { type: _type, ...input } = request;
+        return this.mutate(() => this.runtime.beginHostedReplicaAttachment(input));
+      }
+      case "ConfirmHostedReplicaAttachment": {
+        const { type: _type, ...input } = request;
+        return this.mutate(() => this.runtime.confirmHostedReplicaAttachment(input));
+      }
+      case "CancelHostedReplicaAttachment":
+        return this.mutate(() => this.runtime.cancelHostedReplicaAttachment(request.setupId));
       case "MaterializeHostedReplica": {
         const { type: _type, ...input } = request;
         return this.mutate(() => this.runtime.materializeHostedReplica(input));
