@@ -711,7 +711,11 @@ One Replica's local configuration for reaching another Replica. Its name, endpoi
 locator salt, retry state, and policies are Installation State. Its Channel Authenticator is a
 separate installation-wrapped Trusted Secret; a reference-Host password is transient sign-in input,
 while a rotated session may be retained only for that Host's channel access. Names such as `origin`
-and `upstream` have no Vault-wide meaning.
+and `upstream` have no Vault-wide meaning. Renaming a Replica Remote or pausing and resuming it is
+a local Installation State operation, never a Host request or Vault Event. A paused Replica Remote
+is excluded from newly started materialization, pull, and Artifact-hydration work, without claiming
+to cancel work already in flight or changing its Host Account, Channel Authenticator, Grant, or
+stored opaque bytes.
 
 ## Remote Materialization Ledger
 

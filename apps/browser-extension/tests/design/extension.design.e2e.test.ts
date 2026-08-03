@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { cp, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import {
@@ -8,10 +9,11 @@ import {
   type TestInfo,
   test,
 } from "@playwright/test";
-
+import { startEphemeralHttpsProxy } from "../hosted-recovery/https-proxy";
 import { expectReadableContrast } from "./contrast-audit";
 
 const extensionBuildPath = resolve(process.env.AWSM_EXTENSION_BUILD ?? ".output/chrome-mv3-e2e");
+const proofOrigin = "http://127.0.0.1:3300/";
 
 interface PackagedExtension {
   readonly context: BrowserContext;
@@ -30,13 +32,38 @@ async function packagedExtension(testInfo: TestInfo): Promise<PackagedExtension>
     {
       channel: "chromium",
       headless: true,
-      args: [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`],
+      ignoreHTTPSErrors: true,
+      args: [
+        "--ignore-certificate-errors",
+        `--disable-extensions-except=${extensionPath}`,
+        `--load-extension=${extensionPath}`,
+      ],
     },
   );
   const worker = context.serviceWorkers()[0] ?? (await context.waitForEvent("serviceworker"));
   const extensionId = new URL(worker.url()).host;
   await Promise.all(context.pages().map((page) => page.close()));
   return { context, extensionId };
+}
+
+async function createHostAccount(): Promise<{
+  readonly username: string;
+  readonly password: string;
+}> {
+  const username = `design_${randomUUID().replaceAll("-", "").slice(0, 20)}`;
+  const password = `design hosted replica ${randomUUID()}`;
+  const response = await fetch(new URL("sign_up", proofOrigin), {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      "account[username]": username,
+      "account[password]": password,
+      "account[password_confirmation]": password,
+    }),
+    redirect: "manual",
+  });
+  expect(response.status).toBe(302);
+  return { username, password };
 }
 
 async function extensionPage(
@@ -62,7 +89,7 @@ async function assertInteractiveTargets(page: Page): Promise<void> {
           return { width: box.width, height: box.height };
         }),
       );
-      return sizes.length > 0 && sizes.every(({ width, height }) => width >= 24 && height >= 24);
+      return sizes.length > 0 && sizes.every(({ width, height }) => width >= 44 && height >= 44);
     })
     .toBe(true);
 }
@@ -72,6 +99,8 @@ test("renders the canonical local-Vault and Library surfaces", async ({
 }, testInfo) => {
   test.setTimeout(120_000);
   expect(browserName).toBe("chromium");
+  const proxy = await startEphemeralHttpsProxy({ origin: proofOrigin });
+  const account = await createHostAccount();
   const client = await packagedExtension(testInfo);
   try {
     const popup = await extensionPage(client, "popup.html");
@@ -142,6 +171,39 @@ test("renders the canonical local-Vault and Library surfaces", async ({
     await popup.getByRole("button", { name: "Cancel Hosted Replica setup" }).click();
     await expect(popup.getByRole("heading", { name: "Vault settings" })).toBeVisible();
 
+    await popup.getByRole("button", { name: "Connect Hosted Replica" }).click();
+    await popup.getByLabel("Hosted Replica address").fill(proxy.endpoint);
+    await popup.getByLabel("Connection name").fill("Design archive");
+    await popup.getByLabel("Account username").fill(account.username);
+    await popup.getByLabel("Account password").fill(account.password);
+    await popup.getByRole("button", { name: "Connect Hosted Replica", exact: true }).click();
+    await expect(popup.getByRole("heading", { name: "Vault settings" })).toBeVisible();
+    await expect(popup.getByText("Design archive", { exact: true })).toBeVisible();
+    await expect(popup.getByRole("button", { name: "Rename Hosted Replica" })).toBeVisible();
+    await expect(popup.getByRole("button", { name: "Pause Remote" })).toBeVisible();
+    await assertInteractiveTargets(popup);
+    await expectReadableContrast(popup);
+    await expect(popup).toHaveScreenshot("popup-hosted-replica-management.png", {
+      fullPage: true,
+      mask: [popup.getByText(proxy.endpoint, { exact: true })],
+    });
+
+    await popup.getByRole("button", { name: "Rename Hosted Replica" }).click();
+    await expect(popup.getByRole("heading", { name: "Rename Hosted Replica" })).toBeVisible();
+    await expect(popup.getByLabel("Connection name")).toHaveValue("Design archive");
+    await assertInteractiveTargets(popup);
+    await expectReadableContrast(popup);
+    await expect(popup).toHaveScreenshot("popup-hosted-replica-rename.png", { fullPage: true });
+    await popup.setViewportSize({ width: 360, height: 700 });
+    await assertInteractiveTargets(popup);
+    await expectReadableContrast(popup);
+    await expect(popup).toHaveScreenshot("popup-hosted-replica-rename-narrow.png", {
+      fullPage: true,
+    });
+    await popup.setViewportSize({ width: 400, height: 700 });
+    await popup.getByRole("button", { name: "Cancel Remote rename" }).click();
+    await expect(popup.getByRole("heading", { name: "Vault settings" })).toBeVisible();
+
     const library = await extensionPage(client, "library.html", { width: 1280, height: 900 });
     await expect(library.getByRole("heading", { name: "Library" })).toBeVisible();
     await expect(library.getByText("Vault · Field Notes")).toBeVisible();
@@ -154,6 +216,6 @@ test("renders the canonical local-Vault and Library surfaces", async ({
     await expectReadableContrast(library);
     await expect(library).toHaveScreenshot("library-empty-narrow.png", { fullPage: true });
   } finally {
-    await client.context.close();
+    await Promise.all([client.context.close(), proxy.close()]);
   }
 });

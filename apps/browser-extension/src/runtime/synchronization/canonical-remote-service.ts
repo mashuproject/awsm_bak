@@ -170,6 +170,62 @@ export class CanonicalReplicaRemoteService {
     );
   }
 
+  /**
+   * Changes only the encrypted, Installation-local Remote configuration. This intentionally leaves
+   * the Remote's Channel Authenticator and every Host-held byte untouched.
+   */
+  async update(input: {
+    readonly vaultId: Identifier<"Vault">;
+    readonly remoteId: string;
+    readonly name?: string;
+    readonly enabled?: boolean;
+  }): Promise<CanonicalReplicaRemote> {
+    if (input.name === undefined && input.enabled === undefined) {
+      throw new TypeError("Replica Remote update must change its name or enabled state");
+    }
+    const wrappingKey = await this.storage.getOrCreateInstallationWrappingKey(this.realm);
+    const scopeKey = identifierStorageKey(input.vaultId);
+    const remoteKey = {
+      namespace: NAMESPACES.replicaRemote.key,
+      scopeKey,
+      itemKey: input.remoteId,
+    };
+    const wrappedBytes = required(
+      await this.storage.getBytes(this.realm, remoteKey),
+      "Replica Remote configuration",
+    );
+    const current = decodeCanonicalReplicaRemote(
+      await openWrappedLocalState({
+        wrappingKey,
+        domain: "awsm.local.replica-remote",
+        vaultId: input.vaultId,
+        identity: textEncoder.encode(input.remoteId),
+        wrappedBytes,
+      }),
+    );
+    if (!bytesEqual(current.vaultId, input.vaultId) || current.remoteId !== input.remoteId) {
+      throw new TypeError("Replica Remote storage identity does not match its protected state");
+    }
+    const next: CanonicalReplicaRemote = {
+      ...current,
+      ...(input.name === undefined ? {} : { name: input.name }),
+      ...(input.enabled === undefined ? {} : { enabled: input.enabled }),
+    };
+    const prepared = await prepareWrappedLocalStateItem({
+      ...remoteKey,
+      wrappingKey,
+      domain: "awsm.local.replica-remote",
+      context: canonicalLocalStorageContext(input.vaultId, textEncoder.encode(input.remoteId)),
+      bytes: encodeCanonicalReplicaRemote(next),
+    });
+    await this.storage.commitInstallationMutation({
+      realm: this.realm,
+      expectedMutableItems: [{ ...remoteKey, bytes: wrappedBytes }],
+      mutableItems: [prepared],
+    });
+    return next;
+  }
+
   async load(input: {
     readonly vaultId: Identifier<"Vault">;
     readonly remoteId: string;

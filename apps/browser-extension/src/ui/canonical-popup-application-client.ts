@@ -92,6 +92,16 @@ export interface CanonicalPopupApplicationClient extends CanonicalPopupClient {
     readonly successorBaselineId: string;
   }>;
   listRemotes(expectedVaultId: string): Promise<readonly CanonicalClientRemoteSummary[]>;
+  renameRemote(input: {
+    readonly expectedVaultId: string;
+    readonly remoteId: string;
+    readonly name: string;
+  }): Promise<CanonicalClientRemoteSummary>;
+  setRemoteEnabled(input: {
+    readonly expectedVaultId: string;
+    readonly remoteId: string;
+    readonly enabled: boolean;
+  }): Promise<CanonicalClientRemoteSummary>;
   createHostedReplica(input: {
     readonly expectedVaultId: string;
     readonly endpoint: string;
@@ -592,6 +602,32 @@ export function createCanonicalPopupApplicationClient(
     async listRemotes(expectedVaultId: string): Promise<readonly CanonicalClientRemoteSummary[]> {
       if (!identifier(expectedVaultId)) throw new TypeError("Popup Vault ID is invalid.");
       return decodeRemotes(await transport.request({ type: "ListRemotes", expectedVaultId }));
+    },
+    async renameRemote(input) {
+      if (!identifier(input.expectedVaultId)) throw new TypeError("Popup Vault ID is invalid.");
+      if (!setupId(input.remoteId)) throw new TypeError("Popup Hosted Replica ID is invalid.");
+      if (input.name.length < 1 || input.name.length > 256)
+        throw new TypeError("Popup Hosted Replica name is invalid.");
+      return decodeRemoteSummary(
+        await transport.request({
+          type: "RenameRemote",
+          expectedVaultId: input.expectedVaultId,
+          remoteId: input.remoteId,
+          name: input.name,
+        }),
+      );
+    },
+    async setRemoteEnabled(input) {
+      if (!identifier(input.expectedVaultId)) throw new TypeError("Popup Vault ID is invalid.");
+      if (!setupId(input.remoteId)) throw new TypeError("Popup Hosted Replica ID is invalid.");
+      return decodeRemoteSummary(
+        await transport.request({
+          type: "SetRemoteEnabled",
+          expectedVaultId: input.expectedVaultId,
+          remoteId: input.remoteId,
+          enabled: input.enabled,
+        }),
+      );
     },
     subscribe(listener: () => void): () => void {
       return transport.subscribe(listener);

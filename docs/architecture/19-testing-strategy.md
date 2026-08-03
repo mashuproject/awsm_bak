@@ -184,8 +184,13 @@ and process stop/restart continuity. The packaged Chromium Hosted-recovery proof
 creates one disposable Host Account and Vault, explicitly materializes the authenticated Compact
 closure, and recovers it through the real HTTPS Host adapter into a fresh browser profile. It proves
 the recovered Client can immediately Capture and that recovery did not configure a Remote. The
-loopback TLS terminator is test-only. These are repository evidence, not evidence of a named
-deployment, Firefox behavior, or complete end-to-end Client synchronization.
+same packaged Chromium lane also proves local Remote rename and pause/resume after real setup and
+materialization, including that a paused Remote no longer offers materialization. The rendered
+design lane verifies the management surface and the primary and narrow rename form for contrast,
+interactive target size, and snapshot regression. Two concurrently open popups prove a local pause
+reconciles through the ordinary invalidation path without either popup reloading. The loopback TLS
+terminator is test-only. These are repository evidence, not evidence of a named deployment,
+Firefox behavior, or complete end-to-end Client synchronization.
 
 # Invariants
 

@@ -25,7 +25,8 @@ import type { CanonicalVacuumService } from "../../src/runtime/vault/canonical-v
 
 function fixture(
   options: {
-    readonly remotes?: Pick<CanonicalReplicaRemoteService, "list">;
+    readonly remotes?: Pick<CanonicalReplicaRemoteService, "list"> &
+      Partial<Pick<CanonicalReplicaRemoteService, "update">>;
     readonly hostedReplicaSetup?: Pick<CanonicalHostedReplicaSetupService, "create">;
     readonly hostedCompactMaterializer?: Pick<
       CanonicalHostedCompactMaterializationService,
@@ -225,7 +226,14 @@ describe("canonical Client Runtime", () => {
 
   it("fences non-secret Remote management to the selected Vault", async () => {
     let configured: CanonicalReplicaRemote;
-    const remotes = { list: vi.fn(async () => [configured]) };
+    const remotes = {
+      list: vi.fn(async () => [configured]),
+      update: vi.fn(async (input: { readonly name?: string; readonly enabled?: boolean }) => ({
+        ...configured,
+        ...(input.name === undefined ? {} : { name: input.name }),
+        ...(input.enabled === undefined ? {} : { enabled: input.enabled }),
+      })),
+    };
     const hostedReplicaSetup = { create: vi.fn(async () => configured) };
     const { runtime, firstVaultId: selectedVaultId } = fixture({ remotes, hostedReplicaSetup });
     const expectedVaultId = identifierStorageKey(selectedVaultId);
@@ -269,6 +277,40 @@ describe("canonical Client Runtime", () => {
       name: configured.name,
       username: "archive_reader",
       password: "correct horse battery staple",
+    });
+    await expect(
+      runtime.renameRemote({
+        expectedVaultId,
+        remoteId: configured.remoteId,
+        name: "Personal archive",
+      }),
+    ).resolves.toEqual({
+      remoteId: configured.remoteId,
+      name: "Personal archive",
+      endpoint: configured.endpoint,
+      enabled: true,
+    });
+    await expect(
+      runtime.setRemoteEnabled({
+        expectedVaultId,
+        remoteId: configured.remoteId,
+        enabled: false,
+      }),
+    ).resolves.toEqual({
+      remoteId: configured.remoteId,
+      name: configured.name,
+      endpoint: configured.endpoint,
+      enabled: false,
+    });
+    expect(remotes.update).toHaveBeenNthCalledWith(1, {
+      vaultId: selectedVaultId,
+      remoteId: configured.remoteId,
+      name: "Personal archive",
+    });
+    expect(remotes.update).toHaveBeenNthCalledWith(2, {
+      vaultId: selectedVaultId,
+      remoteId: configured.remoteId,
+      enabled: false,
     });
   });
 

@@ -96,9 +96,16 @@ atomically records the local Remote configuration and rotating session pair. It 
 protected logical identity during setup. It validates the complete local Remote configuration before
 requesting Host access or contacting the Host, so malformed local input cannot create an unused
 Hosted Replica or prompt for an unrelated Host. A missing required capability leaves no local Remote
-configuration. User-facing Remote management is an
-independent Client workflow. The current popup lists only non-secret local Remote summaries and
-offers this setup flow after an explicit Host-permission gesture. Creating a Hosted Replica does not
+configuration. User-facing Remote management is an independent Client workflow. A Client MAY
+rename a Remote or pause and resume it. Those operations change only its protected Installation
+State: they do not contact the Host, change a Channel Authenticator, alter a Replica Access Grant or
+Host-held byte, or affect Vault membership. While a Remote is paused, the Client starts no new
+materialization, pull, or Artifact-hydration operation through it; an operation that started before
+the local update may finish. Resuming restores the same local Remote configuration and Channel
+Authenticator for future operations.
+
+The current popup lists non-secret local Remote summaries, offers local rename and pause/resume,
+and offers setup after an explicit Host-permission gesture. Creating a Hosted Replica does not
 itself synchronize or materialize Vault data. A separate explicit popup action may materialize the
 current Compact closure to one enabled Hosted Replica after the same Host-permission gesture. It
 sends opaque encrypted Records, Objects, Feature Manifests, and Key Envelopes only; Streamable

@@ -155,6 +155,27 @@ test("recovers a fresh local Client from a real opaque Hosted Replica without sa
     await expect(ownerPopup.locator("#announcer")).toHaveText(
       "Compact Vault state stored. Large Capture artifacts remain on demand.",
     );
+    await ownerPopup.getByRole("button", { name: "Rename Hosted Replica" }).click();
+    await expect(ownerPopup.getByRole("heading", { name: "Rename Hosted Replica" })).toBeVisible();
+    await ownerPopup.getByLabel("Connection name").fill("proof host renamed");
+    await ownerPopup.getByRole("button", { name: "Save Remote name" }).click();
+    await expect(ownerPopup.getByRole("heading", { name: "Vault settings" })).toBeVisible();
+    await expect(ownerPopup.getByText("proof host renamed", { exact: true })).toBeVisible();
+    const mirroredOwnerPopup = await popup(owner);
+    await mirroredOwnerPopup.getByRole("button", { name: "Vault settings" }).click();
+    await expect(mirroredOwnerPopup.getByText("proof host renamed", { exact: true })).toBeVisible();
+    await ownerPopup.getByRole("button", { name: "Pause Remote" }).click();
+    await expect(ownerPopup.getByText("Paused locally", { exact: true })).toBeVisible();
+    await expect(mirroredOwnerPopup.getByText("Paused locally", { exact: true })).toBeVisible();
+    await expect(ownerPopup.getByRole("button", { name: "Resume Remote" })).toBeVisible();
+    await expect(ownerPopup.getByRole("button", { name: "Store compact Vault state" })).toHaveCount(
+      0,
+    );
+    await expect(ownerPopup.locator("#announcer")).toHaveText(
+      "Hosted Replica paused locally. It will not be contacted until resumed.",
+    );
+    await ownerPopup.getByRole("button", { name: "Resume Remote" }).click();
+    await expect(ownerPopup.getByText("Available", { exact: true })).toBeVisible();
 
     const recoveredPopup = await popup(recovered);
     await recoveredPopup.getByRole("button", { name: "Recover a Hosted Vault" }).click();

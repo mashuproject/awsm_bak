@@ -60,10 +60,10 @@ describe("canonical background", () => {
       ]),
       pendingCreation: vi.fn().mockResolvedValue(undefined),
     } as unknown as CanonicalVaultService;
-    const remotes = { list: vi.fn().mockResolvedValue([remote]) } as Pick<
-      CanonicalReplicaRemoteService,
-      "list"
-    >;
+    const remotes = {
+      list: vi.fn().mockResolvedValue([remote]),
+      update: vi.fn().mockResolvedValue({ ...remote, name: "Renamed archive", enabled: false }),
+    } as Pick<CanonicalReplicaRemoteService, "list" | "update">;
     const hostedReplicaSetup = { create: vi.fn().mockResolvedValue(remote) } as Pick<
       CanonicalHostedReplicaSetupService,
       "create"
@@ -107,6 +107,24 @@ describe("canonical background", () => {
       },
     ]);
     expect(remotes.list).toHaveBeenCalledWith(vaultId);
+    await expect(
+      application.handle({
+        type: "RenameRemote",
+        expectedVaultId,
+        remoteId: remote.remoteId,
+        name: "Renamed archive",
+      }),
+    ).resolves.toEqual({
+      remoteId: remote.remoteId,
+      name: "Renamed archive",
+      endpoint: remote.endpoint,
+      enabled: false,
+    });
+    expect(remotes.update).toHaveBeenCalledWith({
+      vaultId,
+      remoteId: remote.remoteId,
+      name: "Renamed archive",
+    });
     await expect(
       application.handle({
         type: "MaterializeHostedReplica",

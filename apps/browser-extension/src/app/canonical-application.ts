@@ -55,6 +55,18 @@ export type CanonicalApplicationRequest =
   | { readonly type: "ListLibrary"; readonly expectedVaultId: string }
   | { readonly type: "ListRemotes"; readonly expectedVaultId: string }
   | {
+      readonly type: "RenameRemote";
+      readonly expectedVaultId: string;
+      readonly remoteId: string;
+      readonly name: string;
+    }
+  | {
+      readonly type: "SetRemoteEnabled";
+      readonly expectedVaultId: string;
+      readonly remoteId: string;
+      readonly enabled: boolean;
+    }
+  | {
       readonly type: "CreateHostedReplica";
       readonly expectedVaultId: string;
       readonly endpoint: string;
@@ -94,6 +106,8 @@ type CanonicalApplicationRuntime = Pick<
   | "vacuumVault"
   | "listLibrary"
   | "listRemotes"
+  | "renameRemote"
+  | "setRemoteEnabled"
   | "createHostedReplica"
   | "materializeHostedReplica"
   | "pullHostedReplicas"
@@ -283,6 +297,36 @@ export function decodeCanonicalApplicationRequest(value: unknown): CanonicalAppl
         return { type: value.type, expectedVaultId: value.expectedVaultId };
       }
       break;
+    case "RenameRemote":
+      if (
+        exactKeys(value, ["type", "expectedVaultId", "remoteId", "name"]) &&
+        text(value.expectedVaultId) &&
+        text(value.remoteId) &&
+        text(value.name)
+      ) {
+        return {
+          type: value.type,
+          expectedVaultId: value.expectedVaultId,
+          remoteId: value.remoteId,
+          name: value.name,
+        };
+      }
+      break;
+    case "SetRemoteEnabled":
+      if (
+        exactKeys(value, ["type", "expectedVaultId", "remoteId", "enabled"]) &&
+        text(value.expectedVaultId) &&
+        text(value.remoteId) &&
+        typeof value.enabled === "boolean"
+      ) {
+        return {
+          type: value.type,
+          expectedVaultId: value.expectedVaultId,
+          remoteId: value.remoteId,
+          enabled: value.enabled,
+        };
+      }
+      break;
     case "CreateHostedReplica":
       if (
         exactKeys(value, ["type", "expectedVaultId", "endpoint", "name", "username", "password"]) &&
@@ -467,6 +511,14 @@ export class CanonicalApplication {
         return this.runtime.listLibrary(request.expectedVaultId);
       case "ListRemotes":
         return this.runtime.listRemotes(request.expectedVaultId);
+      case "RenameRemote": {
+        const { type: _type, ...input } = request;
+        return this.mutate(() => this.runtime.renameRemote(input));
+      }
+      case "SetRemoteEnabled": {
+        const { type: _type, ...input } = request;
+        return this.mutate(() => this.runtime.setRemoteEnabled(input));
+      }
       case "CreateHostedReplica": {
         const { type: _type, ...input } = request;
         return this.mutate(() => this.runtime.createHostedReplica(input));

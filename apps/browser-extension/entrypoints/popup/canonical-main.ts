@@ -67,6 +67,7 @@ type CanonicalPopupVaultScreen =
     }
   | { readonly kind: "HostedMemberRecovery" }
   | { readonly kind: "HostedReplicaSetup" }
+  | { readonly kind: "HostedReplicaRename"; readonly remoteId: string }
   | { readonly kind: "VacuumConfirmation" }
   | { readonly kind: "ClosureConfirmation" };
 
@@ -558,8 +559,16 @@ function renderHostedReplicas(view: CanonicalPopupView, content: DocumentFragmen
       item.append(
         element("strong", remote.name),
         element("span", remote.endpoint),
-        element("span", remote.enabled ? "Available" : "Disabled"),
+        element("span", remote.enabled ? "Available" : "Paused locally"),
       );
+      const actions = element("div", undefined, "canonical-popup__actions");
+      const rename = element("button", "Rename Hosted Replica") as HTMLButtonElement;
+      rename.type = "button";
+      rename.addEventListener("click", () => {
+        vaultScreen = { kind: "HostedReplicaRename", remoteId: remote.remoteId };
+        render(view);
+      });
+      actions.append(rename);
       if (remote.enabled) {
         const materialize = element("button", "Store compact Vault state") as HTMLButtonElement;
         materialize.type = "button";
@@ -576,15 +585,40 @@ function renderHostedReplicas(view: CanonicalPopupView, content: DocumentFragmen
             await controller.refresh();
           });
         });
-        item.append(materialize);
+        actions.append(materialize);
       }
+      const toggle = element(
+        "button",
+        remote.enabled ? "Pause Remote" : "Resume Remote",
+      ) as HTMLButtonElement;
+      toggle.type = "button";
+      toggle.addEventListener("click", () => {
+        action(toggle, async () => {
+          transientError = undefined;
+          await client.setRemoteEnabled({
+            expectedVaultId,
+            remoteId: remote.remoteId,
+            enabled: !remote.enabled,
+          });
+          announcer.textContent = remote.enabled
+            ? "Hosted Replica paused locally. It will not be contacted until resumed."
+            : "Hosted Replica resumed locally.";
+          await controller.refresh();
+        });
+      });
+      actions.append(toggle);
+      item.append(actions);
       list.append(item);
     }
     section.append(list);
   }
   const enabledRemotes = view.remotes.filter((remote) => remote.enabled);
   if (enabledRemotes.length > 0) {
-    const pull = element("button", "Check Hosted Replicas") as HTMLButtonElement;
+    const pull = element(
+      "button",
+      "Check Hosted Replicas",
+      "canonical-popup__hosted-action",
+    ) as HTMLButtonElement;
     pull.type = "button";
     pull.addEventListener("click", () => {
       action(pull, async () => {
@@ -617,6 +651,62 @@ function renderHostedReplicas(view: CanonicalPopupView, content: DocumentFragmen
   });
   section.append(connect);
   content.append(section);
+}
+
+function renderHostedReplicaRename(view: CanonicalPopupView, content: DocumentFragment): void {
+  const expectedVaultId = view.state.selectedVaultId;
+  const screen = vaultScreen;
+  if (expectedVaultId === undefined || screen.kind !== "HostedReplicaRename") {
+    throw new Error("Hosted Replica rename requires a selected Vault.");
+  }
+  const remote = view.remotes.find(({ remoteId }) => remoteId === screen.remoteId);
+  if (remote === undefined)
+    throw new Error("Hosted Replica is no longer configured on this Client.");
+  content.append(
+    element(
+      "p",
+      "This changes this Client’s local connection name only. It does not contact the Replica Host.",
+      "canonical-popup__muted",
+    ),
+  );
+  const form = element("form", undefined, "canonical-popup__form");
+  const nameLabel = element("label", "Connection name");
+  const name = element("input") as HTMLInputElement;
+  name.autocomplete = "off";
+  name.maxLength = 256;
+  name.value = remote.name;
+  name.required = true;
+  nameLabel.append(name);
+  const actions = element("div", undefined, "canonical-popup__actions");
+  const cancel = element("button", "Cancel Remote rename") as HTMLButtonElement;
+  cancel.type = "button";
+  cancel.addEventListener("click", () => {
+    vaultScreen = { kind: "Settings" };
+    render(view);
+  });
+  const submit = element(
+    "button",
+    "Save Remote name",
+    "canonical-popup__primary",
+  ) as HTMLButtonElement;
+  submit.type = "submit";
+  actions.append(cancel, submit);
+  form.append(nameLabel, actions);
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    action(submit, async () => {
+      transientError = undefined;
+      await client.renameRemote({
+        expectedVaultId,
+        remoteId: remote.remoteId,
+        name: name.value,
+      });
+      vaultScreen = { kind: "Settings" };
+      announcer.textContent = "Hosted Replica renamed locally.";
+      await controller.refresh();
+    });
+  });
+  content.append(form);
 }
 
 function renderHostedReplicaSetup(view: CanonicalPopupView, content: DocumentFragment): void {
@@ -994,6 +1084,8 @@ function popupHeading(presentation: ReturnType<typeof canonicalPopupPresentation
       return "Recover a Hosted Vault";
     case "HostedReplicaSetup":
       return "Connect a Hosted Replica";
+    case "HostedReplicaRename":
+      return "Rename Hosted Replica";
     case "VacuumConfirmation":
       return "Vacuum this Vault?";
     case "ClosureConfirmation":
@@ -1025,6 +1117,7 @@ function render(view: CanonicalPopupView): void {
     }
     if (vaultScreen.kind === "Fork") renderVaultFork(content, vaultScreen.setup);
     if (vaultScreen.kind === "HostedReplicaSetup") renderHostedReplicaSetup(view, content);
+    if (vaultScreen.kind === "HostedReplicaRename") renderHostedReplicaRename(view, content);
     if (vaultScreen.kind === "VacuumConfirmation") renderVacuumConfirmation(view, content);
     if (vaultScreen.kind === "ClosureConfirmation") renderClosureConfirmation(view, content);
   }

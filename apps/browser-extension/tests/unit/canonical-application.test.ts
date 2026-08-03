@@ -12,6 +12,8 @@ describe("canonical application", () => {
       selectVault: vi.fn(),
       listLibrary: vi.fn(),
       listRemotes: vi.fn(),
+      renameRemote: vi.fn(),
+      setRemoteEnabled: vi.fn(),
       createHostedReplica: vi.fn(),
       materializeHostedReplica: vi.fn(),
       pullHostedReplicas: vi.fn(),
@@ -65,6 +67,8 @@ describe("canonical application", () => {
       selectVault: vi.fn().mockResolvedValue({ selectedVaultId: "b".repeat(64), vaults: [] }),
       listLibrary: vi.fn().mockResolvedValue([]),
       listRemotes: vi.fn(),
+      renameRemote: vi.fn(),
+      setRemoteEnabled: vi.fn(),
       createHostedReplica: vi.fn(),
       materializeHostedReplica: vi.fn(),
       pullHostedReplicas: vi.fn(),
@@ -145,6 +149,65 @@ describe("canonical application", () => {
     });
     await expect(
       application.handle({ type: "ListRemotes", expectedVaultId, extra: true }),
+    ).rejects.toThrow(/Unsupported application Command/u);
+  });
+
+  it("renames and pauses a selected-Vault Remote only through exact local Commands", async () => {
+    const renamed = {
+      remoteId: "019fa62e-a653-7f63-b2bf-94e7ed5e46ca",
+      name: "Personal archive",
+      endpoint: "https://sync.example.test/",
+      enabled: false,
+    };
+    const runtime = {
+      renameRemote: vi.fn().mockResolvedValue({ ...renamed, enabled: true }),
+      setRemoteEnabled: vi.fn().mockResolvedValue(renamed),
+    };
+    const invalidated = vi.fn();
+    const application = new CanonicalApplication(
+      runtime as never,
+      undefined,
+      undefined,
+      undefined,
+      invalidated,
+    );
+    const expectedVaultId = "a".repeat(64);
+
+    await expect(
+      application.handle({
+        type: "RenameRemote",
+        expectedVaultId,
+        remoteId: renamed.remoteId,
+        name: renamed.name,
+      }),
+    ).resolves.toEqual({ ...renamed, enabled: true });
+    await expect(
+      application.handle({
+        type: "SetRemoteEnabled",
+        expectedVaultId,
+        remoteId: renamed.remoteId,
+        enabled: false,
+      }),
+    ).resolves.toEqual(renamed);
+    expect(runtime.renameRemote).toHaveBeenCalledWith({
+      expectedVaultId,
+      remoteId: renamed.remoteId,
+      name: renamed.name,
+    });
+    expect(runtime.setRemoteEnabled).toHaveBeenCalledWith({
+      expectedVaultId,
+      remoteId: renamed.remoteId,
+      enabled: false,
+    });
+    expect(invalidated).toHaveBeenCalledTimes(2);
+    await expect(
+      application.handle({
+        type: "SetRemoteEnabled",
+        expectedVaultId,
+        remoteId: renamed.remoteId,
+        enabled: false,
+        extra: true,
+      }),
     ).rejects.toThrow(/Unsupported application Command/u);
   });
 
@@ -236,6 +299,8 @@ describe("canonical application", () => {
       selectVault: vi.fn(),
       listLibrary: vi.fn(),
       listRemotes: vi.fn(),
+      renameRemote: vi.fn(),
+      setRemoteEnabled: vi.fn(),
       createHostedReplica: vi.fn(),
       materializeHostedReplica: vi.fn(),
       pullHostedReplicas: vi.fn(),
@@ -505,6 +570,8 @@ describe("canonical application", () => {
       selectVault: vi.fn().mockResolvedValue({ selectedVaultId: "b".repeat(64), vaults: [] }),
       listLibrary: vi.fn(),
       listRemotes: vi.fn(),
+      renameRemote: vi.fn(),
+      setRemoteEnabled: vi.fn(),
       createHostedReplica: vi.fn(),
       materializeHostedReplica: vi.fn(),
       pullHostedReplicas: vi.fn(),

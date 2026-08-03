@@ -287,7 +287,8 @@ export class CanonicalClientRuntime {
       "begin"
     > = new CanonicalRecoveryReplacementService(vaults),
     private readonly remoteManagement: {
-      readonly remotes?: Pick<CanonicalReplicaRemoteService, "list">;
+      readonly remotes?: Pick<CanonicalReplicaRemoteService, "list"> &
+        Partial<Pick<CanonicalReplicaRemoteService, "update">>;
       readonly hostedReplicaSetup?: Pick<CanonicalHostedReplicaSetupService, "create">;
       readonly hostedCompactMaterializer?: Pick<
         CanonicalHostedCompactMaterializationService,
@@ -578,6 +579,42 @@ export class CanonicalClientRuntime {
     return (
       await this.remoteManagement.remotes.list(identifierFromStorageKey("Vault", expectedVaultId))
     ).map((remote) => this.remoteSummary(remote));
+  }
+
+  async renameRemote(input: {
+    readonly expectedVaultId: string;
+    readonly remoteId: string;
+    readonly name: string;
+  }): Promise<CanonicalClientRemoteSummary> {
+    return this.updateRemote(input, { name: input.name });
+  }
+
+  async setRemoteEnabled(input: {
+    readonly expectedVaultId: string;
+    readonly remoteId: string;
+    readonly enabled: boolean;
+  }): Promise<CanonicalClientRemoteSummary> {
+    return this.updateRemote(input, { enabled: input.enabled });
+  }
+
+  private async updateRemote(
+    input: { readonly expectedVaultId: string; readonly remoteId: string },
+    update: { readonly name?: string; readonly enabled?: boolean },
+  ): Promise<CanonicalClientRemoteSummary> {
+    await this.assertExpectedVault(input.expectedVaultId);
+    if (this.remoteManagement.remotes?.update === undefined) {
+      throw runtimeError(
+        "REMOTE_MANAGEMENT_UNAVAILABLE",
+        "Remote management is unavailable in this Client.",
+      );
+    }
+    return this.remoteSummary(
+      await this.remoteManagement.remotes.update({
+        vaultId: identifierFromStorageKey("Vault", input.expectedVaultId),
+        remoteId: input.remoteId,
+        ...update,
+      }),
+    );
   }
 
   async createHostedReplica(input: {

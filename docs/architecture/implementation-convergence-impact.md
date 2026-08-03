@@ -261,10 +261,13 @@ authority from that session. A Runtime setup service now signs in, creates one H
 Replica, requires the current pull/materialization capabilities, and atomically records its local
 Remote configuration plus rotated session without retaining the password. It validates the local
 Remote configuration before Host access, preventing malformed input from prompting for an unrelated
-Host or leaving a Host-side Replica. The shipped popup now lists non-secret local Remote summaries
-and creates a Hosted Replica only after an explicit Host permission request; that creation does not
-yet synchronize data. Remote editing, disable/delete controls, and general multi-Remote
-convergence remain unfinished.
+Host or leaving a Host-side Replica. The shipped popup now lists non-secret local Remote summaries,
+creates a Hosted Replica only after an explicit Host permission request, and supports local-only
+rename and pause/resume through an encrypted Remote-config CAS. Those controls make no Host request
+and never rewrite the channel credential; pausing blocks newly started channel work without
+claiming to cancel an operation already in flight. Hosted Replica creation does not itself
+synchronize data. Destructive local Remote removal and general multi-Remote convergence remain
+unfinished.
 For a non-adopted current Generation, it also validates one complete same-Generation Content DAG
 branch and its newly required Vault Object closure, then atomically promotes only those newly
 accepted Compact items with the exact pull Job and Replica state. A repository-tested Runtime
@@ -277,11 +280,12 @@ unavailable Capture. That direct action requests enabled configured Host origins
 work; Library reads recompute Artifact availability from the current local Resolution and wrapper
 presence rather than trusting a cached Materialization. A real Chromium IndexedDB/OPFS restart
 proof uses the actual protected Remote configuration service. Authority, Key-Epoch,
-Required-Feature, Vacuum/adoption, Remote-management UI, and general multi-Remote convergence
-remain Quarantined or unfinished. Retryable opaque-Host transport failures now checkpoint bounded local retries
-without changing Vault state. One local coordinator pulls configured Remotes sequentially and
-isolates an individual Remote failure, while rejecting corrupt local Remote scope/identity before a
-channel call. The Runtime can now authenticate its local accepted Generation and materialize the
+Required-Feature, Vacuum/adoption, destructive Remote removal, and general multi-Remote
+convergence remain Quarantined or unfinished. Retryable opaque-Host transport failures now
+checkpoint bounded local retries without changing Vault state. One local coordinator pulls
+configured Remotes sequentially and isolates an individual Remote failure, while rejecting corrupt
+local Remote scope/identity before a channel call. The Runtime can now authenticate its local
+accepted Generation and materialize the
 entire reachable Compact closure to one writable Hosted Replica through independently randomized
 outer items and the durable Remote Materialization Ledger. It re-wraps Key Envelopes only to their
 authoritative Credential targets, preserves their logical IDs, retries an ambiguous admission with
@@ -290,8 +294,8 @@ hydration. The shipped popup now offers explicit per-Remote Compact materializat
 Host-permission gesture; it is deliberately named and implemented separately from pull
 synchronization. It also exposes an explicit receiver-initiated check of every enabled Remote,
 obtaining all needed Host permissions in one direct gesture before the serial local pull
-coordinator runs. Remote editing, disable/delete controls, and general multi-Remote convergence
-remain unfinished.
+coordinator runs. Local-only rename and pause/resume are implemented; destructive local Remote
+removal and general multi-Remote convergence remain unfinished.
 
 ## 4.4 Account dashboard and public pages
 

@@ -251,6 +251,122 @@ describe("canonical synchronization state", () => {
     });
   });
 
+  it("renames and pauses one Remote with a configuration CAS without rewriting its channel credential", async () => {
+    const key = await crypto.subtle.generateKey({ name: "AES-KW", length: 256 }, false, [
+      "wrapKey",
+      "unwrapKey",
+    ]);
+    const stored = new Map<string, Uint8Array>();
+    const commits: unknown[] = [];
+    const storageKey = (namespace: string, scopeKey: string, itemKey: string) =>
+      `${namespace}\u0000${scopeKey}\u0000${itemKey}`;
+    const storage = {
+      getOrCreateInstallationWrappingKey: async () => key,
+      commitInstallationMutation: async (commit: {
+        readonly expectedAbsentItems?: readonly {
+          readonly namespace: string;
+          readonly scopeKey: string;
+          readonly itemKey: string;
+        }[];
+        readonly expectedMutableItems?: readonly {
+          readonly namespace: string;
+          readonly scopeKey: string;
+          readonly itemKey: string;
+          readonly bytes: Uint8Array;
+        }[];
+        readonly mutableItems?: readonly {
+          readonly namespace: string;
+          readonly scopeKey: string;
+          readonly itemKey: string;
+          readonly bytes: Uint8Array;
+        }[];
+      }) => {
+        commits.push(commit);
+        for (const item of commit.expectedAbsentItems ?? []) {
+          if (stored.has(storageKey(item.namespace, item.scopeKey, item.itemKey))) {
+            throw new TypeError("duplicate local identity");
+          }
+        }
+        for (const item of commit.expectedMutableItems ?? []) {
+          const existing = stored.get(storageKey(item.namespace, item.scopeKey, item.itemKey));
+          if (
+            existing === undefined ||
+            existing.every((byte, index) => byte === item.bytes[index]) === false
+          ) {
+            throw new TypeError("stale local identity");
+          }
+        }
+        for (const item of commit.mutableItems ?? []) {
+          stored.set(storageKey(item.namespace, item.scopeKey, item.itemKey), item.bytes);
+        }
+      },
+      getBytes: async (
+        _realm: unknown,
+        item: { readonly namespace: string; readonly scopeKey: string; readonly itemKey: string },
+      ) => stored.get(storageKey(item.namespace, item.scopeKey, item.itemKey)),
+      listBytes: async (_realm: unknown, namespace: string, scopeKey: string) =>
+        [...stored.entries()]
+          .map(([key, bytes]) => {
+            const [storedNamespace, storedScopeKey, itemKey] = key.split("\u0000");
+            return { storedNamespace, storedScopeKey, itemKey, bytes };
+          })
+          .filter(
+            ({ storedNamespace, storedScopeKey }) =>
+              storedNamespace === namespace && storedScopeKey === scopeKey,
+          )
+          .map(({ itemKey, bytes }) => ({
+            realmKey: "Normal:default",
+            namespace,
+            scopeKey,
+            itemKey,
+            bytes,
+          })),
+    };
+    const service = new CanonicalReplicaRemoteService(
+      storage as unknown as ConstructorParameters<typeof CanonicalReplicaRemoteService>[0],
+      NORMAL_STORAGE_REALM,
+    );
+    const value = remote();
+    await service.configure({ remote: value, bearerToken: "opaque-bearer-token" });
+
+    await service.update({
+      vaultId: value.vaultId,
+      remoteId: value.remoteId,
+      name: "Personal archive",
+      enabled: false,
+    });
+
+    expect(await service.list(value.vaultId)).toEqual([
+      { ...value, name: "Personal archive", enabled: false },
+    ]);
+    expect(commits).toHaveLength(2);
+    const update = commits[1] as {
+      readonly expectedMutableItems: readonly {
+        readonly namespace: string;
+        readonly scopeKey: string;
+        readonly itemKey: string;
+      }[];
+      readonly mutableItems: readonly {
+        readonly namespace: string;
+        readonly scopeKey: string;
+        readonly itemKey: string;
+      }[];
+    };
+    expect(update.expectedMutableItems).toHaveLength(1);
+    expect(update.expectedMutableItems[0]).toMatchObject({
+      namespace: NAMESPACES.replicaRemote.key,
+      scopeKey: identifierStorageKey(value.vaultId),
+      itemKey: value.remoteId,
+    });
+    expect(update.mutableItems).toEqual([
+      expect.objectContaining({
+        namespace: NAMESPACES.replicaRemote.key,
+        scopeKey: identifierStorageKey(value.vaultId),
+        itemKey: value.remoteId,
+      }),
+    ]);
+  });
+
   it("lists only selected-Vault Remotes and rotates an expired Host session through credential CAS", async () => {
     const key = await crypto.subtle.generateKey({ name: "AES-KW", length: 256 }, false, [
       "wrapKey",

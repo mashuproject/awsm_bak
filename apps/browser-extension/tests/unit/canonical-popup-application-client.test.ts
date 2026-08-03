@@ -181,6 +181,51 @@ describe("canonical popup application client", () => {
     });
   });
 
+  it("renames and pauses a Hosted Replica through exact local commands", async () => {
+    const remote = {
+      remoteId: "019fa62e-a653-7f63-b2bf-94e7ed5e46ca",
+      name: "Personal archive",
+      endpoint: "https://sync.example.test/",
+      enabled: false,
+    };
+    const transport = {
+      request: vi
+        .fn()
+        .mockResolvedValueOnce({ ...remote, enabled: true })
+        .mockResolvedValueOnce(remote),
+      subscribe: vi.fn(() => () => undefined),
+    };
+    const client = createCanonicalPopupApplicationClient(transport);
+    const expectedVaultId = "a".repeat(64);
+
+    await expect(
+      client.renameRemote({
+        expectedVaultId,
+        remoteId: remote.remoteId,
+        name: remote.name,
+      }),
+    ).resolves.toEqual({ ...remote, enabled: true });
+    await expect(
+      client.setRemoteEnabled({
+        expectedVaultId,
+        remoteId: remote.remoteId,
+        enabled: false,
+      }),
+    ).resolves.toEqual(remote);
+    expect(transport.request).toHaveBeenNthCalledWith(1, {
+      type: "RenameRemote",
+      expectedVaultId,
+      remoteId: remote.remoteId,
+      name: remote.name,
+    });
+    expect(transport.request).toHaveBeenNthCalledWith(2, {
+      type: "SetRemoteEnabled",
+      expectedVaultId,
+      remoteId: remote.remoteId,
+      enabled: false,
+    });
+  });
+
   it("materializes an exact selected-Vault Remote and validates the progress summary", async () => {
     const transport = {
       request: vi.fn().mockResolvedValue({
