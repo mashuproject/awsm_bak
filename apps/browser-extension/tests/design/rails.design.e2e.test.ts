@@ -160,8 +160,8 @@ test("renders trust, Account, validation, and design-reference surfaces", async 
     })
     .toBe(true);
   await expect(page.locator("#capture")).toHaveCSS("background-color", "rgb(255, 240, 184)");
-  await expect(page.locator('.glossary-index a[href="#vault-record"]')).toBeVisible();
-  await expect(page.locator("#vault-record")).toContainText("immutable content-addressed node");
+  await expect(page.locator('.glossary-index a[href="#vault-member"]')).toBeVisible();
+  await expect(page.locator("#vault")).toContainText("Your encrypted archive.");
 
   await page.goto("/security");
   await page.locator('a.term-link[href="/glossary#replica-access-grant"]').click();
@@ -173,7 +173,7 @@ test("renders trust, Account, validation, and design-reference surfaces", async 
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/glossary");
-  await expect(page.locator('.glossary-index a[href="#vault-record"]')).toBeVisible();
+  await expect(page.locator('.glossary-index a[href="#vault-member"]')).toBeVisible();
   await expect
     .poll(() => page.locator(".glossary-index").evaluate((element) => element.clientHeight))
     .toBeLessThanOrEqual(352);

@@ -150,9 +150,10 @@ not:
 - inspect or mutate staging, production, Cloudflare, GitHub, or any other external service; or
 - add compatibility readers, migrations, aliases, or dual formats.
 
-The public glossary now deterministically renders the tracked canonical glossary source. It has no
-separate editable definition source; public pages link to its anchored canonical terms where that
-context clarifies the trust or product boundary.
+The public glossary now presents a small, source-checked set of canonical terms with
+plain-language summaries. The full tracked glossary remains the source of exact technical
+definitions; public pages link to anchored public terms where that context clarifies the trust or
+product boundary.
 
 Subsequent repository work has implemented canonical browser and Replica Host foundations. In
 particular, selected readable-Replica Recovery now verifies the authenticated compact authority

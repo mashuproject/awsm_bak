@@ -7,8 +7,8 @@
     <p class="eyebrow">AWSM Glossary</p>
     <h1>The language of your archive.</h1>
     <p>
-      The canonical definitions for AWSM's preservation, ownership, and synchronization model,
-      rendered from the living architecture glossary.
+      These short entries explain the words used on this site. For the exact technical meanings,
+      read the <%= link_to "full architecture glossary", "#{public_product_links[:source]}/blob/main/docs/architecture/glossary.md" %>.
     </p>
   </header>
 
@@ -35,27 +35,7 @@
             <% section.terms.each do |term| %>
               <div id="<%= term.anchor %>">
                 <dt><%= term.title %></dt>
-                <dd>
-                  <% term.blocks.each do |block| %>
-                    <% if block.kind == :list %>
-                      <ul>
-                        <% block.items.each do |item_parts| %>
-                          <li>
-                            <% item_parts.each do |part| %>
-                              <% if part.code %><code><%= part.text %></code><% else %><%= part.text %><% end %>
-                            <% end %>
-                          </li>
-                        <% end %>
-                      </ul>
-                    <% else %>
-                      <p>
-                        <% block.parts.each do |part| %>
-                          <% if part.code %><code><%= part.text %></code><% else %><%= part.text %><% end %>
-                        <% end %>
-                      </p>
-                    <% end %>
-                  <% end %>
-                </dd>
+                <dd><p><%= term.summary %></p></dd>
               </div>
             <% end %>
           </dl>

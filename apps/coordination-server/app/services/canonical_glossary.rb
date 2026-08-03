@@ -1,11 +1,52 @@
 class CanonicalGlossary
   Section = Data.define(:title, :terms)
-  Term = Data.define(:title, :anchor, :blocks)
-  Inline = Data.define(:text, :code)
-  Block = Data.define(:kind, :parts, :items)
+  Term = Data.define(:title, :anchor, :summary)
+
+  PUBLIC_SECTIONS = {
+    "Your archive and access" => {
+      "Account" => "Your login at one server. It lets you use that server. It does not open your Vault.",
+      "Capture" => "A saved copy of a web page at one time.",
+      "Client Credential" => "A key in a client installation. It lets that installation sign changes for a Vault member.",
+      "Client Installation" => "One place where AWSM runs, such as one browser profile or desktop app.",
+      "Complete Export" => "A file you keep yourself. It has what you need to rebuild a Vault. AWSM does not sync it.",
+      "Recovery Phrase" => "Twelve private words. They help you get access to your Vault on a new client.",
+      "Vault" => "Your encrypted archive. It keeps the saved data and history that belong together.",
+      "Vault ID" => "The permanent random ID for a Vault. A host that stores encrypted data only does not receive it.",
+      "Vault Member" => "A person or identity that has access to one Vault."
+    },
+    "Copies and synchronization" => {
+      "Coordination Server" => "A server that helps copies of a Vault exchange encrypted data. It cannot read that data.",
+      "Hosted Replica" => "A replica that a host stores for you. It can help you sync. It is not your only copy.",
+      "Replica" => "One stored copy of a Vault. Copies can be complete or partial.",
+      "Replica Access Grant" => "Permission from one replica host to use a hosted replica.",
+      "Replica Host" => "A service or app that stores a replica and controls connections to it.",
+      "Storage Relief" => "Removing local data to save space. Do this only when another replica keeps the data.",
+      "Synchronization Cycle" => "One check and exchange of new encrypted data between replicas."
+    },
+    "Saved items" => {
+      "Folder" => "A place that puts captures and other folders in an order.",
+      "Library" => "The AWSM view where you find and manage saved captures.",
+      "Note" => "Your written text attached to a capture.",
+      "Tag" => "A label you add to a capture to help find it."
+    }
+  }.freeze
 
   def self.load
-    new(source_path.read).sections
+    source_titles = source_term_titles
+
+    PUBLIC_SECTIONS.map do |section_title, summaries|
+      terms = summaries.sort_by { |title, _summary| title.downcase }.map do |title, summary|
+        raise "The canonical architecture glossary does not define #{title}." unless source_titles.include?(title)
+
+        Term.new(title:, anchor: title.parameterize, summary:)
+      end
+
+      Section.new(title: section_title, terms:)
+    end
+  end
+
+  def self.source_term_titles
+    source_path.readlines(chomp: true).filter_map { |line| line[/^## (.+)$/, 1] }
   end
 
   def self.source_path
@@ -13,90 +54,5 @@ class CanonicalGlossary
       Pathname.new("/docs/architecture/glossary.md"),
       Rails.root.join("../../docs/architecture/glossary.md").expand_path
     ].find(&:file?) || raise("The canonical architecture glossary is unavailable.")
-  end
-
-  def initialize(source)
-    @source = source
-  end
-
-  def sections
-    parsed_sections = []
-    current_section = nil
-    current_term = nil
-    definition_lines = []
-
-    @source.each_line(chomp: true) do |line|
-      if (section_match = line.match(/^# \d+\. (.+)$/))
-        append_term(current_section, current_term, definition_lines)
-        current_section = Section.new(title: section_match[1], terms: [])
-        parsed_sections << current_section
-        current_term = nil
-        definition_lines = []
-      elsif (term_match = line.match(/^## (.+)$/))
-        append_term(current_section, current_term, definition_lines)
-        current_term = term_match[1]
-        definition_lines = []
-      elsif current_term
-        definition_lines << line
-      end
-    end
-
-    append_term(current_section, current_term, definition_lines)
-    parsed_sections.select { |section| section.terms.any? }
-  end
-
-  private
-
-  def append_term(section, title, lines)
-    return if section.nil? || title.nil?
-
-    section.terms << Term.new(
-      title: title,
-      anchor: title.parameterize,
-      blocks: parse_blocks(lines)
-    )
-  end
-
-  def parse_blocks(lines)
-    blocks = []
-    paragraph = []
-    list = []
-    flush = lambda do
-      unless paragraph.empty?
-        blocks << Block.new(kind: :paragraph, parts: inline_parts(paragraph.join(" ")), items: [])
-        paragraph = []
-      end
-      unless list.empty?
-        blocks << Block.new(kind: :list, parts: [], items: list.map { |item| inline_parts(item) })
-        list = []
-      end
-    end
-
-    lines.each do |line|
-      if line.empty?
-        flush.call
-      elsif line.start_with?("- ")
-        unless paragraph.empty?
-          blocks << Block.new(kind: :paragraph, parts: inline_parts(paragraph.join(" ")), items: [])
-          paragraph = []
-        end
-        list << line.delete_prefix("- ")
-      else
-        unless list.empty?
-          blocks << Block.new(kind: :list, parts: [], items: list.map { |item| inline_parts(item) })
-          list = []
-        end
-        paragraph << line
-      end
-    end
-    flush.call
-    blocks
-  end
-
-  def inline_parts(text)
-    text.split(/(`[^`]+`)/).reject(&:empty?).map do |part|
-      code = part.start_with?("`") && part.end_with?("`")
-      Inline.new(text: code ? part[1..-2] : part, code:)
-    end
   end
 end

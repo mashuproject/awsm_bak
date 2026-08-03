@@ -79,30 +79,45 @@ RSpec.describe "Plan 16 product site", type: :request do
     expect(response.body).to include('href="/glossary#replica-access-grant"')
   end
 
-  it "defines capitalized product concepts in a public glossary" do
+  it "defines an alphabetized plain-language public glossary" do
     get "/glossary"
 
     expect(response).to have_http_status(:ok)
     expect(response.body).to include(
       "The language of your archive.",
+      "These short entries explain the words used on this site.",
       "Capture",
       "Complete Export",
-      "Vault Record",
       "Replica Access Grant",
       "Vault",
       "Recovery Phrase",
       "Coordination Server"
     )
-    expect(response.body).to include('href="#vault-record"', 'id="vault-record"')
-    expect(response.body).to include("<code>recordId</code>")
-    expect(response.body).not_to include("<dt>Device</dt>")
+    expect(response.body).not_to include("Vault Record", "<dt>Device</dt>")
 
     document = Nokogiri::HTML(response.body)
-    expected_terms = CanonicalGlossary.load.flat_map(&:terms)
-    expect(document.css(".glossary-list dt").map(&:text)).to eq(expected_terms.map(&:title))
-    expect(document.css(".glossary-list__section dl > div[id]").map { |term| term["id"] }).to eq(
-      expected_terms.map(&:anchor)
+    expected_sections = {
+      "Your archive and access" => [
+        "Account", "Capture", "Client Credential", "Client Installation", "Complete Export",
+        "Recovery Phrase", "Vault", "Vault ID", "Vault Member"
+      ],
+      "Copies and synchronization" => [
+        "Coordination Server", "Hosted Replica", "Replica", "Replica Access Grant", "Replica Host",
+        "Storage Relief", "Synchronization Cycle"
+      ],
+      "Saved items" => [ "Folder", "Library", "Note", "Tag" ]
+    }
+
+    expect(document.css(".glossary-list__section").to_h do |section|
+      [ section.at_css("h2").text, section.css("dt").map(&:text) ]
+    end).to eq(expected_sections)
+    expect(document.css(".glossary-list__section").flat_map { |section| section.css("dt").map(&:text) }).to all(
+      satisfy { |title| CanonicalGlossary.source_term_titles.include?(title) }
     )
+    expect(document.css(".glossary-list__section").all? do |section|
+      terms = section.css("dt").map(&:text)
+      terms == terms.sort_by(&:downcase)
+    end).to be(true)
   end
 
   it "keeps the landing cache-safe after browser authentication and exposes enhancement targets" do
