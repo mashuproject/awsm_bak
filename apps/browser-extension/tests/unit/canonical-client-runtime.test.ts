@@ -9,6 +9,7 @@ import { CanonicalClientRuntime } from "../../src/runtime/client/canonical-runti
 import type { CanonicalContentService } from "../../src/runtime/content/canonical-service";
 import type { CanonicalLibraryProjectionService } from "../../src/runtime/library/canonical-projection";
 import type { CanonicalSearchService } from "../../src/runtime/search/canonical-service";
+import type { CanonicalHostedArtifactHydrationService } from "../../src/runtime/synchronization/canonical-hosted-artifact-hydration";
 import type { CanonicalHostedCompactMaterializationService } from "../../src/runtime/synchronization/canonical-hosted-compact-materialization";
 import type { CanonicalHostedReplicaSetupService } from "../../src/runtime/synchronization/canonical-hosted-replica-setup";
 import type { CanonicalMultiRemotePullService } from "../../src/runtime/synchronization/canonical-multi-remote-pull-service";
@@ -29,6 +30,7 @@ function fixture(
       CanonicalHostedCompactMaterializationService,
       "materialize"
     >;
+    readonly hostedArtifactHydrator?: Pick<CanonicalHostedArtifactHydrationService, "hydrate">;
     readonly multiRemotePull?: Pick<CanonicalMultiRemotePullService, "pull">;
   } = {},
 ) {
@@ -151,6 +153,32 @@ function fixture(
 }
 
 describe("canonical Client Runtime", () => {
+  it("hydrates one known Artifact only through the selected Vault", async () => {
+    const artifact = randomIdentifier("Artifact");
+    const storageItem = randomIdentifier("StorageItem");
+    const artifactId = identifierStorageKey(artifact);
+    const storageItemId = identifierStorageKey(storageItem);
+    const hostedArtifactHydrator = {
+      hydrate: vi.fn().mockResolvedValue({
+        artifactId: artifact,
+        storageItemId: storageItem,
+        remoteId: "local",
+      }),
+    };
+    const { runtime, firstVaultId: selectedVaultId } = fixture({ hostedArtifactHydrator });
+    const expectedVaultId = identifierStorageKey(selectedVaultId);
+
+    await expect(runtime.hydrateArtifact({ expectedVaultId, artifactId })).resolves.toEqual({
+      artifactId,
+      storageItemId,
+      remoteId: "local",
+    });
+    expect(hostedArtifactHydrator.hydrate).toHaveBeenCalledWith({
+      vaultId: selectedVaultId,
+      artifactId: artifact,
+    });
+  });
+
   it("checks every selected-Vault Hosted Replica through the receiver-side pull coordinator", async () => {
     const multiRemotePull = {
       pull: vi.fn().mockResolvedValue([

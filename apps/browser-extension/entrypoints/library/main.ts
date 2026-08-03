@@ -5,6 +5,7 @@ import {
   sendCanonicalApplicationRequest,
   subscribeCanonicalApplicationState,
 } from "../../src/app/canonical-application-client";
+import { requestHostedReplicaPermissions } from "../../src/ui/canonical-hosted-replica-permission";
 import {
   type CanonicalPopupApplicationClient,
   createCanonicalPopupApplicationClient,
@@ -50,6 +51,7 @@ const client: CanonicalPopupApplicationClient = createCanonicalPopupApplicationC
 let reconciliationQueued = false;
 let reconciliationRunning = false;
 let reconciliationGeneration = 0;
+let transientError: { readonly vaultId: string; readonly message: string } | undefined;
 
 function heading(): DocumentFragment {
   const content = document.createDocumentFragment();
@@ -71,11 +73,53 @@ function renderError(error: unknown): void {
   app.setAttribute("aria-busy", "false");
 }
 
+function retrieveCapture(
+  button: HTMLButtonElement,
+  input: {
+    readonly vaultId: string;
+    readonly artifactId: string;
+    readonly enabledEndpoints: readonly string[];
+  },
+): void {
+  button.disabled = true;
+  app.setAttribute("aria-busy", "true");
+  void (async () => {
+    try {
+      transientError = undefined;
+      await requestHostedReplicaPermissions(input.enabledEndpoints, {
+        deniedMessage: "Allow access to this Replica Host before retrieving the Capture.",
+      });
+      const hydrated = await client.hydrateArtifact({
+        expectedVaultId: input.vaultId,
+        artifactId: input.artifactId,
+      });
+      announcer.textContent =
+        hydrated.remoteId === "local" ? "Capture is available locally." : "Capture retrieved.";
+    } catch (error) {
+      const message =
+        error instanceof CanonicalApplicationClientError
+          ? error.message
+          : "The Capture could not be retrieved.";
+      transientError = { vaultId: input.vaultId, message };
+      announcer.textContent = message;
+    } finally {
+      requestReconciliation();
+      button.disabled = false;
+    }
+  })();
+}
+
 async function reconcile(generation: number): Promise<void> {
   try {
     const state = await client.state();
     const selectedVaultId = state.selectedVaultId;
-    const items = selectedVaultId === undefined ? [] : await client.listLibrary(selectedVaultId);
+    const [items, remotes] =
+      selectedVaultId === undefined
+        ? [[], []]
+        : await Promise.all([
+            client.listLibrary(selectedVaultId),
+            client.listRemotes(selectedVaultId),
+          ]);
     if (generation !== reconciliationGeneration) return;
 
     const content = heading();
@@ -93,6 +137,15 @@ async function reconcile(generation: number): Promise<void> {
       content.append(
         element("p", `Vault · ${displayVaultLabel(vault.label)}`, "canonical-library__context"),
       );
+      if (transientError?.vaultId === selectedVaultId) {
+        const failure = element(
+          "p",
+          transientError.message,
+          "canonical-library__status canonical-library__status--error",
+        );
+        failure.setAttribute("role", "alert");
+        content.append(failure);
+      }
       const activeItems = items.filter(({ lifecycle }) => lifecycle === "Active");
       const deletedItems = items.filter(({ lifecycle }) => lifecycle === "Deleted");
       const section = element("section", undefined, "canonical-library__section");
@@ -115,6 +168,31 @@ async function reconcile(generation: number): Promise<void> {
               "canonical-library__availability",
             ),
           );
+          if (!item.availableLocally) {
+            capture.append(
+              element(
+                "p",
+                "Retrieve this Capture from a configured Replica Host.",
+                "canonical-library__retrieval-note",
+              ),
+            );
+            const retrieve = element(
+              "button",
+              "Retrieve Capture",
+              "canonical-library__retrieve",
+            ) as HTMLButtonElement;
+            retrieve.type = "button";
+            retrieve.addEventListener("click", () => {
+              retrieveCapture(retrieve, {
+                vaultId: selectedVaultId,
+                artifactId: item.artifactId,
+                enabledEndpoints: remotes
+                  .filter((remote) => remote.enabled)
+                  .map((remote) => remote.endpoint),
+              });
+            });
+            capture.append(retrieve);
+          }
           list.append(capture);
         }
         section.append(list);

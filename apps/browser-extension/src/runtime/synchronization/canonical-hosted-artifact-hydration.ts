@@ -386,7 +386,7 @@ export class CanonicalHostedArtifactHydrationService {
           };
         }
       }
-      throw Object.assign(new Error("No configured Remote supplied a verified Artifact wrapper."), {
+      throw Object.assign(new Error("No configured Replica Host could supply this Capture."), {
         id: "ARTIFACT_REMOTE_UNAVAILABLE",
       });
     } finally {

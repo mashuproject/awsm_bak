@@ -15,6 +15,7 @@ describe("canonical application", () => {
       createHostedReplica: vi.fn(),
       materializeHostedReplica: vi.fn(),
       pullHostedReplicas: vi.fn(),
+      hydrateArtifact: vi.fn(),
       capture: vi.fn(),
       closeVault: vi.fn(),
       vacuumVault: vi.fn(),
@@ -66,6 +67,7 @@ describe("canonical application", () => {
       createHostedReplica: vi.fn(),
       materializeHostedReplica: vi.fn(),
       pullHostedReplicas: vi.fn(),
+      hydrateArtifact: vi.fn(),
       capture: vi.fn(),
       closeVault: vi.fn(),
       vacuumVault: vi.fn(),
@@ -198,6 +200,31 @@ describe("canonical application", () => {
     ).rejects.toThrow(/Unsupported application Command/u);
   });
 
+  it("hydrates an exact selected-Vault Artifact only through a Command", async () => {
+    const runtime = {
+      hydrateArtifact: vi.fn().mockResolvedValue({
+        artifactId: "a".repeat(64),
+        storageItemId: "b".repeat(64),
+        remoteId: "local",
+      }),
+    };
+    const application = new CanonicalApplication(runtime as never);
+    const expectedVaultId = "c".repeat(64);
+    const artifactId = "a".repeat(64);
+
+    await expect(
+      application.handle({ type: "HydrateArtifact", expectedVaultId, artifactId }),
+    ).resolves.toEqual({
+      artifactId,
+      storageItemId: "b".repeat(64),
+      remoteId: "local",
+    });
+    expect(runtime.hydrateArtifact).toHaveBeenCalledWith({ expectedVaultId, artifactId });
+    await expect(
+      application.handle({ type: "HydrateArtifact", expectedVaultId, artifactId, extra: true }),
+    ).rejects.toThrow(/Unsupported application Command/u);
+  });
+
   it("collects a browser page only through the canonical capture Host before authoring it", async () => {
     const runtime = {
       state: vi.fn(),
@@ -210,6 +237,7 @@ describe("canonical application", () => {
       createHostedReplica: vi.fn(),
       materializeHostedReplica: vi.fn(),
       pullHostedReplicas: vi.fn(),
+      hydrateArtifact: vi.fn(),
       capture: vi.fn().mockResolvedValue({ bundleId: "b".repeat(64) }),
       closeVault: vi.fn(),
       vacuumVault: vi.fn(),
@@ -432,6 +460,7 @@ describe("canonical application", () => {
       createHostedReplica: vi.fn(),
       materializeHostedReplica: vi.fn(),
       pullHostedReplicas: vi.fn(),
+      hydrateArtifact: vi.fn(),
       capture: vi.fn(),
       closeVault: vi.fn(),
       vacuumVault: vi.fn(),

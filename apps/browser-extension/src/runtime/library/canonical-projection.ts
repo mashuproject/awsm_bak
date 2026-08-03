@@ -814,7 +814,7 @@ export class CanonicalLibraryProjectionService {
   async load(vaultId: Identifier<"Vault">): Promise<CanonicalLibraryProjection> {
     const vault = await this.vaults.openVault(vaultId);
     const cached = await this.readCache(vault);
-    if (cached !== undefined) return cached;
+    if (cached !== undefined) return this.refreshArtifactAvailability(vault, cached);
     const projection = await this.rebuildOpened(vault);
     await this.writeCache(vault, projection);
     return projection;
@@ -1060,6 +1060,32 @@ export class CanonicalLibraryProjectionService {
     } catch {
       return undefined;
     }
+  }
+
+  private async refreshArtifactAvailability(
+    vault: PersistedOpenedCanonicalVault,
+    projection: CanonicalLibraryProjection,
+  ): Promise<CanonicalLibraryProjection> {
+    const captures = await Promise.all(
+      projection.captures.map(async (capture) => {
+        const resolution = await this.vaults.readLogicalResolution({
+          vault,
+          kind: 5,
+          logicalId: capture.artifactId,
+        });
+        const artifactAvailableLocally =
+          resolution.availability === 1 && (await this.artifacts.has(resolution.storageItemId));
+        return {
+          ...capture,
+          artifactStorageItemId: resolution.storageItemId,
+          artifactAvailableLocally,
+        };
+      }),
+    );
+    return {
+      ...projection,
+      captures,
+    };
   }
 
   private async writeCache(

@@ -146,6 +146,13 @@ change local Resolution state; a later configured Remote remains eligible to sup
 Prepared or promoted physical residue without that publication is unreachable local state and is
 eligible for ordinary reconciliation. No inventory response proves another durable copy.
 
+The current Library invokes this operation only for a known Artifact that is unavailable in its
+local Replica. Its explicit user action requests all enabled configured Host origins in one direct
+gesture before any channel call. A refreshed Library read evaluates its Artifact Resolution and
+local wrapper presence again rather than trusting a Frontier-bound cached availability flag, so
+Storage Relief and successful hydration each become visible through the ordinary state
+invalidation flow.
+
 # 8. CAP and consistency
 
 The portable Vault is availability- and partition-tolerant: disconnected members may author valid

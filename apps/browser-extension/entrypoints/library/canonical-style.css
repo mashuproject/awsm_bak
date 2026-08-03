@@ -73,7 +73,8 @@ h2 {
 .canonical-library__eyebrow,
 .canonical-library__context,
 .canonical-library__muted,
-.canonical-library__captures span {
+.canonical-library__captures span,
+.canonical-library__retrieval-note {
   color: var(--awsm-text-muted);
   font-size: 0.875rem;
 }
@@ -126,6 +127,15 @@ h2 {
 .canonical-library__captures .canonical-library__availability {
   color: var(--awsm-ink);
   font-weight: 700;
+}
+
+.canonical-library__retrieval-note {
+  margin: 0;
+}
+
+.canonical-library__retrieve {
+  justify-self: start;
+  min-height: 44px;
 }
 
 @media (width <= 480px) {

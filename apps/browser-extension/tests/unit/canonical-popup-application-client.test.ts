@@ -226,6 +226,31 @@ describe("canonical popup application client", () => {
     expect(transport.request).toHaveBeenCalledWith({ type: "PullHostedReplicas", expectedVaultId });
   });
 
+  it("hydrates one exact selected-Vault Artifact without accepting extra response fields", async () => {
+    const transport = {
+      request: vi.fn().mockResolvedValue({
+        artifactId: "a".repeat(64),
+        storageItemId: "b".repeat(64),
+        remoteId: "local",
+      }),
+      subscribe: vi.fn(() => () => undefined),
+    };
+    const client = createCanonicalPopupApplicationClient(transport);
+    const expectedVaultId = "c".repeat(64);
+    const artifactId = "a".repeat(64);
+
+    await expect(client.hydrateArtifact({ expectedVaultId, artifactId })).resolves.toEqual({
+      artifactId,
+      storageItemId: "b".repeat(64),
+      remoteId: "local",
+    });
+    expect(transport.request).toHaveBeenCalledWith({
+      type: "HydrateArtifact",
+      expectedVaultId,
+      artifactId,
+    });
+  });
+
   it("sends only canonical popup mutations and validates their outcomes", async () => {
     const transport = {
       request: vi

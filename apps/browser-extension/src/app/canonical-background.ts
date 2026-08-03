@@ -14,6 +14,7 @@ import { CanonicalCaptureService } from "../runtime/capture/canonical-service";
 import { CanonicalClientRuntime } from "../runtime/client/canonical-runtime";
 import { CanonicalLibraryProjectionService } from "../runtime/library/canonical-projection";
 import { CanonicalReplayService } from "../runtime/projection/canonical-replay";
+import { CanonicalHostedArtifactHydrationService } from "../runtime/synchronization/canonical-hosted-artifact-hydration";
 import { CanonicalHostedCompactMaterializationService } from "../runtime/synchronization/canonical-hosted-compact-materialization";
 import { CanonicalHostedPullService } from "../runtime/synchronization/canonical-hosted-pull-service";
 import { CanonicalHostedReplicaSetupService } from "../runtime/synchronization/canonical-hosted-replica-setup";
@@ -42,6 +43,7 @@ export interface CanonicalBackgroundApplicationOptions {
     "materialize"
   >;
   readonly multiRemotePull?: Pick<CanonicalMultiRemotePullService, "pull">;
+  readonly hostedArtifactHydrator?: Pick<CanonicalHostedArtifactHydrationService, "hydrate">;
 }
 
 export function createCanonicalBackgroundApplication(
@@ -74,6 +76,9 @@ export function createCanonicalBackgroundApplication(
         ? {}
         : { hostedCompactMaterializer: input.hostedCompactMaterializer }),
       ...(input.multiRemotePull === undefined ? {} : { multiRemotePull: input.multiRemotePull }),
+      ...(input.hostedArtifactHydrator === undefined
+        ? {}
+        : { hostedArtifactHydrator: input.hostedArtifactHydrator }),
     },
   );
   return new CanonicalApplication(
@@ -96,6 +101,7 @@ function browserPageCapture(): CanonicalBrowserPageCapture {
 export function startCanonicalBackground(): void {
   const storage = new CanonicalIndexedDb();
   const vaults = new CanonicalVaultService(storage, NORMAL_STORAGE_REALM);
+  const artifacts = new CanonicalOpfsArtifactStore();
   const remotes = new CanonicalReplicaRemoteService(storage, NORMAL_STORAGE_REALM);
   const hostedCompactMaterializer = new CanonicalHostedCompactMaterializationService({
     remotes,
@@ -111,14 +117,20 @@ export function startCanonicalBackground(): void {
     list: remotes.list.bind(remotes),
     pull: hostedPull.pull.bind(hostedPull),
   });
+  const hostedArtifactHydrator = new CanonicalHostedArtifactHydrationService({
+    remotes,
+    vaults,
+    artifacts,
+  });
   const application = createCanonicalBackgroundApplication({
     vaults,
-    artifacts: new CanonicalOpfsArtifactStore(),
+    artifacts,
     pageCapture: browserPageCapture(),
     remotes,
     hostedReplicaSetup: new CanonicalHostedReplicaSetupService({ remotes }),
     hostedCompactMaterializer,
     multiRemotePull,
+    hostedArtifactHydrator,
     notifyStateChanged: () =>
       browser.runtime.sendMessage(CANONICAL_APPLICATION_STATE_CHANGED).catch(() => undefined),
   });

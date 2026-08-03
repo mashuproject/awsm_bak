@@ -20,6 +20,7 @@ import type {
   CanonicalLibraryProjectionService,
 } from "../library/canonical-projection";
 import { type CanonicalSearchCoverage, CanonicalSearchService } from "../search/canonical-service";
+import type { CanonicalHostedArtifactHydrationService } from "../synchronization/canonical-hosted-artifact-hydration";
 import type { CanonicalHostedCompactMaterializationService } from "../synchronization/canonical-hosted-compact-materialization";
 import type { CanonicalHostedReplicaSetupService } from "../synchronization/canonical-hosted-replica-setup";
 import type { CanonicalMultiRemotePullService } from "../synchronization/canonical-multi-remote-pull-service";
@@ -63,6 +64,12 @@ export interface CanonicalClientRemoteMaterializationSummary {
 export interface CanonicalClientRemotePullSummary {
   readonly remoteId: string;
   readonly status: "Disabled" | "Failed" | "Active" | "Completed" | "Waiting";
+}
+
+export interface CanonicalClientArtifactHydrationSummary {
+  readonly artifactId: string;
+  readonly storageItemId: string;
+  readonly remoteId: string;
 }
 
 export interface CanonicalClientState {
@@ -285,6 +292,7 @@ export class CanonicalClientRuntime {
         CanonicalHostedCompactMaterializationService,
         "materialize"
       >;
+      readonly hostedArtifactHydrator?: Pick<CanonicalHostedArtifactHydrationService, "hydrate">;
       readonly multiRemotePull?: Pick<CanonicalMultiRemotePullService, "pull">;
     } = {},
   ) {}
@@ -599,6 +607,28 @@ export class CanonicalClientRuntime {
         vaultId: identifierFromStorageKey("Vault", expectedVaultId),
       })
     ).map(({ remoteId, status }) => ({ remoteId, status }));
+  }
+
+  async hydrateArtifact(input: {
+    readonly expectedVaultId: string;
+    readonly artifactId: string;
+  }): Promise<CanonicalClientArtifactHydrationSummary> {
+    await this.assertExpectedVault(input.expectedVaultId);
+    if (this.remoteManagement.hostedArtifactHydrator === undefined) {
+      throw runtimeError(
+        "HOSTED_ARTIFACT_HYDRATION_UNAVAILABLE",
+        "Artifact retrieval is unavailable in this Client.",
+      );
+    }
+    const hydrated = await this.remoteManagement.hostedArtifactHydrator.hydrate({
+      vaultId: identifierFromStorageKey("Vault", input.expectedVaultId),
+      artifactId: identifierFromStorageKey("Artifact", input.artifactId),
+    });
+    return {
+      artifactId: identifierStorageKey(hydrated.artifactId),
+      storageItemId: identifierStorageKey(hydrated.storageItemId),
+      remoteId: hydrated.remoteId,
+    };
   }
 
   async search(input: {

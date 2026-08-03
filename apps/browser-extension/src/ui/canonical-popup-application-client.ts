@@ -1,5 +1,6 @@
 import type { CanonicalApplicationRequest } from "../app/canonical-application";
 import type {
+  CanonicalClientArtifactHydrationSummary,
   CanonicalClientLibraryItem,
   CanonicalClientRemoteMaterializationSummary,
   CanonicalClientRemotePullSummary,
@@ -92,6 +93,10 @@ export interface CanonicalPopupApplicationClient extends CanonicalPopupClient {
     readonly remoteId: string;
   }): Promise<CanonicalClientRemoteMaterializationSummary>;
   pullHostedReplicas(expectedVaultId: string): Promise<readonly CanonicalClientRemotePullSummary[]>;
+  hydrateArtifact(input: {
+    readonly expectedVaultId: string;
+    readonly artifactId: string;
+  }): Promise<CanonicalClientArtifactHydrationSummary>;
 }
 
 function plainRecord(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -361,6 +366,23 @@ function decodeHostedReplicaPull(value: unknown): readonly CanonicalClientRemote
     throw protocolError();
   }
   return results;
+}
+
+function decodeArtifactHydration(value: unknown): CanonicalClientArtifactHydrationSummary {
+  if (
+    !plainRecord(value) ||
+    !exactKeys(value, ["artifactId", "storageItemId", "remoteId"]) ||
+    !identifier(value.artifactId) ||
+    !identifier(value.storageItemId) ||
+    !(value.remoteId === "local" || setupId(value.remoteId))
+  ) {
+    throw protocolError();
+  }
+  return {
+    artifactId: value.artifactId,
+    storageItemId: value.storageItemId,
+    remoteId: value.remoteId,
+  };
 }
 
 function decodeVaultCreation(value: unknown): {
@@ -667,6 +689,17 @@ export function createCanonicalPopupApplicationClient(
       if (!identifier(expectedVaultId)) throw new TypeError("Popup Vault ID is invalid.");
       return decodeHostedReplicaPull(
         await transport.request({ type: "PullHostedReplicas", expectedVaultId }),
+      );
+    },
+    async hydrateArtifact(input) {
+      if (!identifier(input.expectedVaultId)) throw new TypeError("Popup Vault ID is invalid.");
+      if (!identifier(input.artifactId)) throw new TypeError("Popup Artifact ID is invalid.");
+      return decodeArtifactHydration(
+        await transport.request({
+          type: "HydrateArtifact",
+          expectedVaultId: input.expectedVaultId,
+          artifactId: input.artifactId,
+        }),
       );
     },
   };

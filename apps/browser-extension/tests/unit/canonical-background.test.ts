@@ -4,6 +4,7 @@ import { createCanonicalBackgroundApplication } from "../../src/app/canonical-ba
 import { randomIdentifier } from "../../src/domain/canonical/identifiers";
 import { identifierStorageKey } from "../../src/drivers/indexeddb/canonical-database";
 import type { CanonicalArtifactStore } from "../../src/runtime/artifact/canonical-store";
+import type { CanonicalHostedArtifactHydrationService } from "../../src/runtime/synchronization/canonical-hosted-artifact-hydration";
 import type { CanonicalHostedCompactMaterializationService } from "../../src/runtime/synchronization/canonical-hosted-compact-materialization";
 import type { CanonicalHostedReplicaSetupService } from "../../src/runtime/synchronization/canonical-hosted-replica-setup";
 import type { CanonicalMultiRemotePullService } from "../../src/runtime/synchronization/canonical-multi-remote-pull-service";
@@ -77,6 +78,13 @@ describe("canonical background", () => {
     const multiRemotePull = {
       pull: vi.fn().mockResolvedValue([{ remoteId: remote.remoteId, status: "Completed" }]),
     } as Pick<CanonicalMultiRemotePullService, "pull">;
+    const hostedArtifactHydrator = {
+      hydrate: vi.fn().mockResolvedValue({
+        artifactId: randomIdentifier("Artifact"),
+        storageItemId: randomIdentifier("StorageItem"),
+        remoteId: remote.remoteId,
+      }),
+    } as Pick<CanonicalHostedArtifactHydrationService, "hydrate">;
     const application = createCanonicalBackgroundApplication({
       vaults,
       artifacts: {} as CanonicalArtifactStore,
@@ -85,6 +93,7 @@ describe("canonical background", () => {
       hostedReplicaSetup,
       hostedCompactMaterializer,
       multiRemotePull,
+      hostedArtifactHydrator,
     });
     const expectedVaultId = identifierStorageKey(vaultId);
 
@@ -117,5 +126,13 @@ describe("canonical background", () => {
       application.handle({ type: "PullHostedReplicas", expectedVaultId }),
     ).resolves.toEqual([{ remoteId: remote.remoteId, status: "Completed" }]);
     expect(multiRemotePull.pull).toHaveBeenCalledWith({ vaultId });
+    const artifactId = "a".repeat(64);
+    await expect(
+      application.handle({ type: "HydrateArtifact", expectedVaultId, artifactId }),
+    ).resolves.toMatchObject({ remoteId: remote.remoteId });
+    expect(hostedArtifactHydrator.hydrate).toHaveBeenCalledWith({
+      vaultId,
+      artifactId: expect.any(Uint8Array),
+    });
   });
 });

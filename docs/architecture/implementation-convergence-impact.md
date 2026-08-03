@@ -237,19 +237,22 @@ Remote configuration plus rotated session without retaining the password. It val
 Remote configuration before Host access, preventing malformed input from prompting for an unrelated
 Host or leaving a Host-side Replica. The shipped popup now lists non-secret local Remote summaries
 and creates a Hosted Replica only after an explicit Host permission request; that creation does not
-yet synchronize data. Remote editing, disable/delete controls, pull, and materialization activation
-remain unfinished.
+yet synchronize data. Remote editing, disable/delete controls, and general multi-Remote
+convergence remain unfinished.
 For a non-adopted current Generation, it also validates one complete same-Generation Content DAG
 branch and its newly required Vault Object closure, then atomically promotes only those newly
 accepted Compact items with the exact pull Job and Replica state. A repository-tested Runtime
 foundation can now hydrate one known Streamable Artifact by scanning every enabled Remote's opaque
 inventory with its derived locator, fully verifying a candidate under a local Key Epoch, and
 conditionally publishing the local Artifact Resolution. It skips unavailable or invalid Remotes
-without giving them semantic authority; it is not yet wired into the background or a user surface,
-and now has a real Chromium IndexedDB/OPFS restart proof using the actual protected Remote
-configuration service. Authority, Key-Epoch, Required-Feature, Vacuum/adoption,
-Remote-management UI, shipped activation, and general multi-Remote convergence remain Quarantined
-or unfinished. Retryable opaque-Host transport failures now checkpoint bounded local retries
+without giving them semantic authority. The browser background now composes it with the same OPFS
+Artifact Store used for Capture, and the Library offers explicit retrieval for a known locally
+unavailable Capture. That direct action requests enabled configured Host origins before its channel
+work; Library reads recompute Artifact availability from the current local Resolution and wrapper
+presence rather than trusting a cached Materialization. A real Chromium IndexedDB/OPFS restart
+proof uses the actual protected Remote configuration service. Authority, Key-Epoch,
+Required-Feature, Vacuum/adoption, Remote-management UI, and general multi-Remote convergence
+remain Quarantined or unfinished. Retryable opaque-Host transport failures now checkpoint bounded local retries
 without changing Vault state. One local coordinator pulls configured Remotes sequentially and
 isolates an individual Remote failure, while rejecting corrupt local Remote scope/identity before a
 channel call. The Runtime can now authenticate its local accepted Generation and materialize the
@@ -261,8 +264,8 @@ hydration. The shipped popup now offers explicit per-Remote Compact materializat
 Host-permission gesture; it is deliberately named and implemented separately from pull
 synchronization. It also exposes an explicit receiver-initiated check of every enabled Remote,
 obtaining all needed Host permissions in one direct gesture before the serial local pull
-coordinator runs. Remote editing, disable/delete controls, Artifact-hydration activation, and
-general multi-Remote convergence remain unfinished.
+coordinator runs. Remote editing, disable/delete controls, and general multi-Remote convergence
+remain unfinished.
 
 ## 4.4 Account dashboard and public pages
 

@@ -319,6 +319,43 @@ test("runs the canonical local Vault ceremony through a packaged extension", asy
     await first.locator("main").screenshot({
       path: testInfo.outputPath("canonical-popup-closed.png"),
     });
+
+    await library.evaluate(async () => {
+      const root = await navigator.storage.getDirectory();
+      const names: string[] = [];
+      for await (const [name] of root.entries()) names.push(name);
+      await Promise.all(names.map((name) => root.removeEntry(name, { recursive: true })));
+    });
+    await library.setViewportSize({ width: 1_024, height: 700 });
+    await library.reload();
+    await expect(library.getByText("Not available locally")).toBeVisible();
+    const retrieve = library.getByRole("button", { name: "Retrieve Capture" });
+    await expect(retrieve).toBeVisible();
+    await assertInteractiveTargets(library);
+    await expectReadableContrast(library);
+    await library.evaluate(() => window.scrollTo(0, 0));
+    await library.screenshot({ path: testInfo.outputPath("canonical-library-unavailable.png") });
+    await retrieve.click();
+    await expect(
+      library.locator(".canonical-library__status--error", {
+        hasText: "No configured Replica Host could supply this Capture.",
+      }),
+    ).toBeVisible();
+    await expect(retrieve).toBeEnabled();
+    await expect(library.getByRole("heading", { name: "Library", exact: true })).toBeVisible();
+    await expectReadableContrast(library);
+    await library.evaluate(() => window.scrollTo(0, 0));
+    await library.screenshot({
+      path: testInfo.outputPath("canonical-library-unavailable-error.png"),
+      fullPage: true,
+    });
+    await library.setViewportSize({ width: 360, height: 700 });
+    await expect(retrieve).toBeVisible();
+    await expectReadableContrast(library);
+    await library.evaluate(() => window.scrollTo(0, 0));
+    await library.screenshot({
+      path: testInfo.outputPath("canonical-library-unavailable-narrow.png"),
+    });
   } finally {
     await client.context.close();
     await fixture.close();

@@ -142,7 +142,9 @@ for one exact wrapper.
 
 Storage Relief always displays the non-blocking last-copy warning, records only local eviction,
 works with zero Remotes, and treats later absence or corrupt hydration honestly. On-demand Replicas
-can Capture without first hydrating unrelated wrappers.
+can Capture without first hydrating unrelated wrappers. Library proofs delete a local wrapper after
+its Frontier-bound Materialization is cached, then require a fresh Library read to show that exact
+Capture unavailable and expose only its explicit retrieval action at primary and narrow widths.
 
 # Vacuum, Fork, Closure, and history
 

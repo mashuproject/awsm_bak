@@ -110,6 +110,14 @@ starts, the Client validates and requests every selected Host origin in one dire
 the receiver-side coordinator then pulls Remotes serially and reports only local operational
 outcomes. This check never turns a Host Wake Hint or automatic retry into a permission prompt.
 
+The current Library marks a known Capture whose Streamable Artifact wrapper is absent locally and
+offers an explicit retrieval action. That direct action requests access to the enabled configured
+Replica Host origins in one user gesture, then asks the Runtime to retrieve only the known Artifact.
+The Client accepts no Host-supplied semantic statement: it derives the opaque lookup privately and
+publishes local availability only after complete local wrapper verification. Library availability is
+recomputed from the current local Resolution and wrapper bytes on each read, so Storage Relief and
+successful retrieval are immediately visible without treating a cached Materialization as truth.
+
 Synchronization is initiated as a pull by the receiving Client. A Host may send an untrusted Wake
 Hint that causes a Client to pull, but does not push authoritative Vault state. Pull may occur on
 open, explicit refresh, a local schedule, network reconnection, or after a hint. No Remote is an

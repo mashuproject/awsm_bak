@@ -5,9 +5,9 @@ import {
   subscribeCanonicalApplicationState,
 } from "../../src/app/canonical-application-client";
 import {
-  firefoxServerPermissionPattern,
-  requestFirefoxSynchronizationPermissions,
-} from "../../src/hosts/firefox/synchronization-permission";
+  requestHostedReplicaPermission,
+  requestHostedReplicaPermissions,
+} from "../../src/ui/canonical-hosted-replica-permission";
 import {
   type CanonicalPopupApplicationClient,
   createCanonicalPopupApplicationClient,
@@ -99,47 +99,6 @@ function action(button: HTMLButtonElement, operation: () => Promise<void>): void
     .finally(() => {
       button.disabled = false;
     });
-}
-
-function hostedReplicaOriginPattern(endpoint: string): string {
-  try {
-    const parsed = new URL(endpoint);
-    if (
-      parsed.protocol !== "https:" ||
-      parsed.username.length !== 0 ||
-      parsed.password.length !== 0 ||
-      parsed.search.length !== 0 ||
-      parsed.hash.length !== 0 ||
-      parsed.href !== endpoint
-    ) {
-      throw new TypeError("Hosted Replica endpoint is noncanonical");
-    }
-    return firefoxServerPermissionPattern(endpoint);
-  } catch {
-    throw new CanonicalApplicationClientError(
-      "HOSTED_REPLICA_ENDPOINT_INVALID",
-      "Enter a canonical HTTPS Replica Host address.",
-    );
-  }
-}
-
-async function requestHostedReplicaPermissions(endpoints: readonly string[]): Promise<void> {
-  const originPatterns = [...new Set(endpoints.map(hostedReplicaOriginPattern))].toSorted();
-  if (originPatterns.length === 0) return;
-  const firefox = browser.runtime.getManifest().browser_specific_settings?.gecko !== undefined;
-  const granted = firefox
-    ? await requestFirefoxSynchronizationPermissions(browser.permissions, originPatterns)
-    : await browser.permissions.request({ origins: originPatterns });
-  if (!granted) {
-    throw new CanonicalApplicationClientError(
-      "HOST_PERMISSION_DENIED",
-      "Allow access to this Replica Host before connecting it.",
-    );
-  }
-}
-
-async function requestHostedReplicaPermission(endpoint: string): Promise<void> {
-  await requestHostedReplicaPermissions([endpoint]);
 }
 
 function heading(subtitle: string): DocumentFragment {
