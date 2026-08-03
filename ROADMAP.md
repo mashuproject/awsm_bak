@@ -11,40 +11,6 @@ direction. Historical numbered plans remain context and may be stale.
 - **Candidate:** the direction is coherent, but scope, dependencies, or acceptance remain open.
 - **Approved:** the user has explicitly approved conversion into a numbered implementation plan.
 
-## Canonical Vault architecture convergence
-
-**Status:** Candidate
-
-Replace the current pre-release Device, Vault Root Key, Recovery Kit, semantic coordination-server,
-one-synchronized-Vault Account, feature-specific persistence, retain-and-rewrite Vacuum, and old
-organization experiments with the single canonical contract in the living docs.
-
-The implementation scope includes:
-
-- deterministic serialization, protected logical identities, randomized opaque envelopes, exact
-  cryptographic vectors, and independent Key Epochs;
-- Initial Baseline and Genesis, one signed Record DAG, its retained Authority Parent Continuity
-  Proof, exhaustive Event codecs and reducers, Required Features, and scoped conflict handling;
-- per-member Recovery Phrases, Client Credentials, Invitations, multi-member authority, Future
-  Protection, resignation, removal, Closure, and former-member behavior;
-- Vault, Replica, Client, Host, Account, Channel Principal, and Replica Access Grant separation;
-- receiver-initiated opaque synchronization, Hosted Replica storage, On-demand availability,
-  Storage Relief, hydration, and local Garbage Collection;
-- eleven logical persistence families, Storage Realms, Prepared Data, Quarantine, safety state,
-  streaming wrappers, and crash-safe physical mappings;
-- Collections, causal tails, Folders, Tags, Notes, lifecycle, merge and N-way conflict UX;
-- Vacuum successor Baselines with Content-cause remapping and retained authority continuity,
-  Adoption, Fork Before Adoption, state-only Fork, Closure, historical view, Event Re-authoring,
-  Complete Export, Backup, and Restore; and
-- destructive replacement of development and explicitly authorized staging schemas and data,
-  regenerated executable API contracts, rebuilt fixtures, real Client/Host fault proof, and updated
-  public claims.
-
-There is no compatibility reader, migration of discarded data, dual schema, old-client
-negotiation, fallback, alias, or transition UI. Implementation begins with an approved cold plan
-derived from the reconciliation impact record and must keep current marketing claims separate
-until executable proof passes.
-
 ## Direct Replica synchronization
 
 **Status:** Candidate

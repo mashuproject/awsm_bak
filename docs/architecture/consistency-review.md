@@ -144,7 +144,7 @@ and Rails code organized around the superseded experiment. Accordingly this reco
 not:
 
 - change browser or Rails product behavior;
-- change database schemas, routes, executable protocol types, or generated OpenAPI;
+- change database schemas, routes, executable protocol types, or the checked-in executable OpenAPI;
 - relabel current Rails public pages as if target behavior shipped;
 - implement the canonical glossary renderer;
 - reset development, test, staging, or production data;
@@ -216,8 +216,8 @@ Repository-only verification completed on 2026-08-01:
 - `corepack pnpm lint` passed, including the design-system check and Biome over 405 files with zero
   errors or warnings.
 
-The unchanged generated HTTP OpenAPI remains current-code evidence and was not reformatted or
-regenerated. No product source, Rails view, database, live deployment, browser state, staging,
+The unchanged checked-in executable HTTP OpenAPI remains current-code evidence and was not
+reformatted or regenerated. No product source, Rails view, database, live deployment, browser state, staging,
 production, Cloudflare, or other external service was changed or used as proof. Because this was a
 documentation-only reconciliation with no rendered surface change, no visual assertion is part of
 this review.

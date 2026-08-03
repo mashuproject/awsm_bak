@@ -40,6 +40,11 @@ async function files(directory) {
 
 const manifest = JSON.parse(await readFile(new URL("manifest.json", output), "utf8"));
 const notices = await readFile(new URL("THIRD_PARTY_NOTICES.txt", output), "utf8");
+const background = await readFile(new URL("background.js", output), "utf8");
+const onnxRuntime = await readFile(
+  new URL("search-model-runtime/ort-wasm-simd-threaded.mjs", output),
+  "utf8",
+);
 for (const required of [
   "@huggingface/transformers 4.2.0",
   "Xenova/all-MiniLM-L6-v2",
@@ -65,8 +70,8 @@ const gecko = manifest.browser_specific_settings?.gecko;
 assert(gecko?.id === extensionId, "The permanent Firefox extension ID changed.");
 assert(gecko?.strict_min_version === "140.0", "The Firefox minimum version must remain 140.0.");
 assert(
-  manifest.browser_specific_settings?.gecko_android === undefined,
-  "The desktop Linux beta must not claim Firefox for Android compatibility.",
+  manifest.browser_specific_settings?.gecko_android?.strict_min_version === "142.0",
+  "The Firefox Android minimum version must remain 142.0.",
 );
 assert(
   JSON.stringify(gecko?.data_collection_permissions) ===
@@ -80,6 +85,8 @@ assert(
   "Sodium WASM CSP is missing.",
 );
 assert(!/(?:^|\s)'unsafe-eval'(?:\s|;|$)/u.test(csp), "General unsafe-eval is prohibited.");
+assert(!background.includes("import("), "Firefox background must not dynamically import code.");
+assert(!onnxRuntime.includes("new Function"), "Bundled ONNX runtime must not construct code.");
 
 for (const path of await files(output.pathname)) {
   if (extname(path) === ".js") {

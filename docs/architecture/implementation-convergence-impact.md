@@ -396,7 +396,8 @@ of scope.
 2. Clean Client persistence substrate and local single-member Vault creation/Capture/replay.
 3. Complete content organization, search rebuilding, Vacuum, Fork, Closure, and portability.
 4. Multi-member authority, Recovery, Invitation, Credential, Key Epoch, and conflict ceremonies.
-5. Clean opaque Host schema, Account/Grant dashboard, strict protocol, and generated OpenAPI.
+5. Clean opaque Host schema, Account/Grant dashboard, strict protocol, and checked-in executable
+   OpenAPI.
 6. Multi-Remote pull synchronization, locator-derived dependency resolution, On-demand hydration,
    Host switching, and adversarial proof.
 7. Packaged Chrome/Firefox journeys, public-copy reconciliation, destructive authorized staging

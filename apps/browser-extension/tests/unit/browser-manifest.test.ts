@@ -33,10 +33,12 @@ describe("browser manifests", () => {
             optional: FIREFOX_SYNCHRONIZATION_DATA_CATEGORIES,
           },
         },
+        gecko_android: {
+          strict_min_version: "142.0",
+        },
       },
     });
     expect(manifest).not.toHaveProperty("minimum_chrome_version");
-    expect(manifest).not.toHaveProperty("browser_specific_settings.gecko_android");
     expect(manifest.permissions).not.toContain("pageCapture");
     expect(manifest.permissions).not.toContain("offscreen");
   });

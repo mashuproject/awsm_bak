@@ -30,6 +30,9 @@ const manifest = JSON.stringify({
         ],
       },
     },
+    gecko_android: {
+      strict_min_version: "142.0",
+    },
   },
 });
 

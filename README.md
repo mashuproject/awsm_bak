@@ -17,12 +17,12 @@ Account registration remains deployment-specific.
 
 ### Download AWSM for Chrome or Firefox
 
-> **[Download the Chrome ZIP (v0.3.0)](https://github.com/mashuproject/awsm_bak/releases/download/v0.3.0/awsm-chrome-v0.3.0.zip)**
+> **[Download the Chrome ZIP (v0.3.1)](https://github.com/mashuproject/awsm_bak/releases/download/v0.3.1/awsm-chrome-v0.3.1.zip)**
 >
-> [Chrome SHA-256 checksum](https://github.com/mashuproject/awsm_bak/releases/download/v0.3.0/awsm-chrome-v0.3.0.zip.sha256) ·
-> **[Download the Mozilla-signed Firefox XPI (v0.3.0)](https://github.com/mashuproject/awsm_bak/releases/download/v0.3.0/awsm-firefox-v0.3.0.xpi)**
+> [Chrome SHA-256 checksum](https://github.com/mashuproject/awsm_bak/releases/download/v0.3.1/awsm-chrome-v0.3.1.zip.sha256) ·
+> **[Download the Mozilla-signed Firefox XPI (v0.3.1)](https://github.com/mashuproject/awsm_bak/releases/download/v0.3.1/awsm-firefox-v0.3.1.xpi)**
 > ·
-> [Firefox SHA-256 checksum](https://github.com/mashuproject/awsm_bak/releases/download/v0.3.0/awsm-firefox-v0.3.0.xpi.sha256) ·
+> [Firefox SHA-256 checksum](https://github.com/mashuproject/awsm_bak/releases/download/v0.3.1/awsm-firefox-v0.3.1.xpi.sha256) ·
 > [View the latest Release](https://github.com/mashuproject/awsm_bak/releases/latest) ·
 > [Chrome guide](docs/guides/install-chrome-extension.md) ·
 > [Firefox guide](docs/guides/install-firefox-extension.md)
@@ -45,8 +45,9 @@ see [How OpenAI tools were used](#how-openai-tools-were-used).
 and the repository-pinned Firefox Stable and ESR versions on desktop Linux. AWSM must be used in a
 normal browser profile; Incognito and Firefox Private Browsing are not supported. Firefox is an
 unlisted Mozilla-signed Linux beta distributed through the GitHub Release, not a public AMO listing,
-and AWSM does not claim AMO-managed automatic updates. Safari, mobile, and standalone web
-applications are not currently packaged or tested.
+and AWSM does not claim AMO-managed automatic updates. Safari and standalone web applications are
+not currently packaged or tested. Firefox for Android 142 or newer can accept the signed manifest,
+but AWSM is not currently tested or supported there.
 
 ## What works today
 

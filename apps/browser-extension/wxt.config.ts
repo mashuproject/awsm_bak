@@ -4,10 +4,7 @@ import { defineConfig, type UserManifest } from "wxt";
 import { FIREFOX_SYNCHRONIZATION_DATA_CATEGORIES } from "./src/hosts/firefox/synchronization-permission";
 
 export const FIREFOX_EXTENSION_ID = "{f6f49704-8d53-4eda-aef7-619ab88dda5f}";
-const ONNX_RUNTIME_FILES = [
-  "ort-wasm-simd-threaded.asyncify.mjs",
-  "ort-wasm-simd-threaded.asyncify.wasm",
-] as const;
+const ONNX_RUNTIME_FILES = ["ort-wasm-simd-threaded.mjs", "ort-wasm-simd-threaded.wasm"] as const;
 const THIRD_PARTY_NOTICES = fileURLToPath(
   new URL("./notices/THIRD_PARTY_NOTICES.txt", import.meta.url),
 );
@@ -48,6 +45,9 @@ export function createManifest(browser: "chrome" | "firefox"): UserManifest {
             required: ["none"],
             optional: [...FIREFOX_SYNCHRONIZATION_DATA_CATEGORIES],
           },
+        },
+        gecko_android: {
+          strict_min_version: "142.0",
         },
       },
     };

@@ -219,12 +219,18 @@ test("renders the canonical local-Vault and Library surfaces", async ({
     await expect(popup.getByRole("button", { name: /^Use Hosted Replica/ })).toBeVisible();
     await assertInteractiveTargets(popup);
     await expectReadableContrast(popup);
-    await expect(popup).toHaveScreenshot("popup-hosted-replica-selection.png", { fullPage: true });
+    const replicaHandle = popup.locator(".hosted-replica-handle");
+    await expect(replicaHandle).toBeVisible();
+    await expect(popup).toHaveScreenshot("popup-hosted-replica-selection.png", {
+      fullPage: true,
+      mask: [replicaHandle],
+    });
     await popup.setViewportSize({ width: 360, height: 700 });
     await assertInteractiveTargets(popup);
     await expectReadableContrast(popup);
     await expect(popup).toHaveScreenshot("popup-hosted-replica-selection-narrow.png", {
       fullPage: true,
+      mask: [replicaHandle],
     });
     await popup.setViewportSize({ width: 400, height: 700 });
     await popup.getByRole("button", { name: "Cancel Hosted Replica selection" }).click();

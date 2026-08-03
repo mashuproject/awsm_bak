@@ -83,7 +83,8 @@ At least two independent Client implementations or profiles and two isolated Hos
 - Host-local transaction isolation without a portable Vault sequencer.
 
 Black-box Host tests use only public executable APIs and inspect storage/log output for forbidden
-plaintext and semantic metadata. Generated OpenAPI must match implemented routes exactly.
+plaintext and semantic metadata. The checked-in executable OpenAPI must match implemented routes
+exactly.
 
 # Storage and crash tests
 

@@ -66,8 +66,8 @@ try {
   assert(gecko?.id === extensionId, "Signed XPI extension ID changed.");
   assert(gecko?.strict_min_version === "140.0", "Signed XPI minimum Firefox changed.");
   assert(
-    manifest.browser_specific_settings?.gecko_android === undefined,
-    "Signed desktop Linux XPI claims Firefox for Android compatibility.",
+    manifest.browser_specific_settings?.gecko_android?.strict_min_version === "142.0",
+    "Signed XPI Firefox Android minimum version changed.",
   );
   assert(
     JSON.stringify(gecko?.data_collection_permissions) === JSON.stringify(expectedDataPermissions),

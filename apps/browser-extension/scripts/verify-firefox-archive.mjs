@@ -52,7 +52,7 @@ try {
       `Confidential-looking file packaged in Firefox ZIP: ${name}`,
     );
     assert(
-      /^(?:assets\/|chunks\/|search-model-runtime\/|THIRD_PARTY_NOTICES\.txt|manifest\.json|background\.js|(?:library|popup)\.html|chunks\/[^/]+\.js|assets\/[^/]+\.(?:css|woff2)|search-model-runtime\/ort-wasm-simd-threaded\.asyncify\.(?:mjs|wasm)|icon-(?:16|32|48|128|512)\.png)$/u.test(
+      /^(?:assets\/|chunks\/|search-model-runtime\/|THIRD_PARTY_NOTICES\.txt|manifest\.json|background\.js|(?:library|popup)\.html|chunks\/[^/]+\.js|assets\/[^/]+\.(?:css|woff2)|search-model-runtime\/ort-wasm-simd-threaded\.(?:mjs|wasm)|icon-(?:16|32|48|128|512)\.png)$/u.test(
         name,
       ),
       `Unexpected file packaged in Firefox ZIP: ${name}`,
@@ -79,8 +79,8 @@ try {
   assert(gecko?.id === extensionId, "Archived Firefox extension ID changed.");
   assert(gecko?.strict_min_version === "140.0", "Archived Firefox minimum version changed.");
   assert(
-    manifest.browser_specific_settings?.gecko_android === undefined,
-    "Archived desktop Linux beta claims Firefox for Android compatibility.",
+    manifest.browser_specific_settings?.gecko_android?.strict_min_version === "142.0",
+    "Archived Firefox Android minimum version changed.",
   );
   assert(
     JSON.stringify(gecko?.data_collection_permissions) ===

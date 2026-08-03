@@ -947,10 +947,6 @@ function renderHostedReplicaAttachment(view: CanonicalPopupView, content: Docume
   content.append(form);
 }
 
-function displayHostedReplicaChoice(replicaHandle: string, storedBytes: number): string {
-  return `Hosted Replica …${replicaHandle.slice(-8)}. ${storedBytes.toLocaleString()} bytes stored.`;
-}
-
 function renderHostedReplicaAttachmentSelection(
   view: CanonicalPopupView,
   content: DocumentFragment,
@@ -971,10 +967,12 @@ function renderHostedReplicaAttachmentSelection(
   );
   const choices = element("div", undefined, "canonical-popup__choices");
   for (const replica of setup.replicas) {
-    const choose = element(
-      "button",
-      `Use ${displayHostedReplicaChoice(replica.replicaHandle, replica.storedBytes)}`,
-    ) as HTMLButtonElement;
+    const choose = element("button") as HTMLButtonElement;
+    choose.append(
+      "Use Hosted Replica …",
+      element("span", replica.replicaHandle.slice(-8), "hosted-replica-handle"),
+      `. ${replica.storedBytes.toLocaleString()} bytes stored.`,
+    );
     choose.type = "button";
     choose.addEventListener("click", () => {
       action(choose, async () => {
