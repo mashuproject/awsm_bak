@@ -114,6 +114,17 @@ test("renders the canonical local-Vault and Library surfaces", async ({
     await expectReadableContrast(popup);
     await expect(popup).toHaveScreenshot("popup-vault-settings.png", { fullPage: true });
 
+    await popup.getByRole("button", { name: "Connect Hosted Replica" }).click();
+    await expect(popup.getByRole("heading", { name: "Connect a Hosted Replica" })).toBeVisible();
+    await expect(popup.getByLabel("Hosted Replica address")).toBeVisible();
+    await expect(popup.getByLabel("Account username")).toBeVisible();
+    await expect(popup.getByLabel("Account password")).toBeVisible();
+    await assertInteractiveTargets(popup);
+    await expectReadableContrast(popup);
+    await expect(popup).toHaveScreenshot("popup-hosted-replica-setup.png", { fullPage: true });
+    await popup.getByRole("button", { name: "Cancel Hosted Replica setup" }).click();
+    await expect(popup.getByRole("heading", { name: "Vault settings" })).toBeVisible();
+
     const library = await extensionPage(client, "library.html", { width: 1280, height: 900 });
     await expect(library.getByRole("heading", { name: "Library" })).toBeVisible();
     await expect(library.getByText("Vault · Field Notes")).toBeVisible();

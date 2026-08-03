@@ -45,7 +45,7 @@ export class CanonicalReplicaRemoteService {
   private readonly createSessionHttp: (input: {
     readonly endpoint: string;
   }) => Pick<CanonicalHostedReplicaSessionHttp, "refresh">;
-  private readonly hostedSessionRefreshes = new Map<string, Promise<LoadedReplicaRemote>>();
+  private readonly channelLoads = new Map<string, Promise<LoadedReplicaRemote>>();
 
   constructor(
     private readonly storage: CanonicalIndexedDb,
@@ -174,6 +174,22 @@ export class CanonicalReplicaRemoteService {
     readonly vaultId: Identifier<"Vault">;
     readonly remoteId: string;
   }): Promise<LoadedReplicaRemote> {
+    const loadKey = `${identifierStorageKey(input.vaultId)}:${input.remoteId}`;
+    const inFlight = this.channelLoads.get(loadKey);
+    if (inFlight !== undefined) return inFlight;
+    const load = this.loadOnce(input);
+    this.channelLoads.set(loadKey, load);
+    try {
+      return await load;
+    } finally {
+      if (this.channelLoads.get(loadKey) === load) this.channelLoads.delete(loadKey);
+    }
+  }
+
+  private async loadOnce(input: {
+    readonly vaultId: Identifier<"Vault">;
+    readonly remoteId: string;
+  }): Promise<LoadedReplicaRemote> {
     const remote = (await this.list(input.vaultId)).find(
       ({ remoteId }) => remoteId === input.remoteId,
     );
@@ -206,24 +222,13 @@ export class CanonicalReplicaRemoteService {
     if (credential.accessExpiresAt > this.now()) {
       return { remote, bearerToken: credential.accessToken };
     }
-    const refreshKey = `${identifierStorageKey(input.vaultId)}:${input.remoteId}`;
-    const inFlight = this.hostedSessionRefreshes.get(refreshKey);
-    if (inFlight !== undefined) return inFlight;
-    const refresh = this.refreshHostedSession({
+    return this.refreshHostedSession({
       input,
       remote,
       credential,
       wrappingKey,
       wrappedBytes,
     });
-    this.hostedSessionRefreshes.set(refreshKey, refresh);
-    try {
-      return await refresh;
-    } finally {
-      if (this.hostedSessionRefreshes.get(refreshKey) === refresh) {
-        this.hostedSessionRefreshes.delete(refreshKey);
-      }
-    }
   }
 
   private async refreshHostedSession(input: {

@@ -234,8 +234,11 @@ conditionally replace it after local access expiry; it does not retain the passw
 authority from that session. A Runtime setup service now signs in, creates one Host-local Hosted
 Replica, requires the current pull/materialization capabilities, and atomically records its local
 Remote configuration plus rotated session without retaining the password. It validates the local
-Remote configuration before Host creation, preventing malformed input from leaving a Host-side
-Replica. Remote-management UI remains unfinished.
+Remote configuration before Host access, preventing malformed input from prompting for an unrelated
+Host or leaving a Host-side Replica. The shipped popup now lists non-secret local Remote summaries
+and creates a Hosted Replica only after an explicit Host permission request; that creation does not
+yet synchronize data. Remote editing, disable/delete controls, pull, and materialization activation
+remain unfinished.
 For a non-adopted current Generation, it also validates one complete same-Generation Content DAG
 branch and its newly required Vault Object closure, then atomically promotes only those newly
 accepted Compact items with the exact pull Job and Replica state. A repository-tested Runtime

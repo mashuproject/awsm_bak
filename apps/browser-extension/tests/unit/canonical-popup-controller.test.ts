@@ -31,6 +31,14 @@ describe("canonical popup controller", () => {
           lifecycle: "Active" as const,
         },
       ]),
+      listRemotes: vi.fn(async () => [
+        {
+          remoteId: "019fa62e-a653-7f63-b2bf-94e7ed5e46ca",
+          name: "Hosted archive",
+          endpoint: "https://sync.example.test/",
+          enabled: true,
+        },
+      ]),
       subscribe: vi.fn((listener: () => void) => {
         changed = listener;
         return () => undefined;
@@ -68,6 +76,14 @@ describe("canonical popup controller", () => {
           title: "Example",
           availableLocally: true,
           lifecycle: "Active",
+        },
+      ],
+      remotes: [
+        {
+          remoteId: "019fa62e-a653-7f63-b2bf-94e7ed5e46ca",
+          name: "Hosted archive",
+          endpoint: "https://sync.example.test/",
+          enabled: true,
         },
       ],
     });
@@ -109,6 +125,7 @@ describe("canonical popup controller", () => {
           lifecycle: "Active" as const,
         },
       ]),
+      listRemotes: vi.fn().mockResolvedValueOnce([]),
       subscribe: vi.fn((listener: () => void) => {
         changed = listener;
         return () => undefined;
@@ -149,6 +166,7 @@ describe("canonical popup controller", () => {
           lifecycle: "Active",
         },
       ],
+      remotes: [],
     });
   });
 
@@ -181,6 +199,7 @@ describe("canonical popup controller", () => {
           ],
         }),
       listLibrary: vi.fn(async () => []),
+      listRemotes: vi.fn(async () => []),
       subscribe: vi.fn(() => () => undefined),
     };
     const render = vi.fn();
@@ -206,6 +225,7 @@ describe("canonical popup controller", () => {
         ],
       },
       library: [],
+      remotes: [],
     });
   });
 });

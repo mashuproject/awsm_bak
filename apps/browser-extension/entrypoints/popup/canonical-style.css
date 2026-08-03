@@ -61,6 +61,7 @@ h2 {
 .canonical-popup__actions,
 .canonical-popup__choices,
 .canonical-popup__management,
+.canonical-popup__hosted-replicas,
 .canonical-popup__recent,
 .canonical-popup__form {
   display: grid;
@@ -167,6 +168,35 @@ h2 {
   margin-top: var(--awsm-space-2);
   border-top: 1px solid var(--awsm-border-subtle);
   padding-top: var(--awsm-space-4);
+}
+
+.canonical-popup__hosted-replicas {
+  border-top: 1px solid var(--awsm-border-subtle);
+  padding-top: var(--awsm-space-4);
+}
+
+.canonical-popup__hosted-replicas p,
+.canonical-popup__remote-list,
+.canonical-popup__remote-list li {
+  display: grid;
+  gap: var(--awsm-space-2);
+}
+
+.canonical-popup__remote-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.canonical-popup__remote-list li {
+  border-top: 1px solid var(--awsm-border-subtle);
+  padding-top: var(--awsm-space-3);
+  overflow-wrap: anywhere;
+}
+
+.canonical-popup__remote-list span {
+  color: var(--awsm-text-muted);
+  font-size: 0.8125rem;
 }
 
 .canonical-popup__recent ul {

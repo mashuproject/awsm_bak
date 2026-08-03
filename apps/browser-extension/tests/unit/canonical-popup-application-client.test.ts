@@ -125,6 +125,62 @@ describe("canonical popup application client", () => {
     });
   });
 
+  it("lists and creates Hosted Replicas without accepting a secret in any response", async () => {
+    const transport = {
+      request: vi
+        .fn()
+        .mockResolvedValueOnce([
+          {
+            remoteId: "019fa62e-a653-7f63-b2bf-94e7ed5e46ca",
+            name: "Hosted archive",
+            endpoint: "https://sync.example.test/",
+            enabled: true,
+          },
+        ])
+        .mockResolvedValueOnce({
+          remoteId: "019fa62e-a653-7f63-b2bf-94e7ed5e46ca",
+          name: "Hosted archive",
+          endpoint: "https://sync.example.test/",
+          enabled: true,
+        }),
+      subscribe: vi.fn(() => () => undefined),
+    };
+    const client = createCanonicalPopupApplicationClient(transport);
+    const expectedVaultId = "a".repeat(64);
+
+    await expect(client.listRemotes(expectedVaultId)).resolves.toEqual([
+      {
+        remoteId: "019fa62e-a653-7f63-b2bf-94e7ed5e46ca",
+        name: "Hosted archive",
+        endpoint: "https://sync.example.test/",
+        enabled: true,
+      },
+    ]);
+    await expect(
+      client.createHostedReplica({
+        expectedVaultId,
+        endpoint: "https://sync.example.test/",
+        name: "Hosted archive",
+        username: "archive_reader",
+        password: "correct horse battery staple",
+      }),
+    ).resolves.toEqual({
+      remoteId: "019fa62e-a653-7f63-b2bf-94e7ed5e46ca",
+      name: "Hosted archive",
+      endpoint: "https://sync.example.test/",
+      enabled: true,
+    });
+    expect(transport.request).toHaveBeenCalledWith({ type: "ListRemotes", expectedVaultId });
+    expect(transport.request).toHaveBeenLastCalledWith({
+      type: "CreateHostedReplica",
+      expectedVaultId,
+      endpoint: "https://sync.example.test/",
+      name: "Hosted archive",
+      username: "archive_reader",
+      password: "correct horse battery staple",
+    });
+  });
+
   it("sends only canonical popup mutations and validates their outcomes", async () => {
     const transport = {
       request: vi

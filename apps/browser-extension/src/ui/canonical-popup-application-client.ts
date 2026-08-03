@@ -1,6 +1,7 @@
 import type { CanonicalApplicationRequest } from "../app/canonical-application";
 import type {
   CanonicalClientLibraryItem,
+  CanonicalClientRemoteSummary,
   CanonicalClientState,
   CanonicalClientVaultSummary,
 } from "../runtime/client/canonical-runtime";
@@ -76,6 +77,14 @@ export interface CanonicalPopupApplicationClient extends CanonicalPopupClient {
     readonly vacuumEventRecordId: string;
     readonly successorBaselineId: string;
   }>;
+  listRemotes(expectedVaultId: string): Promise<readonly CanonicalClientRemoteSummary[]>;
+  createHostedReplica(input: {
+    readonly expectedVaultId: string;
+    readonly endpoint: string;
+    readonly name: string;
+    readonly username: string;
+    readonly password: string;
+  }): Promise<CanonicalClientRemoteSummary>;
 }
 
 function plainRecord(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -115,6 +124,23 @@ function httpUrl(value: unknown): value is string {
   try {
     const parsed = new URL(value);
     return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function hostedEndpoint(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  try {
+    const parsed = new URL(value);
+    return (
+      parsed.protocol === "https:" &&
+      parsed.username.length === 0 &&
+      parsed.password.length === 0 &&
+      parsed.search.length === 0 &&
+      parsed.hash.length === 0 &&
+      parsed.href === value
+    );
   } catch {
     return false;
   }
@@ -248,6 +274,35 @@ function decodeLibrary(value: unknown): readonly CanonicalClientLibraryItem[] {
   return library;
 }
 
+function decodeRemoteSummary(value: unknown): CanonicalClientRemoteSummary {
+  if (
+    !plainRecord(value) ||
+    !exactKeys(value, ["remoteId", "name", "endpoint", "enabled"]) ||
+    !setupId(value.remoteId) ||
+    typeof value.name !== "string" ||
+    value.name.length < 1 ||
+    value.name.length > 256 ||
+    !hostedEndpoint(value.endpoint) ||
+    typeof value.enabled !== "boolean"
+  ) {
+    throw protocolError();
+  }
+  return {
+    remoteId: value.remoteId,
+    name: value.name,
+    endpoint: value.endpoint,
+    enabled: value.enabled,
+  };
+}
+
+function decodeRemotes(value: unknown): readonly CanonicalClientRemoteSummary[] {
+  if (!Array.isArray(value)) throw protocolError();
+  const remotes = value.map(decodeRemoteSummary);
+  if (new Set(remotes.map(({ remoteId }) => remoteId)).size !== remotes.length)
+    throw protocolError();
+  return remotes;
+}
+
 function decodeVaultCreation(value: unknown): {
   readonly setupId: string;
   readonly recoveryPhrase: string;
@@ -374,6 +429,24 @@ function assertText(value: string, field: string): void {
   if (value.length < 1 || value.length > 1_024) throw new TypeError(`Popup ${field} is invalid.`);
 }
 
+function assertHostedReplicaSetup(input: {
+  readonly expectedVaultId: string;
+  readonly endpoint: string;
+  readonly name: string;
+  readonly username: string;
+  readonly password: string;
+}): void {
+  if (!identifier(input.expectedVaultId)) throw new TypeError("Popup Vault ID is invalid.");
+  if (!hostedEndpoint(input.endpoint))
+    throw new TypeError("Popup Hosted Replica endpoint is invalid.");
+  if (input.name.length < 1 || input.name.length > 256)
+    throw new TypeError("Popup Hosted Replica name is invalid.");
+  if (input.username.length < 1 || input.username.length > 256)
+    throw new TypeError("Popup Hosted Replica username is invalid.");
+  if (input.password.length < 1 || input.password.length > 1_024)
+    throw new TypeError("Popup Hosted Replica password is invalid.");
+}
+
 export function createCanonicalPopupApplicationClient(
   transport: CanonicalPopupApplicationTransport,
 ): CanonicalPopupApplicationClient {
@@ -383,6 +456,10 @@ export function createCanonicalPopupApplicationClient(
     },
     async listLibrary(expectedVaultId: string): Promise<readonly CanonicalClientLibraryItem[]> {
       return decodeLibrary(await transport.request({ type: "ListLibrary", expectedVaultId }));
+    },
+    async listRemotes(expectedVaultId: string): Promise<readonly CanonicalClientRemoteSummary[]> {
+      if (!identifier(expectedVaultId)) throw new TypeError("Popup Vault ID is invalid.");
+      return decodeRemotes(await transport.request({ type: "ListRemotes", expectedVaultId }));
     },
     subscribe(listener: () => void): () => void {
       return transport.subscribe(listener);
@@ -501,6 +578,19 @@ export function createCanonicalPopupApplicationClient(
     async vacuumVault(expectedVaultId) {
       if (!identifier(expectedVaultId)) throw new TypeError("Popup Vault ID is invalid.");
       return decodeVaultVacuumed(await transport.request({ type: "VacuumVault", expectedVaultId }));
+    },
+    async createHostedReplica(input) {
+      assertHostedReplicaSetup(input);
+      return decodeRemoteSummary(
+        await transport.request({
+          type: "CreateHostedReplica",
+          expectedVaultId: input.expectedVaultId,
+          endpoint: input.endpoint,
+          name: input.name,
+          username: input.username,
+          password: input.password,
+        }),
+      );
     },
   };
 }

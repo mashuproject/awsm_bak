@@ -9,6 +9,9 @@ import { CanonicalClientRuntime } from "../../src/runtime/client/canonical-runti
 import type { CanonicalContentService } from "../../src/runtime/content/canonical-service";
 import type { CanonicalLibraryProjectionService } from "../../src/runtime/library/canonical-projection";
 import type { CanonicalSearchService } from "../../src/runtime/search/canonical-service";
+import type { CanonicalHostedReplicaSetupService } from "../../src/runtime/synchronization/canonical-hosted-replica-setup";
+import type { CanonicalReplicaRemoteService } from "../../src/runtime/synchronization/canonical-remote-service";
+import type { CanonicalReplicaRemote } from "../../src/runtime/synchronization/canonical-state";
 import type { CanonicalForkService } from "../../src/runtime/vault/canonical-fork-service";
 import type { CanonicalLifecycleService } from "../../src/runtime/vault/canonical-lifecycle-service";
 import type { CanonicalMemberRecoveryService } from "../../src/runtime/vault/canonical-member-recovery-service";
@@ -16,7 +19,12 @@ import type { CanonicalRecoveryReplacementService } from "../../src/runtime/vaul
 import type { CanonicalVaultService } from "../../src/runtime/vault/canonical-service";
 import type { CanonicalVacuumService } from "../../src/runtime/vault/canonical-vacuum-service";
 
-function fixture() {
+function fixture(
+  options: {
+    readonly remotes?: Pick<CanonicalReplicaRemoteService, "list">;
+    readonly hostedReplicaSetup?: Pick<CanonicalHostedReplicaSetupService, "create">;
+  } = {},
+) {
   const firstVaultId = randomIdentifier("Vault");
   const secondVaultId = randomIdentifier("Vault");
   const generationId = randomIdentifier("Generation");
@@ -110,6 +118,7 @@ function fixture() {
     forkService,
     memberRecovery,
     recoveryReplacement,
+    options,
   );
   return {
     runtime,
@@ -135,6 +144,55 @@ function fixture() {
 }
 
 describe("canonical Client Runtime", () => {
+  it("fences non-secret Remote management to the selected Vault", async () => {
+    let configured: CanonicalReplicaRemote;
+    const remotes = { list: vi.fn(async () => [configured]) };
+    const hostedReplicaSetup = { create: vi.fn(async () => configured) };
+    const { runtime, firstVaultId: selectedVaultId } = fixture({ remotes, hostedReplicaSetup });
+    const expectedVaultId = identifierStorageKey(selectedVaultId);
+    configured = {
+      remoteId: "019fa62e-a653-7f63-b2bf-94e7ed5e46ca",
+      vaultId: selectedVaultId,
+      name: "Hosted archive",
+      endpoint: "https://sync.example.test/",
+      hostedReplicaHandle: "019fa62e-a653-7f63-b2bf-94e7ed5e46cb",
+      locatorSalt: new Uint8Array(32).fill(1),
+      enabled: true,
+      inventoryPageSize: 100,
+    };
+
+    await expect(runtime.listRemotes(expectedVaultId)).resolves.toEqual([
+      {
+        remoteId: configured.remoteId,
+        name: configured.name,
+        endpoint: configured.endpoint,
+        enabled: true,
+      },
+    ]);
+    await expect(
+      runtime.createHostedReplica({
+        expectedVaultId,
+        endpoint: configured.endpoint,
+        name: configured.name,
+        username: "archive_reader",
+        password: "correct horse battery staple",
+      }),
+    ).resolves.toEqual({
+      remoteId: configured.remoteId,
+      name: configured.name,
+      endpoint: configured.endpoint,
+      enabled: true,
+    });
+    expect(remotes.list).toHaveBeenCalledWith(selectedVaultId);
+    expect(hostedReplicaSetup.create).toHaveBeenCalledWith({
+      vaultId: selectedVaultId,
+      endpoint: configured.endpoint,
+      name: configured.name,
+      username: "archive_reader",
+      password: "correct horse battery staple",
+    });
+  });
+
   it("presents the local Vault directory with one explicit selection", async () => {
     const { runtime, firstVaultId, secondVaultId } = fixture();
 

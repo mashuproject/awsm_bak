@@ -20,6 +20,9 @@ import type {
   CanonicalLibraryProjectionService,
 } from "../library/canonical-projection";
 import { type CanonicalSearchCoverage, CanonicalSearchService } from "../search/canonical-service";
+import type { CanonicalHostedReplicaSetupService } from "../synchronization/canonical-hosted-replica-setup";
+import type { CanonicalReplicaRemoteService } from "../synchronization/canonical-remote-service";
+import type { CanonicalReplicaRemote } from "../synchronization/canonical-state";
 import { type CanonicalForkCeremony, CanonicalForkService } from "../vault/canonical-fork-service";
 import { CanonicalLifecycleService } from "../vault/canonical-lifecycle-service";
 import { CanonicalMemberRecoveryService } from "../vault/canonical-member-recovery-service";
@@ -39,6 +42,13 @@ export interface CanonicalClientVaultSummary {
   readonly lifecycle: "Open" | "Closed";
   readonly access: "Authoring" | "ReadOnly";
   readonly selected: boolean;
+}
+
+export interface CanonicalClientRemoteSummary {
+  readonly remoteId: string;
+  readonly name: string;
+  readonly endpoint: string;
+  readonly enabled: boolean;
 }
 
 export interface CanonicalClientState {
@@ -254,6 +264,10 @@ export class CanonicalClientRuntime {
       CanonicalRecoveryReplacementService,
       "begin"
     > = new CanonicalRecoveryReplacementService(vaults),
+    private readonly remoteManagement: {
+      readonly remotes?: Pick<CanonicalReplicaRemoteService, "list">;
+      readonly hostedReplicaSetup?: Pick<CanonicalHostedReplicaSetupService, "create">;
+    } = {},
   ) {}
 
   async state(): Promise<CanonicalClientState> {
@@ -500,6 +514,38 @@ export class CanonicalClientRuntime {
       availableLocally: capture.artifactAvailableLocally,
       lifecycle: capture.lifecycle === 1 ? "Active" : "Deleted",
     }));
+  }
+
+  async listRemotes(expectedVaultId: string): Promise<readonly CanonicalClientRemoteSummary[]> {
+    await this.assertExpectedVault(expectedVaultId);
+    if (this.remoteManagement.remotes === undefined) return [];
+    return (
+      await this.remoteManagement.remotes.list(identifierFromStorageKey("Vault", expectedVaultId))
+    ).map((remote) => this.remoteSummary(remote));
+  }
+
+  async createHostedReplica(input: {
+    readonly expectedVaultId: string;
+    readonly endpoint: string;
+    readonly name: string;
+    readonly username: string;
+    readonly password: string;
+  }): Promise<CanonicalClientRemoteSummary> {
+    await this.assertExpectedVault(input.expectedVaultId);
+    if (this.remoteManagement.hostedReplicaSetup === undefined) {
+      throw runtimeError(
+        "HOSTED_REPLICA_SETUP_UNAVAILABLE",
+        "Hosted Replica setup is unavailable in this Client.",
+      );
+    }
+    const remote = await this.remoteManagement.hostedReplicaSetup.create({
+      vaultId: identifierFromStorageKey("Vault", input.expectedVaultId),
+      endpoint: input.endpoint,
+      name: input.name,
+      username: input.username,
+      password: input.password,
+    });
+    return this.remoteSummary(remote);
   }
 
   async search(input: {
@@ -1848,6 +1894,15 @@ export class CanonicalClientRuntime {
     if (current !== expectedVaultId) {
       throw runtimeError("VAULT_CONTEXT_CHANGED", "The selected Vault changed.");
     }
+  }
+
+  private remoteSummary(remote: CanonicalReplicaRemote): CanonicalClientRemoteSummary {
+    return {
+      remoteId: remote.remoteId,
+      name: remote.name,
+      endpoint: remote.endpoint,
+      enabled: remote.enabled,
+    };
   }
 
   private async changeCaptureLifecycle(input: {

@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createCanonicalBackgroundApplication } from "../../src/app/canonical-background";
+import { randomIdentifier } from "../../src/domain/canonical/identifiers";
+import { identifierStorageKey } from "../../src/drivers/indexeddb/canonical-database";
 import type { CanonicalArtifactStore } from "../../src/runtime/artifact/canonical-store";
+import type { CanonicalHostedReplicaSetupService } from "../../src/runtime/synchronization/canonical-hosted-replica-setup";
+import type { CanonicalReplicaRemoteService } from "../../src/runtime/synchronization/canonical-remote-service";
+import type { CanonicalReplicaRemote } from "../../src/runtime/synchronization/canonical-state";
 import type { CanonicalVaultService } from "../../src/runtime/vault/canonical-service";
 
 describe("canonical background", () => {
@@ -23,5 +28,59 @@ describe("canonical background", () => {
 
     await expect(application.handle({ type: "GetState" })).resolves.toEqual({ vaults: [] });
     expect(vaults.listVaults).toHaveBeenCalledTimes(1);
+  });
+
+  it("wires the canonical Hosted Replica setup and listing services into the application", async () => {
+    const vaultId = randomIdentifier("Vault");
+    const remote: CanonicalReplicaRemote = {
+      remoteId: "019fa62e-a653-7f63-b2bf-94e7ed5e46ca",
+      vaultId,
+      name: "Hosted archive",
+      endpoint: "https://sync.example.test/",
+      hostedReplicaHandle: "019fa62e-a653-7f63-b2bf-94e7ed5e46cb",
+      locatorSalt: new Uint8Array(32).fill(1),
+      enabled: true,
+      inventoryPageSize: 100,
+    };
+    const vaults = {
+      listVaults: vi.fn().mockResolvedValue([
+        {
+          vaultId,
+          generationId: randomIdentifier("Generation"),
+          label: "Research",
+          selectedClientCredentialId: randomIdentifier("ClientCredential"),
+          lifecycle: 1,
+          access: "Authoring",
+          selected: true,
+        },
+      ]),
+      pendingCreation: vi.fn().mockResolvedValue(undefined),
+    } as unknown as CanonicalVaultService;
+    const remotes = { list: vi.fn().mockResolvedValue([remote]) } as Pick<
+      CanonicalReplicaRemoteService,
+      "list"
+    >;
+    const hostedReplicaSetup = { create: vi.fn().mockResolvedValue(remote) } as Pick<
+      CanonicalHostedReplicaSetupService,
+      "create"
+    >;
+    const application = createCanonicalBackgroundApplication({
+      vaults,
+      artifacts: {} as CanonicalArtifactStore,
+      pageCapture: { captureActivePage: vi.fn() },
+      remotes,
+      hostedReplicaSetup,
+    });
+    const expectedVaultId = identifierStorageKey(vaultId);
+
+    await expect(application.handle({ type: "ListRemotes", expectedVaultId })).resolves.toEqual([
+      {
+        remoteId: remote.remoteId,
+        name: remote.name,
+        endpoint: remote.endpoint,
+        enabled: true,
+      },
+    ]);
+    expect(remotes.list).toHaveBeenCalledWith(vaultId);
   });
 });

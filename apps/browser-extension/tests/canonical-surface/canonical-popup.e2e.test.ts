@@ -217,12 +217,40 @@ test("runs the canonical local Vault ceremony through a packaged extension", asy
       "background-color",
       "rgb(169, 46, 34)",
     );
+    await expect(first.getByRole("button", { name: "Connect Hosted Replica" })).toBeVisible();
     await assertInteractiveTargets(first);
     await expectReadableContrast(first);
     await first.evaluate(() => window.scrollTo(0, 0));
     await first.screenshot({
       path: testInfo.outputPath("canonical-popup-settings.png"),
     });
+
+    await first.getByRole("button", { name: "Connect Hosted Replica" }).click();
+    await expect(first.getByRole("heading", { name: "Connect a Hosted Replica" })).toBeVisible();
+    await expect(first.getByLabel("Hosted Replica address")).toBeVisible();
+    await expect(first.getByLabel("Account username")).toBeVisible();
+    await expect(first.getByLabel("Account password")).toBeVisible();
+    await assertInteractiveTargets(first);
+    await expectReadableContrast(first);
+    await first.evaluate(() => window.scrollTo(0, 0));
+    await first.screenshot({
+      path: testInfo.outputPath("canonical-popup-hosted-replica-setup.png"),
+    });
+    await first.getByLabel("Hosted Replica address").fill("http://sync.example.test/");
+    await first.getByLabel("Account username").fill("archive_reader");
+    await first.getByLabel("Account password").fill("correct horse battery staple");
+    await first.getByRole("button", { name: "Connect Hosted Replica", exact: true }).click();
+    await expect(
+      first.locator(".canonical-popup__status--error", {
+        hasText: "Enter a canonical HTTPS Replica Host address.",
+      }),
+    ).toBeVisible();
+    await expectReadableContrast(first);
+    await first.screenshot({
+      path: testInfo.outputPath("canonical-popup-hosted-replica-validation-error.png"),
+    });
+    await first.getByRole("button", { name: "Cancel Hosted Replica setup" }).click();
+    await expect(first.getByRole("heading", { name: "Vault settings" })).toBeVisible();
 
     await first.getByRole("button", { name: "Change Recovery Phrase" }).click();
     await expect(

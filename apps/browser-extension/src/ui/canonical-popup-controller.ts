@@ -1,5 +1,6 @@
 import type {
   CanonicalClientLibraryItem,
+  CanonicalClientRemoteSummary,
   CanonicalClientState,
 } from "../runtime/client/canonical-runtime";
 
@@ -8,11 +9,13 @@ export type CanonicalPopupState = CanonicalClientState;
 export interface CanonicalPopupView {
   readonly state: CanonicalPopupState;
   readonly library: readonly CanonicalClientLibraryItem[];
+  readonly remotes: readonly CanonicalClientRemoteSummary[];
 }
 
 export interface CanonicalPopupClient {
   state(): Promise<CanonicalPopupState>;
   listLibrary(expectedVaultId: string): Promise<readonly CanonicalClientLibraryItem[]>;
+  listRemotes(expectedVaultId: string): Promise<readonly CanonicalClientRemoteSummary[]>;
   subscribe(listener: () => void): () => void;
 }
 
@@ -66,12 +69,15 @@ export class CanonicalPopupController {
       const generation = this.generation;
       const state = await this.client.state();
       if (!this.active || generation !== this.generation) continue;
-      const library =
+      const [library, remotes] =
         state.selectedVaultId === undefined
-          ? []
-          : await this.client.listLibrary(state.selectedVaultId);
+          ? [[], []]
+          : await Promise.all([
+              this.client.listLibrary(state.selectedVaultId),
+              this.client.listRemotes(state.selectedVaultId),
+            ]);
       if (!this.active || generation !== this.generation) continue;
-      this.render({ state, library });
+      this.render({ state, library, remotes });
       this.renderedGeneration = generation;
       return;
     }

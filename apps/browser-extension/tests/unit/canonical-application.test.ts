@@ -11,6 +11,8 @@ describe("canonical application", () => {
       cancelVaultCreation: vi.fn(),
       selectVault: vi.fn(),
       listLibrary: vi.fn(),
+      listRemotes: vi.fn(),
+      createHostedReplica: vi.fn(),
       capture: vi.fn(),
       closeVault: vi.fn(),
       vacuumVault: vi.fn(),
@@ -58,6 +60,8 @@ describe("canonical application", () => {
       cancelVaultCreation: vi.fn().mockResolvedValue(undefined),
       selectVault: vi.fn().mockResolvedValue({ selectedVaultId: "b".repeat(64), vaults: [] }),
       listLibrary: vi.fn().mockResolvedValue([]),
+      listRemotes: vi.fn(),
+      createHostedReplica: vi.fn(),
       capture: vi.fn(),
       closeVault: vi.fn(),
       vacuumVault: vi.fn(),
@@ -94,6 +98,48 @@ describe("canonical application", () => {
     expect(runtime.listLibrary).toHaveBeenCalledWith(expectedVaultId);
   });
 
+  it("keeps Hosted Replica setup and listing on exact selected-Vault Commands", async () => {
+    const runtime = {
+      listRemotes: vi.fn().mockResolvedValue([]),
+      createHostedReplica: vi.fn().mockResolvedValue({
+        remoteId: "019fa62e-a653-7f63-b2bf-94e7ed5e46ca",
+        name: "Hosted archive",
+        endpoint: "https://sync.example.test/",
+        enabled: true,
+      }),
+    };
+    const application = new CanonicalApplication(runtime as never);
+    const expectedVaultId = "a".repeat(64);
+
+    await expect(application.handle({ type: "ListRemotes", expectedVaultId })).resolves.toEqual([]);
+    await expect(
+      application.handle({
+        type: "CreateHostedReplica",
+        expectedVaultId,
+        endpoint: "https://sync.example.test/",
+        name: "Hosted archive",
+        username: "archive_reader",
+        password: "correct horse battery staple",
+      }),
+    ).resolves.toEqual({
+      remoteId: "019fa62e-a653-7f63-b2bf-94e7ed5e46ca",
+      name: "Hosted archive",
+      endpoint: "https://sync.example.test/",
+      enabled: true,
+    });
+    expect(runtime.listRemotes).toHaveBeenCalledWith(expectedVaultId);
+    expect(runtime.createHostedReplica).toHaveBeenCalledWith({
+      expectedVaultId,
+      endpoint: "https://sync.example.test/",
+      name: "Hosted archive",
+      username: "archive_reader",
+      password: "correct horse battery staple",
+    });
+    await expect(
+      application.handle({ type: "ListRemotes", expectedVaultId, extra: true }),
+    ).rejects.toThrow(/Unsupported application Command/u);
+  });
+
   it("collects a browser page only through the canonical capture Host before authoring it", async () => {
     const runtime = {
       state: vi.fn(),
@@ -102,6 +148,8 @@ describe("canonical application", () => {
       cancelVaultCreation: vi.fn(),
       selectVault: vi.fn(),
       listLibrary: vi.fn(),
+      listRemotes: vi.fn(),
+      createHostedReplica: vi.fn(),
       capture: vi.fn().mockResolvedValue({ bundleId: "b".repeat(64) }),
       closeVault: vi.fn(),
       vacuumVault: vi.fn(),
@@ -320,6 +368,8 @@ describe("canonical application", () => {
       cancelVaultCreation: vi.fn(),
       selectVault: vi.fn().mockResolvedValue({ selectedVaultId: "b".repeat(64), vaults: [] }),
       listLibrary: vi.fn(),
+      listRemotes: vi.fn(),
+      createHostedReplica: vi.fn(),
       capture: vi.fn(),
       closeVault: vi.fn(),
       vacuumVault: vi.fn(),

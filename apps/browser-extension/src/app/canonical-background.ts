@@ -13,6 +13,8 @@ import type { CanonicalArtifactStore } from "../runtime/artifact/canonical-store
 import { CanonicalCaptureService } from "../runtime/capture/canonical-service";
 import { CanonicalClientRuntime } from "../runtime/client/canonical-runtime";
 import { CanonicalLibraryProjectionService } from "../runtime/library/canonical-projection";
+import { CanonicalHostedReplicaSetupService } from "../runtime/synchronization/canonical-hosted-replica-setup";
+import { CanonicalReplicaRemoteService } from "../runtime/synchronization/canonical-remote-service";
 import { CanonicalVaultService } from "../runtime/vault/canonical-service";
 import { CanonicalApplication } from "./canonical-application";
 import {
@@ -27,6 +29,8 @@ export interface CanonicalBackgroundApplicationOptions {
   readonly now?: () => number;
   readonly createCaptureCommandId?: () => string;
   readonly notifyStateChanged?: () => void | Promise<void>;
+  readonly remotes?: Pick<CanonicalReplicaRemoteService, "list">;
+  readonly hostedReplicaSetup?: Pick<CanonicalHostedReplicaSetupService, "create">;
 }
 
 export function createCanonicalBackgroundApplication(
@@ -34,7 +38,29 @@ export function createCanonicalBackgroundApplication(
 ): CanonicalApplication {
   const captures = new CanonicalCaptureService(input.vaults, input.artifacts);
   const library = new CanonicalLibraryProjectionService(input.vaults, input.artifacts);
-  const runtime = new CanonicalClientRuntime(input.vaults, captures, library);
+  const runtime = new CanonicalClientRuntime(
+    input.vaults,
+    captures,
+    library,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    {
+      ...(input.remotes === undefined ? {} : { remotes: input.remotes }),
+      ...(input.hostedReplicaSetup === undefined
+        ? {}
+        : { hostedReplicaSetup: input.hostedReplicaSetup }),
+    },
+  );
   return new CanonicalApplication(
     runtime,
     input.now,
@@ -55,10 +81,13 @@ function browserPageCapture(): CanonicalBrowserPageCapture {
 export function startCanonicalBackground(): void {
   const storage = new CanonicalIndexedDb();
   const vaults = new CanonicalVaultService(storage, NORMAL_STORAGE_REALM);
+  const remotes = new CanonicalReplicaRemoteService(storage, NORMAL_STORAGE_REALM);
   const application = createCanonicalBackgroundApplication({
     vaults,
     artifacts: new CanonicalOpfsArtifactStore(),
     pageCapture: browserPageCapture(),
+    remotes,
+    hostedReplicaSetup: new CanonicalHostedReplicaSetupService({ remotes }),
     notifyStateChanged: () =>
       browser.runtime.sendMessage(CANONICAL_APPLICATION_STATE_CHANGED).catch(() => undefined),
   });

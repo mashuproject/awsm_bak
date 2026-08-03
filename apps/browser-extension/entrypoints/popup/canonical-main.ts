@@ -5,6 +5,10 @@ import {
   subscribeCanonicalApplicationState,
 } from "../../src/app/canonical-application-client";
 import {
+  firefoxServerPermissionPattern,
+  requestFirefoxSynchronizationPermission,
+} from "../../src/hosts/firefox/synchronization-permission";
+import {
   type CanonicalPopupApplicationClient,
   createCanonicalPopupApplicationClient,
 } from "../../src/ui/canonical-popup-application-client";
@@ -61,6 +65,7 @@ type CanonicalPopupVaultScreen =
       readonly kind: "Fork";
       readonly setup: Awaited<ReturnType<CanonicalPopupApplicationClient["beginVaultFork"]>>;
     }
+  | { readonly kind: "HostedReplicaSetup" }
   | { readonly kind: "VacuumConfirmation" }
   | { readonly kind: "ClosureConfirmation" };
 
@@ -94,6 +99,42 @@ function action(button: HTMLButtonElement, operation: () => Promise<void>): void
     .finally(() => {
       button.disabled = false;
     });
+}
+
+async function requestHostedReplicaPermission(endpoint: string): Promise<void> {
+  let parsed: URL;
+  try {
+    parsed = new URL(endpoint);
+  } catch {
+    throw new CanonicalApplicationClientError(
+      "HOSTED_REPLICA_ENDPOINT_INVALID",
+      "Enter a canonical HTTPS Replica Host address.",
+    );
+  }
+  if (
+    parsed.protocol !== "https:" ||
+    parsed.username.length !== 0 ||
+    parsed.password.length !== 0 ||
+    parsed.search.length !== 0 ||
+    parsed.hash.length !== 0 ||
+    parsed.href !== endpoint
+  ) {
+    throw new CanonicalApplicationClientError(
+      "HOSTED_REPLICA_ENDPOINT_INVALID",
+      "Enter a canonical HTTPS Replica Host address.",
+    );
+  }
+  const originPattern = firefoxServerPermissionPattern(endpoint);
+  const firefox = browser.runtime.getManifest().browser_specific_settings?.gecko !== undefined;
+  const granted = firefox
+    ? await requestFirefoxSynchronizationPermission(browser.permissions, originPattern)
+    : await browser.permissions.request({ origins: [originPattern] });
+  if (!granted) {
+    throw new CanonicalApplicationClientError(
+      "HOST_PERMISSION_DENIED",
+      "Allow access to this Replica Host before connecting it.",
+    );
+  }
 }
 
 function heading(subtitle: string): DocumentFragment {
@@ -431,6 +472,128 @@ function renderVaultSettings(view: CanonicalPopupView, content: DocumentFragment
     actions.append(fork, back);
   }
   content.append(actions);
+  renderHostedReplicas(view, content);
+}
+
+function renderHostedReplicas(view: CanonicalPopupView, content: DocumentFragment): void {
+  const section = element("section", undefined, "canonical-popup__hosted-replicas");
+  section.append(
+    element("h2", "Hosted Replicas"),
+    element(
+      "p",
+      "A Hosted Replica is an optional opaque storage channel. Connecting one creates an empty Host-side Replica; it does not send this Vault’s data yet.",
+      "canonical-popup__muted",
+    ),
+  );
+  if (view.remotes.length === 0) {
+    section.append(
+      element("p", "No Hosted Replicas are configured on this Client.", "canonical-popup__muted"),
+    );
+  } else {
+    const list = element("ul", undefined, "canonical-popup__remote-list");
+    for (const remote of view.remotes) {
+      const item = element("li");
+      item.append(
+        element("strong", remote.name),
+        element("span", remote.endpoint),
+        element("span", remote.enabled ? "Available" : "Disabled"),
+      );
+      list.append(item);
+    }
+    section.append(list);
+  }
+  const connect = element(
+    "button",
+    "Connect Hosted Replica",
+    "canonical-popup__primary",
+  ) as HTMLButtonElement;
+  connect.type = "button";
+  connect.addEventListener("click", () => {
+    vaultScreen = { kind: "HostedReplicaSetup" };
+    render(view);
+  });
+  section.append(connect);
+  content.append(section);
+}
+
+function renderHostedReplicaSetup(view: CanonicalPopupView, content: DocumentFragment): void {
+  const presentation = canonicalPopupPresentation(view.state);
+  if (presentation.kind !== "Capture" && presentation.kind !== "ClosedVault") {
+    throw new Error("Hosted Replica setup requires a selected Vault.");
+  }
+  content.append(
+    element(
+      "p",
+      "Sign in to a Replica Host. Your password is used only for this sign-in and is not stored by AWSM.",
+      "canonical-popup__warning",
+    ),
+  );
+  const form = element("form", undefined, "canonical-popup__form");
+  const endpointLabel = element("label", "Hosted Replica address");
+  const endpoint = element("input") as HTMLInputElement;
+  endpoint.type = "url";
+  endpoint.autocomplete = "off";
+  endpoint.placeholder = "https://sync.example/";
+  endpoint.required = true;
+  endpointLabel.append(endpoint);
+  const nameLabel = element("label", "Connection name");
+  const name = element("input") as HTMLInputElement;
+  name.autocomplete = "off";
+  name.maxLength = 256;
+  name.value = `${displayVaultLabel(presentation.vault.label)} hosted`;
+  name.required = true;
+  nameLabel.append(name);
+  const usernameLabel = element("label", "Account username");
+  const username = element("input") as HTMLInputElement;
+  username.autocomplete = "username";
+  username.maxLength = 256;
+  username.required = true;
+  usernameLabel.append(username);
+  const passwordLabel = element("label", "Account password");
+  const password = element("input") as HTMLInputElement;
+  password.type = "password";
+  password.autocomplete = "current-password";
+  password.maxLength = 1024;
+  password.required = true;
+  passwordLabel.append(password);
+  const actions = element("div", undefined, "canonical-popup__actions");
+  const cancel = element("button", "Cancel Hosted Replica setup") as HTMLButtonElement;
+  cancel.type = "button";
+  cancel.addEventListener("click", () => {
+    password.value = "";
+    vaultScreen = { kind: "Settings" };
+    render(view);
+  });
+  const submit = element(
+    "button",
+    "Connect Hosted Replica",
+    "canonical-popup__primary",
+  ) as HTMLButtonElement;
+  submit.type = "submit";
+  actions.append(cancel, submit);
+  form.append(endpointLabel, nameLabel, usernameLabel, passwordLabel, actions);
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    action(submit, async () => {
+      try {
+        transientError = undefined;
+        await requestHostedReplicaPermission(endpoint.value);
+        await client.createHostedReplica({
+          expectedVaultId: presentation.vault.vaultId,
+          endpoint: endpoint.value,
+          name: name.value,
+          username: username.value,
+          password: password.value,
+        });
+        vaultScreen = { kind: "Settings" };
+        announcer.textContent = "Hosted Replica connected.";
+        await controller.refresh();
+      } finally {
+        password.value = "";
+      }
+    });
+  });
+  content.append(form);
 }
 
 function renderClosedVault(view: CanonicalPopupView, content: DocumentFragment): void {
@@ -721,6 +884,8 @@ function popupHeading(presentation: ReturnType<typeof canonicalPopupPresentation
       return "Replace your Recovery Phrase";
     case "Fork":
       return "Fork this Vault";
+    case "HostedReplicaSetup":
+      return "Connect a Hosted Replica";
     case "VacuumConfirmation":
       return "Vacuum this Vault?";
     case "ClosureConfirmation":
@@ -748,6 +913,7 @@ function render(view: CanonicalPopupView): void {
       renderRecoveryPhraseReplacement(content, vaultScreen.setup);
     }
     if (vaultScreen.kind === "Fork") renderVaultFork(content, vaultScreen.setup);
+    if (vaultScreen.kind === "HostedReplicaSetup") renderHostedReplicaSetup(view, content);
     if (vaultScreen.kind === "VacuumConfirmation") renderVacuumConfirmation(view, content);
     if (vaultScreen.kind === "ClosureConfirmation") renderClosureConfirmation(view, content);
   }

@@ -45,7 +45,16 @@ export type CanonicalApplicationRequest =
   | { readonly type: "CancelRecoveryPhraseReplacement"; readonly setupId: string }
   | { readonly type: "CloseVault"; readonly expectedVaultId: string }
   | { readonly type: "VacuumVault"; readonly expectedVaultId: string }
-  | { readonly type: "ListLibrary"; readonly expectedVaultId: string };
+  | { readonly type: "ListLibrary"; readonly expectedVaultId: string }
+  | { readonly type: "ListRemotes"; readonly expectedVaultId: string }
+  | {
+      readonly type: "CreateHostedReplica";
+      readonly expectedVaultId: string;
+      readonly endpoint: string;
+      readonly name: string;
+      readonly username: string;
+      readonly password: string;
+    };
 
 type CanonicalApplicationRuntime = Pick<
   CanonicalClientRuntime,
@@ -65,6 +74,8 @@ type CanonicalApplicationRuntime = Pick<
   | "closeVault"
   | "vacuumVault"
   | "listLibrary"
+  | "listRemotes"
+  | "createHostedReplica"
 >;
 
 interface CanonicalApplicationPageCapture {
@@ -228,6 +239,30 @@ export function decodeCanonicalApplicationRequest(value: unknown): CanonicalAppl
         return { type: value.type, expectedVaultId: value.expectedVaultId };
       }
       break;
+    case "ListRemotes":
+      if (exactKeys(value, ["type", "expectedVaultId"]) && text(value.expectedVaultId)) {
+        return { type: value.type, expectedVaultId: value.expectedVaultId };
+      }
+      break;
+    case "CreateHostedReplica":
+      if (
+        exactKeys(value, ["type", "expectedVaultId", "endpoint", "name", "username", "password"]) &&
+        text(value.expectedVaultId) &&
+        text(value.endpoint) &&
+        text(value.name) &&
+        text(value.username) &&
+        text(value.password)
+      ) {
+        return {
+          type: value.type,
+          expectedVaultId: value.expectedVaultId,
+          endpoint: value.endpoint,
+          name: value.name,
+          username: value.username,
+          password: value.password,
+        };
+      }
+      break;
   }
   throw new TypeError("Unsupported application Command");
 }
@@ -350,6 +385,12 @@ export class CanonicalApplication {
         );
       case "ListLibrary":
         return this.runtime.listLibrary(request.expectedVaultId);
+      case "ListRemotes":
+        return this.runtime.listRemotes(request.expectedVaultId);
+      case "CreateHostedReplica": {
+        const { type: _type, ...input } = request;
+        return this.mutate(() => this.runtime.createHostedReplica(input));
+      }
     }
   }
 }
