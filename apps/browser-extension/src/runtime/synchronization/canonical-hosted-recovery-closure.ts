@@ -3,11 +3,17 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { decodeRecoveryPhrase, deriveRecoveryCredential } from "../../crypto/canonical";
 import { openKeyEnvelope } from "../../crypto/key-envelope";
 import { wipe } from "../../crypto/sodium";
+import { DEPENDENCY_TYPES } from "../../domain/canonical/dependencies";
+import { decodeFeatureManifest } from "../../domain/canonical/features";
 import type { Identifier } from "../../domain/canonical/identifiers";
+import { ARTIFACT_OBJECT, artifactId } from "../../domain/canonical/object";
 import type { AuthenticatedVaultEvent, VaultBaseline } from "../../domain/canonical/record";
+import { exactMap, identifierValue, mapValue, oneOfCodes } from "../../domain/canonical/schema";
 import { bytesEqual } from "../../domain/hash";
 import { identifierStorageKey } from "../../drivers/indexeddb/canonical-database";
 import { COMPACT_STORAGE_CLASS, decodeOpaqueEnvelope } from "../../storage/opaque-envelope";
+import type { CanonicalArtifactStore } from "../artifact/canonical-store";
+import { verifyCanonicalArtifactRepresentation } from "../artifact/canonical-verify";
 import {
   type CompleteExportManifestInput,
   type CompleteExportOpaqueItem,
@@ -22,6 +28,8 @@ import {
   type ValidatedCompleteExportSemantics,
   validateCompleteExportSemantics,
 } from "../complete-import/semantic";
+import { decodeCanonicalAuthorityCheckpoint } from "../projection/canonical-authority-checkpoint";
+import { canonicalAuthorityKeyEnvelopeRequirements } from "../projection/canonical-authority-replay";
 import type { CanonicalReplicaState, EpochSecretState } from "../vault/canonical-local-state";
 import {
   CanonicalHostedReplicaHttp,
@@ -128,6 +136,151 @@ function uniqueCandidate<T>(values: readonly T[], error: string): T {
   return values[0];
 }
 
+function selectedBaselineClosure(input: {
+  readonly records: ReadonlyMap<
+    string,
+    Extract<CanonicalPulledCompactCandidate, { kind: "VaultRecord" }>
+  >;
+}): {
+  readonly baseline: VaultBaseline;
+  readonly frontier: readonly Identifier<"VaultRecord">[];
+  readonly authorityFrontier: readonly Identifier<"VaultRecord">[];
+} {
+  const records = [...input.records.values()].map(({ record }) => record);
+  const baselines = records.filter((record): record is VaultBaseline => !("family" in record));
+  const events = records.filter((record): record is AuthenticatedVaultEvent => "family" in record);
+  const vacuumBySuccessorBaseline = new Map<string, AuthenticatedVaultEvent>();
+  const vacuumPredecessorGenerations = new Set<string>();
+  for (const event of events) {
+    if (event.family !== 3 || event.type !== 1) continue;
+    const body = exactMap(event.body, [...Array(7).keys()], "Recovery closure Vacuum Event body");
+    const successorBaselineId = identifierValue(
+      mapValue(body, 3),
+      "VaultRecord",
+      "Recovery closure successor Baseline ID",
+    );
+    if (
+      !event.dependencies.some(
+        ({ type, id }) =>
+          type === DEPENDENCY_TYPES.VaultBaseline && bytesEqual(id, successorBaselineId),
+      )
+    ) {
+      throw new TypeError("Recovery closure Vacuum does not commit to its successor Baseline");
+    }
+    const successorKey = identifierStorageKey(successorBaselineId);
+    if (vacuumBySuccessorBaseline.has(successorKey)) {
+      throw new TypeError("Recovery closure has multiple Vacuum anchors for one Baseline");
+    }
+    vacuumBySuccessorBaseline.set(successorKey, event);
+    vacuumPredecessorGenerations.add(identifierStorageKey(event.generationId));
+  }
+  const baseline = uniqueCandidate(
+    baselines.filter(
+      (candidate) =>
+        !vacuumPredecessorGenerations.has(identifierStorageKey(candidate.generationId)),
+    ),
+    "Recovery closure requires exactly one current observed Baseline",
+  );
+  const currentEvents = events.filter(({ generationId }) =>
+    bytesEqual(generationId, baseline.generationId),
+  );
+  const currentAuthorityEvents = currentEvents.filter(({ family }) => family !== 2);
+  const anchor = vacuumBySuccessorBaseline.get(identifierStorageKey(baseline.recordId));
+  if (currentEvents.length === 0) {
+    if (anchor === undefined) {
+      throw new TypeError("Recovery closure current Baseline has no Genesis or Vacuum anchor");
+    }
+    return {
+      baseline,
+      frontier: [baseline.recordId],
+      authorityFrontier: [anchor.recordId],
+    };
+  }
+  if (currentAuthorityEvents.length === 0) {
+    if (anchor === undefined) {
+      throw new TypeError("Recovery closure content Frontier has no Authority anchor");
+    }
+    return {
+      baseline,
+      frontier: nextFrontier(currentEvents, ({ parentRecordIds }) => parentRecordIds),
+      authorityFrontier: [anchor.recordId],
+    };
+  }
+  return {
+    baseline,
+    frontier: nextFrontier(currentEvents, ({ parentRecordIds }) => parentRecordIds),
+    authorityFrontier: nextFrontier(
+      currentAuthorityEvents,
+      ({ authorityParentRecordIds }) => authorityParentRecordIds,
+    ),
+  };
+}
+
+function keyEnvelopeEpochAssignments(input: {
+  readonly vaultId: Identifier<"Vault">;
+  readonly baseline: VaultBaseline;
+  readonly records: ReadonlyMap<
+    string,
+    Extract<CanonicalPulledCompactCandidate, { kind: "VaultRecord" }>
+  >;
+  readonly features: ReadonlyMap<
+    string,
+    Extract<CanonicalPulledCompactCandidate, { kind: "FeatureManifest" }>
+  >;
+}): ReadonlyMap<string, Identifier<"KeyEpoch">> {
+  const assignments = new Map<string, Identifier<"KeyEpoch">>();
+  const assign = (keyEnvelopeId: Identifier<"KeyEnvelope">, keyEpochId: Identifier<"KeyEpoch">) => {
+    const id = identifierStorageKey(keyEnvelopeId);
+    const existing = assignments.get(id);
+    if (existing !== undefined) {
+      same(existing, keyEpochId, "Recovery closure Key Envelope Epoch assignment");
+      return;
+    }
+    assignments.set(id, keyEpochId);
+  };
+  for (const { record } of input.records.values()) {
+    if (!("family" in record)) continue;
+    for (const requirement of canonicalAuthorityKeyEnvelopeRequirements(record)) {
+      assign(requirement.keyEnvelopeId, requirement.keyEpochId);
+    }
+  }
+  const baselineBody = exactMap(
+    input.baseline.body,
+    [0, 1, 2, 3, 4, 5],
+    "Recovery closure Baseline body",
+  );
+  const lifecycle = oneOfCodes(
+    mapValue(exactMap(mapValue(baselineBody, 4), [0], "Recovery closure Baseline lifecycle"), 0),
+    [1, 2] as const,
+    "Recovery closure Baseline lifecycle",
+  );
+  const featureManifests = input.baseline.dependencies
+    .filter(({ type }) => type === DEPENDENCY_TYPES.FeatureManifest)
+    .map(({ id }) => {
+      const featureId = id as Identifier<"FeatureManifest">;
+      const feature = input.features.get(identifierStorageKey(featureId));
+      if (feature === undefined) {
+        throw new TypeError("Recovery closure Baseline Feature Manifest is unavailable");
+      }
+      return {
+        id: featureId,
+        bytes: feature.bytes,
+        manifest: decodeFeatureManifest(feature.bytes),
+      };
+    });
+  const authority = decodeCanonicalAuthorityCheckpoint({
+    vaultId: input.vaultId,
+    checkpoint: mapValue(baselineBody, 3),
+    requiredFeatureSetId: input.baseline.requiredFeatureSetId,
+    featureManifests,
+    lifecycle,
+  });
+  for (const { keyEnvelopeId, keyEpochId } of authority.keyEnvelopeSlots) {
+    assign(keyEnvelopeId, keyEpochId);
+  }
+  return assignments;
+}
+
 /**
  * An in-memory phrase-authenticated closure. It carries epoch secrets only until the caller either
  * enrolls a new Client atomically or explicitly wipes it with `wipeHostedRecoveryClosure`.
@@ -148,8 +301,6 @@ export async function wipeHostedRecoveryClosure(
 
 /**
  * Authenticates an observed opaque Hosted Replica before a phrase may create local Vault state.
- * The initial implementation intentionally accepts one observed Baseline only; a multiple-
- * Generation candidate remains untrusted until its complete Vacuum-chain selector is implemented.
  */
 export class CanonicalHostedRecoveryClosureService {
   constructor(
@@ -315,27 +466,7 @@ export class CanonicalHostedRecoveryClosureService {
         collection.set(logicalKey, classified as never);
       }
 
-      const baseline = uniqueCandidate(
-        [...records.values()]
-          .map(({ record }) => record)
-          .filter((record): record is VaultBaseline => !("family" in record)),
-        "Recovery closure requires exactly one observed Baseline",
-      );
-      const events = [...records.values()]
-        .map(({ record }) => record)
-        .filter(
-          (record): record is AuthenticatedVaultEvent =>
-            "family" in record && bytesEqual(record.generationId, baseline.generationId),
-        );
-      uniqueCandidate(
-        events.filter(({ family, type }) => family === 1 && type === 1),
-        "Recovery closure requires exactly one Genesis",
-      );
-      const frontier = nextFrontier(events, ({ parentRecordIds }) => parentRecordIds);
-      const authorityFrontier = nextFrontier(
-        events,
-        ({ authorityParentRecordIds }) => authorityParentRecordIds,
-      );
+      const { baseline, frontier, authorityFrontier } = selectedBaselineClosure({ records });
       const reachability = await collectCompleteExportReachability({
         vaultId: input.candidate.vaultId,
         generationId: baseline.generationId,
@@ -351,8 +482,17 @@ export class CanonicalHostedRecoveryClosureService {
         inventory,
         replica,
         reachability,
-        candidate: input.candidate,
-        recoveredEpochs,
+        records,
+        objects,
+        features,
+        epochSecrets,
+        http,
+        keyEnvelopeEpochs: keyEnvelopeEpochAssignments({
+          vaultId: input.candidate.vaultId,
+          baseline,
+          records,
+          features,
+        }),
       });
       const manifestInput: CompleteExportManifestInput = {
         vaultId: input.candidate.vaultId,
@@ -510,17 +650,25 @@ export class CanonicalHostedRecoveryClosureService {
     };
     readonly replica: CanonicalHostedReplicaSummary;
     readonly reachability: Awaited<ReturnType<typeof collectCompleteExportReachability>>;
-    readonly candidate: CanonicalHostedRecoveryEnvelopeCandidate;
-    readonly recoveredEpochs: readonly RecoveredEpoch[];
+    readonly records: ReadonlyMap<
+      string,
+      Extract<CanonicalPulledCompactCandidate, { kind: "VaultRecord" }>
+    >;
+    readonly objects: ReadonlyMap<
+      string,
+      Extract<CanonicalPulledCompactCandidate, { kind: "VaultObject" }>
+    >;
+    readonly features: ReadonlyMap<
+      string,
+      Extract<CanonicalPulledCompactCandidate, { kind: "FeatureManifest" }>
+    >;
+    readonly epochSecrets: readonly EpochSecretState[];
+    readonly http: RecoveryClosureHttp;
+    readonly keyEnvelopeEpochs: ReadonlyMap<string, Identifier<"KeyEpoch">>;
   }): Promise<readonly CompleteExportOpaqueItem[]> {
-    if (input.reachability.artifactIds.length > 0) {
-      throw new TypeError(
-        "Recovery closure cannot yet authenticate Streamable Artifact dependencies",
-      );
-    }
     const entries: CompleteExportOpaqueItem[] = [];
     const add = async (
-      namespace: 1 | 2 | 3 | 4 | 5,
+      namespace: 1 | 2 | 3 | 4,
       logicalId: Uint8Array,
       keyEpochId: Identifier<"KeyEpoch">,
     ) => {
@@ -529,7 +677,6 @@ export class CanonicalHostedRecoveryClosureService {
         2: 2,
         3: 3,
         4: 4,
-        5: 5,
       } as const;
       const references = await findHostedReplicaOpaqueReferences({
         locatorSalt: input.replica.locatorSalt,
@@ -541,30 +688,109 @@ export class CanonicalHostedRecoveryClosureService {
         references,
         "Recovery closure reachable item is unavailable",
       );
+      if (reference.storageClass !== 1) {
+        throw new TypeError("Recovery closure reachable Compact item is not Compact");
+      }
       const bytes = input.inventory.compact.get(
         identifierStorageKey(reference.storageItemId),
       )?.bytes;
+      if (bytes === undefined) {
+        throw new TypeError("Recovery closure reachable Compact bytes are unavailable");
+      }
       entries.push({
         namespace,
         logicalId,
         storageItemId: reference.storageItemId,
         keyEpochId,
         byteLength: reference.byteLength,
-        byteDigest: bytes === undefined ? reference.ciphertextDigest : sha256(bytes),
+        byteDigest: sha256(bytes),
       });
     };
-    for (const id of input.reachability.recordIds) await add(1, id, input.candidate.keyEpochId);
-    for (const id of input.reachability.keyEnvelopeIds) {
-      const recovered = input.recoveredEpochs.find(({ keyEnvelopeId }) =>
-        bytesEqual(keyEnvelopeId, id),
-      );
-      await add(2, id, recovered?.keyEpochId ?? input.candidate.keyEpochId);
+    for (const id of input.reachability.recordIds) {
+      const record = input.records.get(identifierStorageKey(id));
+      if (record === undefined) throw new TypeError("Recovery closure Vault Record is unavailable");
+      await add(1, id, record.keyEpochId);
     }
-    for (const id of input.reachability.vaultObjectIds)
-      await add(3, id, input.candidate.keyEpochId);
-    for (const id of input.reachability.featureManifestIds)
-      await add(4, id, input.candidate.keyEpochId);
-    for (const id of input.reachability.artifactIds) await add(5, id, input.candidate.keyEpochId);
+    for (const id of input.reachability.keyEnvelopeIds) {
+      const keyEpochId = input.keyEnvelopeEpochs.get(identifierStorageKey(id));
+      if (keyEpochId === undefined) {
+        throw new TypeError("Recovery closure Key Envelope has no authenticated Epoch assignment");
+      }
+      await add(2, id, keyEpochId);
+    }
+    for (const id of input.reachability.vaultObjectIds) {
+      const object = input.objects.get(identifierStorageKey(id));
+      if (object === undefined) throw new TypeError("Recovery closure Vault Object is unavailable");
+      await add(3, id, object.keyEpochId);
+    }
+    for (const id of input.reachability.featureManifestIds) {
+      const feature = input.features.get(identifierStorageKey(id));
+      if (feature === undefined) {
+        throw new TypeError("Recovery closure Feature Manifest is unavailable");
+      }
+      await add(4, id, feature.keyEpochId);
+    }
+    for (const requiredArtifactId of input.reachability.artifactIds) {
+      const object = [...input.objects.values()].find(
+        (candidate) =>
+          candidate.object.objectType === ARTIFACT_OBJECT &&
+          bytesEqual(artifactId(candidate.object), requiredArtifactId),
+      );
+      if (object === undefined) {
+        throw new TypeError("Recovery closure Artifact Object is unavailable");
+      }
+      const epoch = uniqueCandidate(
+        input.epochSecrets.filter(({ keyEpochId }) => bytesEqual(keyEpochId, object.keyEpochId)),
+        "Recovery closure Artifact Key Epoch is unavailable",
+      );
+      const references = await findHostedReplicaOpaqueReferences({
+        locatorSalt: input.replica.locatorSalt,
+        logicalNamespace: 5,
+        logicalId: requiredArtifactId,
+        references: [...input.inventory.items.values()],
+      });
+      const reference = uniqueCandidate(
+        references,
+        "Recovery closure Artifact representation is unavailable",
+      );
+      if (reference.storageClass !== 2) {
+        throw new TypeError("Recovery closure Artifact representation is not Streamable");
+      }
+      const store: CanonicalArtifactStore = {
+        prepare: async () => {
+          throw new TypeError("Recovery closure never prepares Artifact representations");
+        },
+        has: async (storageItemId) => bytesEqual(storageItemId, reference.storageItemId),
+        open: async (storageItemId) => {
+          same(storageItemId, reference.storageItemId, "Recovery closure Artifact Storage Item ID");
+          return input.http.item({
+            replicaHandle: input.replica.replicaHandle,
+            storageItemId: reference.storageItemId,
+            byteLength: reference.byteLength,
+          });
+        },
+        remove: async () => undefined,
+      };
+      const verified = await verifyCanonicalArtifactRepresentation({
+        store,
+        storageItemId: reference.storageItemId,
+        object: object.object,
+        keyEpochId: epoch.keyEpochId,
+        keyEpochKey: epoch.key,
+        writePlaintext: async () => undefined,
+      });
+      if (verified.byteLength !== reference.byteLength) {
+        throw new TypeError("Recovery closure Artifact length disagrees with Host inventory");
+      }
+      entries.push({
+        namespace: 5,
+        logicalId: requiredArtifactId,
+        storageItemId: reference.storageItemId,
+        keyEpochId: epoch.keyEpochId,
+        byteLength: verified.byteLength,
+        byteDigest: verified.byteDigest,
+      });
+    }
     return entries.toSorted(
       (left, right) =>
         left.namespace - right.namespace || compareBytes(left.logicalId, right.logicalId),
