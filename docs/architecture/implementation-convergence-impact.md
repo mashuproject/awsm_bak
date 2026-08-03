@@ -51,6 +51,12 @@ The disconnected Device/Recovery Kit/server-switch error and service tree is rem
 add precise local validation, authority conflict, unsupported feature, opaque Host, adoption, and
 collision outcomes without reusing Host errors as Vault facts.
 
+The disconnected generic Account HTTP, Account-session, Cable, synchronization coordinator,
+generation-fence, server-switch, and transfer HTTP tree is also removed. It encoded retired
+`VaultDevice` identity, semantic Vault routes, and an old server-switch model, and was reachable
+only from its own obsolete tests. The strict Hosted Replica session and opaque HTTP adapters are
+the one current Client channel foundation.
+
 ## 3.2 Cryptography
 
 Current canonical code is concentrated in `src/crypto/`, `src/domain/canonical/`, and the canonical
