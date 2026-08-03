@@ -1,4 +1,6 @@
 import { type Identifier, identifier } from "../../domain/canonical/identifiers";
+import { bytesEqual } from "../../domain/hash";
+import { COMPACT_STORAGE_CLASS, decodeOpaqueEnvelope } from "../../storage/opaque-envelope";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const BASE64_URL_32 = /^[A-Za-z0-9_-]{43}$/u;
@@ -20,6 +22,30 @@ const HOST_OUTCOMES = new Set([
   "service_unavailable",
   "protocol_invalid",
 ]);
+const REPLICA_CAPABILITIES = new Set([
+  "awsm.replica.inventory.read",
+  "awsm.replica.item.read",
+  "awsm.replica.item.write",
+  "awsm.replica.hint.read",
+  "awsm.replica.hint.write",
+  "awsm.replica.manage",
+]);
+
+export type CanonicalReplicaCapability =
+  | "awsm.replica.inventory.read"
+  | "awsm.replica.item.read"
+  | "awsm.replica.item.write"
+  | "awsm.replica.hint.read"
+  | "awsm.replica.hint.write"
+  | "awsm.replica.manage";
+
+export interface CanonicalHostedReplicaSummary {
+  readonly replicaHandle: string;
+  readonly locatorSalt: Uint8Array;
+  readonly capabilities: readonly CanonicalReplicaCapability[];
+  readonly quotaBytes: number | null;
+  readonly storedBytes: number;
+}
 
 export interface CanonicalOpaqueInventoryItem {
   readonly storageItemId: Identifier<"StorageItem">;
@@ -33,6 +59,13 @@ export interface CanonicalOpaqueInventoryPage {
   readonly snapshotCursor: number;
   readonly nextPosition: Identifier<"StorageItem"> | null;
   readonly items: readonly CanonicalOpaqueInventoryItem[];
+}
+
+export interface CanonicalOpaqueAdmission {
+  readonly storageItemId: Identifier<"StorageItem">;
+  readonly byteLength: number;
+  readonly admission: "stored" | "already_present";
+  readonly hintCursor: number;
 }
 
 export class CanonicalHostedReplicaHttpError extends Error {
@@ -252,6 +285,87 @@ function parseInventoryPage(value: unknown, requestedLimit: number): CanonicalOp
   };
 }
 
+function parseReplicaSummary(value: unknown): CanonicalHostedReplicaSummary {
+  const summary = exactObject(
+    value,
+    ["replica_handle", "locator_salt", "capabilities", "quota_bytes", "stored_bytes"],
+    "Hosted Replica summary",
+  );
+  if (
+    !Array.isArray(summary.capabilities) ||
+    summary.capabilities.length < 1 ||
+    summary.capabilities.length > REPLICA_CAPABILITIES.size ||
+    new Set(summary.capabilities).size !== summary.capabilities.length ||
+    summary.capabilities.some(
+      (capability) => typeof capability !== "string" || !REPLICA_CAPABILITIES.has(capability),
+    )
+  ) {
+    throw new TypeError("Hosted Replica capabilities are invalid");
+  }
+  const quotaBytes =
+    summary.quota_bytes === null
+      ? null
+      : safeInteger(summary.quota_bytes, "Hosted Replica quota bytes", 1, Number.MAX_SAFE_INTEGER);
+  const storedBytes = safeInteger(
+    summary.stored_bytes,
+    "Hosted Replica stored bytes",
+    0,
+    Number.MAX_SAFE_INTEGER,
+  );
+  if (quotaBytes !== null && storedBytes > quotaBytes) {
+    throw new TypeError("Hosted Replica stored bytes exceed its advertised quota");
+  }
+  return {
+    replicaHandle: uuid(String(summary.replica_handle), "Hosted Replica handle"),
+    locatorSalt: base64Url32(summary.locator_salt, "Hosted Replica locator salt"),
+    capabilities: summary.capabilities as CanonicalReplicaCapability[],
+    quotaBytes,
+    storedBytes,
+  };
+}
+
+function parseReplicaList(value: unknown): readonly CanonicalHostedReplicaSummary[] {
+  const list = exactObject(value, ["replicas"], "Hosted Replica list");
+  if (!Array.isArray(list.replicas)) {
+    throw new TypeError("Hosted Replica list is invalid");
+  }
+  const replicas = list.replicas.map(parseReplicaSummary);
+  if (new Set(replicas.map(({ replicaHandle }) => replicaHandle)).size !== replicas.length) {
+    throw new TypeError("Hosted Replica list contains duplicate handles");
+  }
+  return replicas;
+}
+
+function parseAdmission(value: unknown): CanonicalOpaqueAdmission {
+  const admission = exactObject(
+    value,
+    ["storage_item_id", "byte_length", "admission", "hint_cursor"],
+    "Opaque item admission",
+  );
+  if (admission.admission !== "stored" && admission.admission !== "already_present") {
+    throw new TypeError("Opaque item admission outcome is invalid");
+  }
+  return {
+    storageItemId: identifier(
+      "StorageItem",
+      base64Url32(admission.storage_item_id, "Opaque item admission Storage Item ID"),
+    ),
+    byteLength: safeInteger(
+      admission.byte_length,
+      "Opaque item admission byte length",
+      1,
+      Number.MAX_SAFE_INTEGER,
+    ),
+    admission: admission.admission,
+    hintCursor: safeInteger(
+      admission.hint_cursor,
+      "Opaque item admission hint cursor",
+      0,
+      Number.MAX_SAFE_INTEGER,
+    ),
+  };
+}
+
 export interface CanonicalHostedReplicaSession {
   readonly username: string;
   readonly sessionId: string;
@@ -367,6 +481,70 @@ export class CanonicalHostedReplicaHttp {
     }
   }
 
+  async createReplica(): Promise<CanonicalHostedReplicaSummary> {
+    const response = await this.request(this.path("api/replicas"), {
+      method: "POST",
+      accept: "application/json",
+      json: {},
+    });
+    if (!response.ok) return hostFailure(response);
+    protocolHeader(response);
+    if (response.status !== 201) {
+      throw new TypeError("Replica Host Hosted Replica creation did not return Created");
+    }
+    return parseReplicaSummary(await decodeJson(response));
+  }
+
+  async listReplicas(): Promise<readonly CanonicalHostedReplicaSummary[]> {
+    const response = await this.request(this.path("api/replicas"), {
+      method: "GET",
+      accept: "application/json",
+    });
+    if (!response.ok) return hostFailure(response);
+    protocolHeader(response);
+    if (response.status !== 200) {
+      throw new TypeError("Replica Host Hosted Replica list did not return OK");
+    }
+    return parseReplicaList(await decodeJson(response));
+  }
+
+  async admitCompact(input: {
+    readonly replicaHandle: string;
+    readonly locator: Uint8Array;
+    readonly bytes: Uint8Array;
+  }): Promise<CanonicalOpaqueAdmission> {
+    uuid(input.replicaHandle, "Hosted Replica handle");
+    if (input.locator.byteLength !== 32) {
+      throw new TypeError("Opaque item locator must contain exactly 32 bytes");
+    }
+    const envelope = decodeOpaqueEnvelope(input.bytes);
+    if (envelope.storageClass !== COMPACT_STORAGE_CLASS) {
+      throw new TypeError("Compact item admission requires a Compact opaque envelope");
+    }
+    const response = await this.request(
+      this.path(`api/replicas/${input.replicaHandle}/items/${base64Url(envelope.storageItemId)}`),
+      {
+        method: "PUT",
+        accept: "application/json",
+        bytes: envelope.bytes,
+        headers: { "Awsm-Opaque-Locator": base64Url(input.locator) },
+      },
+    );
+    if (!response.ok) return hostFailure(response);
+    protocolHeader(response);
+    if (response.status !== 200 && response.status !== 201) {
+      throw new TypeError("Replica Host opaque item admission did not return an accepted status");
+    }
+    const admission = parseAdmission(await decodeJson(response));
+    if (
+      admission.byteLength !== envelope.bytes.byteLength ||
+      !bytesEqual(admission.storageItemId, envelope.storageItemId)
+    ) {
+      throw new TypeError("Replica Host opaque item admission does not match the submitted item");
+    }
+    return admission;
+  }
+
   async inventory(input: {
     readonly replicaHandle: string;
     readonly snapshotCursor?: number;
@@ -394,7 +572,7 @@ export class CanonicalHostedReplicaHttp {
       );
     }
     if (input.position !== undefined) url.searchParams.set("position", base64Url(input.position));
-    const response = await this.request(url, "application/json");
+    const response = await this.request(url, { method: "GET", accept: "application/json" });
     if (!response.ok) return hostFailure(response);
     protocolHeader(response);
     return parseInventoryPage(await decodeJson(response), limit);
@@ -414,7 +592,7 @@ export class CanonicalHostedReplicaHttp {
     );
     const response = await this.request(
       this.path(`api/replicas/${input.replicaHandle}/items/${base64Url(input.storageItemId)}`),
-      "application/octet-stream",
+      { method: "GET", accept: "application/octet-stream" },
     );
     if (!response.ok) return hostFailure(response);
     protocolHeader(response);
@@ -433,20 +611,36 @@ export class CanonicalHostedReplicaHttp {
     return new URL(path, this.endpoint);
   }
 
-  private async request(url: URL, accept: string): Promise<Response> {
+  private async request(
+    url: URL,
+    input:
+      | { readonly method: "GET"; readonly accept: string }
+      | { readonly method: "POST"; readonly accept: string; readonly json: Record<string, never> }
+      | {
+          readonly method: "PUT";
+          readonly accept: string;
+          readonly bytes: Uint8Array;
+          readonly headers: Readonly<Record<string, string>>;
+        },
+  ): Promise<Response> {
     try {
       return await (this.configuration.fetcher ?? fetch)(url, {
-        method: "GET",
+        method: input.method,
         redirect: "error",
         credentials: "omit",
         cache: "no-store",
         referrerPolicy: "no-referrer",
         headers: {
-          Accept: accept,
+          Accept: input.accept,
           Authorization: `Bearer ${this.configuration.bearerToken}`,
+          ...(input.method === "POST" ? { "Content-Type": "application/json" } : {}),
+          ...(input.method === "PUT" ? { "Content-Type": "application/octet-stream" } : {}),
+          ...(input.method === "PUT" ? input.headers : {}),
           "Awsm-Protocol-Version": "1",
           "Awsm-Request-ID": crypto.randomUUID(),
         },
+        ...(input.method === "POST" ? { body: JSON.stringify(input.json) } : {}),
+        ...(input.method === "PUT" ? { body: Uint8Array.from(input.bytes).buffer } : {}),
       });
     } catch (cause) {
       throw Object.assign(new Error("Replica Host transport is unavailable", { cause }), {

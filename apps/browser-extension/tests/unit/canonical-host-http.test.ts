@@ -6,6 +6,7 @@ import {
   CanonicalHostedReplicaHttpError,
   CanonicalHostedReplicaSessionHttp,
 } from "../../src/runtime/synchronization/canonical-host-http";
+import { COMPACT_STORAGE_CLASS, encodeOpaqueEnvelope } from "../../src/storage/opaque-envelope";
 
 const REPLICA_HANDLE = "019fa62e-a653-7f63-b2bf-94e7ed5e46ca";
 
@@ -28,6 +29,140 @@ function response(body: unknown, init: ResponseInit = {}): Response {
 }
 
 describe("canonical Hosted Replica HTTP transport", () => {
+  it("creates and lists only strict Host-local Hosted Replica summaries", async () => {
+    const locatorSalt = new Uint8Array(32).fill(7);
+    const createdHandle = "019fa62e-a653-7f63-b2bf-94e7ed5e46cc";
+    const listedHandle = "019fa62e-a653-7f63-b2bf-94e7ed5e46cd";
+    const requests: Request[] = [];
+    const transport = new CanonicalHostedReplicaHttp({
+      endpoint: "https://sync.example.test/",
+      bearerToken: "opaque-bearer-token",
+      fetcher: async (input, init) => {
+        const request = new Request(input, init);
+        requests.push(request);
+        const summary = (replicaHandle: string) => ({
+          replica_handle: replicaHandle,
+          locator_salt: base64Url(locatorSalt),
+          capabilities: [
+            "awsm.replica.inventory.read",
+            "awsm.replica.item.read",
+            "awsm.replica.item.write",
+            "awsm.replica.manage",
+          ],
+          quota_bytes: null,
+          stored_bytes: 0,
+        });
+        return request.method === "POST"
+          ? response(summary(createdHandle), { status: 201 })
+          : response({ replicas: [summary(createdHandle), summary(listedHandle)] });
+      },
+    });
+
+    await expect(transport.createReplica()).resolves.toEqual({
+      replicaHandle: createdHandle,
+      locatorSalt,
+      capabilities: [
+        "awsm.replica.inventory.read",
+        "awsm.replica.item.read",
+        "awsm.replica.item.write",
+        "awsm.replica.manage",
+      ],
+      quotaBytes: null,
+      storedBytes: 0,
+    });
+    await expect(transport.listReplicas()).resolves.toEqual([
+      expect.objectContaining({ replicaHandle: createdHandle, locatorSalt }),
+      expect.objectContaining({ replicaHandle: listedHandle, locatorSalt }),
+    ]);
+    expect(requests.map((request) => [request.method, request.url])).toEqual([
+      ["POST", "https://sync.example.test/api/replicas"],
+      ["GET", "https://sync.example.test/api/replicas"],
+    ]);
+    expect(requests[0]?.headers.get("Authorization")).toBe("Bearer opaque-bearer-token");
+    await expect(requests[0]?.json()).resolves.toEqual({});
+  });
+
+  it("admits one locally verified compact envelope without sending protected identity", async () => {
+    const envelope = encodeOpaqueEnvelope({
+      storageClass: COMPACT_STORAGE_CLASS,
+      protectionParameters: new Uint8Array(64).fill(4),
+      payload: new Uint8Array(16).fill(5),
+    });
+    const locator = new Uint8Array(32).fill(6);
+    let request: Request | undefined;
+    const transport = new CanonicalHostedReplicaHttp({
+      endpoint: "https://sync.example.test/",
+      bearerToken: "opaque-bearer-token",
+      fetcher: async (input, init) => {
+        request = new Request(input, init);
+        return response(
+          {
+            storage_item_id: base64Url(envelope.storageItemId),
+            byte_length: envelope.bytes.byteLength,
+            admission: "stored",
+            hint_cursor: 3,
+          },
+          { status: 201 },
+        );
+      },
+    });
+
+    await expect(
+      transport.admitCompact({
+        replicaHandle: REPLICA_HANDLE,
+        locator,
+        bytes: envelope.bytes,
+      }),
+    ).resolves.toEqual({
+      storageItemId: envelope.storageItemId,
+      byteLength: envelope.bytes.byteLength,
+      admission: "stored",
+      hintCursor: 3,
+    });
+    expect(request?.method).toBe("PUT");
+    expect(request?.url).toBe(
+      `https://sync.example.test/api/replicas/${REPLICA_HANDLE}/items/${base64Url(envelope.storageItemId)}`,
+    );
+    expect(request?.headers.get("Awsm-Opaque-Locator")).toBe(base64Url(locator));
+    expect(request?.headers.get("Content-Type")).toBe("application/octet-stream");
+    await expect(request?.bytes()).resolves.toEqual(envelope.bytes);
+    expect(request?.url).not.toContain("vault");
+  });
+
+  it("rejects an opaque admission receipt that does not bind the submitted outer item", async () => {
+    const envelope = encodeOpaqueEnvelope({
+      storageClass: COMPACT_STORAGE_CLASS,
+      protectionParameters: new Uint8Array(64).fill(8),
+      payload: new Uint8Array(16).fill(9),
+    });
+    let requests = 0;
+    const transport = new CanonicalHostedReplicaHttp({
+      endpoint: "https://sync.example.test/",
+      bearerToken: "opaque-bearer-token",
+      fetcher: async () => {
+        requests += 1;
+        return response(
+          {
+            storage_item_id: base64Url(new Uint8Array(32).fill(10)),
+            byte_length: envelope.bytes.byteLength,
+            admission: "stored",
+            hint_cursor: 3,
+          },
+          { status: 201 },
+        );
+      },
+    });
+
+    await expect(
+      transport.admitCompact({
+        replicaHandle: REPLICA_HANDLE,
+        locator: new Uint8Array(32).fill(11),
+        bytes: envelope.bytes,
+      }),
+    ).rejects.toThrow(/does not match the submitted item/u);
+    expect(requests).toBe(1);
+  });
+
   it("exchanges transient username/password credentials for one strict Host session", async () => {
     let request: Request | undefined;
     const transport = new CanonicalHostedReplicaSessionHttp({
