@@ -127,7 +127,7 @@ test("renders trust, Account, validation, and design-reference surfaces", async 
   });
   await page.setViewportSize({ width: 1280, height: 900 });
   for (const [path, heading, screenshot] of [
-    ["/privacy", "What stays local. What a server can see.", "privacy.png"],
+    ["/privacy", "What stays on your device. What a server can see.", "privacy.png"],
     ["/security", "The server coordinates. The client holds the keys.", "security.png"],
     ["/glossary", "The language of your archive.", "glossary.png"],
     ["/session/new", "Sign in", "sign-in.png"],
@@ -260,7 +260,7 @@ test("renders trust, Account, validation, and design-reference surfaces", async 
   await page.getByRole("link", { name: "Privacy" }).first().click();
   await expect(
     page.getByRole("heading", {
-      name: "What stays local. What a server can see.",
+      name: "What stays on your device. What a server can see.",
     }),
   ).toBeVisible();
   await expect(page.getByRole("link", { name: "Account for reader_test" })).toHaveCount(2);
