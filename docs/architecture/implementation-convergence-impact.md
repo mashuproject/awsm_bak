@@ -152,10 +152,14 @@ exact authenticated Recovery Envelope set, enrolls a fresh same-member Client in
 mutation, protects the recovered local keyring, and immediately supports confirmation-gated
 all-head Recovery replacement. Unit crypto/replay proof and a real Chromium IndexedDB restart prove
 the retired phrase, one effective replacement head, fresh local Client authority, and subsequent
-authorship. The first unscoped Host-inventory primitive now scans bounded opaque Compact items and
-retains only phrase-openable Recovery Envelope candidates; it neither trusts those candidates nor
-activates a Vault. Continuity/closure proof and fresh-Client activation, withholding/freshness proof
-across Remotes, multi-Client conflict journeys, and full multi-member management remain target work.
+authorship. The unscoped Host-inventory primitive now scans bounded opaque Compact items and retains
+only phrase-openable Recovery Envelope candidates. Its initial in-memory closure verifier then
+re-reads one source Host snapshot, checks outer metadata and locators, derives phrase-owned Epochs,
+requires the exact initial Baseline/Genesis/authority closure and every committed Envelope, and
+matches the phrase keys to an effective Recovery Credential before returning anything. It retains no
+local Replica state and does not activate a Vault. Multi-Generation/Vacuum selection, Streamable
+Artifact closure, fresh-Client activation, withholding/freshness proof across Remotes, multi-Client
+conflict journeys, and full multi-member management remain target work.
 
 The shipped background, popup, and Library now use only the canonical application boundary. They
 support local Vault creation and selection, Recovery Phrase confirmation and selected-replica

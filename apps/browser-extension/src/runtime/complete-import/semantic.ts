@@ -79,6 +79,13 @@ export interface ValidatedCompleteExportSemantics {
     readonly clientCredentialId: Identifier<"ClientCredential">;
     readonly memberId: Identifier<"Member">;
   }[];
+  readonly effectiveRecoveryCredentials: readonly {
+    readonly recoveryCredentialId: Identifier<"RecoveryCredential">;
+    readonly memberId: Identifier<"Member">;
+    readonly revision: number;
+    readonly signingPublicKey: Uint8Array;
+    readonly wrappingPublicKey: Uint8Array;
+  }[];
   readonly keyEnvelopeSlots: readonly CanonicalAuthorityKeyEnvelopeSlot[];
 }
 
@@ -185,6 +192,13 @@ async function validateSelectedEventAuthority(input: {
   readonly activeClientCredentials: readonly {
     readonly clientCredentialId: Identifier<"ClientCredential">;
     readonly memberId: Identifier<"Member">;
+  }[];
+  readonly effectiveRecoveryCredentials: readonly {
+    readonly recoveryCredentialId: Identifier<"RecoveryCredential">;
+    readonly memberId: Identifier<"Member">;
+    readonly revision: number;
+    readonly signingPublicKey: Uint8Array;
+    readonly wrappingPublicKey: Uint8Array;
   }[];
   readonly keyEnvelopeSlots: readonly CanonicalAuthorityKeyEnvelopeSlot[];
 }> {
@@ -382,6 +396,15 @@ async function validateSelectedEventAuthority(input: {
     activeClientCredentials: [...authority.clientCredentials.values()]
       .filter(({ active }) => active)
       .map(({ clientCredentialId, memberId }) => ({ clientCredentialId, memberId })),
+    effectiveRecoveryCredentials: authority.recoveryCredentials
+      .filter(({ effective }) => effective)
+      .map(({ recoveryCredentialId, memberId, revision, signingPublicKey, wrappingPublicKey }) => ({
+        recoveryCredentialId,
+        memberId,
+        revision,
+        signingPublicKey: Uint8Array.from(signingPublicKey),
+        wrappingPublicKey: Uint8Array.from(wrappingPublicKey),
+      })),
     keyEnvelopeSlots: authority.keyEnvelopeSlots,
   };
 }
@@ -586,6 +609,7 @@ export async function validateCompleteExportSemantics(input: {
       vaultLabel: baselineVaultLabel(baseline),
       keyEpochs: authority.keyEpochs,
       activeClientCredentials: authority.activeClientCredentials,
+      effectiveRecoveryCredentials: authority.effectiveRecoveryCredentials,
       keyEnvelopeSlots: authority.keyEnvelopeSlots,
     };
   } catch (error) {
