@@ -180,8 +180,12 @@ are never test evidence by themselves. Convergence work begins with failing targ
 black-box scenarios, removes superseded fixtures and compatibility expectations, and updates public
 claims only after real proof. The current local opaque-Host proofs cover session rotation, bounded
 Grant isolation and revocation, verified compact-envelope admission, cross-process opaque reads,
-and process stop/restart continuity. They are repository evidence, not evidence of a named
-deployment or complete end-to-end Client synchronization.
+and process stop/restart continuity. The packaged Chromium Hosted-recovery proof additionally
+creates one disposable Host Account and Vault, explicitly materializes the authenticated Compact
+closure, and recovers it through the real HTTPS Host adapter into a fresh browser profile. It proves
+the recovered Client can immediately Capture and that recovery did not configure a Remote. The
+loopback TLS terminator is test-only. These are repository evidence, not evidence of a named
+deployment, Firefox behavior, or complete end-to-end Client synchronization.
 
 # Invariants
 

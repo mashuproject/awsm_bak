@@ -157,10 +157,9 @@ only phrase-openable Recovery Envelope candidates. Its in-memory closure verifie
 source Host snapshot, checks outer metadata and locators, derives every phrase-owned Epoch, assigns
 every reachable Record, Object, Feature Manifest, and Key Envelope to its authenticated Epoch,
 selects the current Baseline from its signed Vacuum chain, and verifies every reachable Streamable
-Artifact frame before matching the phrase keys to an effective Recovery Credential. It retains no
-local Replica state and does not activate a Vault. Fresh-Client activation, withholding/freshness
-proof across Remotes, multi-Client conflict journeys, and full multi-member management remain target
-work.
+Artifact frame before matching the phrase keys to an effective Recovery Credential. The verifier
+retains no local Replica state and does not itself activate a Vault. Withholding/freshness proof
+across Remotes, multi-Client conflict journeys, and full multi-member management remain target work.
 
 The Complete Import substrate atomically activates Hosted recovery after revalidating an exact
 complete closure: it prepares the fresh Client enrollment and commits the authenticated closure,
@@ -174,6 +173,12 @@ username, password, and Recovery Phrase, requests only that Host permission, and
 password and phrase when the attempt ends. The UI states that recovery creates a fresh local Client
 Credential and that the Host is not saved as a Remote. Binding a recovered Replica to an existing
 Host channel remains a separate future operation rather than an implicit side effect of Recovery.
+One local packaged-Chromium Host proof creates a disposable Account and Vault, materializes its
+Compact closure to the real Rails opaque-storage API, then recovers that closure through the real
+HTTPS Host adapter in a separate fresh browser profile. It verifies immediate Capture under the
+fresh Client Credential and verifies that the recovered profile lists no configured Remote. The
+loopback TLS terminator is test-only; this is repository evidence for that narrow Host path, not
+evidence about a deployed Host or multi-Remote convergence.
 
 The shipped background, popup, and Library now use only the canonical application boundary. They
 support local Vault creation and selection, first-use Hosted recovery, Recovery Phrase confirmation
@@ -314,18 +319,20 @@ evidence.
 The packaged Chrome design and ceremony lanes likewise cover only current visible behavior. The
 design lane renders local-Vault creation, first-use Hosted recovery, phrase confirmation, ready,
 Vault settings, and the empty Library at wide and narrow sizes, alongside the Account dashboard and
-public surfaces. The Chrome E2E entry point runs the canonical packaged ceremony: local creation,
-first-use Hosted recovery form, Recovery Phrase confirmation, capture, Library projection,
-settings, phrase replacement, Fork, Vacuum, and Closure. The superseded
+public surfaces. The Chrome E2E entry point runs the canonical packaged ceremony plus a separate
+disposable-Host recovery journey: local creation, explicit Hosted Compact materialization, recovery
+in a fresh browser profile, immediate Capture with the fresh Client Credential, and absence of an
+implicitly saved Remote. It uses the real local Rails opaque-storage API through a test-only
+loopback HTTPS terminator. The ceremony also covers Recovery Phrase confirmation, capture, Library
+projection, settings, phrase replacement, Fork, Vacuum, and Closure. The superseded
 Device/Generation/server-switch E2E files and their Search, Storage Relief, semantic Host, and
 synchronization-setup snapshots are removed; they are not retained as skipped release evidence.
 
 Firefox Stable and ESR execute the same packaged local-Vault ceremony through their real Firefox
 hosts: Recovery Phrase confirmation, page capture, Library rendering, and persisted reopening after
 a background restart. The cross-browser command composes the current Chrome and Firefox ceremonies.
-It proves each packaged Host's current local behavior; it must not be represented as Client-to-Client
-or Client-to-Host synchronization proof until the opaque Remote path is shipped and independently
-proven.
+It proves each packaged Host's current local behavior. The separate Chromium Hosted-recovery proof
+is not Firefox evidence, Client-to-Client proof, multi-Remote proof, or deployed-Host evidence.
 
 Start with the target golden, reducer, authority, recovery, Host, storage, Vacuum, Fork, and
 divergence matrix in `19-testing-strategy.md`. Preserve page-snapshot, Capture, browser permission,
