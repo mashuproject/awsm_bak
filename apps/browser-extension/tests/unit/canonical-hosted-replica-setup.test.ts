@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { identifier } from "../../src/domain/canonical/identifiers";
 import { CanonicalHostedReplicaSetupService } from "../../src/runtime/synchronization/canonical-hosted-replica-setup";
@@ -99,5 +99,30 @@ describe("canonical Hosted Replica setup", () => {
       }),
     ).rejects.toThrow(/item.write/u);
     expect(configured).toEqual([]);
+  });
+
+  it("rejects invalid local Remote configuration before creating a Host Replica", async () => {
+    const signIn = vi.fn();
+    const createReplica = vi.fn();
+    const service = new CanonicalHostedReplicaSetupService({
+      remotes: {
+        configureHostedSession: vi.fn(),
+      },
+      createSessionHttp: () => ({ signIn }),
+      createReplicaHttp: () => ({ createReplica }),
+      createRemoteId: () => REMOTE_ID,
+    } as never);
+
+    await expect(
+      service.create({
+        vaultId: identifier("Vault", new Uint8Array(32).fill(7)),
+        endpoint: "http://host.example/",
+        name: "Hosted copy",
+        username: "archive_reader",
+        password: "correct horse battery staple",
+      }),
+    ).rejects.toThrow(/HTTPS/u);
+    expect(signIn).not.toHaveBeenCalled();
+    expect(createReplica).not.toHaveBeenCalled();
   });
 });

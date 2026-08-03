@@ -93,8 +93,10 @@ refresh are Host-local channel policy, not Vault time, membership, or authority.
 The current reference-Host setup flow signs in with those transient credentials, creates one
 Host-local Hosted Replica, requires inventory-read, item-read, and item-write capabilities, then
 atomically records the local Remote configuration and rotating session pair. It sends no Vault or
-protected logical identity during setup. A missing required capability leaves no local Remote
-configuration. User-facing Remote management is an independent Client workflow.
+protected logical identity during setup. It validates the complete local Remote configuration before
+contacting the Host, so malformed local input cannot create an unused Hosted Replica. A missing
+required capability leaves no local Remote configuration. User-facing Remote management is an
+independent Client workflow.
 
 Synchronization is initiated as a pull by the receiving Client. A Host may send an untrusted Wake
 Hint that causes a Client to pull, but does not push authoritative Vault state. Pull may occur on

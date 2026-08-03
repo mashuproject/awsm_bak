@@ -233,8 +233,9 @@ username/password for the reference Host's installation-wrapped rotating session
 conditionally replace it after local access expiry; it does not retain the password or derive Vault
 authority from that session. A Runtime setup service now signs in, creates one Host-local Hosted
 Replica, requires the current pull/materialization capabilities, and atomically records its local
-Remote configuration plus rotated session without retaining the password. Remote-management UI
-remains unfinished.
+Remote configuration plus rotated session without retaining the password. It validates the local
+Remote configuration before Host creation, preventing malformed input from leaving a Host-side
+Replica. Remote-management UI remains unfinished.
 For a non-adopted current Generation, it also validates one complete same-Generation Content DAG
 branch and its newly required Vault Object closure, then atomically promotes only those newly
 accepted Compact items with the exact pull Job and Replica state. A repository-tested Runtime

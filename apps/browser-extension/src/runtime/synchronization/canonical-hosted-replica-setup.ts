@@ -6,7 +6,7 @@ import {
   type CanonicalHostedReplicaSummary,
 } from "./canonical-host-http";
 import type { CanonicalReplicaRemoteService } from "./canonical-remote-service";
-import type { CanonicalReplicaRemote } from "./canonical-state";
+import { type CanonicalReplicaRemote, encodeCanonicalReplicaRemote } from "./canonical-state";
 
 const REQUIRED_CAPABILITIES = [
   "awsm.replica.inventory.read",
@@ -49,6 +49,8 @@ export class CanonicalHostedReplicaSetupService {
     readonly password: string;
     readonly inventoryPageSize?: number;
   }): Promise<CanonicalReplicaRemote> {
+    const remoteId = this.dependencies.createRemoteId?.() ?? crypto.randomUUID();
+    this.validateLocalConfiguration(input, remoteId);
     const session = await (
       this.dependencies.createSessionHttp?.({ endpoint: input.endpoint }) ??
       new CanonicalHostedReplicaSessionHttp({ endpoint: input.endpoint })
@@ -63,7 +65,7 @@ export class CanonicalHostedReplicaSetupService {
     ).createReplica();
     requireUsableReplica(summary);
     const remote: CanonicalReplicaRemote = {
-      remoteId: this.dependencies.createRemoteId?.() ?? crypto.randomUUID(),
+      remoteId,
       vaultId: input.vaultId,
       name: input.name,
       endpoint: input.endpoint,
@@ -74,6 +76,27 @@ export class CanonicalHostedReplicaSetupService {
     };
     await this.dependencies.remotes.configureHostedSession({ remote, session });
     return remote;
+  }
+
+  private validateLocalConfiguration(
+    input: {
+      readonly vaultId: Identifier<"Vault">;
+      readonly endpoint: string;
+      readonly name: string;
+      readonly inventoryPageSize?: number;
+    },
+    remoteId: string,
+  ): void {
+    encodeCanonicalReplicaRemote({
+      remoteId,
+      vaultId: input.vaultId,
+      name: input.name,
+      endpoint: input.endpoint,
+      hostedReplicaHandle: "00000000-0000-4000-8000-000000000000",
+      locatorSalt: new Uint8Array(32),
+      enabled: true,
+      inventoryPageSize: input.inventoryPageSize ?? 100,
+    });
   }
 
   private sameUsername(session: CanonicalHostedReplicaSession, expected: string): void {
