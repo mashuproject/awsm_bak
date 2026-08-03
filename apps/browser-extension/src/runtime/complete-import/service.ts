@@ -32,6 +32,7 @@ import {
   type CanonicalReplicaState,
   canonicalLocalStorageContext,
   encodeCanonicalReplicaState,
+  encodeClientSecretState,
   encodeEpochSecretState,
   encodeInstallationSelection,
   encodeLogicalResolution,
@@ -39,6 +40,10 @@ import {
   type LogicalResolution,
   prepareWrappedLocalStateItem,
 } from "../vault/canonical-local-state";
+import {
+  prepareCanonicalMemberRecoveryEnrollment,
+  wipePreparedCanonicalMemberRecoveryEnrollment,
+} from "../vault/canonical-member-recovery";
 import {
   CanonicalVaultService,
   type PersistedOpenedCanonicalVault,
@@ -57,6 +62,12 @@ import {
 export interface ActivatedCompleteImport {
   readonly vaultId: Identifier<"Vault">;
   readonly generationId: Identifier<"Generation">;
+}
+
+export interface RecoveredCompleteImport extends ActivatedCompleteImport {
+  readonly memberId: Identifier<"Member">;
+  readonly clientCredentialId: Identifier<"ClientCredential">;
+  readonly eventRecordId: Identifier<"VaultRecord">;
 }
 
 export interface ReconciledCompleteImport {
@@ -521,10 +532,52 @@ export class CanonicalCompleteImportService {
     readonly source: CompleteImportPreparedSource;
   }): Promise<ActivatedCompleteImport> {
     const validated = await validateCompleteExportSemantics(input);
+    return this.activateValidatedUnknown({ validated, source: input.source });
+  }
+
+  /**
+   * Activates an unknown complete closure and its phrase-authorized fresh Client in one initial
+   * local commit. The supplied source is re-read and re-verified; a validated closure is never
+   * treated as persisted local state before the enrollment Event is prepared.
+   */
+  async activateUnknownWithMemberRecovery(input: {
+    readonly manifest: CompleteExportManifest;
+    readonly keyInventory: CompleteExportKeyInventory;
+    readonly source: CompleteImportPreparedSource;
+    readonly recoveryPhrase: string;
+    readonly assertedAt: number | bigint;
+  }): Promise<RecoveredCompleteImport> {
+    const validated = await validateCompleteExportSemantics(input);
+    const result = await this.activateValidatedUnknown({
+      validated,
+      source: input.source,
+      recovery: {
+        recoveryPhrase: input.recoveryPhrase,
+        assertedAt: input.assertedAt,
+      },
+    });
+    if (!("memberId" in result)) {
+      throw new TypeError("Complete Import Recovery activation did not enroll a Client Credential");
+    }
+    return result;
+  }
+
+  private async activateValidatedUnknown(input: {
+    readonly validated: Awaited<ReturnType<typeof validateCompleteExportSemantics>>;
+    readonly source: CompleteImportPreparedSource;
+    readonly recovery?: {
+      readonly recoveryPhrase: string;
+      readonly assertedAt: number | bigint;
+    };
+  }): Promise<ActivatedCompleteImport | RecoveredCompleteImport> {
+    const { validated } = input;
     const vaultId = validated.manifest.vaultId;
     const generationId = validated.manifest.generationId;
     const vaultKey = identifierStorageKey(vaultId);
     const preparedArtifacts: PreparedOpaqueArtifactRepresentation[] = [];
+    let preparedRecovery:
+      | Awaited<ReturnType<typeof prepareCanonicalMemberRecoveryEnrollment>>
+      | undefined;
     let activated = false;
     try {
       for (const item of validated.manifest.opaqueItemInventory) {
@@ -539,12 +592,14 @@ export class CanonicalCompleteImportService {
         );
       }
       const wrappingKey = await this.storage.getOrCreateInstallationWrappingKey(this.realm);
-      const immutableItems = await prepareCompactItems({
-        source: input.source,
-        inventory: validated.manifest.opaqueItemInventory,
-        vaultKey,
-      });
-      const resolutions: LogicalResolution[] = validated.manifest.opaqueItemInventory.map(
+      const immutableItems = [
+        ...(await prepareCompactItems({
+          source: input.source,
+          inventory: validated.manifest.opaqueItemInventory,
+          vaultKey,
+        })),
+      ];
+      const baseResolutions: LogicalResolution[] = validated.manifest.opaqueItemInventory.map(
         (item) => ({
           vaultId,
           kind: item.namespace,
@@ -554,14 +609,80 @@ export class CanonicalCompleteImportService {
           availability: 1,
         }),
       );
+      if (input.recovery !== undefined) {
+        preparedRecovery = await prepareCanonicalMemberRecoveryEnrollment({
+          replay: {
+            vault: { replicaState: validated.replicaState },
+            authority: validated.authority,
+          },
+          recoveryPhrase: input.recovery.recoveryPhrase,
+          assertedAt: input.recovery.assertedAt,
+          readRecoveryKeyEnvelope: async (requirement) => {
+            const item = validated.manifest.opaqueItemInventory.find(
+              (candidate) =>
+                candidate.namespace === 2 &&
+                bytesEqual(candidate.logicalId, requirement.keyEnvelopeId) &&
+                bytesEqual(candidate.keyEpochId, requirement.keyEpochId),
+            );
+            if (item === undefined) {
+              throw new TypeError("Complete Import Recovery Key Envelope is unavailable");
+            }
+            return readVerifiedIncomingCompact(
+              input.source,
+              item,
+              "Complete Import Recovery Key Envelope",
+            );
+          },
+        });
+        immutableItems.push(
+          {
+            namespace: NAMESPACES.vaultRecord.key,
+            scopeKey: vaultKey,
+            itemKey: identifierStorageKey(preparedRecovery.event.recordId),
+            bytes: preparedRecovery.eventEnvelope.bytes,
+          },
+          ...preparedRecovery.clientKeyEnvelopes.map((envelope) => ({
+            namespace: NAMESPACES.keyEnvelope.key,
+            scopeKey: vaultKey,
+            itemKey: identifierStorageKey(envelope.id),
+            bytes: envelope.envelope.bytes,
+          })),
+        );
+      }
+      const replicaStateValue = preparedRecovery?.nextReplicaState ?? validated.replicaState;
+      const resolutions: LogicalResolution[] = [
+        ...baseResolutions,
+        ...(preparedRecovery === undefined
+          ? []
+          : [
+              {
+                vaultId,
+                kind: 1 as const,
+                logicalId: preparedRecovery.event.recordId,
+                storageItemId: preparedRecovery.eventEnvelope.storageItemId,
+                keyEpochId: replicaStateValue.currentKeyEpochId,
+                availability: 1 as const,
+              },
+              ...preparedRecovery.clientKeyEnvelopes.map(
+                (envelope): LogicalResolution => ({
+                  vaultId,
+                  kind: 2,
+                  logicalId: envelope.id,
+                  storageItemId: envelope.envelope.storageItemId,
+                  keyEpochId: envelope.keyEpochId,
+                  availability: 1,
+                }),
+              ),
+            ]),
+      ];
       const replicaState = await prepareWrappedLocalStateItem({
         namespace: NAMESPACES.replicaState.key,
         scopeKey: vaultKey,
         itemKey: "current",
         wrappingKey,
         domain: "awsm.local.replica-state",
-        context: canonicalLocalStorageContext(vaultId, generationId),
-        bytes: encodeCanonicalReplicaState(validated.replicaState),
+        context: canonicalLocalStorageContext(vaultId, replicaStateValue.generationId),
+        bytes: encodeCanonicalReplicaState(replicaStateValue),
       });
       const replicaSafetyItems = await Promise.all(
         resolutions.map((resolution) =>
@@ -589,32 +710,58 @@ export class CanonicalCompleteImportService {
           vaultId,
           generationId,
           label: validated.vaultLabel,
-          selectedClientCredentialId: null,
+          selectedClientCredentialId: preparedRecovery?.clientSecret.clientCredentialId ?? null,
         }),
       });
       const trustedSecrets: NamespaceBytes[] = [];
-      for (const entry of validated.keyInventory.entries) {
-        const authorityEpoch = validated.keyEpochs.find(({ keyEpochId }) =>
-          bytesEqual(keyEpochId, entry.keyEpochId),
+      const recoveredEpochs =
+        preparedRecovery?.recoveredEpochs ??
+        validated.keyInventory.entries.map((entry) => {
+          const authorityEpoch = validated.keyEpochs.find(({ keyEpochId }) =>
+            bytesEqual(keyEpochId, entry.keyEpochId),
+          );
+          if (authorityEpoch === undefined) {
+            throw new TypeError("Complete Import Epoch is not authenticated by Authority State");
+          }
+          return {
+            vaultId,
+            keyEpochId: entry.keyEpochId,
+            displayNumber: authorityEpoch.displayNumber,
+            key: entry.keyEpochKey,
+          };
+        });
+      if (preparedRecovery !== undefined) {
+        trustedSecrets.push(
+          await prepareWrappedLocalStateItem({
+            namespace: NAMESPACES.clientSecret.key,
+            scopeKey: vaultKey,
+            itemKey: identifierStorageKey(preparedRecovery.clientSecret.clientCredentialId),
+            wrappingKey,
+            domain: "awsm.local.client-secret",
+            context: canonicalLocalStorageContext(
+              vaultId,
+              preparedRecovery.clientSecret.clientCredentialId,
+            ),
+            bytes: encodeClientSecretState(preparedRecovery.clientSecret),
+          }),
         );
-        if (authorityEpoch === undefined) {
-          throw new TypeError("Complete Import Epoch is not authenticated by Authority State");
-        }
+      }
+      for (const epoch of recoveredEpochs) {
         const encoded = encodeEpochSecretState({
           vaultId,
-          keyEpochId: entry.keyEpochId,
-          displayNumber: authorityEpoch.displayNumber,
-          key: entry.keyEpochKey,
+          keyEpochId: epoch.keyEpochId,
+          displayNumber: epoch.displayNumber,
+          key: epoch.key,
         });
         try {
           trustedSecrets.push(
             await prepareWrappedLocalStateItem({
               namespace: NAMESPACES.epochSecret.key,
               scopeKey: vaultKey,
-              itemKey: identifierStorageKey(entry.keyEpochId),
+              itemKey: identifierStorageKey(epoch.keyEpochId),
               wrappingKey,
               domain: "awsm.local.epoch-secret",
-              context: canonicalLocalStorageContext(vaultId, entry.keyEpochId),
+              context: canonicalLocalStorageContext(vaultId, epoch.keyEpochId),
               bytes: encoded,
             }),
           );
@@ -642,9 +789,20 @@ export class CanonicalCompleteImportService {
       for (const prepared of preparedArtifacts) await prepared.promote();
       await this.storage.commitInitialVault(commit);
       activated = true;
-      return { vaultId, generationId };
+      return preparedRecovery === undefined
+        ? { vaultId, generationId }
+        : {
+            vaultId,
+            generationId,
+            memberId: preparedRecovery.clientSecret.memberId,
+            clientCredentialId: preparedRecovery.clientSecret.clientCredentialId,
+            eventRecordId: preparedRecovery.event.recordId,
+          };
     } finally {
       for (const entry of validated.keyInventory.entries) await wipe(entry.keyEpochKey);
+      if (preparedRecovery !== undefined) {
+        await wipePreparedCanonicalMemberRecoveryEnrollment(preparedRecovery);
+      }
       if (!activated) {
         await Promise.all(preparedArtifacts.map((prepared) => prepared.discard())).catch(
           () => undefined,

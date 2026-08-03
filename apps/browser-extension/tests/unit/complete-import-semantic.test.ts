@@ -13,7 +13,7 @@ import type {
   InitialVaultCommit,
 } from "../../src/drivers/indexeddb/canonical-database";
 import { CanonicalStorageError } from "../../src/drivers/indexeddb/canonical-database";
-import { NORMAL_STORAGE_REALM } from "../../src/drivers/indexeddb/canonical-schema";
+import { NAMESPACES, NORMAL_STORAGE_REALM } from "../../src/drivers/indexeddb/canonical-schema";
 import type {
   CanonicalArtifactStore,
   PreparedArtifactRepresentation,
@@ -45,6 +45,7 @@ import { prepareCanonicalVaultCreation } from "../../src/runtime/vault/canonical
 import {
   type CanonicalReplicaState,
   decodeCanonicalReplicaState,
+  decodeClientSecretState,
   decodeEpochSecretState,
   decodeLogicalResolution,
   decodeVaultDirectoryEntry,
@@ -753,6 +754,101 @@ describe("canonical Complete Import semantic validation", () => {
         ) ?? [],
       ),
     ).toHaveLength(4);
+  });
+
+  it("atomically activates an authenticated recovery closure with a fresh Client Credential", async () => {
+    const fixture = await initialVaultPackage();
+    const wrappingKey = await installationWrappingKey();
+    let committed: InitialVaultCommit | undefined;
+    const storage = {
+      getOrCreateInstallationWrappingKey: vi.fn(async () => wrappingKey),
+      commitInitialVault: vi.fn(async (input: InitialVaultCommit) => {
+        committed = input;
+      }),
+    } as unknown as CanonicalIndexedDb;
+
+    const result = await new CanonicalCompleteImportService(
+      storage,
+      NORMAL_STORAGE_REALM,
+      {} as never,
+    ).activateUnknownWithMemberRecovery({
+      ...fixture,
+      recoveryPhrase: fixture.creation.recoveryPhrase,
+      assertedAt: 2,
+    });
+
+    expect(result.vaultId).toEqual(fixture.creation.ids.vaultId);
+    expect(result.memberId).toEqual(fixture.creation.ids.firstMemberId);
+    expect(storage.commitInitialVault).toHaveBeenCalledOnce();
+    if (committed === undefined) throw new Error("missing captured recovery activation commit");
+    expect(committed.immutableItems).toHaveLength(6);
+    expect(committed.replicaSafetyItems).toHaveLength(6);
+    expect(committed.trustedSecrets).toHaveLength(2);
+    const replicaState = decodeCanonicalReplicaState(
+      await openWrappedLocalState({
+        wrappingKey,
+        domain: "awsm.local.replica-state",
+        vaultId: fixture.creation.ids.vaultId,
+        identity: fixture.creation.ids.generationId,
+        wrappedBytes: committed.replicaState.bytes,
+      }),
+    );
+    expect(replicaState).toMatchObject({
+      authoringClientCredentialId: result.clientCredentialId,
+      memberId: fixture.creation.ids.firstMemberId,
+      causalFrontier: [result.eventRecordId],
+      authorityFrontier: [result.eventRecordId],
+    });
+    const directory = decodeVaultDirectoryEntry(
+      await openWrappedLocalState({
+        wrappingKey,
+        domain: "awsm.local.vault-directory",
+        vaultId: fixture.creation.ids.vaultId,
+        identity: fixture.creation.ids.vaultId,
+        wrappedBytes: committed.vaultDirectoryEntry.bytes,
+      }),
+    );
+    expect(directory.selectedClientCredentialId).toEqual(result.clientCredentialId);
+    const clientSecret = committed.trustedSecrets.find(
+      ({ namespace }) => namespace === NAMESPACES.clientSecret.key,
+    );
+    if (clientSecret === undefined) throw new Error("missing captured Client secret");
+    expect(
+      await decodeClientSecretState(
+        await openWrappedLocalState({
+          wrappingKey,
+          domain: "awsm.local.client-secret",
+          vaultId: fixture.creation.ids.vaultId,
+          identity: result.clientCredentialId,
+          wrappedBytes: clientSecret.bytes,
+        }),
+      ),
+    ).toMatchObject({
+      memberId: fixture.creation.ids.firstMemberId,
+      clientCredentialId: result.clientCredentialId,
+    });
+  });
+
+  it("does not activate any local Vault state when the recovery phrase cannot authorize enrollment", async () => {
+    const fixture = await initialVaultPackage();
+    const storage = {
+      getOrCreateInstallationWrappingKey: vi.fn(async () => installationWrappingKey()),
+      commitInitialVault: vi.fn(async () => undefined),
+    } as unknown as CanonicalIndexedDb;
+
+    await expect(
+      new CanonicalCompleteImportService(
+        storage,
+        NORMAL_STORAGE_REALM,
+        {} as never,
+      ).activateUnknownWithMemberRecovery({
+        ...fixture,
+        recoveryPhrase:
+          "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+        assertedAt: 2,
+      }),
+    ).rejects.toThrow("Recovery Phrase");
+    expect(storage.commitInitialVault).not.toHaveBeenCalled();
   });
 
   it("promotes every authenticated Artifact wrapper before activating its resolutions", async () => {

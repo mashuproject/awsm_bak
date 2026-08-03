@@ -162,6 +162,13 @@ local Replica state and does not activate a Vault. Fresh-Client activation, with
 proof across Remotes, multi-Client conflict journeys, and full multi-member management remain target
 work.
 
+The Complete Import substrate now has the separate atomic activation primitive that a future Hosted
+recovery ceremony will use: after revalidating an exact complete closure, it prepares the fresh
+Client enrollment and commits the authenticated closure, enrollment Event, Client Envelopes, and
+installation-wrapped secrets in one initial local transaction. An incorrect phrase reaches no local
+Vault commit. This is repository-only substrate, not yet a Hosted recovery command or user-facing
+flow.
+
 The shipped background, popup, and Library now use only the canonical application boundary. They
 support local Vault creation and selection, Recovery Phrase confirmation and selected-replica
 recovery, page Capture, a current recent-Capture view, Recovery Phrase replacement, Fork, Vacuum,

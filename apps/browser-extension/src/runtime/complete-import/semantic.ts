@@ -46,6 +46,7 @@ import {
   type CanonicalAuthorityFeatureManifest,
   type CanonicalAuthorityKeyEnvelopeSlot,
   CanonicalAuthorityReplay,
+  type CanonicalAuthorityState,
 } from "../projection/canonical-authority-replay";
 import type { CanonicalReplicaState } from "../vault/canonical-local-state";
 import {
@@ -87,6 +88,7 @@ export interface ValidatedCompleteExportSemantics {
     readonly wrappingPublicKey: Uint8Array;
   }[];
   readonly keyEnvelopeSlots: readonly CanonicalAuthorityKeyEnvelopeSlot[];
+  readonly authority: CanonicalAuthorityState;
 }
 
 function key(value: Uint8Array): string {
@@ -201,6 +203,7 @@ async function validateSelectedEventAuthority(input: {
     readonly wrappingPublicKey: Uint8Array;
   }[];
   readonly keyEnvelopeSlots: readonly CanonicalAuthorityKeyEnvelopeSlot[];
+  readonly authority: CanonicalAuthorityState;
 }> {
   const baselineBody = exactMap(
     input.baseline.body,
@@ -406,6 +409,7 @@ async function validateSelectedEventAuthority(input: {
         wrappingPublicKey: Uint8Array.from(wrappingPublicKey),
       })),
     keyEnvelopeSlots: authority.keyEnvelopeSlots,
+    authority,
   };
 }
 
@@ -611,6 +615,7 @@ export async function validateCompleteExportSemantics(input: {
       activeClientCredentials: authority.activeClientCredentials,
       effectiveRecoveryCredentials: authority.effectiveRecoveryCredentials,
       keyEnvelopeSlots: authority.keyEnvelopeSlots,
+      authority: authority.authority,
     };
   } catch (error) {
     for (const entry of keyInventory.entries) await wipe(entry.keyEpochKey);

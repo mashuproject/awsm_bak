@@ -26,7 +26,7 @@ import {
 } from "../../domain/canonical/value";
 import { bytesEqual } from "../../domain/hash";
 import type { OpaqueEnvelope } from "../../storage/opaque-envelope";
-import type { ReplayedCanonicalVault } from "../projection/canonical-replay";
+import type { CanonicalAuthorityState } from "../projection/canonical-authority-replay";
 import type {
   CanonicalReplicaState,
   ClientSecretState,
@@ -57,6 +57,12 @@ export interface PreparedCanonicalMemberRecoveryEnrollment {
   readonly recoveredEpochs: readonly EpochSecretState[];
   readonly clientSecret: ClientSecretState;
   readonly nextReplicaState: CanonicalReplicaState;
+}
+
+/** The authenticated Authority and Replica state needed to propose a fresh Client enrollment. */
+export interface CanonicalMemberRecoveryReplay {
+  readonly vault: Pick<{ readonly replicaState: CanonicalReplicaState }, "replicaState">;
+  readonly authority: CanonicalAuthorityState;
 }
 
 function byteKey(value: Uint8Array): string {
@@ -94,7 +100,7 @@ export async function wipePreparedCanonicalMemberRecoveryEnrollment(
 }
 
 export async function prepareCanonicalMemberRecoveryEnrollment(input: {
-  readonly replay: ReplayedCanonicalVault;
+  readonly replay: CanonicalMemberRecoveryReplay;
   readonly recoveryPhrase: string;
   readonly readRecoveryKeyEnvelope: (
     requirement: CanonicalRecoveryKeyEnvelopeRequirement,
