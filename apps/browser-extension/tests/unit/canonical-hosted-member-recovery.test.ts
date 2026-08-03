@@ -53,10 +53,11 @@ describe("Hosted Member Recovery", () => {
       expect(input.recoveryPhrase).toBe(
         "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
       );
-      const item = await input.source.openOpaque({
-        storageItemId: randomIdentifier("StorageItem"),
+      const stream = await input.source.openOpaque({
+        storageItemId: discovered.storageItemId,
+        byteLength: itemBytes.byteLength,
       });
-      expect(new Uint8Array(await new Response(item).arrayBuffer())).toEqual(itemBytes);
+      expect(new Uint8Array(await new Response(stream).arrayBuffer())).toEqual(itemBytes);
       return recovery;
     });
     const item = vi.fn(async () => new Blob([itemBytes]).stream());
@@ -87,8 +88,8 @@ describe("Hosted Member Recovery", () => {
     expect(authenticate).toHaveBeenCalledTimes(1);
     expect(item).toHaveBeenCalledWith({
       replicaHandle: discovered.replicaHandle,
-      storageItemId: expect.any(Uint8Array),
-      byteLength: undefined,
+      storageItemId: discovered.storageItemId,
+      byteLength: itemBytes.byteLength,
     });
   });
 
