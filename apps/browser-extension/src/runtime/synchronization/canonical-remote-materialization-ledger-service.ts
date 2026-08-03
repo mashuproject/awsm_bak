@@ -20,11 +20,18 @@ import {
 
 const textEncoder = new TextEncoder();
 
-function itemKey(entry: CanonicalRemoteMaterializationLedgerEntry): string {
+function itemKey(
+  entry: Pick<CanonicalRemoteMaterializationLedgerEntry, "logicalNamespace" | "logicalId">,
+): string {
   return `${entry.logicalNamespace}:${identifierStorageKey(entry.logicalId as Identifier<"VaultRecord">)}`;
 }
 
-function identity(entry: CanonicalRemoteMaterializationLedgerEntry): Uint8Array {
+function identity(
+  entry: Pick<
+    CanonicalRemoteMaterializationLedgerEntry,
+    "remoteId" | "logicalNamespace" | "logicalId"
+  >,
+): Uint8Array {
   return transcript("awsm:remote-materialization-ledger:v1", [
     textEncoder.encode(entry.remoteId),
     uint8(entry.logicalNamespace),
@@ -82,6 +89,64 @@ export class CanonicalRemoteMaterializationLedgerService {
       ],
       mutableItems: [ledger],
     });
+  }
+
+  async load(input: {
+    readonly vaultId: CanonicalRemoteMaterializationLedgerEntry["vaultId"];
+    readonly remoteId: string;
+    readonly logicalNamespace: CanonicalRemoteMaterializationLedgerEntry["logicalNamespace"];
+    readonly logicalId: Uint8Array;
+  }): Promise<{
+    readonly entry: CanonicalRemoteMaterializationLedgerEntry;
+    readonly bytes: Uint8Array | null;
+  }> {
+    const wrappingKey = await this.storage.getOrCreateInstallationWrappingKey(this.realm);
+    const key = {
+      namespace: NAMESPACES.remoteMaterializationLedger.key,
+      scopeKey: input.remoteId,
+      itemKey: itemKey(input),
+    };
+    const wrappedBytes = await this.storage.getBytes(this.realm, key);
+    if (wrappedBytes === undefined) {
+      throw new TypeError("Remote materialization ledger is unavailable");
+    }
+    const entry = decodeCanonicalRemoteMaterializationLedgerEntry(
+      await openWrappedLocalState({
+        wrappingKey,
+        domain: "awsm.local.remote-materialization-ledger",
+        vaultId: input.vaultId,
+        identity: identity(input),
+        wrappedBytes,
+      }),
+    );
+    if (
+      !bytesEqual(entry.vaultId, input.vaultId) ||
+      entry.remoteId !== input.remoteId ||
+      entry.logicalNamespace !== input.logicalNamespace ||
+      !bytesEqual(entry.logicalId, input.logicalId)
+    ) {
+      throw new TypeError(
+        "Remote materialization ledger storage identity does not match its state",
+      );
+    }
+    if (entry.state === "Confirmed") return { entry, bytes: null };
+    const preparedBytes = await this.storage.getBytes(this.realm, {
+      namespace: NAMESPACES.preparedOutgoingItem.key,
+      scopeKey: entry.remoteId,
+      itemKey: identifierStorageKey(entry.storageItemId),
+    });
+    if (preparedBytes === undefined) {
+      throw new TypeError("Prepared Remote materialization bytes are unavailable");
+    }
+    const envelope = decodeOpaqueEnvelope(preparedBytes);
+    if (
+      !bytesEqual(envelope.storageItemId, entry.storageItemId) ||
+      envelope.bytes.byteLength !== entry.byteLength ||
+      !bytesEqual(await sha256(envelope.bytes), entry.byteDigest)
+    ) {
+      throw new TypeError("Remote materialization ledger does not match its prepared outer bytes");
+    }
+    return { entry, bytes: envelope.bytes };
   }
 
   async confirm(input: {

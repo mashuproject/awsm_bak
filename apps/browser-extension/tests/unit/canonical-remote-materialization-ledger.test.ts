@@ -177,6 +177,15 @@ describe("canonical Remote materialization ledger", () => {
     await service.prepare({ entry, bytes: envelope.bytes });
 
     await expect(
+      service.load({
+        vaultId: entry.vaultId,
+        remoteId: entry.remoteId,
+        logicalNamespace: entry.logicalNamespace,
+        logicalId: entry.logicalId,
+      }),
+    ).resolves.toEqual({ entry, bytes: envelope.bytes });
+
+    await expect(
       service.confirm({
         entry,
         admission: {
@@ -214,5 +223,13 @@ describe("canonical Remote materialization ledger", () => {
         itemKey: identifierStorageKey(envelope.storageItemId),
       },
     ]);
+    await expect(
+      service.load({
+        vaultId: entry.vaultId,
+        remoteId: entry.remoteId,
+        logicalNamespace: entry.logicalNamespace,
+        logicalId: entry.logicalId,
+      }),
+    ).resolves.toEqual({ entry: { ...entry, state: "Confirmed" }, bytes: null });
   });
 });
