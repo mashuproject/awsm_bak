@@ -32,7 +32,36 @@ for the terms below.
   type or storing a consequence that can be derived.
 - A failure or Conflict fences the narrowest unsafe capability. Unaffected valid work continues.
 
-# 3. Vault identity and access
+# 3. Product concepts
+
+## Client
+
+Trusted software that operates a local Replica. A Client holds protected keys, decrypts and
+validates Vault data, and submits Commands. A Client Credential signs accepted Vault Events. A
+Client may run in a browser, desktop app, mobile app, or headless service. A Client may also act as
+a Replica Host, but those roles remain separate.
+
+## Local-First
+
+A design in which the Client keeps the primary usable data and can complete every safe local
+operation without a network connection or Coordination Server. Synchronization is optional and
+can happen later. A local success is not a claim of remote acknowledgement or global durability.
+
+## Server-Visible Metadata
+
+Operational information that an opaque Replica Host can see, such as Channel identity, request
+timing, byte lengths, quota use, inventory growth, and network metadata. It does not include
+Vault plaintext, keys, or protected semantic identifiers. Zero-Knowledge Synchronization does not
+claim anonymity or resistance to traffic analysis.
+
+## Zero-Knowledge Synchronization
+
+A synchronization boundary in which the trusted Client encrypts and validates Vault data, while a
+Replica Host stores or transfers opaque bytes without the keys or plaintext needed to read them.
+The Host can still see Server-Visible Metadata. Sending plaintext to a remote processing provider
+is a separate disclosure and is not zero knowledge.
+
+# 4. Vault identity and access
 
 ## Vault
 
@@ -303,7 +332,7 @@ The Authority Event by which an unambiguously authorized pre-existing Administra
 consumed candidate or cancels all candidates. Rejected consumed candidates require a descendant
 excluding Key Epoch Transition before protected writes resume.
 
-# 4. Vault history and lifecycle
+# 5. Vault history and lifecycle
 
 ## Vault Record
 
@@ -539,7 +568,7 @@ resolution, and required Key Epoch until idempotent cleanup resumes and one fina
 transaction retires the obsolete safety state and records a stable terminal Job outcome. The latest
 terminal Job remains local until a later heavy cleanup replaces it.
 
-# 5. Cryptography and feature evolution
+# 6. Cryptography and feature evolution
 
 ## Domain Separation
 
@@ -661,7 +690,7 @@ Opaque authenticated inline data that cannot affect authority, logical state, va
 dependencies, Baselines, Export, reachability, rendering, or security. Unknown entries may be
 preserved and ignored. Any data requiring a correctness effect is a Required Vault Feature.
 
-# 6. Replicas, Hosts, and synchronization
+# 7. Replicas, Hosts, and synchronization
 
 ## Replica
 
@@ -877,7 +906,7 @@ that another copy exists.
 The local state of one wrapper: `Present`, intentionally `Evicted`, or `Unexpectedly Missing`.
 Only `Present` asserts verified local bytes. This state is not synchronized as Vault truth.
 
-# 7. Content and organization
+# 8. Content and organization
 
 ## Capture
 
@@ -1004,7 +1033,7 @@ retained and restorable. It never means physical erasure.
 The rebuildable user-facing Projection used to browse and manage Captures and Collections. It is
 not an authoritative container.
 
-# 8. Runtime and persistence
+# 9. Runtime and persistence
 
 ## Runtime
 
@@ -1163,7 +1192,7 @@ The Runtime component that schedules Jobs under declared resource and dependency
 
 A Runtime component that executes Job work without owning the Job's durable contract.
 
-# 9. Capture, Search, and AI
+# 10. Capture, Search, and AI
 
 ## Capture Request
 
@@ -1203,7 +1232,7 @@ An immutable generated Object deliberately preserved as Vault content through an
 operation and Vault Event. Search-only embeddings, tokens, passages, and indexes are
 Materializations, not Derived Artifacts.
 
-# 10. Portability
+# 11. Portability
 
 ## Complete Export
 

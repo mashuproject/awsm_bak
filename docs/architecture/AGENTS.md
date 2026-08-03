@@ -6,14 +6,13 @@ This directory explains system intent, trust boundaries, component responsibilit
 
 ## STRUCTURE
 
-| Area               | Documents                                                       | Purpose                                                         |
-| ------------------ | --------------------------------------------------------------- | --------------------------------------------------------------- |
-| Foundations        | `00`-`04`, `glossary.md`                                        | Principles, system/domain model, zero knowledge, security       |
-| Client data model  | `05`-`10`                                                       | Runtime, Bundles, storage, synchronization, Events, Projections |
-| Features           | `11`-`14`                                                       | Search, processing, capture, credential trust                   |
-| Service boundaries | `15`-`18`                                                       | Coordination server, protocol, extensions, cryptography         |
-| Assurance          | `19`-`20`                                                       | Testing and deployment/operations                               |
-| Reconciliation     | `consistency-review.md`, `implementation-convergence-impact.md` | Current audit and cold implementation scope                     |
+| Area               | Documents                | Purpose                                                         |
+| ------------------ | ------------------------ | --------------------------------------------------------------- |
+| Foundations        | `00`-`04`, `glossary.md` | Principles, system/domain model, zero knowledge, security       |
+| Client data model  | `05`-`10`                | Runtime, Bundles, storage, synchronization, Events, Projections |
+| Features           | `11`-`14`                | Search, processing, capture, credential trust                   |
+| Service boundaries | `15`-`18`                | Coordination server, protocol, extensions, cryptography         |
+| Assurance          | `19`-`20`                | Testing and deployment/operations                               |
 
 ## WHERE TO LOOK
 
@@ -26,7 +25,6 @@ This directory explains system intent, trust boundaries, component responsibilit
 | Change client behavior             | `05-client-runtime.md`                                                                | Host integrates; Runtime owns business logic          |
 | Change authoritative/derived state | `07-content-storage.md`, `09-event-model.md`, `10-projection-engine.md`               | Reconcile with Object Store and Vault specs           |
 | Change network behavior            | `08-synchronization.md`, `15-coordination-server.md`, `16-opaque-replica-protocol.md` | Protocol semantics remain transport-independent       |
-| Check known inconsistencies        | `consistency-review.md`                                                               | Verify record against current normative sources       |
 
 ## CONVENTIONS
 
@@ -42,13 +40,12 @@ This directory explains system intent, trust boundaries, component responsibilit
 ## ANTI-PATTERNS
 
 - Do not let draft architecture override the normative glossary or an owning formal specification.
-- Do not treat `consistency-review.md` as authority merely because it records a prior reconciliation.
 - Do not introduce platform or vendor names as core concepts.
 - Do not collapse Host, Runtime, Service, Driver, Projection, and Materialization boundaries.
 - Do not describe mutable state, caches, registries, or server replicas as the source of Vault truth.
 
 ## RECONCILIATION STATUS
 
-`consistency-review.md` records the latest full living-document reconciliation and implementation
-gaps. It is evidence and an audit aid, not an authority that overrides the glossary or owning
-specifications.
+Keep every architecture document current. Reconcile affected documents in the same change when
+the canonical direction changes; do not add a separate audit or implementation-impact document as
+a substitute for updating the owning architecture and specification.

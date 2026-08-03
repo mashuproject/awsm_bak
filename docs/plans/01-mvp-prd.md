@@ -296,4 +296,3 @@ fields.
 - `ROADMAP.md`
 - `docs/architecture/00-design-principles.md`
 - `docs/architecture/glossary.md`
-- `docs/architecture/consistency-review.md`

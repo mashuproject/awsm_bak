@@ -108,7 +108,7 @@ Vault.
 The release carries one canonical pre-release design. It has no compatibility readers, migrations,
 or fallback paths for discarded experiments. See the [living PRD](docs/plans/01-mvp-prd.md),
 [system overview](docs/architecture/01-system-overview.md), and
-[consistency review](docs/architecture/consistency-review.md).
+[zero-knowledge architecture](docs/architecture/03-zero-knowledge.md).
 
 ## Quick start: local-only Chrome extension
 
@@ -279,7 +279,7 @@ provided and reviewed by the project author. OpenAI tools supported the work end
 - **Testing and debugging:** Codex developed unit, browser integration, packaged-extension
   end-to-end, multi-replica synchronization, failure-injection, and recovery tests; investigated
   failures; and iterated on implementations until the required behavior was demonstrated.
-- **Privacy and consistency review:** GPT-5.6 and Codex helped trace changes across architecture,
+- **Privacy and architecture review:** GPT-5.6 and Codex helped trace changes across architecture,
   formal contracts, implementation, tests, and operations so that plaintext remained inside trusted
   clients and superseded pre-release behavior was not retained as compatibility code.
 - **Product and UI refinement:** Codex iterated on onboarding, capture feedback, Library and Artifact

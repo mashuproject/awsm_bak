@@ -1,8 +1,14 @@
 class CanonicalGlossary
   Section = Data.define(:title, :terms)
-  Term = Data.define(:title, :anchor, :summary)
+  Term = Data.define(:title, :anchor, :summary, :related_titles)
 
   PUBLIC_SECTIONS = {
+    "How AWSM works" => {
+      "Client" => "Trusted software that opens, checks, and changes a local Vault copy.",
+      "Local-First" => "Your Client keeps the usable data. Safe local work continues without a network connection.",
+      "Server-Visible Metadata" => "A remote Host can see some operating details, such as timing, sizes, and network data. It cannot see your saved content.",
+      "Zero-Knowledge Synchronization" => "Your Client encrypts data before a remote Host stores or transfers it. The Host does not have the keys or plaintext."
+    },
     "Your archive and access" => {
       "Account" => "Your login at one server. It lets you use that server. It does not open your Vault.",
       "Capture" => "A saved copy of a web page at one time.",
@@ -31,14 +37,48 @@ class CanonicalGlossary
     }
   }.freeze
 
+  RELATED_TERMS = {
+    "Account" => [ "Hosted Replica", "Replica Host" ],
+    "Capture" => [ "Library", "Vault" ],
+    "Client" => [ "Client Installation", "Local-First", "Vault" ],
+    "Client Credential" => [ "Client Installation", "Vault Member" ],
+    "Client Installation" => [ "Client", "Client Credential", "Recovery Phrase" ],
+    "Complete Export" => [ "Replica", "Vault" ],
+    "Coordination Server" => [ "Replica Host", "Synchronization Cycle", "Zero-Knowledge Synchronization" ],
+    "Folder" => [ "Capture", "Library" ],
+    "Hosted Replica" => [ "Account", "Replica", "Replica Host" ],
+    "Library" => [ "Capture", "Folder" ],
+    "Local-First" => [ "Client", "Vault" ],
+    "Note" => [ "Capture", "Library" ],
+    "Replica" => [ "Storage Relief", "Synchronization Cycle", "Vault" ],
+    "Replica Access Grant" => [ "Account", "Hosted Replica" ],
+    "Replica Host" => [ "Account", "Hosted Replica", "Server-Visible Metadata" ],
+    "Recovery Phrase" => [ "Client Installation", "Vault" ],
+    "Server-Visible Metadata" => [ "Replica Host", "Zero-Knowledge Synchronization" ],
+    "Storage Relief" => [ "Hosted Replica", "Replica" ],
+    "Synchronization Cycle" => [ "Coordination Server", "Replica" ],
+    "Tag" => [ "Capture", "Library" ],
+    "Vault" => [ "Client", "Local-First", "Replica", "Vault Member" ],
+    "Vault ID" => [ "Replica Host", "Vault" ],
+    "Vault Member" => [ "Client Credential", "Vault" ],
+    "Zero-Knowledge Synchronization" => [ "Replica Host", "Server-Visible Metadata" ]
+  }.freeze
+
   def self.load
     source_titles = source_term_titles
+    public_titles = PUBLIC_SECTIONS.values.flat_map(&:keys)
 
     PUBLIC_SECTIONS.map do |section_title, summaries|
       terms = summaries.sort_by { |title, _summary| title.downcase }.map do |title, summary|
         raise "The canonical architecture glossary does not define #{title}." unless source_titles.include?(title)
 
-        Term.new(title:, anchor: title.parameterize, summary:)
+        related_titles = RELATED_TERMS.fetch(title, [])
+        unknown_related_titles = related_titles - public_titles
+        unless unknown_related_titles.empty?
+          raise "The public glossary references unknown terms: #{unknown_related_titles.join(', ')}."
+        end
+
+        Term.new(title:, anchor: title.parameterize, summary:, related_titles:)
       end
 
       Section.new(title: section_title, terms:)

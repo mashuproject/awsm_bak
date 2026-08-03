@@ -574,41 +574,47 @@ body {
 }
 
 .trust-page {
-  padding-block: var(--awsm-space-12);
+  padding-block: var(--awsm-space-16);
 }
 
 .trust-page__header {
   max-width: 780px;
-  margin-bottom: var(--awsm-space-8);
+  margin-bottom: var(--awsm-space-12);
 }
 
 .trust-page h1,
 .account-card h1,
 .gallery h1 {
-  margin-top: 0;
+  margin: 0;
   font-family: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
   font-size: clamp(2.4rem, 6vw, 4.5rem);
   letter-spacing: -0.04em;
   line-height: 0.98;
 }
 
+.trust-page__header > p:last-child {
+  max-width: 68ch;
+  margin: var(--awsm-space-6) 0 0;
+}
+
 .prose-stack {
   display: grid;
   max-width: 780px;
-  gap: var(--awsm-space-6);
+  gap: var(--awsm-space-8);
 }
 
 .prose-stack section {
   border-top: var(--awsm-border);
-  padding-top: var(--awsm-space-6);
+  padding-top: var(--awsm-space-8);
 }
 
 .prose-stack h2 {
-  margin: 0 0 var(--awsm-space-3);
+  margin: 0 0 var(--awsm-space-4);
+  line-height: 1.1;
 }
 
 .glossary-page {
-  padding-block: var(--awsm-space-12);
+  padding-block: var(--awsm-space-16);
 }
 
 .glossary-page__header {
@@ -626,7 +632,7 @@ body {
 
 .glossary-page__header > p:last-child {
   max-width: 62ch;
-  margin-block: var(--awsm-space-6);
+  margin: var(--awsm-space-6) 0 0;
   font-size: 1.125rem;
 }
 
@@ -635,9 +641,9 @@ body {
   grid-template-columns: minmax(190px, 0.3fr) minmax(0, 1fr);
   align-items: start;
   gap: var(--awsm-space-10);
-  margin-top: var(--awsm-space-10);
+  margin-top: var(--awsm-space-12);
   border-top: var(--awsm-border);
-  padding-top: var(--awsm-space-8);
+  padding-top: var(--awsm-space-10);
 }
 
 .glossary-index {
@@ -649,6 +655,25 @@ body {
   gap: var(--awsm-space-1);
   max-height: calc(100vh - 96px);
   overflow-y: auto;
+  scrollbar-color: var(--awsm-border-subtle) transparent;
+  scrollbar-width: thin;
+}
+
+.glossary-index::-webkit-scrollbar {
+  width: 6px;
+}
+
+.glossary-index::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.glossary-index::-webkit-scrollbar-thumb {
+  border-radius: var(--awsm-radius-full);
+  background: var(--awsm-border-subtle);
+}
+
+.glossary-index::-webkit-scrollbar-thumb:hover {
+  background: var(--awsm-ink-muted);
 }
 
 .glossary-index__section {
@@ -690,10 +715,10 @@ body {
 .glossary-list__section dl > div {
   display: grid;
   grid-template-columns: minmax(180px, 0.35fr) minmax(0, 1fr);
-  gap: var(--awsm-space-8);
+  gap: var(--awsm-space-10);
   border-bottom: 1px solid var(--awsm-border-subtle);
   border-radius: var(--awsm-radius-compact);
-  padding: var(--awsm-space-6) var(--awsm-space-4);
+  padding: var(--awsm-space-8) var(--awsm-space-4);
   scroll-margin-top: calc(72px + var(--awsm-space-6));
 }
 
@@ -702,8 +727,9 @@ body {
 }
 
 .glossary-list__section h2 {
-  margin: 0 0 var(--awsm-space-4);
+  margin: 0 0 var(--awsm-space-6);
   font-size: clamp(1.6rem, 4vw, 2.2rem);
+  line-height: 1.1;
 }
 
 .glossary-list__section dl {
@@ -738,6 +764,30 @@ body {
 
 .glossary-list dd > :last-child {
   margin-bottom: 0;
+}
+
+.glossary-term__related {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--awsm-space-2) var(--awsm-space-3);
+  margin-top: var(--awsm-space-4);
+  font-size: 0.875rem;
+}
+
+.glossary-term__related span {
+  color: var(--awsm-ink-muted);
+  font-size: 0.8125rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.glossary-term__related a {
+  color: var(--awsm-link);
+  font-weight: 750;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
 }
 
 .account-page {

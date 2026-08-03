@@ -26,7 +26,6 @@ AWSM (Archive What Should Matter) is a local-first, zero-knowledge knowledge pre
 | Resolve terminology             | `docs/architecture/glossary.md`             | Normative; wins terminology conflicts                    |
 | Understand system boundaries    | `docs/architecture/01-system-overview.md`   | Trusted client vs untrusted coordination service         |
 | Find a format or contract       | `docs/specifications/`                      | Specifications own their declared domain semantics       |
-| Check recent reconciliation     | `docs/architecture/consistency-review.md`   | Review record, not an independent normative source       |
 | Understand testing requirements | `docs/architecture/19-testing-strategy.md`  | Architectural invariants and TDD expectations            |
 
 ## DOCUMENT AUTHORITY
@@ -40,8 +39,8 @@ Use this precedence when editing or reviewing:
 4. The draft PRD, vision, and README for scope and context.
 
 No universal tie-break exists between conflicting formal specifications. Treat such conflicts as
-design issues and update all affected documents together. Verify claims in
-`docs/architecture/consistency-review.md`; it is a review record, not authority.
+design issues and update all affected documents together. Verify claims against the owning living
+documents, formal specifications, implementation, and tests.
 
 Current explicit user decisions govern until they are reconciled into the living documentation. An
 explicitly approved active plan is the temporary execution authority for the scope it owns and may

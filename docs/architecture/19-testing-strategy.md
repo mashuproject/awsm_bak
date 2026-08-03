@@ -208,6 +208,6 @@ synchronization, or global freshness.
 
 # References
 
-- `docs/architecture/consistency-review.md`
+- `docs/architecture/00-design-principles.md`
 - `docs/specifications/runtime/jobs.md`
 - `docs/specifications/vault/authority.md`

@@ -39,7 +39,7 @@
           <%= link_to "How it works", "#how-it-works", class: "awsm-button awsm-button--secondary" %>
         </div>
         <ul class="hero__assurances" aria-label="AWSM preservation features">
-          <li>Local-first by default</li>
+          <li><%= glossary_term_link "Local-First", "Local-first" %> by default</li>
           <li>Ownership through your encrypted <%= link_to "Vault", glossary_path(anchor: "vault"), class: "term-link", data: { turbo: false } %></li>
           <li>Offline access to local <%= link_to "Captures", glossary_path(anchor: "capture"), class: "term-link", data: { turbo: false } %></li>
         </ul>
@@ -125,7 +125,7 @@
       <p class="eyebrow">Optional synchronization. Local validation.</p>
       <h2 class="section-heading">Optional synchronization through opaque Replicas.</h2>
       <p class="section-lede">
-        A Host <%= glossary_term_link "Account" %> identifies you only to that Host for access and quotas. It does not identify a
+        <%= glossary_term_link "Zero-Knowledge Synchronization", "Zero-knowledge synchronization" %> keeps the data opaque to the Host. A Host <%= glossary_term_link "Account" %> identifies you only to that Host for access and quotas. It does not identify a
         <%= glossary_term_link "Vault Member" %> or decrypt a <%= glossary_term_link "Vault" %>. The
         <%= glossary_term_link "Recovery Phrase" %> remains client-held, and the client
         validates data it retrieves.
@@ -236,7 +236,7 @@
         <article class="faq-item"><h3>How is AWSM different from a bookmark manager?</h3><p>A bookmark manager keeps an address. AWSM keeps an authoritative browser-independent snapshot of the page with its Capture. Other useful representations are best-effort.</p></article>
         <article class="faq-item"><h3>Why not just use the Wayback Machine?</h3><p>The Wayback Machine preserves public web history. AWSM gives you a personal copy of what matters, available offline. It also works for private research, account-only documents, bank statements, and anything else that should never enter a public archive. Every Capture stays in your encrypted Vault. If you choose synchronization, a Replica Host receives opaque encrypted items, not Capture contents.</p></article>
         <article class="faq-item"><h3>Can I use AWSM without creating an Account?</h3><p>Yes. Capture, the local Library, and local encrypted Vaults work without an Account. An Account is needed only when you choose to use a particular Replica Host.</p></article>
-        <article class="faq-item"><h3>What can a Replica Host see?</h3><p>It stores opaque encrypted items and operational metadata, but does not receive Vault decryption keys.</p></article>
+        <article class="faq-item"><h3>What can a Replica Host see?</h3><p>It stores opaque encrypted items and <%= glossary_term_link "Server-Visible Metadata", "operational metadata" %>, but does not receive Vault decryption keys.</p></article>
         <article class="faq-item"><h3>Why do I need both an Account password and a Recovery Phrase?</h3><p>The Account password proves identity to one Replica Host. The Recovery Phrase is client-held Vault recovery material. They are separate secrets.</p></article>
         <article class="faq-item"><h3>What happens when I lose internet access?</h3><p>The local Library and locally available Capture content remain usable offline. Optional synchronization waits for connectivity.</p></article>
         <article class="faq-item"><h3>Where can I install AWSM today?</h3><p>Chrome has a downloadable unpacked preview. Desktop Linux Firefox Stable and ESR have an unlisted Mozilla-signed beta distributed through the GitHub Release. It is not a public AMO listing and does not claim AMO-managed updates.</p></article>

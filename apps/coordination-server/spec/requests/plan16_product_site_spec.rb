@@ -31,6 +31,8 @@ RSpec.describe "Plan 16 product site", type: :request do
     )
     expect(response.body).to include('href="/glossary#capture"')
     expect(response.body).to include('href="/glossary#hosted-replica"')
+    expect(response.body).to include('href="/glossary#local-first"')
+    expect(response.body).to include('href="/glossary#zero-knowledge-synchronization"')
 
     document = Nokogiri::HTML(response.body)
     expect(document.css("#optional-sync .section-heading").map(&:text)).to eq(
@@ -86,17 +88,24 @@ RSpec.describe "Plan 16 product site", type: :request do
     expect(response.body).to include(
       "The language of your archive.",
       "These short entries explain the words used on this site.",
+      "Client",
+      "Local-First",
+      "Zero-Knowledge Synchronization",
       "Capture",
       "Complete Export",
       "Replica Access Grant",
       "Vault",
       "Recovery Phrase",
-      "Coordination Server"
+      "Coordination Server",
+      "Related terms"
     )
     expect(response.body).not_to include("Vault Record", "<dt>Device</dt>")
 
     document = Nokogiri::HTML(response.body)
     expected_sections = {
+      "How AWSM works" => [
+        "Client", "Local-First", "Server-Visible Metadata", "Zero-Knowledge Synchronization"
+      ],
       "Your archive and access" => [
         "Account", "Capture", "Client Credential", "Client Installation", "Complete Export",
         "Recovery Phrase", "Vault", "Vault ID", "Vault Member"
@@ -118,6 +127,12 @@ RSpec.describe "Plan 16 product site", type: :request do
       terms = section.css("dt").map(&:text)
       terms == terms.sort_by(&:downcase)
     end).to be(true)
+    expect(document.css(".glossary-term__related a").map { |link| link["href"] }).to all(
+      match(/^#[-a-z0-9]+$/)
+    )
+    expect(document.css(".glossary-term__related a").map { |link| link["href"] }).to include(
+      "#vault", "#local-first", "#zero-knowledge-synchronization"
+    )
   end
 
   it "keeps the landing cache-safe after browser authentication and exposes enhancement targets" do
