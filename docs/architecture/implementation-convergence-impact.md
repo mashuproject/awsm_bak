@@ -32,30 +32,31 @@ future semantic evolution, not compatibility with discarded experiments.
 
 ## 3.1 Domain contracts and codecs
 
-Current central contracts begin in:
+The shipped central contracts now begin in:
 
-- `apps/browser-extension/src/domain/contracts.ts`
+- `apps/browser-extension/src/domain/canonical/`
 - `apps/browser-extension/src/domain/cbor.ts`
 - `apps/browser-extension/src/domain/hash.ts`
-- `apps/browser-extension/src/domain/artifact-graph.ts`
-- `apps/browser-extension/src/domain/decode*.ts`
+- `apps/browser-extension/src/domain/structured-content.ts`
+- `apps/browser-extension/src/storage/opaque-envelope.ts`
 
-They currently expose string/UUID-style IDs, `issuingDeviceId`, a broad semantic
-`EncryptedEnvelopeV1`, linear Event and Generation assumptions, and old error identifiers. Replace
-them with small owning modules for restricted deterministic CBOR, typed 32-byte IDs, transcript
-framing, Vault Records, Vault Objects, dependencies, Required Features, exhaustive Event bodies,
-Baselines, dual causal and Authority Parent Frontiers, retained Continuity Proofs, fresh Content
-Baseline Cause mapping, Historical Attribution, reducers, and opaque outer envelopes. Generate
-golden fixtures shared by every Client implementation.
+They own restricted deterministic CBOR, typed 32-byte IDs, transcript framing, Vault Records,
+Vault Objects, dependencies, Required Features, Event bodies, Baselines, causal and Authority
+Parent Frontiers, Continuity Proofs, Content Baseline Cause mapping, Historical Attribution,
+reducers, and opaque outer envelopes. The still-disconnected generic domain decoder residue remains
+an audit target; it must not regain a route into a packaged Client or become a compatibility reader.
+Generate golden fixtures shared by every Client implementation.
 
-Remove old `DEVICE_*`, `RECOVERY_GENERATION_*`, semantic server-Generation, selective-package, and
-server-replacement errors. Add precise local validation, authority conflict, unsupported feature,
-opaque Host, adoption, and collision outcomes without reusing Host errors as Vault facts.
+The disconnected Device/Recovery Kit/server-switch error and service tree is removed. Continue to
+add precise local validation, authority conflict, unsupported feature, opaque Host, adoption, and
+collision outcomes without reusing Host errors as Vault facts.
 
 ## 3.2 Cryptography
 
-Current code is concentrated in `src/crypto/`, `runtime/vault/keyring.ts`, `runtime/vault/slots.ts`,
-`runtime/recovery/`, and `runtime/export/`. Replace Root Key and Device-slot derivation with:
+Current canonical code is concentrated in `src/crypto/`, `src/domain/canonical/`, and the canonical
+Vault services. The superseded Root Key, Device-slot, Device certificate, and Recovery Kit service
+tree is removed rather than retained as an unused reader. Complete the current cryptographic
+contract with:
 
 - independent random Key Epoch Keys and exact Key Epoch IDs;
 - Ed25519 Client and Recovery signing keys;
@@ -70,13 +71,11 @@ fallback.
 
 ## 3.3 Persistence
 
-`apps/browser-extension/src/drivers/indexeddb/schema.ts` currently declares one version-1 database
-with feature-specific stores for Devices, Recovery Kits, server switch, Vault replacement,
-Generations, projections, Jobs, and key slots. Replace the whole database with registry-backed
-namespaces in the eleven logical families and explicit Storage Realm scope.
-
-Update `database.ts`, `driver.ts`, repositories and decoders under `drivers/indexeddb/`, plus the
-shared Artifact Store adapters under `src/hosts/shared/`. Introduce:
+`apps/browser-extension/src/drivers/indexeddb/canonical-schema.ts` is the sole shipped IndexedDB
+schema. It declares registry-backed namespaces in eleven logical storage families and explicit
+Storage Realm scope; its canonical database driver performs the associated atomic commits. The old
+feature-specific Device, Recovery Kit, server-switch, Vault-replacement, Job, and key-slot store
+tree is removed with its repositories and decoders. Continue to complete:
 
 - immutable Vault Record and Vault Object namespaces;
 - Replica Safety State with accepted Generation, causal and Authority Frontiers, Continuity Proof
@@ -92,12 +91,12 @@ absent.
 
 ## 3.4 Runtime services
 
-Replace or substantially rewrite:
+Continue or substantially rewrite:
 
 - `src/runtime/vault/` for Initial Baseline, Genesis, selected context, Frontiers, Fork, Closure,
   Historical View, and Key Epochs;
-- `src/runtime/recovery/` for member Recovery Credentials, invitations, enrollment, replacement,
-  resignation, removal, roles, conflicts, and Future Protection;
+- canonical Vault recovery services for member Recovery Credentials, invitations, enrollment,
+  replacement, resignation, removal, roles, conflicts, and Future Protection;
 - `src/runtime/synchronization/` for multi-Remote receiver pull, Quarantine, opaque inventory,
   randomized destination rewrapping, DAG convergence, and Vacuum discovery;
 - `src/runtime/library/` for all 31 Content Events, exhaustive reducers, Folders, Tags, Notes, and
@@ -168,6 +167,14 @@ removed. The unshipped old Search request/permission surface and old Storage Rel
 surface are removed with their sole-contract tests. Remaining disconnected experimental source and
 browser journeys, including old Search and synchronization paths, require a separate audit and
 canonical replacement or deletion before v0.3 is complete.
+
+The first closed removal audit eliminated every unreachable dependency of the superseded
+Device/Recovery Kit/replacement/server-switch tree: its 111 implementation files, 69 sole-contract
+tests, old IndexedDB schema and repositories, and old Account/session, export/import, Search,
+Storage Relief, and synchronization helpers. A fresh static import walk from every packaged
+entrypoint now reaches only the canonical application graph. This is checkout evidence; the
+remaining disconnected canonical Remote foundations are retained for activation, while all other
+residue needs the same dependency-led audit rather than a filename-only deletion.
 
 # 4. Replica Host impact
 
