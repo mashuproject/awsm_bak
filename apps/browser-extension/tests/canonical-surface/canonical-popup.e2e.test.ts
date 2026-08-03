@@ -163,6 +163,22 @@ test("runs the canonical local Vault ceremony through a packaged extension", asy
     await first.screenshot({
       path: testInfo.outputPath("canonical-popup-hosted-recovery-narrow.png"),
     });
+    await first.getByLabel("Hosted Replica address").fill("http://sync.example.test/");
+    await first.getByLabel("Account username").fill("archive_reader");
+    await first.getByLabel("Account password").fill("correct horse battery staple");
+    await first.getByLabel("Recovery Phrase").fill("twelve private words");
+    await first.getByRole("button", { name: "Recover Hosted Vault" }).click();
+    await expect(
+      first.locator(".canonical-popup__status--error", {
+        hasText: "Enter a canonical HTTPS Replica Host address.",
+      }),
+    ).toBeVisible();
+    await expect(first.getByLabel("Account password")).toHaveValue("");
+    await expect(first.getByLabel("Recovery Phrase")).toHaveValue("");
+    await expectReadableContrast(first);
+    await first.screenshot({
+      path: testInfo.outputPath("canonical-popup-hosted-recovery-validation-error.png"),
+    });
     await first.getByRole("button", { name: "Back to create Vault" }).click();
     await expect(first.getByRole("heading", { name: "Create your local Vault" })).toBeVisible();
     await first.setViewportSize({ width: 400, height: 700 });
