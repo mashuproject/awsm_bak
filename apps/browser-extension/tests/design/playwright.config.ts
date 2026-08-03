@@ -27,17 +27,10 @@ export default defineConfig({
     timezoneId: "UTC",
     trace: "retain-on-failure",
   },
-  webServer: [
-    {
-      command: "node ../e2e/server.mjs",
-      port: 4174,
-      reuseExistingServer: false,
-    },
-    {
-      command: resolve(repositoryRoot, "apps/coordination-server/script/run-browser-proof.sh"),
-      url: "http://127.0.0.1:3300/ready",
-      timeout: 180_000,
-      reuseExistingServer: false,
-    },
-  ],
+  webServer: {
+    command: resolve(repositoryRoot, "apps/coordination-server/script/run-browser-proof.sh"),
+    url: "http://127.0.0.1:3300/ready",
+    timeout: 180_000,
+    reuseExistingServer: false,
+  },
 });

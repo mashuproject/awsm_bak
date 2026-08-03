@@ -266,6 +266,13 @@ Closure. The superseded Device/Generation/server-switch E2E files and their Sear
 semantic Host, and synchronization-setup snapshots are removed; they are not retained as skipped
 release evidence.
 
+Firefox Stable and ESR execute the same packaged local-Vault ceremony through their real Firefox
+hosts: Recovery Phrase confirmation, page capture, Library rendering, and persisted reopening after
+a background restart. The cross-browser command composes the current Chrome and Firefox ceremonies.
+It proves each packaged Host's current local behavior; it must not be represented as Client-to-Client
+or Client-to-Host synchronization proof until the opaque Remote path is shipped and independently
+proven.
+
 Start with the target golden, reducer, authority, recovery, Host, storage, Vacuum, Fork, and
 divergence matrix in `19-testing-strategy.md`. Preserve page-snapshot, Capture, browser permission,
 Search, accessibility, and visual tests only after their fixtures use the canonical substrate.

@@ -4,7 +4,7 @@ import { BlobReader, TextWriter, ZipReader } from "@zip.js/zip.js";
 const root = new URL("../", import.meta.url);
 const output = new URL(".output/", root);
 const extensionId = "{f6f49704-8d53-4eda-aef7-619ab88dda5f}";
-const expectedPages = new Set(["library.html", "popup.html", "sync-setup.html"]);
+const expectedPages = new Set(["library.html", "popup.html"]);
 const approvedPermissions = ["activeTab", "scripting", "unlimitedStorage", "downloads", "alarms"];
 const approvedOptionalOrigins = ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"];
 const approvedDataCollectionPermissions = {
@@ -52,7 +52,7 @@ try {
       `Confidential-looking file packaged in Firefox ZIP: ${name}`,
     );
     assert(
-      /^(?:assets\/|chunks\/|search-model-runtime\/|THIRD_PARTY_NOTICES\.txt|manifest\.json|background\.js|(?:library|popup|sync-setup)\.html|chunks\/[^/]+\.js|assets\/[^/]+\.(?:css|woff2)|search-model-runtime\/ort-wasm-simd-threaded\.asyncify\.(?:mjs|wasm)|icon-(?:16|32|48|128|512)\.png)$/u.test(
+      /^(?:assets\/|chunks\/|search-model-runtime\/|THIRD_PARTY_NOTICES\.txt|manifest\.json|background\.js|(?:library|popup)\.html|chunks\/[^/]+\.js|assets\/[^/]+\.(?:css|woff2)|search-model-runtime\/ort-wasm-simd-threaded\.asyncify\.(?:mjs|wasm)|icon-(?:16|32|48|128|512)\.png)$/u.test(
         name,
       ),
       `Unexpected file packaged in Firefox ZIP: ${name}`,

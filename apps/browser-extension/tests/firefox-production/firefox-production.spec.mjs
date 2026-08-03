@@ -1,5 +1,5 @@
 import { once } from "node:events";
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { resolve } from "node:path";
 import { expect, test } from "@playwright/test";
@@ -16,7 +16,6 @@ const EXTENSION_PATH = resolve(
 );
 const SIGNED_INSTALL = process.env.AWSM_FIREFOX_SIGNED_XPI !== undefined;
 const DRIVER_CACHE = resolve(PACKAGE_ROOT, ".output/firefox-browsers/geckodriver");
-const DOWNLOAD_ROOT = resolve(PACKAGE_ROOT, ".output/firefox-production-downloads");
 const FIREFOX_EXTENSION_ID = "{f6f49704-8d53-4eda-aef7-619ab88dda5f}";
 const browserConfiguration = JSON.parse(
   await readFile(new URL("../firefox-feasibility/browsers.json", import.meta.url), "utf8"),
@@ -28,38 +27,14 @@ function listen(server) {
 }
 
 async function startFixture() {
-  let informationRequests = 0;
-  const server = createServer((request, response) => {
-    if (request.url === "/api/server-information") {
-      informationRequests += 1;
-      response.writeHead(200, { "content-type": "application/json" });
-      response.end(
-        JSON.stringify({
-          service: "AWSM Coordination Server",
-          protocolVersion: "1",
-          capabilities: {
-            accountPassword: true,
-            accountVaultLimit: 1,
-            completeReplicaSynchronization: true,
-            deviceEnrollment: "RecoveryPhrase",
-            deviceRevocation: true,
-          },
-          accountPolicy: { inactiveRetentionDays: 365 },
-          registration: { enabled: false },
-        }),
-      );
-      return;
-    }
+  const server = createServer((_request, response) => {
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-    response.end(`<!doctype html><html><head><title>Firefox production fixture</title></head>
-      <body><main id="rendered">initial</main><input id="live" value="initial">
-      <script>rendered.textContent = "rendered"; live.value = "preserved";</script></body></html>`);
+    response.end(`<!doctype html><title>Firefox canonical fixture</title>
+      <main id="rendered">Stored locally.</main><input id="live" value="preserved">`);
   });
   const port = await listen(server);
   return {
     url: `http://127.0.0.1:${port}/`,
-    origin: `http://127.0.0.1:${port}`,
-    informationRequests: () => informationRequests,
     async stop() {
       server.close();
       await once(server, "close");
@@ -67,116 +42,24 @@ async function startFixture() {
   };
 }
 
-async function answerPermissionPrompt(driver, accept) {
-  await driver.setContext(firefox.Context.CHROME);
-  try {
-    let prompt;
-    try {
-      prompt = await driver.wait(
-        async () =>
-          driver.executeScript(`
-          const panel = globalThis.PopupNotifications?.panel;
-          if (!panel || panel.state === "closed") return null;
-          const notification =
-            document.getElementById("addon-webext-permissions-notification") ||
-            panel.querySelector("popupnotification");
-          if (!notification) return null;
-          return {
-            id: notification.id,
-            label: notification.getAttribute("label") || "",
-            text: panel.textContent || "",
-          };
-        `),
-        10_000,
-      );
-    } catch (error) {
-      const diagnostics = await driver.executeScript(`
-        const panel = globalThis.PopupNotifications?.panel;
-        return {
-          panelState: panel?.state,
-          panelText: panel?.textContent,
-          panelMarkup: panel?.innerHTML,
-          permissionIds: [...document.querySelectorAll('[id*="permission"]')].map(node => node.id),
-        };
-      `);
-      await driver.setContext(firefox.Context.CONTENT);
-      diagnostics.page = await driver.executeScript(`
-        const status = document.querySelector("#status");
-        return {
-          text: status?.textContent,
-          role: status?.getAttribute("role"),
-          tone: status?.dataset.tone,
-        };
-      `);
-      await driver.setContext(firefox.Context.CHROME);
-      throw new Error(
-        `Firefox native permission prompt was not found: ${JSON.stringify(diagnostics)}`,
-        {
-          cause: error,
-        },
-      );
-    }
-    expect(`${prompt.label}\n${prompt.text}`).toContain("AWSM");
-    await driver.executeScript(
-      `
-        const [accept] = arguments;
-        const panel = globalThis.PopupNotifications?.panel;
-        const notification =
-          document.getElementById("addon-webext-permissions-notification") ||
-          panel?.querySelector("popupnotification");
-        const button = accept ? notification.button : notification.secondaryButton;
-        if (!button) throw new Error("Firefox permission response button is unavailable.");
-        button.click();
-      `,
-      accept,
-    );
-  } finally {
-    await driver.setContext(firefox.Context.CONTENT);
-  }
-}
-
-async function requestServerFromSetup(driver, origin, accept) {
-  const setupUrl = await driver.executeScript('return browser.runtime.getURL("/sync-setup.html");');
-  await driver.get(setupUrl);
-  const details = await driver.findElement(By.css("#server-choice details"));
-  await details.click();
-  const originInput = await driver.findElement(By.css('input[name="server-origin"]'));
-  await originInput.clear();
-  await originInput.sendKeys(origin);
-  const submit = await driver.findElement(By.css('#server-form button[type="submit"]'));
-  await submit.click();
-  await answerPermissionPrompt(driver, accept);
-}
-
 async function createDriver(lane) {
   const configuration = browserConfiguration[lane];
-  const downloadDirectory = resolve(DOWNLOAD_ROOT, lane);
-  await rm(downloadDirectory, { recursive: true, force: true });
-  await mkdir(downloadDirectory, { recursive: true });
   const geckodriverBinary = await downloadGeckodriver(
     browserConfiguration.geckodriver.version,
     DRIVER_CACHE,
   );
   const options = new firefox.Options()
     .setBinary(resolve(PACKAGE_ROOT, configuration.executable))
-    .addArguments("-headless")
-    .setPreference("browser.download.folderList", 2)
-    .setPreference("browser.download.dir", downloadDirectory)
-    .setPreference("browser.download.useDownloadDir", true)
-    .setPreference("browser.download.alwaysOpenPanel", false)
-    .setPreference("browser.helperApps.neverAsk.saveToDisk", "multipart/related");
+    .addArguments("-headless");
   if (!SIGNED_INSTALL) options.setPreference("xpinstall.signatures.required", false);
   const service = new firefox.ServiceBuilder(geckodriverBinary).addArguments(
     "--allow-system-access",
   );
-  return {
-    downloadDirectory,
-    driver: await new Builder()
-      .forBrowser("firefox")
-      .setFirefoxOptions(options)
-      .setFirefoxService(service)
-      .build(),
-  };
+  return new Builder()
+    .forBrowser("firefox")
+    .setFirefoxOptions(options)
+    .setFirefoxService(service)
+    .build();
 }
 
 async function send(driver, request) {
@@ -192,7 +75,7 @@ async function send(driver, request) {
   return response.value;
 }
 
-async function grantActiveTabForProductionHostSmoke(driver) {
+async function grantActiveTab(driver) {
   await driver.setContext(firefox.Context.CHROME);
   try {
     await driver.executeScript(
@@ -230,9 +113,9 @@ async function restartBackground(driver) {
 const lanes = process.env.AWSM_FIREFOX_LANE ? [process.env.AWSM_FIREFOX_LANE] : ["stable", "esr"];
 
 for (const lane of lanes) {
-  test(`gates Firefox ${lane} synchronization on native data and origin consent`, async () => {
+  test(`creates, captures, and reopens a local Vault in Firefox ${lane}`, async () => {
     const fixture = await startFixture();
-    const { driver } = await createDriver(lane);
+    const driver = await createDriver(lane);
     try {
       if (process.env.AWSM_FIREFOX_NARROW === "true")
         await driver.manage().window().setRect({ width: 520, height: 760 });
@@ -242,121 +125,46 @@ for (const lane of lanes) {
         "return WebExtensionPolicy.getByID(arguments[0]).getURL('popup.html');",
         FIREFOX_EXTENSION_ID,
       );
-      await driver.setContext(firefox.Context.CONTENT);
-      await driver.get(popupUrl);
-
-      await requestServerFromSetup(driver, fixture.origin, false);
-      await driver.wait(
-        async () => driver.findElement(By.css('#server-form button[type="submit"]')).isEnabled(),
-        10_000,
-      );
-      expect(fixture.informationRequests()).toBe(0);
-      expect((await send(driver, { type: "GetState" })).account.configuration).toEqual({
-        mode: "Unconfigured",
-      });
-
-      const submit = await driver.findElement(By.css('#server-form button[type="submit"]'));
-      await submit.click();
-      await answerPermissionPrompt(driver, true);
-      await driver.wait(
-        async () =>
-          (await send(driver, { type: "GetState" })).account.configuration.mode === "Configured",
-        10_000,
-      );
-      expect(fixture.informationRequests()).toBe(1);
-      const configured = await send(driver, { type: "GetState" });
-      expect(configured.account.configuration).toEqual({
-        mode: "Configured",
-        serverOrigin: fixture.origin,
-        registration: { enabled: false },
-      });
-      expect(configured.account.vaultSyncState).toBe("AuthenticationRequired");
-
-      const removed = await driver.executeAsyncScript(`
-        const done = arguments[arguments.length - 1];
-        browser.permissions.remove({
-          data_collection: [
-            "websiteContent",
-            "browsingActivity",
-            "authenticationInfo",
-            "personallyIdentifyingInfo",
-          ],
-        }).then(done, error => done({ error: String(error) }));
-      `);
-      expect(removed).toBe(true);
-      expect((await send(driver, { type: "GetState" })).account.vaultSyncState).toBe(
-        "PermissionRequired",
-      );
-      await expect(send(driver, { type: "WakeSynchronization" })).rejects.toThrow(
-        "SERVER_PERMISSION_DENIED",
-      );
-      expect(fixture.informationRequests()).toBe(1);
-
-      await driver.get(popupUrl);
-      await driver.wait(
-        until.elementLocated(By.xpath("//button[normalize-space()='Allow synchronization']")),
-        10_000,
-      );
-      if (process.env.AWSM_FIREFOX_PERMISSION_SCREENSHOT !== undefined)
-        await writeFile(
-          resolve(process.env.AWSM_FIREFOX_PERMISSION_SCREENSHOT),
-          await driver.takeScreenshot(),
-          "base64",
-        );
-      await driver.wait(async () => {
-        try {
-          await driver
-            .findElement(By.xpath("//button[normalize-space()='Allow synchronization']"))
-            .click();
-          return true;
-        } catch (error) {
-          if (error?.name === "StaleElementReferenceError" || error?.name === "NoSuchElementError")
-            return false;
-          throw error;
-        }
-      }, 10_000);
-      await answerPermissionPrompt(driver, true);
-      await driver.wait(
-        async () =>
-          (await send(driver, { type: "GetState" })).account.vaultSyncState ===
-          "AuthenticationRequired",
-        10_000,
-      );
-    } finally {
-      await driver.quit();
-      await fixture.stop();
-    }
-  });
-
-  test(`captures, lists, and downloads MHTML in Firefox ${lane}`, async () => {
-    const fixture = await startFixture();
-    const { driver, downloadDirectory } = await createDriver(lane);
-    try {
-      if (process.env.AWSM_FIREFOX_NARROW === "true")
-        await driver.manage().window().setRect({ width: 520, height: 760 });
-      expect(await driver.installAddon(EXTENSION_PATH, !SIGNED_INSTALL)).toBe(FIREFOX_EXTENSION_ID);
-      await driver.setContext(firefox.Context.CHROME);
-      const popupUrl = await driver.executeScript(
-        "return WebExtensionPolicy.getByID(arguments[0]).getURL('popup.html');",
+      const libraryUrl = await driver.executeScript(
+        "return WebExtensionPolicy.getByID(arguments[0]).getURL('library.html');",
         FIREFOX_EXTENSION_ID,
       );
       await driver.setContext(firefox.Context.CONTENT);
       await driver.get(popupUrl);
+      await driver.wait(
+        until.elementLocated(By.xpath("//h1[normalize-space()='Create your local Vault']")),
+        10_000,
+      );
+      await driver.findElement(By.css('input[name="vault-name"]')).sendKeys("Firefox Field Notes");
+      await driver.findElement(By.xpath("//button[normalize-space()='Create Vault']")).click();
+      await driver.wait(
+        until.elementLocated(By.xpath("//h1[normalize-space()='Protect your Vault']")),
+        10_000,
+      );
+      const phraseField = await driver.findElement(
+        By.css('textarea[aria-label="Recovery Phrase"]'),
+      );
+      const recoveryPhrase = await driver.executeScript("return arguments[0].value;", phraseField);
+      expect(recoveryPhrase.trim()).not.toBe("");
+      await driver
+        .findElement(
+          By.xpath("//label[normalize-space()='Type the Recovery Phrase to continue']/input"),
+        )
+        .sendKeys(recoveryPhrase);
+      await driver
+        .findElement(By.xpath("//button[normalize-space()='Confirm Recovery Phrase']"))
+        .click();
+      await driver.wait(
+        until.elementLocated(By.xpath("//h1[normalize-space()='Archive this page']")),
+        10_000,
+      );
+
       const initial = await send(driver, { type: "GetState" });
-      expect(initial.account.configuration).toEqual({ mode: "Unconfigured" });
-      await expect(
-        send(driver, {
-          type: "ConfigureSyncServer",
-          serverOrigin: "https://sync.invalid",
-        }),
-      ).rejects.toThrow("SERVER_PERMISSION_DENIED");
-      await send(driver, { type: "ChooseLocalOnly" });
-      const created = await send(driver, {
-        type: "CreateVault",
-        name: "Firefox Smoke Vault",
-      });
-      const vaultId = created.workspace.activeVaultId;
-      expect(typeof vaultId).toBe("string");
+      expect(typeof initial.selectedVaultId).toBe("string");
+      expect(initial.vaults).toHaveLength(1);
+      expect(initial.vaults[0].label).toBe("Firefox Field Notes");
+      const vaultId = initial.selectedVaultId;
+
       const popupHandle = await driver.getWindowHandle();
       const fixtureTabId = await driver.executeAsyncScript(
         `
@@ -370,140 +178,37 @@ for (const lane of lanes) {
       );
       expect(fixtureHandle).toBeDefined();
       await driver.switchTo().window(fixtureHandle);
-      await driver.wait(until.titleIs("Firefox production fixture"), 10_000);
-      await grantActiveTabForProductionHostSmoke(driver);
+      await driver.wait(until.titleIs("Firefox canonical fixture"), 10_000);
+      await grantActiveTab(driver);
       await driver.switchTo().window(popupHandle);
+
       const capture = await send(driver, {
         type: "CaptureActivePage",
         expectedVaultId: vaultId,
         tabId: fixtureTabId,
       });
-      const library = await send(driver, {
-        type: "ListLibrary",
-        expectedVaultId: vaultId,
-      });
+      const library = await send(driver, { type: "ListLibrary", expectedVaultId: vaultId });
       expect(library).toHaveLength(1);
-      expect(library[0].captures).toHaveLength(1);
-      expect(library[0].captures[0]).toMatchObject({
+      expect(library[0]).toMatchObject({
         bundleId: capture.bundleId,
-        title: "Firefox production fixture",
+        title: "Firefox canonical fixture",
+        lifecycle: "Active",
+        availableLocally: true,
       });
-      const libraryPageUrl = await driver.executeScript(
-        'return browser.runtime.getURL("/library.html");',
-      );
-      await driver.get(libraryPageUrl);
+
+      await driver.get(libraryUrl);
       await driver.wait(
-        async () =>
-          (
-            await send(driver, {
-              type: "GetSearchState",
-              expectedVaultId: vaultId,
-            })
-          ).coverage.keywordCaptures === 1,
-        30_000,
-      );
-      const search = await send(driver, {
-        type: "SearchLibrary",
-        expectedVaultId: vaultId,
-        query: "Firefox production fixture",
-        clientInstanceId: "abcdefghijklmnopqrstuv",
-        scope: "Active",
-        filters: { hosts: [], collectionIds: [] },
-        pageSize: 50,
-      });
-      expect(search.results).toHaveLength(1);
-      expect(search.results[0]).toMatchObject({
-        bundleId: capture.bundleId,
-        title: "Firefox production fixture",
-        match: "ExactTitle",
-      });
-      await driver.wait(async () => {
-        try {
-          await driver.findElement(By.css("#account-settings")).click();
-          return (await driver.findElements(By.css("dialog[open]"))).length === 1;
-        } catch (error) {
-          if (error?.name === "StaleElementReferenceError" || error?.name === "NoSuchElementError")
-            return false;
-          throw error;
-        }
-      }, 10_000);
-      await driver.wait(
-        until.elementLocated(By.xpath("//*[contains(normalize-space(), 'Local only')]")),
+        until.elementLocated(By.xpath("//h1[normalize-space()='Library']")),
         10_000,
       );
-      expect(
-        await driver.findElements(By.xpath("//button[normalize-space()='Connect server']")),
-      ).toHaveLength(1);
-      if (process.env.AWSM_FIREFOX_SCREENSHOT !== undefined)
-        await writeFile(
-          resolve(process.env.AWSM_FIREFOX_SCREENSHOT),
-          await driver.takeScreenshot(),
-          "base64",
-        );
-      let download;
-      try {
-        download = await send(driver, {
-          type: "DownloadMhtml",
-          expectedVaultId: vaultId,
-          bundleId: capture.bundleId,
-        });
-      } catch (error) {
-        const diagnostics = await driver.executeAsyncScript(`
-          const done = arguments[arguments.length - 1];
-          browser.downloads.search({}).then(
-            items => done({ items, runtimeOrigin: new URL(browser.runtime.getURL("/")).origin }),
-            cause => done({ error: String(cause) }),
-          );
-        `);
-        throw new Error(`${String(error)} ${JSON.stringify(diagnostics)}`);
-      }
-      await driver.wait(async () => (await readdir(downloadDirectory)).includes(download.filename));
-      const mhtml = await readFile(resolve(downloadDirectory, download.filename), "utf8");
-      const encodedDocument = mhtml.split(/\r?\n\r?\n/u)[2]?.split(/\r?\n--/u)[0];
-      expect(encodedDocument).toBeDefined();
-      const documentHtml = Buffer.from(encodedDocument.replaceAll(/\s/gu, ""), "base64").toString(
-        "utf8",
+      await driver.wait(
+        until.elementLocated(By.xpath("//*[normalize-space()='Firefox canonical fixture']")),
+        10_000,
       );
-      expect(documentHtml).toContain("Firefox production fixture");
-      expect(documentHtml).toContain('value="preserved"');
-      if (process.env.AWSM_FIREFOX_EXPORT === "true") {
-        const exported = await send(driver, {
-          type: "ExportVault",
-          expectedVaultId: vaultId,
-          passphrase: "firefox-production-export-passphrase",
-        });
-        await driver.wait(async () =>
-          (await readdir(downloadDirectory)).includes(exported.filename),
-        );
-        expect(
-          (await readFile(resolve(downloadDirectory, exported.filename))).byteLength,
-        ).toBeGreaterThan(0);
-        await send(driver, { type: "ResetLocalDevice" });
-        await restartBackground(driver);
-        const libraryUrl = await driver.executeScript(
-          'return browser.runtime.getURL("/library.html?import=1");',
-        );
-        await driver.get(libraryUrl);
-        const fileInput = await driver.wait(
-          until.elementLocated(By.css('input[type="file"]')),
-          10_000,
-        );
-        await fileInput.sendKeys(resolve(downloadDirectory, exported.filename));
-        await driver.findElement(By.xpath("//button[normalize-space()='Continue']")).click();
-        const passphrase = await driver.wait(
-          until.elementLocated(By.css('input[type="password"]')),
-          10_000,
-        );
-        await passphrase.sendKeys("firefox-production-export-passphrase");
-        await driver.findElement(By.xpath("//button[normalize-space()='Import Vault']")).click();
-        await driver.wait(async () => {
-          const state = await send(driver, { type: "GetState" });
-          return (
-            state.latestImportJob?.state === "Succeeded" &&
-            state.workspace.vaults.some((vault) => vault.name === "Firefox Smoke Vault")
-          );
-        }, 20_000);
-      }
+      await restartBackground(driver);
+      const reopened = await send(driver, { type: "ListLibrary", expectedVaultId: vaultId });
+      expect(reopened).toHaveLength(1);
+      expect(reopened[0].bundleId).toBe(capture.bundleId);
     } finally {
       await driver.quit();
       await fixture.stop();
