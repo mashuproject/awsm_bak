@@ -166,8 +166,10 @@ The Complete Import substrate now has the separate atomic activation primitive t
 recovery ceremony will use: after revalidating an exact complete closure, it prepares the fresh
 Client enrollment and commits the authenticated closure, enrollment Event, Client Envelopes, and
 installation-wrapped secrets in one initial local transaction. An incorrect phrase reaches no local
-Vault commit. This is repository-only substrate, not yet a Hosted recovery command or user-facing
-flow.
+Vault commit. The Hosted recovery orchestration substrate uses only a transient Account session to
+scan, authenticate, and re-read one opaque closure; it deduplicates same-Replica Recovery Envelopes
+and rejects divergent authenticated closures before activation. It persists neither that session nor
+a Remote. This is not yet an application command or user-facing flow.
 
 The shipped background, popup, and Library now use only the canonical application boundary. They
 support local Vault creation and selection, Recovery Phrase confirmation and selected-replica
