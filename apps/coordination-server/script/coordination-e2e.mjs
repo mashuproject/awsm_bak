@@ -1,19 +1,42 @@
 import assert from "node:assert/strict";
-import { createHash, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { createInitialVaultAuthority } from "./plan15-proof-authority.mjs";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 
-const baseUrl = process.env.AWSM_COORDINATION_E2E_BASE_URL;
-const cableUrl = process.env.AWSM_COORDINATION_E2E_CABLE_URL;
+const primaryBaseUrl = process.env.AWSM_COORDINATION_E2E_BASE_URL;
+const peerBaseUrl = process.env.AWSM_COORDINATION_E2E_PEER_BASE_URL;
 const composeFile = process.env.AWSM_COORDINATION_E2E_COMPOSE_FILE;
-assert(baseUrl, "AWSM_COORDINATION_E2E_BASE_URL is required");
-assert(cableUrl, "AWSM_COORDINATION_E2E_CABLE_URL is required");
+assert(primaryBaseUrl, "AWSM_COORDINATION_E2E_BASE_URL is required");
+assert(peerBaseUrl, "AWSM_COORDINATION_E2E_PEER_BASE_URL is required");
 assert(composeFile, "AWSM_COORDINATION_E2E_COMPOSE_FILE is required");
 
-let credential;
+function digest(bytes) {
+  return createHash("sha256").update(bytes).digest();
+}
 
-function sha256(bytes) {
-  return createHash("sha256").update(bytes).digest("base64url");
+function base64Url(bytes) {
+  return Buffer.from(bytes).toString("base64url");
+}
+
+function storageItemId(bytes) {
+  const framing = Buffer.alloc(12);
+  framing.writeUInt32BE(1, 0);
+  framing.writeBigUInt64BE(BigInt(bytes.byteLength), 4);
+  return digest(Buffer.concat([Buffer.from("awsm:storage-item-id:v1\0"), framing, bytes]));
+}
+
+function compactEnvelope(payload) {
+  const ciphertextDigest = digest(payload);
+  const header = Buffer.concat([
+    Buffer.from([0xa6, 0x00, 0x01, 0x01, 0x01, 0x02, 0x58, 0x40]),
+    randomBytes(64),
+    Buffer.from([0x03, payload.byteLength, 0x04, 0x58, 0x20]),
+    ciphertextDigest,
+    Buffer.from([0x05, 0x00]),
+  ]);
+  const prefix = Buffer.alloc(12);
+  prefix.write("AWSMSE\x01\x00", 0, "binary");
+  prefix.writeUInt32BE(header.byteLength, 8);
+  return { bytes: Buffer.concat([prefix, header, payload]), ciphertextDigest };
 }
 
 function compose(...args) {
@@ -25,163 +48,49 @@ function compose(...args) {
   }
 }
 
-async function request(method, path, body, options = {}) {
+async function request(
+  baseUrl,
+  credential,
+  method,
+  path,
+  body,
+  { expected = [200], headers: extraHeaders = {} } = {},
+) {
   const headers = {
     "Awsm-Protocol-Version": "1",
     "Awsm-Request-ID": randomUUID(),
+    ...extraHeaders,
   };
-  if (credential) headers.Authorization = `Bearer ${credential}`;
-  if (body !== undefined) headers["Content-Type"] = "application/json";
-  if (options.idempotencyKey) {
-    headers["Idempotency-Key"] = options.idempotencyKey;
-  }
-
+  if (credential !== undefined) headers.Authorization = `Bearer ${credential}`;
+  if (body !== undefined && !(body instanceof Uint8Array))
+    headers["Content-Type"] = "application/json";
   const response = await fetch(`${baseUrl}${path}`, {
     method,
     headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
+    body: body === undefined ? undefined : body instanceof Uint8Array ? body : JSON.stringify(body),
   });
+  assert.equal(response.headers.get("Awsm-Protocol-Version"), "1");
   const payload = response.status === 204 ? null : await response.json();
-  const expected = options.expected ?? [200];
   if (!expected.includes(response.status)) {
     throw new Error(
       `${method} ${path}: expected ${expected}, got ${response.status} ${JSON.stringify(payload)}`,
     );
   }
-  return payload;
+  return { payload, response };
 }
 
-async function putPart(url, bytes) {
-  const response = await fetch(`${baseUrl}${url.replace("{partNumber}", "0")}`, {
-    method: "PUT",
-    headers: {
-      "Awsm-Protocol-Version": "1",
-      "Awsm-Request-ID": randomUUID(),
-      "Content-Type": "application/octet-stream",
-      "Content-Length": String(bytes.byteLength),
-      "Content-SHA256": sha256(bytes),
-    },
-    body: bytes,
-  });
-  assert.equal(response.status, 204);
-}
-
-async function uploadEvent(vaultId, generationId, keyEpochId, objectId, bytes) {
-  const started = await request(
-    "POST",
-    `/api/vaults/${vaultId}/uploads`,
-    {
-      objectId,
-      objectType: "Event",
-      keyEpochId,
-      byteLength: bytes.byteLength,
-      sha256: sha256(bytes),
-      targetGenerationId: generationId,
-      eventMetadata: {
-        orderingTimestamp: new Date().toISOString(),
-        dependencyObjectIds: [],
-      },
-    },
-    { idempotencyKey: randomUUID(), expected: [201] },
-  );
-  await putPart(started.ticket.url, bytes);
-  await request(
-    "POST",
-    `/api/vaults/${vaultId}/uploads/${started.upload.uploadId}/complete`,
-    undefined,
-    { idempotencyKey: randomUUID() },
-  );
-}
-
-async function commitEvent(vaultId, generationId, objectId) {
-  return request(
-    "POST",
-    `/api/vaults/${vaultId}/commits`,
-    {
-      generationId,
-      generationNumber: 0,
-      eventObjectId: objectId,
-      dependencyObjectIds: [],
-    },
-    { idempotencyKey: randomUUID() },
-  );
-}
-
-async function readiness(expectedStatus) {
+async function assertReady(baseUrl) {
   const response = await fetch(`${baseUrl}/ready`);
   assert.equal(response.status, 200);
-  const payload = await response.json();
-  assert.equal(payload.status, expectedStatus);
-  assert.equal(payload.components.database, "ready");
-  assert.equal(payload.components.opaqueByteStorage, "ready");
-  assert.equal(
-    payload.components.ephemeralCoordination,
-    expectedStatus === "ready" ? "ready" : "unavailable",
-  );
-}
-
-async function waitForReadiness(expectedStatus, timeout = 20_000) {
-  const deadline = Date.now() + timeout;
-  let lastError;
-  while (Date.now() < deadline) {
-    try {
-      await readiness(expectedStatus);
-      return;
-    } catch (error) {
-      lastError = error;
-      await new Promise((resolve) => setTimeout(resolve, 200));
-    }
-  }
-  throw new Error(`Timed out waiting for ${expectedStatus} readiness: ${lastError?.message}`);
-}
-
-async function openCable(vaultId) {
-  const issued = await request("POST", "/api/cable-tickets", undefined, {
-    expected: [201],
+  assert.deepEqual(await response.json(), {
+    status: "ready",
+    components: { database: "ready", opaqueByteStorage: "ready" },
   });
-  const socket = new WebSocket(`${cableUrl}?ticket=${encodeURIComponent(issued.ticket)}`, [
-    "actioncable-v1-json",
-    "actioncable-unsupported",
-  ]);
-  const messages = [];
-  const confirmed = new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error("Cable subscription timeout")), 10_000);
-    socket.addEventListener("message", (event) => {
-      const frame = JSON.parse(event.data);
-      if (frame.type === "welcome") {
-        socket.send(
-          JSON.stringify({
-            command: "subscribe",
-            identifier: JSON.stringify({
-              channel: "VaultChangesChannel",
-              vaultId,
-            }),
-          }),
-        );
-      } else if (frame.type === "confirm_subscription") {
-        clearTimeout(timeout);
-        resolve();
-      } else if (frame.message) {
-        messages.push(frame.message);
-      }
-    });
-  });
-  await confirmed;
-  return { socket, messages };
 }
 
-async function waitForMessage(messages, cursor, timeout = 15_000) {
-  const deadline = Date.now() + timeout;
-  while (Date.now() < deadline) {
-    if (messages.some((message) => message.latestCursor === cursor)) return;
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  throw new Error(`Timed out waiting for Cable cursor ${cursor}`);
-}
-
-const username = `resilience_${randomUUID().replaceAll("-", "").slice(0, 20)}`;
-const password = `coordination proof ${randomUUID()}`;
-const signupResponse = await fetch(`${baseUrl}/sign_up`, {
+const username = `e2e_owner_${randomUUID().replaceAll("-", "").slice(0, 18)}`;
+const password = `opaque continuity proof ${randomUUID()}`;
+const signup = await fetch(`${primaryBaseUrl}/sign_up`, {
   method: "POST",
   headers: { "Content-Type": "application/x-www-form-urlencoded" },
   body: new URLSearchParams({
@@ -191,73 +100,84 @@ const signupResponse = await fetch(`${baseUrl}/sign_up`, {
   }),
   redirect: "manual",
 });
-assert.equal(signupResponse.status, 302);
-const login = await request("POST", "/api/sessions", { username, password });
-credential = login.accessToken;
-const generationBytes = Buffer.from("opaque-resilience-generation");
-const authority = createInitialVaultAuthority(login.sessionId, generationBytes);
-const { vaultId, generationId, keyEpochId } = authority;
-const attached = await request("POST", "/api/vaults", authority.body, {
-  idempotencyKey: randomUUID(),
-  expected: [201],
-});
-credential = attached.session.accessToken;
-await putPart(attached.ticket.url, generationBytes);
-await request(
-  "POST",
-  `/api/vaults/${vaultId}/uploads/${attached.upload.uploadId}/complete`,
-  undefined,
-  { idempotencyKey: randomUUID() },
-);
-await request(
-  "POST",
-  `/api/vaults/${vaultId}/complete`,
-  { generationId },
-  { idempotencyKey: randomUUID() },
-);
-await readiness("ready");
+assert.equal(signup.status, 302);
+const session = (
+  await request(primaryBaseUrl, undefined, "POST", "/api/sessions", { username, password })
+).payload;
 
-compose("stop", "redis-coordination-e2e");
-await waitForReadiness("degraded");
+await assertReady(primaryBaseUrl);
+await assertReady(peerBaseUrl);
+const replica = (
+  await request(
+    primaryBaseUrl,
+    session.access_token,
+    "POST",
+    "/api/replicas",
+    {},
+    {
+      expected: [201],
+    },
+  )
+).payload;
+const opaque = compactEnvelope(Buffer.alloc(16, 0x6b));
+const itemId = storageItemId(opaque.bytes);
+const locator = digest(Buffer.concat([Buffer.from("e2e locator\0"), itemId]));
+await request(
+  primaryBaseUrl,
+  session.access_token,
+  "PUT",
+  `/api/replicas/${replica.replica_handle}/items/${base64Url(itemId)}`,
+  opaque.bytes,
+  {
+    expected: [201],
+    headers: {
+      "Content-Type": "application/octet-stream",
+      "Awsm-Opaque-Locator": base64Url(locator),
+    },
+  },
+);
 
-const unavailable = await request("POST", "/api/cable-tickets", undefined, {
-  expected: [503],
-});
+const peerBeforeStop = (
+  await request(
+    peerBaseUrl,
+    session.access_token,
+    "GET",
+    `/api/replicas/${replica.replica_handle}/inventory`,
+  )
+).payload;
+assert.equal(peerBeforeStop.snapshot_cursor, 1);
 assert.deepEqual(
-  { outcome: unavailable.outcome, retryable: unavailable.retryable },
-  { outcome: "AUTHENTICATION_UNAVAILABLE", retryable: true },
+  peerBeforeStop.items.map((item) => item.storage_item_id),
+  [base64Url(itemId)],
 );
 
-const outageEventId = randomUUID();
-await uploadEvent(
-  vaultId,
-  generationId,
-  keyEpochId,
-  outageEventId,
-  Buffer.from("opaque-event-during-redis-outage"),
+compose("stop", "coordination-e2e");
+await assertReady(peerBaseUrl);
+const peerItem = await fetch(
+  `${peerBaseUrl}/api/replicas/${replica.replica_handle}/items/${base64Url(itemId)}`,
+  {
+    headers: {
+      Authorization: `Bearer ${session.access_token}`,
+      "Awsm-Protocol-Version": "1",
+      "Awsm-Request-ID": randomUUID(),
+    },
+  },
 );
-const outageCommit = await commitEvent(vaultId, generationId, outageEventId);
-assert.equal(outageCommit.cursor, 2);
-const outageChanges = await request("GET", `/api/vaults/${vaultId}/changes?after=1&limit=100`);
-assert(outageChanges.changes.some((change) => change.event?.objectId === outageEventId));
+assert.equal(peerItem.status, 200);
+assert.deepEqual(Buffer.from(await peerItem.arrayBuffer()), opaque.bytes);
 
-compose("up", "--detach", "--wait", "redis-coordination-e2e");
-await waitForReadiness("ready");
-
-const cable = await openCable(vaultId);
-const recoveryEventId = randomUUID();
-await uploadEvent(
-  vaultId,
-  generationId,
-  keyEpochId,
-  recoveryEventId,
-  Buffer.from("opaque-event-after-redis-recovery"),
-);
-const recoveryCommit = await commitEvent(vaultId, generationId, recoveryEventId);
-assert.equal(recoveryCommit.cursor, 3);
-await waitForMessage(cable.messages, 3);
-cable.socket.close();
+compose("up", "--detach", "--wait", "coordination-e2e");
+await assertReady(primaryBaseUrl);
+const primaryAfterRestart = (
+  await request(
+    primaryBaseUrl,
+    session.access_token,
+    "GET",
+    `/api/replicas/${replica.replica_handle}/inventory`,
+  )
+).payload;
+assert.deepEqual(primaryAfterRestart, peerBeforeStop);
 
 process.stdout.write(
-  "coordination E2E kept polling available during Redis loss and recovered ticket issuance and cross-process Cable delivery\n",
+  "coordination E2E preserved opaque Hosted Replica access and bytes across independent Host-process failover and restart\n",
 );

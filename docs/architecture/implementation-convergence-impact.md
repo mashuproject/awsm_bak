@@ -257,6 +257,15 @@ journeys. Old Device, Recovery Kit, Generation, server replacement, remote-proof
 Relief, and compatibility scenarios are removed rather than compiled as unreachable release
 evidence.
 
+The packaged Chrome design and ceremony lanes likewise cover only current visible behavior. The
+design lane renders local-Vault creation, phrase confirmation, ready, Vault settings, and the
+empty Library at wide and narrow sizes, alongside the Account dashboard and public surfaces. The
+Chrome E2E entry point runs the canonical packaged ceremony: local creation, Recovery Phrase
+confirmation, capture, Library projection, settings, phrase replacement, Fork, Vacuum, and
+Closure. The superseded Device/Generation/server-switch E2E files and their Search, Storage Relief,
+semantic Host, and synchronization-setup snapshots are removed; they are not retained as skipped
+release evidence.
+
 Start with the target golden, reducer, authority, recovery, Host, storage, Vacuum, Fork, and
 divergence matrix in `19-testing-strategy.md`. Preserve page-snapshot, Capture, browser permission,
 Search, accessibility, and visual tests only after their fixtures use the canonical substrate.
@@ -274,6 +283,17 @@ still match.
 Build black-box tests exclusively through the new public API. Prove cross-Grant isolation, opaque
 metadata limits, immutable retry, range/resume, withholding, corruption, quota, Account deletion,
 and two isolated Hosts. Add database constraints for every Host-local invariant.
+
+The two heavyweight local proofs now exercise the current opaque boundary rather than semantic
+Vault fixtures. `corepack pnpm test:sync-proof` signs up Host-local Accounts, rotates a session,
+creates one Hosted Replica, proves no-access before a bounded Grant, admits one verified compact
+envelope, reads its opaque inventory and bytes through a second Host process, rejects an
+unauthorized hint write, and proves immediate revocation. `corepack pnpm test:e2e:coordination`
+admits an opaque item through one Host process, reads it through another, stops the first process,
+then restarts it and proves the same session can still obtain the same inventory. Neither proof
+introduces Vault IDs, Device authority, Recovery, Generation, Cable, or semantic content at the
+Host boundary. They are local repository evidence, not evidence of a named deployment or complete
+Client synchronization.
 
 # 6. Tooling, packaging, and operations
 

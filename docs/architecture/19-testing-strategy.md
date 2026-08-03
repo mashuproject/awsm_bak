@@ -176,8 +176,10 @@ a duplicate web Vault host.
 Implemented suites prove only the exact code paths and boundaries they execute; target documents
 are never test evidence by themselves. Convergence work begins with failing target vectors and
 black-box scenarios, removes superseded fixtures and compatibility expectations, and updates public
-claims only after real proof. Current opaque-Host request proof is repository evidence, not proof of
-a named deployment, independent Host implementation, or end-to-end Client synchronization.
+claims only after real proof. The current local opaque-Host proofs cover session rotation, bounded
+Grant isolation and revocation, verified compact-envelope admission, cross-process opaque reads,
+and process stop/restart continuity. They are repository evidence, not evidence of a named
+deployment or complete end-to-end Client synchronization.
 
 # Invariants
 

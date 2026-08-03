@@ -106,7 +106,7 @@ services:
         condition: service_healthy
     environment:
       AWSM_PROOF_BASE_URL: http://coordination-proof:3000
-      AWSM_PROOF_CABLE_URL: ws://coordination-proof-peer:3000/cable
+      AWSM_PROOF_PEER_BASE_URL: http://coordination-proof-peer:3000
     volumes:
       - ./apps/coordination-server/script:/proof:ro
 
