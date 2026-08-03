@@ -144,6 +144,29 @@ test("runs the canonical local Vault ceremony through a packaged extension", asy
       path: testInfo.outputPath("canonical-popup-create.png"),
     });
 
+    await first.getByRole("button", { name: "Recover a Hosted Vault" }).click();
+    await expect(first.getByRole("heading", { name: "Recover a Hosted Vault" })).toBeVisible();
+    await expect(first.getByLabel("Hosted Replica address")).toBeVisible();
+    await expect(first.getByLabel("Account username")).toBeVisible();
+    await expect(first.getByLabel("Account password")).toBeVisible();
+    await expect(first.getByLabel("Recovery Phrase")).toBeVisible();
+    await assertInteractiveTargets(first);
+    await expectReadableContrast(first);
+    await first.evaluate(() => window.scrollTo(0, 0));
+    await first.screenshot({
+      path: testInfo.outputPath("canonical-popup-hosted-recovery.png"),
+    });
+    await first.setViewportSize({ width: 360, height: 700 });
+    await assertInteractiveTargets(first);
+    await expectReadableContrast(first);
+    await first.evaluate(() => window.scrollTo(0, 0));
+    await first.screenshot({
+      path: testInfo.outputPath("canonical-popup-hosted-recovery-narrow.png"),
+    });
+    await first.getByRole("button", { name: "Back to create Vault" }).click();
+    await expect(first.getByRole("heading", { name: "Create your local Vault" })).toBeVisible();
+    await first.setViewportSize({ width: 400, height: 700 });
+
     await first.getByLabel("Vault name").fill("Field Notes");
     await first.getByRole("button", { name: "Create Vault" }).click();
     await expect(first.getByRole("heading", { name: "Protect your Vault" })).toBeVisible();

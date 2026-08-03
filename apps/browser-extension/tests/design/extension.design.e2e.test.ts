@@ -83,6 +83,23 @@ test("renders the canonical local-Vault and Library surfaces", async ({
     await expectReadableContrast(popup);
     await expect(popup).toHaveScreenshot("popup-first-use.png", { fullPage: true });
 
+    await popup.getByRole("button", { name: "Recover a Hosted Vault" }).click();
+    await expect(popup.getByRole("heading", { name: "Recover a Hosted Vault" })).toBeVisible();
+    await expect(popup.getByLabel("Hosted Replica address")).toBeVisible();
+    await expect(popup.getByLabel("Account username")).toBeVisible();
+    await expect(popup.getByLabel("Account password")).toBeVisible();
+    await expect(popup.getByLabel("Recovery Phrase")).toBeVisible();
+    await assertInteractiveTargets(popup);
+    await expectReadableContrast(popup);
+    await expect(popup).toHaveScreenshot("popup-hosted-recovery.png", { fullPage: true });
+    await popup.setViewportSize({ width: 360, height: 700 });
+    await assertInteractiveTargets(popup);
+    await expectReadableContrast(popup);
+    await expect(popup).toHaveScreenshot("popup-hosted-recovery-narrow.png", { fullPage: true });
+    await popup.getByRole("button", { name: "Back to create Vault" }).click();
+    await expect(popup.getByRole("heading", { name: "Create your local Vault" })).toBeVisible();
+    await popup.setViewportSize({ width: 400, height: 700 });
+
     await popup.getByLabel("Vault name").fill("Field Notes");
     await popup.getByRole("button", { name: "Create Vault" }).click();
     await expect(popup.getByRole("heading", { name: "Protect your Vault" })).toBeVisible();

@@ -22,6 +22,7 @@ import type {
 import { type CanonicalSearchCoverage, CanonicalSearchService } from "../search/canonical-service";
 import type { CanonicalHostedArtifactHydrationService } from "../synchronization/canonical-hosted-artifact-hydration";
 import type { CanonicalHostedCompactMaterializationService } from "../synchronization/canonical-hosted-compact-materialization";
+import type { CanonicalHostedMemberRecoveryService } from "../synchronization/canonical-hosted-member-recovery";
 import type { CanonicalHostedReplicaSetupService } from "../synchronization/canonical-hosted-replica-setup";
 import type { CanonicalMultiRemotePullService } from "../synchronization/canonical-multi-remote-pull-service";
 import type { CanonicalReplicaRemoteService } from "../synchronization/canonical-remote-service";
@@ -293,6 +294,7 @@ export class CanonicalClientRuntime {
         "materialize"
       >;
       readonly hostedArtifactHydrator?: Pick<CanonicalHostedArtifactHydrationService, "hydrate">;
+      readonly hostedMemberRecovery?: Pick<CanonicalHostedMemberRecoveryService, "recover">;
       readonly multiRemotePull?: Pick<CanonicalMultiRemotePullService, "pull">;
     } = {},
   ) {}
@@ -446,6 +448,33 @@ export class CanonicalClientRuntime {
       memberId: identifierStorageKey(outcome.memberId),
       clientCredentialId: identifierStorageKey(outcome.clientCredentialId),
       eventRecordId: identifierStorageKey(outcome.eventRecordId),
+    };
+  }
+
+  async recoverHostedMember(input: {
+    readonly endpoint: string;
+    readonly username: string;
+    readonly password: string;
+    readonly recoveryPhrase: string;
+    readonly assertedAt: number | bigint;
+  }): Promise<{
+    readonly vaultId: string;
+    readonly memberId: string;
+    readonly clientCredentialId: string;
+    readonly eventRecordId: string;
+  }> {
+    if (this.remoteManagement.hostedMemberRecovery === undefined) {
+      throw runtimeError(
+        "HOSTED_MEMBER_RECOVERY_UNAVAILABLE",
+        "Hosted Member Recovery is unavailable in this Client.",
+      );
+    }
+    const recovered = await this.remoteManagement.hostedMemberRecovery.recover(input);
+    return {
+      vaultId: identifierStorageKey(recovered.vaultId),
+      memberId: identifierStorageKey(recovered.memberId),
+      clientCredentialId: identifierStorageKey(recovered.clientCredentialId),
+      eventRecordId: identifierStorageKey(recovered.eventRecordId),
     };
   }
 

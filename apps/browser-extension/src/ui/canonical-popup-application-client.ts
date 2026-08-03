@@ -52,6 +52,17 @@ export interface CanonicalPopupApplicationClient extends CanonicalPopupClient {
     readonly clientCredentialId: string;
     readonly eventRecordId: string;
   }>;
+  recoverHostedMember(input: {
+    readonly endpoint: string;
+    readonly username: string;
+    readonly password: string;
+    readonly recoveryPhrase: string;
+  }): Promise<{
+    readonly vaultId: string;
+    readonly memberId: string;
+    readonly clientCredentialId: string;
+    readonly eventRecordId: string;
+  }>;
   beginRecoveryPhraseReplacement(expectedVaultId: string): Promise<{
     readonly setupId: string;
     readonly recoveryPhrase: string;
@@ -479,6 +490,30 @@ function decodeMemberRecovered(value: unknown): {
   };
 }
 
+function decodeHostedMemberRecovered(value: unknown): {
+  readonly vaultId: string;
+  readonly memberId: string;
+  readonly clientCredentialId: string;
+  readonly eventRecordId: string;
+} {
+  if (
+    !plainRecord(value) ||
+    !exactKeys(value, ["vaultId", "memberId", "clientCredentialId", "eventRecordId"]) ||
+    !identifier(value.vaultId) ||
+    !identifier(value.memberId) ||
+    !identifier(value.clientCredentialId) ||
+    !identifier(value.eventRecordId)
+  ) {
+    throw protocolError();
+  }
+  return {
+    vaultId: value.vaultId,
+    memberId: value.memberId,
+    clientCredentialId: value.clientCredentialId,
+    eventRecordId: value.eventRecordId,
+  };
+}
+
 function decodeRecoveryPhraseReplaced(value: unknown): {
   readonly recoveryCredentialId: string;
   readonly revision: number;
@@ -527,6 +562,21 @@ function assertHostedReplicaSetup(input: {
     throw new TypeError("Popup Hosted Replica username is invalid.");
   if (input.password.length < 1 || input.password.length > 1_024)
     throw new TypeError("Popup Hosted Replica password is invalid.");
+}
+
+function assertHostedMemberRecovery(input: {
+  readonly endpoint: string;
+  readonly username: string;
+  readonly password: string;
+  readonly recoveryPhrase: string;
+}): void {
+  if (!hostedEndpoint(input.endpoint))
+    throw new TypeError("Popup Hosted Replica endpoint is invalid.");
+  if (input.username.length < 1 || input.username.length > 256)
+    throw new TypeError("Popup Hosted Replica username is invalid.");
+  if (input.password.length < 1 || input.password.length > 1_024)
+    throw new TypeError("Popup Hosted Replica password is invalid.");
+  assertText(input.recoveryPhrase, "Recovery Phrase");
 }
 
 export function createCanonicalPopupApplicationClient(
@@ -603,6 +653,18 @@ export function createCanonicalPopupApplicationClient(
         await transport.request({
           type: "RecoverMember",
           expectedVaultId: input.expectedVaultId,
+          recoveryPhrase: input.recoveryPhrase,
+        }),
+      );
+    },
+    async recoverHostedMember(input) {
+      assertHostedMemberRecovery(input);
+      return decodeHostedMemberRecovered(
+        await transport.request({
+          type: "RecoverHostedMember",
+          endpoint: input.endpoint,
+          username: input.username,
+          password: input.password,
           recoveryPhrase: input.recoveryPhrase,
         }),
       );

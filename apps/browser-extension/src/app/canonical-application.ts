@@ -36,6 +36,13 @@ export type CanonicalApplicationRequest =
       readonly expectedVaultId: string;
       readonly recoveryPhrase: string;
     }
+  | {
+      readonly type: "RecoverHostedMember";
+      readonly endpoint: string;
+      readonly username: string;
+      readonly password: string;
+      readonly recoveryPhrase: string;
+    }
   | { readonly type: "BeginRecoveryPhraseReplacement"; readonly expectedVaultId: string }
   | {
       readonly type: "ConfirmRecoveryPhraseReplacement";
@@ -79,6 +86,7 @@ type CanonicalApplicationRuntime = Pick<
   | "confirmVaultFork"
   | "cancelVaultFork"
   | "recoverMember"
+  | "recoverHostedMember"
   | "beginRecoveryPhraseReplacement"
   | "confirmRecoveryPhraseReplacement"
   | "cancelRecoveryPhraseReplacement"
@@ -215,6 +223,23 @@ export function decodeCanonicalApplicationRequest(value: unknown): CanonicalAppl
         return {
           type: value.type,
           expectedVaultId: value.expectedVaultId,
+          recoveryPhrase: value.recoveryPhrase,
+        };
+      }
+      break;
+    case "RecoverHostedMember":
+      if (
+        exactKeys(value, ["type", "endpoint", "username", "password", "recoveryPhrase"]) &&
+        text(value.endpoint) &&
+        text(value.username) &&
+        text(value.password) &&
+        text(value.recoveryPhrase)
+      ) {
+        return {
+          type: value.type,
+          endpoint: value.endpoint,
+          username: value.username,
+          password: value.password,
           recoveryPhrase: value.recoveryPhrase,
         };
       }
@@ -393,6 +418,16 @@ export class CanonicalApplication {
             expectedVaultId: request.expectedVaultId,
             recoveryPhrase: request.recoveryPhrase,
             commandId: this.createCaptureCommandId(),
+            assertedAt: this.now(),
+          }),
+        );
+      case "RecoverHostedMember":
+        return this.mutate(() =>
+          this.runtime.recoverHostedMember({
+            endpoint: request.endpoint,
+            username: request.username,
+            password: request.password,
+            recoveryPhrase: request.recoveryPhrase,
             assertedAt: this.now(),
           }),
         );

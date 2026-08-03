@@ -23,6 +23,7 @@ describe("canonical application", () => {
       confirmVaultFork: vi.fn(),
       cancelVaultFork: vi.fn(),
       recoverMember: vi.fn(),
+      recoverHostedMember: vi.fn(),
       beginRecoveryPhraseReplacement: vi.fn(),
       confirmRecoveryPhraseReplacement: vi.fn(),
       cancelRecoveryPhraseReplacement: vi.fn(),
@@ -75,6 +76,7 @@ describe("canonical application", () => {
       confirmVaultFork: vi.fn(),
       cancelVaultFork: vi.fn(),
       recoverMember: vi.fn(),
+      recoverHostedMember: vi.fn(),
       beginRecoveryPhraseReplacement: vi.fn(),
       confirmRecoveryPhraseReplacement: vi.fn(),
       cancelRecoveryPhraseReplacement: vi.fn(),
@@ -245,6 +247,7 @@ describe("canonical application", () => {
       confirmVaultFork: vi.fn(),
       cancelVaultFork: vi.fn(),
       recoverMember: vi.fn(),
+      recoverHostedMember: vi.fn(),
       beginRecoveryPhraseReplacement: vi.fn(),
       confirmRecoveryPhraseReplacement: vi.fn(),
       cancelRecoveryPhraseReplacement: vi.fn(),
@@ -376,6 +379,7 @@ describe("canonical application", () => {
         clientCredentialId: "b".repeat(64),
         eventRecordId: "c".repeat(64),
       }),
+      recoverHostedMember: vi.fn(),
       beginRecoveryPhraseReplacement: vi.fn().mockResolvedValue({
         setupId: "replacement-setup",
         recoveryPhrase: "delta echo foxtrot",
@@ -448,6 +452,50 @@ describe("canonical application", () => {
     ).rejects.toThrow(/Unsupported application Command/u);
   });
 
+  it("runs Hosted Member Recovery as a fresh local Vault mutation", async () => {
+    const runtime = {
+      recoverHostedMember: vi.fn().mockResolvedValue({
+        vaultId: "a".repeat(64),
+        memberId: "b".repeat(64),
+        clientCredentialId: "c".repeat(64),
+        eventRecordId: "d".repeat(64),
+      }),
+    };
+    const application = new CanonicalApplication(runtime as never, () => 1234);
+
+    await expect(
+      application.handle({
+        type: "RecoverHostedMember",
+        endpoint: "https://host.example",
+        username: "marin",
+        password: "not persisted",
+        recoveryPhrase: "twelve private words",
+      }),
+    ).resolves.toEqual({
+      vaultId: "a".repeat(64),
+      memberId: "b".repeat(64),
+      clientCredentialId: "c".repeat(64),
+      eventRecordId: "d".repeat(64),
+    });
+    expect(runtime.recoverHostedMember).toHaveBeenCalledWith({
+      endpoint: "https://host.example",
+      username: "marin",
+      password: "not persisted",
+      recoveryPhrase: "twelve private words",
+      assertedAt: 1234,
+    });
+    await expect(
+      application.handle({
+        type: "RecoverHostedMember",
+        endpoint: "https://host.example",
+        username: "marin",
+        password: "not persisted",
+        recoveryPhrase: "twelve private words",
+        extra: true,
+      }),
+    ).rejects.toThrow(/Unsupported application Command/u);
+  });
+
   it("publishes one invalidation after a successful application mutation", async () => {
     const runtime = {
       state: vi.fn(),
@@ -468,6 +516,7 @@ describe("canonical application", () => {
       confirmVaultFork: vi.fn(),
       cancelVaultFork: vi.fn(),
       recoverMember: vi.fn(),
+      recoverHostedMember: vi.fn(),
       beginRecoveryPhraseReplacement: vi.fn(),
       confirmRecoveryPhraseReplacement: vi.fn(),
       cancelRecoveryPhraseReplacement: vi.fn(),

@@ -162,21 +162,26 @@ local Replica state and does not activate a Vault. Fresh-Client activation, with
 proof across Remotes, multi-Client conflict journeys, and full multi-member management remain target
 work.
 
-The Complete Import substrate now has the separate atomic activation primitive that a future Hosted
-recovery ceremony will use: after revalidating an exact complete closure, it prepares the fresh
-Client enrollment and commits the authenticated closure, enrollment Event, Client Envelopes, and
-installation-wrapped secrets in one initial local transaction. An incorrect phrase reaches no local
-Vault commit. The Hosted recovery orchestration substrate uses only a transient Account session to
-scan, authenticate, and re-read one opaque closure; it deduplicates same-Replica Recovery Envelopes
-and rejects divergent authenticated closures before activation. It persists neither that session nor
-a Remote. This is not yet an application command or user-facing flow.
+The Complete Import substrate atomically activates Hosted recovery after revalidating an exact
+complete closure: it prepares the fresh Client enrollment and commits the authenticated closure,
+enrollment Event, Client Envelopes, and installation-wrapped secrets in one initial local
+transaction. An incorrect phrase reaches no local Vault commit. The Hosted recovery coordinator
+uses only a transient Account session to scan, authenticate, and re-read one opaque closure; it
+deduplicates same-Replica Recovery Envelopes and rejects divergent authenticated closures before
+activation. It persists neither that session nor a Remote. The shipped first-use popup exposes this
+as **Recover a Hosted Vault**: a direct user action supplies a canonical HTTPS Host address,
+username, password, and Recovery Phrase, requests only that Host permission, and clears the entered
+password and phrase when the attempt ends. The UI states that recovery creates a fresh local Client
+Credential and that the Host is not saved as a Remote. Binding a recovered Replica to an existing
+Host channel remains a separate future operation rather than an implicit side effect of Recovery.
 
 The shipped background, popup, and Library now use only the canonical application boundary. They
-support local Vault creation and selection, Recovery Phrase confirmation and selected-replica
-recovery, page Capture, a current recent-Capture view, Recovery Phrase replacement, Fork, Vacuum,
-Closure, and a live selected-Vault Capture projection. A packaged Chromium journey builds those
-actual entrypoints and proves the local ceremony, a Library opened through the popup, Capture
-appearing in that already-open Library without reload, live second-popup reconciliation, management
+support local Vault creation and selection, first-use Hosted recovery, Recovery Phrase confirmation
+and selected-replica recovery, page Capture, a current recent-Capture view, Recovery Phrase
+replacement, Fork, Vacuum, Closure, and a live selected-Vault Capture projection. A packaged
+Chromium journey builds those actual entrypoints and proves the local ceremony, the first-use Hosted
+recovery form at primary and narrow widths, a Library opened through the popup, Capture appearing
+in that already-open Library without reload, live second-popup reconciliation, management
 disclosures, and retained readable Capture after Closure.
 
 Search, export/import, synchronization, availability, member and invitation management, Capture
@@ -307,13 +312,13 @@ Relief, and compatibility scenarios are removed rather than compiled as unreacha
 evidence.
 
 The packaged Chrome design and ceremony lanes likewise cover only current visible behavior. The
-design lane renders local-Vault creation, phrase confirmation, ready, Vault settings, and the
-empty Library at wide and narrow sizes, alongside the Account dashboard and public surfaces. The
-Chrome E2E entry point runs the canonical packaged ceremony: local creation, Recovery Phrase
-confirmation, capture, Library projection, settings, phrase replacement, Fork, Vacuum, and
-Closure. The superseded Device/Generation/server-switch E2E files and their Search, Storage Relief,
-semantic Host, and synchronization-setup snapshots are removed; they are not retained as skipped
-release evidence.
+design lane renders local-Vault creation, first-use Hosted recovery, phrase confirmation, ready,
+Vault settings, and the empty Library at wide and narrow sizes, alongside the Account dashboard and
+public surfaces. The Chrome E2E entry point runs the canonical packaged ceremony: local creation,
+first-use Hosted recovery form, Recovery Phrase confirmation, capture, Library projection,
+settings, phrase replacement, Fork, Vacuum, and Closure. The superseded
+Device/Generation/server-switch E2E files and their Search, Storage Relief, semantic Host, and
+synchronization-setup snapshots are removed; they are not retained as skipped release evidence.
 
 Firefox Stable and ESR execute the same packaged local-Vault ceremony through their real Firefox
 hosts: Recovery Phrase confirmation, page capture, Library rendering, and persisted reopening after

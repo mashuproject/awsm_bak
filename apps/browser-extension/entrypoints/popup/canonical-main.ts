@@ -65,6 +65,7 @@ type CanonicalPopupVaultScreen =
       readonly kind: "Fork";
       readonly setup: Awaited<ReturnType<CanonicalPopupApplicationClient["beginVaultFork"]>>;
     }
+  | { readonly kind: "HostedMemberRecovery" }
   | { readonly kind: "HostedReplicaSetup" }
   | { readonly kind: "VacuumConfirmation" }
   | { readonly kind: "ClosureConfirmation" };
@@ -146,6 +147,96 @@ function renderCreateVault(view: CanonicalPopupView, content: DocumentFragment):
         label: input.value.trim() === "" ? null : input.value.trim(),
       });
       render(view);
+    });
+  });
+  const recover = element(
+    "button",
+    "Recover a Hosted Vault",
+    "canonical-popup__quiet",
+  ) as HTMLButtonElement;
+  recover.type = "button";
+  recover.addEventListener("click", () => {
+    transientError = undefined;
+    vaultScreen = { kind: "HostedMemberRecovery" };
+    render(view);
+  });
+  content.append(form, recover);
+}
+
+function renderHostedMemberRecovery(view: CanonicalPopupView, content: DocumentFragment): void {
+  content.append(
+    element(
+      "p",
+      "Recover an existing Vault from a Replica Host. Your Host Account opens a temporary channel only; your Recovery Phrase authorizes a fresh local Client Credential.",
+      "canonical-popup__warning",
+    ),
+  );
+  const form = element("form", undefined, "canonical-popup__form");
+  const endpointLabel = element("label", "Hosted Replica address");
+  const endpoint = element("input") as HTMLInputElement;
+  endpoint.type = "url";
+  endpoint.autocomplete = "off";
+  endpoint.placeholder = "https://sync.example/";
+  endpoint.required = true;
+  endpointLabel.append(endpoint);
+  const usernameLabel = element("label", "Account username");
+  const username = element("input") as HTMLInputElement;
+  username.autocomplete = "username";
+  username.maxLength = 256;
+  username.required = true;
+  usernameLabel.append(username);
+  const passwordLabel = element("label", "Account password");
+  const password = element("input") as HTMLInputElement;
+  password.type = "password";
+  password.autocomplete = "current-password";
+  password.maxLength = 1024;
+  password.required = true;
+  passwordLabel.append(password);
+  const phraseLabel = element("label", "Recovery Phrase");
+  const phrase = element("textarea") as HTMLTextAreaElement;
+  phrase.autocomplete = "off";
+  phrase.required = true;
+  phrase.rows = 3;
+  phraseLabel.append(phrase);
+  const actions = element("div", undefined, "canonical-popup__actions");
+  const cancel = element("button", "Back to create Vault") as HTMLButtonElement;
+  cancel.type = "button";
+  cancel.addEventListener("click", () => {
+    password.value = "";
+    phrase.value = "";
+    vaultScreen = { kind: "Capture" };
+    render(view);
+  });
+  const submit = element(
+    "button",
+    "Recover Hosted Vault",
+    "canonical-popup__primary",
+  ) as HTMLButtonElement;
+  submit.type = "submit";
+  actions.append(cancel, submit);
+  form.append(endpointLabel, usernameLabel, passwordLabel, phraseLabel, actions);
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    action(submit, async () => {
+      try {
+        transientError = undefined;
+        await requestHostedReplicaPermission(endpoint.value, {
+          deniedMessage: "Allow access to this Replica Host before recovering a Vault.",
+        });
+        await client.recoverHostedMember({
+          endpoint: endpoint.value,
+          username: username.value,
+          password: password.value,
+          recoveryPhrase: phrase.value,
+        });
+        vaultScreen = { kind: "Capture" };
+        announcer.textContent =
+          "Vault recovered on this Client. The Host is not saved as a Remote.";
+        await controller.refresh();
+      } finally {
+        password.value = "";
+        phrase.value = "";
+      }
     });
   });
   content.append(form);
@@ -874,6 +965,9 @@ function renderClosureConfirmation(view: CanonicalPopupView, content: DocumentFr
 }
 
 function popupHeading(presentation: ReturnType<typeof canonicalPopupPresentation>): string {
+  if (presentation.kind === "CreateVault" && vaultScreen.kind === "HostedMemberRecovery") {
+    return "Recover a Hosted Vault";
+  }
   if (presentation.kind !== "Capture") {
     return presentation.kind === "CreateVault"
       ? "Create your local Vault"
@@ -896,6 +990,8 @@ function popupHeading(presentation: ReturnType<typeof canonicalPopupPresentation
       return "Replace your Recovery Phrase";
     case "Fork":
       return "Fork this Vault";
+    case "HostedMemberRecovery":
+      return "Recover a Hosted Vault";
     case "HostedReplicaSetup":
       return "Connect a Hosted Replica";
     case "VacuumConfirmation":
@@ -910,7 +1006,10 @@ function render(view: CanonicalPopupView): void {
   const content = document.createDocumentFragment();
   content.append(heading(popupHeading(presentation)));
   if (transientError !== undefined) content.append(status(transientError, "error"));
-  if (presentation.kind === "CreateVault") renderCreateVault(view, content);
+  if (presentation.kind === "CreateVault") {
+    if (vaultScreen.kind === "HostedMemberRecovery") renderHostedMemberRecovery(view, content);
+    else renderCreateVault(view, content);
+  }
   if (presentation.kind === "SelectVault") renderVaultSelection(view, content);
   if (presentation.kind === "ConfirmRecoveryPhrase") renderRecoveryConfirmation(content);
   if (presentation.kind === "ResumeRecoveryPhrase") renderRecoveryResume(presentation, content);

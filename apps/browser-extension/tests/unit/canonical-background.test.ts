@@ -6,6 +6,7 @@ import { identifierStorageKey } from "../../src/drivers/indexeddb/canonical-data
 import type { CanonicalArtifactStore } from "../../src/runtime/artifact/canonical-store";
 import type { CanonicalHostedArtifactHydrationService } from "../../src/runtime/synchronization/canonical-hosted-artifact-hydration";
 import type { CanonicalHostedCompactMaterializationService } from "../../src/runtime/synchronization/canonical-hosted-compact-materialization";
+import type { CanonicalHostedMemberRecoveryService } from "../../src/runtime/synchronization/canonical-hosted-member-recovery";
 import type { CanonicalHostedReplicaSetupService } from "../../src/runtime/synchronization/canonical-hosted-replica-setup";
 import type { CanonicalMultiRemotePullService } from "../../src/runtime/synchronization/canonical-multi-remote-pull-service";
 import type { CanonicalReplicaRemoteService } from "../../src/runtime/synchronization/canonical-remote-service";
@@ -133,6 +134,42 @@ describe("canonical background", () => {
     expect(hostedArtifactHydrator.hydrate).toHaveBeenCalledWith({
       vaultId,
       artifactId: expect.any(Uint8Array),
+    });
+  });
+
+  it("wires Hosted Member Recovery without requiring a currently selected Vault", async () => {
+    const hostedMemberRecovery = {
+      recover: vi.fn().mockResolvedValue({
+        vaultId: randomIdentifier("Vault"),
+        generationId: randomIdentifier("Generation"),
+        memberId: randomIdentifier("Member"),
+        clientCredentialId: randomIdentifier("ClientCredential"),
+        eventRecordId: randomIdentifier("VaultRecord"),
+      }),
+    } as Pick<CanonicalHostedMemberRecoveryService, "recover">;
+    const application = createCanonicalBackgroundApplication({
+      vaults: {} as CanonicalVaultService,
+      artifacts: {} as CanonicalArtifactStore,
+      pageCapture: { captureActivePage: vi.fn() },
+      now: () => 1234,
+      hostedMemberRecovery,
+    });
+
+    await expect(
+      application.handle({
+        type: "RecoverHostedMember",
+        endpoint: "https://host.example",
+        username: "marin",
+        password: "not persisted",
+        recoveryPhrase: "twelve private words",
+      }),
+    ).resolves.toMatchObject({ vaultId: expect.any(String) });
+    expect(hostedMemberRecovery.recover).toHaveBeenCalledWith({
+      endpoint: "https://host.example",
+      username: "marin",
+      password: "not persisted",
+      recoveryPhrase: "twelve private words",
+      assertedAt: 1234,
     });
   });
 });

@@ -400,4 +400,38 @@ describe("canonical popup application client", () => {
       [{ type: "CancelRecoveryPhraseReplacement", setupId: "replacement-setup" }],
     ]);
   });
+
+  it("recovers a fresh local Client from a Hosted closure without accepting secret output", async () => {
+    const transport = {
+      request: vi.fn().mockResolvedValue({
+        vaultId: "a".repeat(64),
+        memberId: "b".repeat(64),
+        clientCredentialId: "c".repeat(64),
+        eventRecordId: "d".repeat(64),
+      }),
+      subscribe: vi.fn(() => () => undefined),
+    };
+    const client = createCanonicalPopupApplicationClient(transport);
+
+    await expect(
+      client.recoverHostedMember({
+        endpoint: "https://host.example/",
+        username: "marin",
+        password: "not persisted",
+        recoveryPhrase: "twelve private words",
+      }),
+    ).resolves.toEqual({
+      vaultId: "a".repeat(64),
+      memberId: "b".repeat(64),
+      clientCredentialId: "c".repeat(64),
+      eventRecordId: "d".repeat(64),
+    });
+    expect(transport.request).toHaveBeenCalledWith({
+      type: "RecoverHostedMember",
+      endpoint: "https://host.example/",
+      username: "marin",
+      password: "not persisted",
+      recoveryPhrase: "twelve private words",
+    });
+  });
 });

@@ -12,10 +12,12 @@ import {
 import type { CanonicalArtifactStore } from "../runtime/artifact/canonical-store";
 import { CanonicalCaptureService } from "../runtime/capture/canonical-service";
 import { CanonicalClientRuntime } from "../runtime/client/canonical-runtime";
+import { CanonicalCompleteImportService } from "../runtime/complete-import/service";
 import { CanonicalLibraryProjectionService } from "../runtime/library/canonical-projection";
 import { CanonicalReplayService } from "../runtime/projection/canonical-replay";
 import { CanonicalHostedArtifactHydrationService } from "../runtime/synchronization/canonical-hosted-artifact-hydration";
 import { CanonicalHostedCompactMaterializationService } from "../runtime/synchronization/canonical-hosted-compact-materialization";
+import { CanonicalHostedMemberRecoveryService } from "../runtime/synchronization/canonical-hosted-member-recovery";
 import { CanonicalHostedPullService } from "../runtime/synchronization/canonical-hosted-pull-service";
 import { CanonicalHostedReplicaSetupService } from "../runtime/synchronization/canonical-hosted-replica-setup";
 import { CanonicalMultiRemotePullService } from "../runtime/synchronization/canonical-multi-remote-pull-service";
@@ -44,6 +46,7 @@ export interface CanonicalBackgroundApplicationOptions {
   >;
   readonly multiRemotePull?: Pick<CanonicalMultiRemotePullService, "pull">;
   readonly hostedArtifactHydrator?: Pick<CanonicalHostedArtifactHydrationService, "hydrate">;
+  readonly hostedMemberRecovery?: Pick<CanonicalHostedMemberRecoveryService, "recover">;
 }
 
 export function createCanonicalBackgroundApplication(
@@ -79,6 +82,9 @@ export function createCanonicalBackgroundApplication(
       ...(input.hostedArtifactHydrator === undefined
         ? {}
         : { hostedArtifactHydrator: input.hostedArtifactHydrator }),
+      ...(input.hostedMemberRecovery === undefined
+        ? {}
+        : { hostedMemberRecovery: input.hostedMemberRecovery }),
     },
   );
   return new CanonicalApplication(
@@ -122,6 +128,9 @@ export function startCanonicalBackground(): void {
     vaults,
     artifacts,
   });
+  const hostedMemberRecovery = new CanonicalHostedMemberRecoveryService({
+    completeImports: new CanonicalCompleteImportService(storage, NORMAL_STORAGE_REALM, artifacts),
+  });
   const application = createCanonicalBackgroundApplication({
     vaults,
     artifacts,
@@ -131,6 +140,7 @@ export function startCanonicalBackground(): void {
     hostedCompactMaterializer,
     multiRemotePull,
     hostedArtifactHydrator,
+    hostedMemberRecovery,
     notifyStateChanged: () =>
       browser.runtime.sendMessage(CANONICAL_APPLICATION_STATE_CHANGED).catch(() => undefined),
   });

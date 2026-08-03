@@ -11,6 +11,7 @@ import type { CanonicalLibraryProjectionService } from "../../src/runtime/librar
 import type { CanonicalSearchService } from "../../src/runtime/search/canonical-service";
 import type { CanonicalHostedArtifactHydrationService } from "../../src/runtime/synchronization/canonical-hosted-artifact-hydration";
 import type { CanonicalHostedCompactMaterializationService } from "../../src/runtime/synchronization/canonical-hosted-compact-materialization";
+import type { CanonicalHostedMemberRecoveryService } from "../../src/runtime/synchronization/canonical-hosted-member-recovery";
 import type { CanonicalHostedReplicaSetupService } from "../../src/runtime/synchronization/canonical-hosted-replica-setup";
 import type { CanonicalMultiRemotePullService } from "../../src/runtime/synchronization/canonical-multi-remote-pull-service";
 import type { CanonicalReplicaRemoteService } from "../../src/runtime/synchronization/canonical-remote-service";
@@ -31,6 +32,7 @@ function fixture(
       "materialize"
     >;
     readonly hostedArtifactHydrator?: Pick<CanonicalHostedArtifactHydrationService, "hydrate">;
+    readonly hostedMemberRecovery?: Pick<CanonicalHostedMemberRecoveryService, "recover">;
     readonly multiRemotePull?: Pick<CanonicalMultiRemotePullService, "pull">;
   } = {},
 ) {
@@ -427,6 +429,46 @@ describe("canonical Client Runtime", () => {
       vaultId: firstVaultId,
       recoveryPhrase: "twelve private words",
       assertedAt: 12,
+    });
+  });
+
+  it("recovers a phrase-authenticated Hosted closure without requiring a selected Vault", async () => {
+    const vaultId = randomIdentifier("Vault");
+    const generationId = randomIdentifier("Generation");
+    const memberId = randomIdentifier("Member");
+    const clientCredentialId = randomIdentifier("ClientCredential");
+    const eventRecordId = randomIdentifier("VaultRecord");
+    const hostedMemberRecovery = {
+      recover: vi.fn().mockResolvedValue({
+        vaultId,
+        generationId,
+        memberId,
+        clientCredentialId,
+        eventRecordId,
+      }),
+    };
+    const { runtime } = fixture({ hostedMemberRecovery });
+
+    await expect(
+      runtime.recoverHostedMember({
+        endpoint: "https://host.example",
+        username: "marin",
+        password: "not persisted",
+        recoveryPhrase: "twelve private words",
+        assertedAt: 13,
+      }),
+    ).resolves.toEqual({
+      vaultId: identifierStorageKey(vaultId),
+      memberId: identifierStorageKey(memberId),
+      clientCredentialId: identifierStorageKey(clientCredentialId),
+      eventRecordId: identifierStorageKey(eventRecordId),
+    });
+    expect(hostedMemberRecovery.recover).toHaveBeenCalledWith({
+      endpoint: "https://host.example",
+      username: "marin",
+      password: "not persisted",
+      recoveryPhrase: "twelve private words",
+      assertedAt: 13,
     });
   });
 
