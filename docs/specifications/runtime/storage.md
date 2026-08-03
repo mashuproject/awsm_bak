@@ -73,7 +73,9 @@ The canonical Client registry currently declares these revision-1 namespaces:
 | `awsm.storage.command-outcome`                | Execution State      | Vault        | immutable                 |
 | `awsm.storage.replica-garbage-collection-job` | Execution State      | Vault        | mutable conditional state |
 | `awsm.storage.pull-synchronization-job`       | Execution State      | Vault        | mutable resumable state   |
+| `awsm.storage.remote-materialization-ledger`  | Execution State      | Remote       | mutable conditional state |
 | `awsm.storage.prepared-capture`               | Prepared Data        | Job          | immutable                 |
+| `awsm.storage.prepared-outgoing-item`         | Prepared Data        | Remote       | immutable                 |
 | `awsm.storage.pending-vault-creation`         | Prepared Data        | Installation | mutable conditional state |
 | `awsm.storage.incoming-quarantine`            | Quarantine           | Remote       | immutable                 |
 | `awsm.storage.library-projection`             | Materializations     | Replica      | replaceable               |
@@ -93,6 +95,17 @@ Refreshing an expired access token conditionally replaces the exact prior sealed
 same Client coalesces concurrent refreshes for one Remote so that a single-use refresh credential is
 presented once. Local expiry is scheduling information, while the Host remains authoritative only
 for channel access.
+
+The `remote-materialization-ledger` is installation-wrapped local Execution State keyed by one
+Replica Remote and protected logical item identity. It records the exact fresh destination Storage
+Item ID, opaque locator, Key Epoch context, byte length and digest, and one of `Prepared` or
+`Confirmed`. While `Prepared`, the exact opaque bytes are immutable Remote-scoped
+`prepared-outgoing-item` data under that Storage Item ID. The Client writes both records before
+first admission; an ambiguous transport outcome retries those exact bytes. A Host `stored` or
+`already_present` receipt matching the exact Storage Item ID and length conditionally marks the
+ledger `Confirmed` and deletes its Prepared Data. The ledger never enters Vault state, proves
+neither current Host retention nor global redundancy, and is removed only with its local Remote
+configuration.
 
 A pull Synchronization Job retains one canonical Quarantine reference for every downloaded opaque
 item: its Opaque Storage Item ID and the exact 32-byte locator supplied by that Remote's inventory.

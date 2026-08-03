@@ -104,5 +104,25 @@ describe("canonical storage schema", () => {
       backupTreatment: "Excluded",
       immutable: false,
     });
+    expect(NAMESPACES.remoteMaterializationLedger).toMatchObject({
+      key: "awsm.storage.remote-materialization-ledger",
+      family: STORAGE_FAMILIES.ExecutionState,
+      scope: "Remote",
+      protection: "InstallationWrapped",
+      synchronization: "Never",
+      exportTreatment: "Excluded",
+      backupTreatment: "Excluded",
+      immutable: false,
+    });
+    expect(NAMESPACES.preparedOutgoingItem).toMatchObject({
+      key: "awsm.storage.prepared-outgoing-item",
+      family: STORAGE_FAMILIES.PreparedData,
+      scope: "Remote",
+      protection: "Opaque",
+      synchronization: "Never",
+      exportTreatment: "Excluded",
+      backupTreatment: "Excluded",
+      immutable: true,
+    });
   });
 });

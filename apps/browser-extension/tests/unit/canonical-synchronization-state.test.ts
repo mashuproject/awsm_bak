@@ -7,12 +7,15 @@ import { NAMESPACES, NORMAL_STORAGE_REALM } from "../../src/drivers/indexeddb/ca
 import { CanonicalReplicaRemoteService } from "../../src/runtime/synchronization/canonical-remote-service";
 import {
   type CanonicalPullSynchronizationJob,
+  type CanonicalRemoteMaterializationLedgerEntry,
   type CanonicalReplicaRemote,
   decodeCanonicalPullSynchronizationJob,
   decodeCanonicalRemoteCredential,
+  decodeCanonicalRemoteMaterializationLedgerEntry,
   decodeCanonicalReplicaRemote,
   encodeCanonicalPullSynchronizationJob,
   encodeCanonicalRemoteCredential,
+  encodeCanonicalRemoteMaterializationLedgerEntry,
   encodeCanonicalReplicaRemote,
 } from "../../src/runtime/synchronization/canonical-state";
 import { openWrappedLocalState } from "../../src/runtime/vault/canonical-local-state";
@@ -61,6 +64,21 @@ function job(): CanonicalPullSynchronizationJob {
       promotedItemCount: 0,
       rejectedItemCount: 0,
     },
+  };
+}
+
+function materializationLedger(): CanonicalRemoteMaterializationLedgerEntry {
+  return {
+    vaultId: filled("Vault", 1),
+    remoteId: REMOTE_ID,
+    logicalNamespace: 1,
+    logicalId: filled("VaultRecord", 2),
+    keyEpochId: filled("KeyEpoch", 3),
+    locator: new Uint8Array(32).fill(4),
+    storageItemId: filled("StorageItem", 5),
+    byteLength: 64,
+    byteDigest: new Uint8Array(32).fill(6),
+    state: "Prepared",
   };
 }
 
@@ -114,6 +132,16 @@ describe("canonical synchronization state", () => {
 
     expect(
       decodeCanonicalPullSynchronizationJob(encodeCanonicalPullSynchronizationJob(value)),
+    ).toEqual(value);
+  });
+
+  it("round-trips a Remote-local prepared destination representation without making it Vault state", () => {
+    const value = materializationLedger();
+
+    expect(
+      decodeCanonicalRemoteMaterializationLedgerEntry(
+        encodeCanonicalRemoteMaterializationLedgerEntry(value),
+      ),
     ).toEqual(value);
   });
 

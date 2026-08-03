@@ -32,6 +32,7 @@ const HOSTED_USERNAME = /^[a-z0-9](?:[a-z0-9_-]{1,30}[a-z0-9])?$/u;
 const REMOTE_TRANSPORT_HOSTED_HTTP = 1 as const;
 const PULL_STAGES = [1, 2, 3] as const;
 const PULL_STATES = [1, 2, 3, 4] as const;
+const MATERIALIZATION_STATES = [1, 2] as const;
 
 export const MAX_AUTOMATIC_PULL_RETRY_ATTEMPTS = 8;
 
@@ -88,6 +89,23 @@ export interface CanonicalPullSynchronizationJob {
   };
 }
 
+/**
+ * One local destination representation for one protected logical item at one Remote.
+ * This is local Execution State, never a portable Vault fact or a Host-visible request shape.
+ */
+export interface CanonicalRemoteMaterializationLedgerEntry {
+  readonly vaultId: Identifier<"Vault">;
+  readonly remoteId: string;
+  readonly logicalNamespace: 1 | 2 | 3 | 4 | 5;
+  readonly logicalId: Uint8Array;
+  readonly keyEpochId: Identifier<"KeyEpoch">;
+  readonly locator: Uint8Array;
+  readonly storageItemId: Identifier<"StorageItem">;
+  readonly byteLength: number;
+  readonly byteDigest: Uint8Array;
+  readonly state: "Prepared" | "Confirmed";
+}
+
 function uuid(value: CanonicalValue, field: string): string {
   const parsed = textValue(value, field, { maxUtf8Bytes: 64 });
   if (!UUID.test(parsed)) throw new TypeError(`${field} must be a lowercase UUID`);
@@ -100,6 +118,21 @@ function hostedUsername(value: CanonicalValue, field: string): string {
     throw new TypeError(`${field} must be a canonical username`);
   }
   return parsed;
+}
+
+function materializationStateCode(
+  state: CanonicalRemoteMaterializationLedgerEntry["state"],
+): 1 | 2 {
+  if (state === "Prepared") return 1;
+  if (state === "Confirmed") return 2;
+  throw new TypeError("Remote materialization state is invalid");
+}
+
+function materializationState(
+  value: CanonicalValue,
+): CanonicalRemoteMaterializationLedgerEntry["state"] {
+  const code = oneOfCodes(value, MATERIALIZATION_STATES, "Remote materialization state");
+  return code === 1 ? "Prepared" : "Confirmed";
 }
 
 function endpoint(value: CanonicalValue): string {
@@ -345,6 +378,90 @@ export function decodeCanonicalReplicaRemote(bytes: Uint8Array): CanonicalReplic
   }
   if (!bytesEqual(encodeCanonicalReplicaRemote(value), bytes)) {
     throw new TypeError("Replica Remote bytes are not canonical");
+  }
+  return value;
+}
+
+export function encodeCanonicalRemoteMaterializationLedgerEntry(
+  value: CanonicalRemoteMaterializationLedgerEntry,
+): Uint8Array {
+  identifierValue(value.vaultId, "Vault", "Remote materialization Vault ID");
+  uuid(value.remoteId, "Remote materialization Remote ID");
+  const logicalNamespace = oneOfCodes(
+    value.logicalNamespace,
+    [1, 2, 3, 4, 5] as const,
+    "Remote materialization logical namespace",
+  );
+  const logicalId = byteString(value.logicalId, 32, "Remote materialization logical ID");
+  const keyEpochId = identifierValue(
+    value.keyEpochId,
+    "KeyEpoch",
+    "Remote materialization Key Epoch ID",
+  );
+  const locator = byteString(value.locator, 32, "Remote materialization opaque locator");
+  const storageItemId = identifierValue(
+    value.storageItemId,
+    "StorageItem",
+    "Remote materialization Storage Item ID",
+  );
+  const byteLength = nonnegativeInteger(value.byteLength, "Remote materialization byte length");
+  if (byteLength < 1) throw new TypeError("Remote materialization byte length must be positive");
+  const byteDigest = byteString(value.byteDigest, 32, "Remote materialization byte digest");
+  return encodeCanonicalValue(
+    canonicalMap([
+      [0, SYNCHRONIZATION_STATE_FORMAT],
+      [1, value.vaultId],
+      [2, value.remoteId],
+      [3, logicalNamespace],
+      [4, logicalId],
+      [5, keyEpochId],
+      [6, locator],
+      [7, storageItemId],
+      [8, byteLength],
+      [9, byteDigest],
+      [10, materializationStateCode(value.state)],
+    ]),
+  );
+}
+
+export function decodeCanonicalRemoteMaterializationLedgerEntry(
+  bytes: Uint8Array,
+): CanonicalRemoteMaterializationLedgerEntry {
+  const map = exactMap(
+    decodeCanonicalValue(bytes),
+    [...Array(11).keys()],
+    "Remote materialization ledger entry",
+  );
+  exactCode(mapValue(map, 0), SYNCHRONIZATION_STATE_FORMAT, "Remote materialization format");
+  const value: CanonicalRemoteMaterializationLedgerEntry = {
+    vaultId: identifierValue(mapValue(map, 1), "Vault", "Remote materialization Vault ID"),
+    remoteId: uuid(mapValue(map, 2), "Remote materialization Remote ID"),
+    logicalNamespace: oneOfCodes(
+      mapValue(map, 3),
+      [1, 2, 3, 4, 5] as const,
+      "Remote materialization logical namespace",
+    ),
+    logicalId: byteString(mapValue(map, 4), 32, "Remote materialization logical ID"),
+    keyEpochId: identifierValue(
+      mapValue(map, 5),
+      "KeyEpoch",
+      "Remote materialization Key Epoch ID",
+    ),
+    locator: byteString(mapValue(map, 6), 32, "Remote materialization opaque locator"),
+    storageItemId: identifierValue(
+      mapValue(map, 7),
+      "StorageItem",
+      "Remote materialization Storage Item ID",
+    ),
+    byteLength: nonnegativeInteger(mapValue(map, 8), "Remote materialization byte length"),
+    byteDigest: byteString(mapValue(map, 9), 32, "Remote materialization byte digest"),
+    state: materializationState(mapValue(map, 10)),
+  };
+  if (value.byteLength < 1) {
+    throw new TypeError("Remote materialization byte length must be positive");
+  }
+  if (!bytesEqual(encodeCanonicalRemoteMaterializationLedgerEntry(value), bytes)) {
+    throw new TypeError("Remote materialization ledger entry bytes are not canonical");
   }
   return value;
 }

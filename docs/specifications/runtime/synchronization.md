@@ -85,6 +85,14 @@ representation before admission. Ambiguous failures retry those exact bytes and 
 presence prevents another rewrap. A different Hosted Replica destination receives independently
 randomized bytes so inventories are not correlated by avoidable equality.
 
+The durable record is a local Remote Materialization Ledger entry. It binds the protected logical
+item and Key Epoch context to the Remote-local locator, exact destination Storage Item ID, byte
+length, digest, and `Prepared` or `Confirmed` state; the exact opaque bytes remain local Prepared
+Data only while `Prepared`. The Client may mark it `Confirmed` only after an exact `stored` or
+`already_present` admission receipt, then retires those Prepared bytes. A confirmed ledger prevents
+automatic rewrapping but does not prove that the Host retains data, that another Replica exists, or
+that a Remote is fresh.
+
 # 4. DAG convergence
 
 Synchronization unions valid immutable Records and Objects. Concurrent Events remain sibling DAG

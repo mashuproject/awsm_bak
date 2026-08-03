@@ -713,6 +713,15 @@ separate installation-wrapped Trusted Secret; a reference-Host password is trans
 while a rotated session may be retained only for that Host's channel access. Names such as `origin`
 and `upstream` have no Vault-wide meaning.
 
+## Remote Materialization Ledger
+
+Installation-wrapped local Execution State for one Replica Remote and protected logical item.
+Before immutable Host admission, it binds one fresh destination-specific Opaque Storage Item ID,
+opaque locator, exact byte length and digest, Key Epoch context, and `Prepared` state to
+Remote-scoped opaque Prepared Data. An accepted `stored` or `already_present` receipt changes only
+that local record to `Confirmed` and retires its Prepared Data. It prevents automatic rewrapping
+after ambiguous transport outcomes but is neither Host inventory evidence nor portable Vault state.
+
 ## Channel Principal
 
 The Host-local subject authenticated by a Channel Authenticator. It may be an Account, bearer-token
