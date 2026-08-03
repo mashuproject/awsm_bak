@@ -146,7 +146,7 @@ test("renders trust, Account, validation, and design-reference surfaces", async 
   await expect(page.locator("#capture")).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
 
   await page.goto("/");
-  await page.locator('a.term-link[href="/glossary#capture"]').click();
+  await page.getByRole("link", { name: "Captures", exact: true }).click();
   await expect(page).toHaveURL(/\/glossary#capture$/);
   await expect
     .poll(async () => {
@@ -160,7 +160,28 @@ test("renders trust, Account, validation, and design-reference surfaces", async 
     })
     .toBe(true);
   await expect(page.locator("#capture")).toHaveCSS("background-color", "rgb(255, 240, 184)");
+  await expect(page.locator('.glossary-index a[href="#vault-record"]')).toBeVisible();
+  await expect(page.locator("#vault-record")).toContainText("immutable content-addressed node");
 
+  await page.goto("/security");
+  await page.locator('a.term-link[href="/glossary#replica-access-grant"]').click();
+  await expect(page).toHaveURL(/\/glossary#replica-access-grant$/);
+  await expect(page.locator("#replica-access-grant")).toHaveCSS(
+    "background-color",
+    "rgb(255, 240, 184)",
+  );
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/glossary");
+  await expect(page.locator('.glossary-index a[href="#vault-record"]')).toBeVisible();
+  await expect
+    .poll(() => page.locator(".glossary-index").evaluate((element) => element.clientHeight))
+    .toBeLessThanOrEqual(352);
+  await expectReadableContrast(page);
+  await expect(page).toHaveScreenshot("glossary-narrow-top.png");
+  await expect(page).toHaveScreenshot("glossary-narrow.png", { fullPage: true });
+
+  await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto("/sign_up");
   await expect(page.getByRole("heading", { name: "Create your Account" })).toBeVisible();
   await expectReadableContrast(page);

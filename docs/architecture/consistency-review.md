@@ -146,14 +146,13 @@ not:
 - change browser or Rails product behavior;
 - change database schemas, routes, executable protocol types, or the checked-in executable OpenAPI;
 - relabel current Rails public pages as if target behavior shipped;
-- implement the canonical glossary renderer;
 - reset development, test, staging, or production data;
 - inspect or mutate staging, production, Cloudflare, GitHub, or any other external service; or
 - add compatibility readers, migrations, aliases, or dual formats.
 
-Current public pages remain current-implementation copy. The Roadmap retains deterministic
-rendering of the tracked canonical glossary as implementation work, preventing a second editable
-definition source without pretending that behavior exists today.
+The public glossary now deterministically renders the tracked canonical glossary source. It has no
+separate editable definition source; public pages link to its anchored canonical terms where that
+context clarifies the trust or product boundary.
 
 Subsequent repository work has implemented canonical browser and Replica Host foundations. In
 particular, selected readable-Replica Recovery now verifies the authenticated compact authority

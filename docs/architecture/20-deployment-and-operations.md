@@ -34,7 +34,7 @@ must preserve their referential integrity without treating the Host as the only 
 Static landing, privacy, security, and glossary pages can be publicly cached. Account signup,
 login, dashboard, sessions, Hosted Replica management, API, and authenticated status are private
 and `no-store`. Public responses cannot vary secretly on Account state. The canonical glossary page
-should render from the tracked glossary source rather than duplicate definitions.
+renders from the tracked glossary source rather than duplicating definitions.
 
 # Privacy and observability
 

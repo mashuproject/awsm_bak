@@ -318,9 +318,9 @@ does not imply Vault membership. Remaining dashboard management mutations must c
 the same Host-local policy boundary already used by the executable Grant and reaping API.
 
 Keep username/password and no-email behavior. Update landing, privacy, security, layout, and
-dashboard copy only after shipped behavior changes. Replace `home/glossary.html.erb` with safe
-deterministic rendering from `docs/architecture/glossary.md` under the separate Roadmap initiative
-or the convergence plan if explicitly included.
+dashboard copy only after shipped behavior changes. The public glossary now safely renders
+`docs/architecture/glossary.md` deterministically; keep its definitions source-derived and link
+public explanatory copy to anchored terms where that context clarifies a canonical concept.
 
 # 5. Test replacement
 

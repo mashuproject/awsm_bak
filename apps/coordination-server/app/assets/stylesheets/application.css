@@ -647,6 +647,28 @@ body {
   align-items: flex-start;
   flex-direction: column;
   gap: var(--awsm-space-1);
+  max-height: calc(100vh - 96px);
+  overflow-y: auto;
+}
+
+.glossary-index__section {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  gap: var(--awsm-space-1);
+}
+
+.glossary-index__section + .glossary-index__section {
+  margin-top: var(--awsm-space-4);
+}
+
+.glossary-index__section h2 {
+  margin: 0;
+  padding: var(--awsm-space-2);
+  color: var(--awsm-ink-muted);
+  font-size: 0.8rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .glossary-index a {
@@ -665,7 +687,7 @@ body {
   margin: 0;
 }
 
-.glossary-list > div {
+.glossary-list__section dl > div {
   display: grid;
   grid-template-columns: minmax(180px, 0.35fr) minmax(0, 1fr);
   gap: var(--awsm-space-8);
@@ -675,12 +697,25 @@ body {
   scroll-margin-top: calc(72px + var(--awsm-space-6));
 }
 
-.glossary-list > div.is-previewed:not(:target) {
+.glossary-list__section + .glossary-list__section {
+  margin-top: var(--awsm-space-10);
+}
+
+.glossary-list__section h2 {
+  margin: 0 0 var(--awsm-space-4);
+  font-size: clamp(1.6rem, 4vw, 2.2rem);
+}
+
+.glossary-list__section dl {
+  margin: 0;
+}
+
+.glossary-list__section dl > div.is-previewed:not(:target) {
   background: var(--awsm-surface-subtle);
   box-shadow: inset 4px 0 0 var(--awsm-border-subtle);
 }
 
-.glossary-list > div:target {
+.glossary-list__section dl > div:target {
   background: var(--awsm-warning-pale);
   box-shadow: inset 6px 0 0 var(--awsm-yellow);
 }
@@ -695,6 +730,14 @@ body {
 
 .glossary-list dd {
   margin: 0;
+}
+
+.glossary-list dd > :first-child {
+  margin-top: 0;
+}
+
+.glossary-list dd > :last-child {
+  margin-bottom: 0;
 }
 
 .account-page {
@@ -1019,6 +1062,12 @@ body {
     padding: var(--awsm-space-2);
     background: var(--awsm-paper);
     box-shadow: var(--awsm-shadow-hard);
+    max-height: 22rem;
+    overflow-y: auto;
+  }
+
+  .glossary-index__section {
+    grid-column: 1 / -1;
   }
 
   .account-main {
@@ -1050,7 +1099,7 @@ body {
     grid-template-columns: 1fr;
   }
 
-  .glossary-list > div {
+  .glossary-list__section dl > div {
     grid-template-columns: 1fr;
     gap: var(--awsm-space-3);
   }

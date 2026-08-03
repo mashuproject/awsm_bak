@@ -17,4 +17,8 @@ module ApplicationHelper
   def keeper_image(variant: "keeper", **options)
     image_tag "assets/icons/#{variant}.svg", { alt: "", aria: { hidden: true } }.merge(options)
   end
+
+  def glossary_term_link(term, label = term)
+    link_to label, glossary_path(anchor: term.parameterize), class: "term-link", data: { turbo: false }
+  end
 end

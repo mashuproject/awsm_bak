@@ -17,6 +17,7 @@ class HomeController < ApplicationController
 
   def glossary
     assign_public_context
+    @glossary_sections = CanonicalGlossary.load
   end
 
   def design_system

@@ -30,6 +30,7 @@ RSpec.describe "Plan 16 product site", type: :request do
       "waitlist"
     )
     expect(response.body).to include('href="/glossary#capture"')
+    expect(response.body).to include('href="/glossary#hosted-replica"')
 
     document = Nokogiri::HTML(response.body)
     expect(document.css("#optional-sync .section-heading").map(&:text)).to eq(
@@ -56,12 +57,14 @@ RSpec.describe "Plan 16 product site", type: :request do
     get "/privacy"
     expect(response).to have_http_status(:ok)
     expect(response.body).to include(
-      "Host-local access and quota records for Hosted Replicas",
+      "Host-local access and quota records for",
+      "Hosted Replicas",
       "opaque encrypted item bytes",
       "cannot decrypt the items",
       "no analytics"
     )
     expect(response.body).not_to include("Device certificates", "remote embedding endpoint")
+    expect(response.body).to include('href="/glossary#client-installation"')
 
     get "/security"
     expect(response).to have_http_status(:ok)
@@ -69,10 +72,11 @@ RSpec.describe "Plan 16 product site", type: :request do
     expect(response.body).to include(
       "Account password",
       "Recovery Phrase",
-      "Host Access Grant",
+      "Replica Access Grant",
       "Client Credential"
     )
     expect(response.body).not_to include("Device removal", "remote embedding endpoint")
+    expect(response.body).to include('href="/glossary#replica-access-grant"')
   end
 
   it "defines capitalized product concepts in a public glossary" do
@@ -83,9 +87,21 @@ RSpec.describe "Plan 16 product site", type: :request do
       "The language of your archive.",
       "Capture",
       "Complete Export",
+      "Vault Record",
+      "Replica Access Grant",
       "Vault",
       "Recovery Phrase",
       "Coordination Server"
+    )
+    expect(response.body).to include('href="#vault-record"', 'id="vault-record"')
+    expect(response.body).to include("<code>recordId</code>")
+    expect(response.body).not_to include("<dt>Device</dt>")
+
+    document = Nokogiri::HTML(response.body)
+    expected_terms = CanonicalGlossary.load.flat_map(&:terms)
+    expect(document.css(".glossary-list dt").map(&:text)).to eq(expected_terms.map(&:title))
+    expect(document.css(".glossary-list__section dl > div[id]").map { |term| term["id"] }).to eq(
+      expected_terms.map(&:anchor)
     )
   end
 

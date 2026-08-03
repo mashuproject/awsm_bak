@@ -180,18 +180,6 @@ capability absence, model download, language and hardware limits, model updates,
 memory clearing, accessibility, and no silent remote fallback. Firefox and unsupported Chrome must
 retain complete Library and Search behavior.
 
-## Canonical public glossary rendering
-
-**Status:** Discovery
-
-Make `docs/architecture/glossary.md` the single source for the public `/glossary` page. Replace the
-independently authored ERB definitions with deterministic safe rendering or generated output while
-preserving stable anchors, selected public sections, sanitization, anonymous cache safety,
-accessible navigation, and the current design system.
-
-Choose build-time or request-time rendering, package source availability, stale-output detection,
-link checks, and primary plus narrow visual proof. Do not create another editable glossary source.
-
 ## Executable OpenAPI contract generation
 
 **Status:** Candidate

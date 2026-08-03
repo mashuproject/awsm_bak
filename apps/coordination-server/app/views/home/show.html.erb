@@ -10,8 +10,8 @@
   <div class="site-container signed-in-banner__inner">
     <p>
       Signed in as <strong data-public-session-target="username"></strong> on
-      <strong><%= @server_origin %></strong>. Account login identifies this browser to the
-      Coordination Server; it does not unlock a Vault.
+      <strong><%= @server_origin %></strong>. <%= glossary_term_link "Account" %> login identifies this browser to the
+      <%= glossary_term_link "Coordination Server" %>; it does not unlock a <%= glossary_term_link "Vault" %>.
     </p>
     <div class="button-row">
       <%= link_to "Account", account_path,
@@ -96,7 +96,7 @@
           <article class="awsm-card comparison__card comparison__card--awsm">
             <p class="eyebrow">AWSM Vault</p>
             <h3>Keeps your Vault under your control</h3>
-            <p>Locally available content works offline. You choose whether to add an opaque Hosted Replica.</p>
+            <p>Locally available content works offline. You choose whether to add an opaque <%= glossary_term_link "Hosted Replica" %>.</p>
           </article>
         </div>
       </div>
@@ -108,8 +108,9 @@
       <p class="eyebrow">What works today</p>
       <h2 class="section-heading">A working archive on your device.</h2>
       <p class="section-lede">
-        Capture useful HTTP(S) pages into an encrypted local Vault. Recover with your Recovery Phrase.
-        Add an opaque Hosted Replica only when you choose.
+        <%= glossary_term_link "Capture" %> useful HTTP(S) pages into an encrypted local <%= glossary_term_link "Vault" %>.
+        Recover with your <%= glossary_term_link "Recovery Phrase" %>. Add an opaque
+        <%= glossary_term_link "Hosted Replica" %> only when you choose.
       </p>
       <div class="card-grid">
         <article class="awsm-card story-card"><h3>Capture a page locally. Keep control of the Vault.</h3><p>The authoritative page snapshot stays with the Capture, not with a fragile address.</p></article>
@@ -124,8 +125,9 @@
       <p class="eyebrow">Optional synchronization. Local validation.</p>
       <h2 class="section-heading">Optional synchronization through opaque Replicas.</h2>
       <p class="section-lede">
-        A Host Account identifies you only to that Host for access and quotas. It does not identify a
-        Vault Member or decrypt a Vault. The Recovery Phrase remains client-held, and the client
+        A Host <%= glossary_term_link "Account" %> identifies you only to that Host for access and quotas. It does not identify a
+        <%= glossary_term_link "Vault Member" %> or decrypt a <%= glossary_term_link "Vault" %>. The
+        <%= glossary_term_link "Recovery Phrase" %> remains client-held, and the client
         validates data it retrieves.
       </p>
       <div class="flow-diagram" aria-label="AWSM synchronization trust flow">
@@ -137,8 +139,9 @@
       </div>
       <div class="sync-setup">
         <p>
-          To use a Host, create an Account there, then explicitly create or attach a Hosted Replica in
-          the extension. The extension sends no Vault ID and locally validates the data it retrieves.
+          To use a Host, create an <%= glossary_term_link "Account" %> there, then explicitly create or attach a
+          <%= glossary_term_link "Hosted Replica" %> in the extension. The extension sends no
+          <%= glossary_term_link "Vault ID" %> and locally validates the data it retrieves.
         </p>
         <% if @registration_enabled %>
           <%= link_to "Create an Account on this server", sign_up_path, class: "awsm-button awsm-button--secondary" %>
