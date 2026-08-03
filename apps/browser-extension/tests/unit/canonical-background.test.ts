@@ -4,6 +4,7 @@ import { createCanonicalBackgroundApplication } from "../../src/app/canonical-ba
 import { randomIdentifier } from "../../src/domain/canonical/identifiers";
 import { identifierStorageKey } from "../../src/drivers/indexeddb/canonical-database";
 import type { CanonicalArtifactStore } from "../../src/runtime/artifact/canonical-store";
+import type { CanonicalHostedCompactMaterializationService } from "../../src/runtime/synchronization/canonical-hosted-compact-materialization";
 import type { CanonicalHostedReplicaSetupService } from "../../src/runtime/synchronization/canonical-hosted-replica-setup";
 import type { CanonicalReplicaRemoteService } from "../../src/runtime/synchronization/canonical-remote-service";
 import type { CanonicalReplicaRemote } from "../../src/runtime/synchronization/canonical-state";
@@ -64,12 +65,21 @@ describe("canonical background", () => {
       CanonicalHostedReplicaSetupService,
       "create"
     >;
+    const hostedCompactMaterializer = {
+      materialize: vi.fn().mockResolvedValue({
+        remoteId: remote.remoteId,
+        materializedCompactItemCount: 4,
+        retriedCompactItemCount: 1,
+        alreadyConfirmedCompactItemCount: 2,
+      }),
+    } as Pick<CanonicalHostedCompactMaterializationService, "materialize">;
     const application = createCanonicalBackgroundApplication({
       vaults,
       artifacts: {} as CanonicalArtifactStore,
       pageCapture: { captureActivePage: vi.fn() },
       remotes,
       hostedReplicaSetup,
+      hostedCompactMaterializer,
     });
     const expectedVaultId = identifierStorageKey(vaultId);
 
@@ -82,5 +92,21 @@ describe("canonical background", () => {
       },
     ]);
     expect(remotes.list).toHaveBeenCalledWith(vaultId);
+    await expect(
+      application.handle({
+        type: "MaterializeHostedReplica",
+        expectedVaultId,
+        remoteId: remote.remoteId,
+      }),
+    ).resolves.toEqual({
+      remoteId: remote.remoteId,
+      materializedCompactItemCount: 4,
+      retriedCompactItemCount: 1,
+      alreadyConfirmedCompactItemCount: 2,
+    });
+    expect(hostedCompactMaterializer.materialize).toHaveBeenCalledWith({
+      vaultId,
+      remoteId: remote.remoteId,
+    });
   });
 });

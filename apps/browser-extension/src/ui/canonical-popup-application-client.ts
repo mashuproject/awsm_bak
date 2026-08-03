@@ -1,6 +1,7 @@
 import type { CanonicalApplicationRequest } from "../app/canonical-application";
 import type {
   CanonicalClientLibraryItem,
+  CanonicalClientRemoteMaterializationSummary,
   CanonicalClientRemoteSummary,
   CanonicalClientState,
   CanonicalClientVaultSummary,
@@ -85,6 +86,10 @@ export interface CanonicalPopupApplicationClient extends CanonicalPopupClient {
     readonly username: string;
     readonly password: string;
   }): Promise<CanonicalClientRemoteSummary>;
+  materializeHostedReplica(input: {
+    readonly expectedVaultId: string;
+    readonly remoteId: string;
+  }): Promise<CanonicalClientRemoteMaterializationSummary>;
 }
 
 function plainRecord(value: unknown): value is Readonly<Record<string, unknown>> {
@@ -110,6 +115,10 @@ function setupId(value: unknown): value is string {
     typeof value === "string" &&
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(value)
   );
+}
+
+function nonnegativeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
 function safeTimestamp(value: unknown): value is number | bigint {
@@ -301,6 +310,32 @@ function decodeRemotes(value: unknown): readonly CanonicalClientRemoteSummary[] 
   if (new Set(remotes.map(({ remoteId }) => remoteId)).size !== remotes.length)
     throw protocolError();
   return remotes;
+}
+
+function decodeHostedReplicaMaterialization(
+  value: unknown,
+): CanonicalClientRemoteMaterializationSummary {
+  if (
+    !plainRecord(value) ||
+    !exactKeys(value, [
+      "remoteId",
+      "materializedCompactItemCount",
+      "retriedCompactItemCount",
+      "alreadyConfirmedCompactItemCount",
+    ]) ||
+    !setupId(value.remoteId) ||
+    !nonnegativeInteger(value.materializedCompactItemCount) ||
+    !nonnegativeInteger(value.retriedCompactItemCount) ||
+    !nonnegativeInteger(value.alreadyConfirmedCompactItemCount)
+  ) {
+    throw protocolError();
+  }
+  return {
+    remoteId: value.remoteId,
+    materializedCompactItemCount: value.materializedCompactItemCount,
+    retriedCompactItemCount: value.retriedCompactItemCount,
+    alreadyConfirmedCompactItemCount: value.alreadyConfirmedCompactItemCount,
+  };
 }
 
 function decodeVaultCreation(value: unknown): {
@@ -589,6 +624,17 @@ export function createCanonicalPopupApplicationClient(
           name: input.name,
           username: input.username,
           password: input.password,
+        }),
+      );
+    },
+    async materializeHostedReplica(input) {
+      if (!identifier(input.expectedVaultId)) throw new TypeError("Popup Vault ID is invalid.");
+      if (!setupId(input.remoteId)) throw new TypeError("Popup Hosted Replica ID is invalid.");
+      return decodeHostedReplicaMaterialization(
+        await transport.request({
+          type: "MaterializeHostedReplica",
+          expectedVaultId: input.expectedVaultId,
+          remoteId: input.remoteId,
         }),
       );
     },

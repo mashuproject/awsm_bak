@@ -13,6 +13,7 @@ describe("canonical application", () => {
       listLibrary: vi.fn(),
       listRemotes: vi.fn(),
       createHostedReplica: vi.fn(),
+      materializeHostedReplica: vi.fn(),
       capture: vi.fn(),
       closeVault: vi.fn(),
       vacuumVault: vi.fn(),
@@ -62,6 +63,7 @@ describe("canonical application", () => {
       listLibrary: vi.fn().mockResolvedValue([]),
       listRemotes: vi.fn(),
       createHostedReplica: vi.fn(),
+      materializeHostedReplica: vi.fn(),
       capture: vi.fn(),
       closeVault: vi.fn(),
       vacuumVault: vi.fn(),
@@ -140,6 +142,38 @@ describe("canonical application", () => {
     ).rejects.toThrow(/Unsupported application Command/u);
   });
 
+  it("materializes one selected-Vault Remote only through an exact Command", async () => {
+    const runtime = {
+      materializeHostedReplica: vi.fn().mockResolvedValue({
+        remoteId: "019fa62e-a653-7f63-b2bf-94e7ed5e46ca",
+        materializedCompactItemCount: 4,
+        retriedCompactItemCount: 1,
+        alreadyConfirmedCompactItemCount: 2,
+      }),
+    };
+    const application = new CanonicalApplication(runtime as never);
+    const expectedVaultId = "a".repeat(64);
+    const remoteId = "019fa62e-a653-7f63-b2bf-94e7ed5e46ca";
+
+    await expect(
+      application.handle({ type: "MaterializeHostedReplica", expectedVaultId, remoteId }),
+    ).resolves.toEqual({
+      remoteId,
+      materializedCompactItemCount: 4,
+      retriedCompactItemCount: 1,
+      alreadyConfirmedCompactItemCount: 2,
+    });
+    expect(runtime.materializeHostedReplica).toHaveBeenCalledWith({ expectedVaultId, remoteId });
+    await expect(
+      application.handle({
+        type: "MaterializeHostedReplica",
+        expectedVaultId,
+        remoteId,
+        extra: true,
+      }),
+    ).rejects.toThrow(/Unsupported application Command/u);
+  });
+
   it("collects a browser page only through the canonical capture Host before authoring it", async () => {
     const runtime = {
       state: vi.fn(),
@@ -150,6 +184,7 @@ describe("canonical application", () => {
       listLibrary: vi.fn(),
       listRemotes: vi.fn(),
       createHostedReplica: vi.fn(),
+      materializeHostedReplica: vi.fn(),
       capture: vi.fn().mockResolvedValue({ bundleId: "b".repeat(64) }),
       closeVault: vi.fn(),
       vacuumVault: vi.fn(),
@@ -370,6 +405,7 @@ describe("canonical application", () => {
       listLibrary: vi.fn(),
       listRemotes: vi.fn(),
       createHostedReplica: vi.fn(),
+      materializeHostedReplica: vi.fn(),
       capture: vi.fn(),
       closeVault: vi.fn(),
       vacuumVault: vi.fn(),

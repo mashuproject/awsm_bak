@@ -13,7 +13,10 @@ import type { CanonicalArtifactStore } from "../runtime/artifact/canonical-store
 import { CanonicalCaptureService } from "../runtime/capture/canonical-service";
 import { CanonicalClientRuntime } from "../runtime/client/canonical-runtime";
 import { CanonicalLibraryProjectionService } from "../runtime/library/canonical-projection";
+import { CanonicalReplayService } from "../runtime/projection/canonical-replay";
+import { CanonicalHostedCompactMaterializationService } from "../runtime/synchronization/canonical-hosted-compact-materialization";
 import { CanonicalHostedReplicaSetupService } from "../runtime/synchronization/canonical-hosted-replica-setup";
+import { CanonicalRemoteMaterializationLedgerService } from "../runtime/synchronization/canonical-remote-materialization-ledger-service";
 import { CanonicalReplicaRemoteService } from "../runtime/synchronization/canonical-remote-service";
 import { CanonicalVaultService } from "../runtime/vault/canonical-service";
 import { CanonicalApplication } from "./canonical-application";
@@ -31,6 +34,10 @@ export interface CanonicalBackgroundApplicationOptions {
   readonly notifyStateChanged?: () => void | Promise<void>;
   readonly remotes?: Pick<CanonicalReplicaRemoteService, "list">;
   readonly hostedReplicaSetup?: Pick<CanonicalHostedReplicaSetupService, "create">;
+  readonly hostedCompactMaterializer?: Pick<
+    CanonicalHostedCompactMaterializationService,
+    "materialize"
+  >;
 }
 
 export function createCanonicalBackgroundApplication(
@@ -59,6 +66,9 @@ export function createCanonicalBackgroundApplication(
       ...(input.hostedReplicaSetup === undefined
         ? {}
         : { hostedReplicaSetup: input.hostedReplicaSetup }),
+      ...(input.hostedCompactMaterializer === undefined
+        ? {}
+        : { hostedCompactMaterializer: input.hostedCompactMaterializer }),
     },
   );
   return new CanonicalApplication(
@@ -82,12 +92,18 @@ export function startCanonicalBackground(): void {
   const storage = new CanonicalIndexedDb();
   const vaults = new CanonicalVaultService(storage, NORMAL_STORAGE_REALM);
   const remotes = new CanonicalReplicaRemoteService(storage, NORMAL_STORAGE_REALM);
+  const hostedCompactMaterializer = new CanonicalHostedCompactMaterializationService({
+    remotes,
+    replays: new CanonicalReplayService(vaults),
+    ledger: new CanonicalRemoteMaterializationLedgerService(storage, NORMAL_STORAGE_REALM),
+  });
   const application = createCanonicalBackgroundApplication({
     vaults,
     artifacts: new CanonicalOpfsArtifactStore(),
     pageCapture: browserPageCapture(),
     remotes,
     hostedReplicaSetup: new CanonicalHostedReplicaSetupService({ remotes }),
+    hostedCompactMaterializer,
     notifyStateChanged: () =>
       browser.runtime.sendMessage(CANONICAL_APPLICATION_STATE_CHANGED).catch(() => undefined),
   });

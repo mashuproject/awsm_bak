@@ -476,12 +476,19 @@ function renderVaultSettings(view: CanonicalPopupView, content: DocumentFragment
 }
 
 function renderHostedReplicas(view: CanonicalPopupView, content: DocumentFragment): void {
+  const expectedVaultId = view.state.selectedVaultId;
+  if (expectedVaultId === undefined) throw new Error("Hosted Replicas require a selected Vault.");
   const section = element("section", undefined, "canonical-popup__hosted-replicas");
   section.append(
     element("h2", "Hosted Replicas"),
     element(
       "p",
       "A Hosted Replica is an optional opaque storage channel. Connecting one creates an empty Host-side Replica; it does not send this Vault’s data yet.",
+      "canonical-popup__muted",
+    ),
+    element(
+      "p",
+      "Store compact Vault state explicitly when you want this Host to retain encrypted Records, Objects, and Key Envelopes. Large Capture artifacts remain on demand.",
       "canonical-popup__muted",
     ),
   );
@@ -498,6 +505,24 @@ function renderHostedReplicas(view: CanonicalPopupView, content: DocumentFragmen
         element("span", remote.endpoint),
         element("span", remote.enabled ? "Available" : "Disabled"),
       );
+      if (remote.enabled) {
+        const materialize = element("button", "Store compact Vault state") as HTMLButtonElement;
+        materialize.type = "button";
+        materialize.addEventListener("click", () => {
+          action(materialize, async () => {
+            transientError = undefined;
+            await requestHostedReplicaPermission(remote.endpoint);
+            await client.materializeHostedReplica({
+              expectedVaultId,
+              remoteId: remote.remoteId,
+            });
+            announcer.textContent =
+              "Compact Vault state stored. Large Capture artifacts remain on demand.";
+            await controller.refresh();
+          });
+        });
+        item.append(materialize);
+      }
       list.append(item);
     }
     section.append(list);

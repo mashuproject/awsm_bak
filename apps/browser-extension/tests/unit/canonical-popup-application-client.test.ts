@@ -181,6 +181,33 @@ describe("canonical popup application client", () => {
     });
   });
 
+  it("materializes an exact selected-Vault Remote and validates the progress summary", async () => {
+    const transport = {
+      request: vi.fn().mockResolvedValue({
+        remoteId: "019fa62e-a653-7f63-b2bf-94e7ed5e46ca",
+        materializedCompactItemCount: 4,
+        retriedCompactItemCount: 1,
+        alreadyConfirmedCompactItemCount: 2,
+      }),
+      subscribe: vi.fn(() => () => undefined),
+    };
+    const client = createCanonicalPopupApplicationClient(transport);
+    const expectedVaultId = "a".repeat(64);
+    const remoteId = "019fa62e-a653-7f63-b2bf-94e7ed5e46ca";
+
+    await expect(client.materializeHostedReplica({ expectedVaultId, remoteId })).resolves.toEqual({
+      remoteId,
+      materializedCompactItemCount: 4,
+      retriedCompactItemCount: 1,
+      alreadyConfirmedCompactItemCount: 2,
+    });
+    expect(transport.request).toHaveBeenCalledWith({
+      type: "MaterializeHostedReplica",
+      expectedVaultId,
+      remoteId,
+    });
+  });
+
   it("sends only canonical popup mutations and validates their outcomes", async () => {
     const transport = {
       request: vi

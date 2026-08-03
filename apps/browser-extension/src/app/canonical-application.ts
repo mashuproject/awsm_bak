@@ -54,6 +54,11 @@ export type CanonicalApplicationRequest =
       readonly name: string;
       readonly username: string;
       readonly password: string;
+    }
+  | {
+      readonly type: "MaterializeHostedReplica";
+      readonly expectedVaultId: string;
+      readonly remoteId: string;
     };
 
 type CanonicalApplicationRuntime = Pick<
@@ -76,6 +81,7 @@ type CanonicalApplicationRuntime = Pick<
   | "listLibrary"
   | "listRemotes"
   | "createHostedReplica"
+  | "materializeHostedReplica"
 >;
 
 interface CanonicalApplicationPageCapture {
@@ -263,6 +269,19 @@ export function decodeCanonicalApplicationRequest(value: unknown): CanonicalAppl
         };
       }
       break;
+    case "MaterializeHostedReplica":
+      if (
+        exactKeys(value, ["type", "expectedVaultId", "remoteId"]) &&
+        text(value.expectedVaultId) &&
+        text(value.remoteId)
+      ) {
+        return {
+          type: value.type,
+          expectedVaultId: value.expectedVaultId,
+          remoteId: value.remoteId,
+        };
+      }
+      break;
   }
   throw new TypeError("Unsupported application Command");
 }
@@ -390,6 +409,10 @@ export class CanonicalApplication {
       case "CreateHostedReplica": {
         const { type: _type, ...input } = request;
         return this.mutate(() => this.runtime.createHostedReplica(input));
+      }
+      case "MaterializeHostedReplica": {
+        const { type: _type, ...input } = request;
+        return this.mutate(() => this.runtime.materializeHostedReplica(input));
       }
     }
   }

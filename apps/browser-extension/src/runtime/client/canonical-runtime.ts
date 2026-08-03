@@ -20,6 +20,7 @@ import type {
   CanonicalLibraryProjectionService,
 } from "../library/canonical-projection";
 import { type CanonicalSearchCoverage, CanonicalSearchService } from "../search/canonical-service";
+import type { CanonicalHostedCompactMaterializationService } from "../synchronization/canonical-hosted-compact-materialization";
 import type { CanonicalHostedReplicaSetupService } from "../synchronization/canonical-hosted-replica-setup";
 import type { CanonicalReplicaRemoteService } from "../synchronization/canonical-remote-service";
 import type { CanonicalReplicaRemote } from "../synchronization/canonical-state";
@@ -49,6 +50,13 @@ export interface CanonicalClientRemoteSummary {
   readonly name: string;
   readonly endpoint: string;
   readonly enabled: boolean;
+}
+
+export interface CanonicalClientRemoteMaterializationSummary {
+  readonly remoteId: string;
+  readonly materializedCompactItemCount: number;
+  readonly retriedCompactItemCount: number;
+  readonly alreadyConfirmedCompactItemCount: number;
 }
 
 export interface CanonicalClientState {
@@ -267,6 +275,10 @@ export class CanonicalClientRuntime {
     private readonly remoteManagement: {
       readonly remotes?: Pick<CanonicalReplicaRemoteService, "list">;
       readonly hostedReplicaSetup?: Pick<CanonicalHostedReplicaSetupService, "create">;
+      readonly hostedCompactMaterializer?: Pick<
+        CanonicalHostedCompactMaterializationService,
+        "materialize"
+      >;
     } = {},
   ) {}
 
@@ -546,6 +558,23 @@ export class CanonicalClientRuntime {
       password: input.password,
     });
     return this.remoteSummary(remote);
+  }
+
+  async materializeHostedReplica(input: {
+    readonly expectedVaultId: string;
+    readonly remoteId: string;
+  }): Promise<CanonicalClientRemoteMaterializationSummary> {
+    await this.assertExpectedVault(input.expectedVaultId);
+    if (this.remoteManagement.hostedCompactMaterializer === undefined) {
+      throw runtimeError(
+        "HOSTED_REPLICA_MATERIALIZATION_UNAVAILABLE",
+        "Hosted Replica materialization is unavailable in this Client.",
+      );
+    }
+    return this.remoteManagement.hostedCompactMaterializer.materialize({
+      vaultId: identifierFromStorageKey("Vault", input.expectedVaultId),
+      remoteId: input.remoteId,
+    });
   }
 
   async search(input: {

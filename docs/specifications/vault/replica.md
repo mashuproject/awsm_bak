@@ -99,7 +99,11 @@ Hosted Replica or prompt for an unrelated Host. A missing required capability le
 configuration. User-facing Remote management is an
 independent Client workflow. The current popup lists only non-secret local Remote summaries and
 offers this setup flow after an explicit Host-permission gesture. Creating a Hosted Replica does not
-itself synchronize or materialize Vault data.
+itself synchronize or materialize Vault data. A separate explicit popup action may materialize the
+current Compact closure to one enabled Hosted Replica after the same Host-permission gesture. It
+sends opaque encrypted Records, Objects, Feature Manifests, and Key Envelopes only; Streamable
+Artifact wrappers remain on demand. That destination write is not pull synchronization and does
+not establish an origin or prove that the Host retains a complete Vault.
 
 Synchronization is initiated as a pull by the receiving Client. A Host may send an untrusted Wake
 Hint that causes a Client to pull, but does not push authoritative Vault state. Pull may occur on

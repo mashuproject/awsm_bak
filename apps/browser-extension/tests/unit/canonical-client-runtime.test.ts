@@ -9,6 +9,7 @@ import { CanonicalClientRuntime } from "../../src/runtime/client/canonical-runti
 import type { CanonicalContentService } from "../../src/runtime/content/canonical-service";
 import type { CanonicalLibraryProjectionService } from "../../src/runtime/library/canonical-projection";
 import type { CanonicalSearchService } from "../../src/runtime/search/canonical-service";
+import type { CanonicalHostedCompactMaterializationService } from "../../src/runtime/synchronization/canonical-hosted-compact-materialization";
 import type { CanonicalHostedReplicaSetupService } from "../../src/runtime/synchronization/canonical-hosted-replica-setup";
 import type { CanonicalReplicaRemoteService } from "../../src/runtime/synchronization/canonical-remote-service";
 import type { CanonicalReplicaRemote } from "../../src/runtime/synchronization/canonical-state";
@@ -23,6 +24,10 @@ function fixture(
   options: {
     readonly remotes?: Pick<CanonicalReplicaRemoteService, "list">;
     readonly hostedReplicaSetup?: Pick<CanonicalHostedReplicaSetupService, "create">;
+    readonly hostedCompactMaterializer?: Pick<
+      CanonicalHostedCompactMaterializationService,
+      "materialize"
+    >;
   } = {},
 ) {
   const firstVaultId = randomIdentifier("Vault");
@@ -144,6 +149,31 @@ function fixture(
 }
 
 describe("canonical Client Runtime", () => {
+  it("materializes only the selected Vault's Compact closure to an explicit Remote", async () => {
+    const remoteId = "019fa62e-a653-7f63-b2bf-94e7ed5e46ca";
+    const hostedCompactMaterializer = {
+      materialize: vi.fn().mockResolvedValue({
+        remoteId,
+        materializedCompactItemCount: 4,
+        retriedCompactItemCount: 1,
+        alreadyConfirmedCompactItemCount: 2,
+      }),
+    };
+    const { runtime, firstVaultId: selectedVaultId } = fixture({ hostedCompactMaterializer });
+    const expectedVaultId = identifierStorageKey(selectedVaultId);
+
+    await expect(runtime.materializeHostedReplica({ expectedVaultId, remoteId })).resolves.toEqual({
+      remoteId,
+      materializedCompactItemCount: 4,
+      retriedCompactItemCount: 1,
+      alreadyConfirmedCompactItemCount: 2,
+    });
+    expect(hostedCompactMaterializer.materialize).toHaveBeenCalledWith({
+      vaultId: selectedVaultId,
+      remoteId,
+    });
+  });
+
   it("fences non-secret Remote management to the selected Vault", async () => {
     let configured: CanonicalReplicaRemote;
     const remotes = { list: vi.fn(async () => [configured]) };

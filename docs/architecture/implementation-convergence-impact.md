@@ -257,8 +257,10 @@ entire reachable Compact closure to one writable Hosted Replica through independ
 outer items and the durable Remote Materialization Ledger. It re-wraps Key Envelopes only to their
 authoritative Credential targets, preserves their logical IDs, retries an ambiguous admission with
 the same prepared bytes, and deliberately leaves Streamable Artifact wrappers sparse for explicit
-hydration. Remote onboarding, Remote-management UI, shipped activation, and general multi-Remote
-convergence remain unfinished.
+hydration. The shipped popup now offers explicit per-Remote Compact materialization after a
+Host-permission gesture; it is deliberately named and implemented separately from pull
+synchronization. Remote editing, disable/delete controls, receiver-initiated pull activation, and
+general multi-Remote convergence remain unfinished.
 
 ## 4.4 Account dashboard and public pages
 
