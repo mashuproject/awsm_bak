@@ -640,10 +640,10 @@ body {
   display: grid;
   grid-template-columns: minmax(190px, 0.3fr) minmax(0, 1fr);
   align-items: start;
-  gap: var(--awsm-space-10);
+  gap: var(--awsm-space-12);
   margin-top: var(--awsm-space-12);
   border-top: var(--awsm-border);
-  padding-top: var(--awsm-space-10);
+  padding-top: var(--awsm-space-12);
 }
 
 .glossary-index {
@@ -673,7 +673,7 @@ body {
 }
 
 .glossary-index::-webkit-scrollbar-thumb:hover {
-  background: var(--awsm-ink-muted);
+  background: var(--awsm-text-muted);
 }
 
 .glossary-index__section {
@@ -690,7 +690,7 @@ body {
 .glossary-index__section h2 {
   margin: 0;
   padding: var(--awsm-space-2);
-  color: var(--awsm-ink-muted);
+  color: var(--awsm-text-muted);
   font-size: 0.8rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -715,7 +715,7 @@ body {
 .glossary-list__section dl > div {
   display: grid;
   grid-template-columns: minmax(180px, 0.35fr) minmax(0, 1fr);
-  gap: var(--awsm-space-10);
+  gap: var(--awsm-space-12);
   border-bottom: 1px solid var(--awsm-border-subtle);
   border-radius: var(--awsm-radius-compact);
   padding: var(--awsm-space-8) var(--awsm-space-4);
@@ -723,7 +723,7 @@ body {
 }
 
 .glossary-list__section + .glossary-list__section {
-  margin-top: var(--awsm-space-10);
+  margin-top: var(--awsm-space-12);
 }
 
 .glossary-list__section h2 {
@@ -764,30 +764,6 @@ body {
 
 .glossary-list dd > :last-child {
   margin-bottom: 0;
-}
-
-.glossary-term__related {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--awsm-space-2) var(--awsm-space-3);
-  margin-top: var(--awsm-space-4);
-  font-size: 0.875rem;
-}
-
-.glossary-term__related span {
-  color: var(--awsm-ink-muted);
-  font-size: 0.8125rem;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.glossary-term__related a {
-  color: var(--awsm-link);
-  font-weight: 750;
-  text-decoration-thickness: 1px;
-  text-underline-offset: 0.2em;
 }
 
 .account-page {
@@ -1112,8 +1088,8 @@ body {
     padding: var(--awsm-space-2);
     background: var(--awsm-paper);
     box-shadow: var(--awsm-shadow-hard);
-    max-height: 22rem;
-    overflow-y: auto;
+    max-height: none;
+    overflow: visible;
   }
 
   .glossary-index__section {

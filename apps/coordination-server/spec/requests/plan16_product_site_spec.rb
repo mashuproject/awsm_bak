@@ -96,8 +96,7 @@ RSpec.describe "Plan 16 product site", type: :request do
       "Replica Access Grant",
       "Vault",
       "Recovery Phrase",
-      "Coordination Server",
-      "Related terms"
+      "Coordination Server"
     )
     expect(response.body).not_to include("Vault Record", "<dt>Device</dt>")
 
@@ -127,11 +126,9 @@ RSpec.describe "Plan 16 product site", type: :request do
       terms = section.css("dt").map(&:text)
       terms == terms.sort_by(&:downcase)
     end).to be(true)
-    expect(document.css(".glossary-term__related a").map { |link| link["href"] }).to all(
-      match(/^#[-a-z0-9]+$/)
-    )
-    expect(document.css(".glossary-term__related a").map { |link| link["href"] }).to include(
-      "#vault", "#local-first", "#zero-knowledge-synchronization"
+    expect(document.css(".glossary-term__related")).to be_empty
+    expect(document.css(".glossary-list dd a").map { |link| link["href"] }).to include(
+      "/glossary#vault", "/glossary#local-first", "/glossary#zero-knowledge-synchronization"
     )
   end
 

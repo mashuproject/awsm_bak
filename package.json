@@ -7,7 +7,7 @@
     "build": "corepack pnpm --filter @awsm/browser-extension build",
     "design:generate": "node apps/design-system/scripts/generate.mjs",
     "design:icons": "node apps/design-system/scripts/generate-icons.mjs",
-    "design:check": "designmd lint DESIGN.md && node apps/design-system/scripts/generate.mjs --check",
+    "design:check": "designmd lint DESIGN.md && node apps/design-system/scripts/generate.mjs --check && node apps/design-system/scripts/check-token-references.mjs",
     "lint": "corepack pnpm design:check && corepack pnpm --filter @awsm/browser-extension lint",
     "test": "corepack pnpm --filter @awsm/browser-extension test",
     "test:integration": "corepack pnpm --filter @awsm/browser-extension test:integration",

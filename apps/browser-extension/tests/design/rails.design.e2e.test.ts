@@ -176,7 +176,8 @@ test("renders trust, Account, validation, and design-reference surfaces", async 
   await expect(page.locator('.glossary-index a[href="#vault-member"]')).toBeVisible();
   await expect
     .poll(() => page.locator(".glossary-index").evaluate((element) => element.clientHeight))
-    .toBeLessThanOrEqual(352);
+    .toBeGreaterThan(352);
+  await expect(page.locator(".glossary-index")).toHaveCSS("overflow-y", "visible");
   await expectReadableContrast(page);
   await expect(page).toHaveScreenshot("glossary-narrow-top.png");
   await expect(page).toHaveScreenshot("glossary-narrow.png", { fullPage: true });

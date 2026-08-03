@@ -21,4 +21,14 @@ module ApplicationHelper
   def glossary_term_link(term, label = term)
     link_to label, glossary_path(anchor: term.parameterize), class: "term-link", data: { turbo: false }
   end
+
+  def glossary_summary(term)
+    return ERB::Util.html_escape(term.summary) if term.linked_titles.empty?
+
+    titles = term.linked_titles.sort_by { |title| -title.length }
+    pattern = Regexp.union(titles)
+    safe_join(term.summary.split(/(#{pattern})/).map do |part|
+      titles.include?(part) ? glossary_term_link(part) : ERB::Util.html_escape(part)
+    end)
+  end
 end

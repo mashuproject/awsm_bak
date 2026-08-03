@@ -35,15 +35,7 @@
             <% section.terms.each do |term| %>
               <div id="<%= term.anchor %>">
                 <dt><%= term.title %></dt>
-                <dd>
-                  <p><%= term.summary %></p>
-                  <nav class="glossary-term__related" aria-label="Related terms">
-                    <span>Related terms</span>
-                    <% term.related_titles.each do |related_title| %>
-                      <%= link_to related_title, "##{related_title.parameterize}" %>
-                    <% end %>
-                  </nav>
-                </dd>
+                <dd><p><%= glossary_summary(term) %></p></dd>
               </div>
             <% end %>
           </dl>
