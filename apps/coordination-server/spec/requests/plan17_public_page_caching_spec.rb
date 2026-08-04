@@ -1,7 +1,7 @@
 require "rails_helper"
 
 RSpec.describe "Plan 17 public page caching", type: :request do
-  PUBLIC_PATHS = %w[/ /privacy /security /glossary].freeze
+  PUBLIC_PATHS = %w[/ /privacy /security /glossary /compare /compare/wayback-machine].freeze
   BROWSER_CACHE_POLICY = "public, max-age=300"
   CDN_CACHE_POLICY =
     "public, max-age=86400, stale-while-revalidate=86400, stale-if-error=604800"

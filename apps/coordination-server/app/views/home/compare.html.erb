@@ -1,0 +1,45 @@
+<% content_for :title, "AWSM and other archive tools" %>
+<% content_for :meta_description, "Compare AWSM with archive, browser capture, read-later, and bookmark tools. Choose the archive that fits your work." %>
+<% content_for :body_class, "public-site" %>
+
+<%= render "shared/public_header" %>
+
+<main class="site-container compare-page">
+  <header class="compare-page__header">
+    <p class="eyebrow">Compare tools</p>
+    <h1>Choose the archive that fits your work.</h1>
+    <p class="compare-page__lede">AWSM is one kind of archive. These guides explain where other tools are stronger, where AWSM is different, and which boundary matters for the work you want to do.</p>
+  </header>
+
+  <aside class="compare-current" aria-labelledby="compare-current-title">
+    <p class="eyebrow">Current preview</p>
+    <h2 id="compare-current-title">AWSM today</h2>
+    <p>AWSM is currently a browser extension with <%= glossary_term_link "Local-First", "local-first" %> encrypted <%= glossary_term_link "Vault", "Vaults" %>. It can optionally synchronize opaque data through a <%= glossary_term_link "Hosted Replica" %>. The preview has no mobile Client. No hosted web reader. No user-facing AI. No server-side crawler.</p>
+    <p class="compare-current__note">This page describes the current preview. It is not a promise about an unreleased feature.</p>
+  </aside>
+
+  <div class="compare-categories">
+    <% @comparison_categories.each do |category| %>
+      <section class="compare-category" aria-labelledby="category-<%= category.title.parameterize %>">
+        <header class="compare-category__header">
+          <p class="eyebrow"><%= category.title %></p>
+          <h2 id="category-<%= category.title.parameterize %>"><%= category.description %></h2>
+        </header>
+        <div class="compare-card-grid">
+          <% @comparisons.select { |comparison| comparison.category == category.title }.each do |comparison| %>
+            <article class="compare-card">
+              <p class="compare-badge"><%= comparison.badge %></p>
+              <h3><%= comparison.name %></h3>
+              <p><%= comparison.description %></p>
+              <%= link_to "Read AWSM and #{comparison.name}", comparison_path(comparison.slug), class: "compare-card__link" %>
+            </article>
+          <% end %>
+        </div>
+      </section>
+    <% end %>
+  </div>
+
+  <p class="compare-disclosure"><strong>No affiliation:</strong> AWSM is not affiliated with, endorsed by, or sponsored by the products named here. Product capabilities change. Each guide links to the alternative's official sources and shows when it was reviewed.</p>
+</main>
+
+<%= render "shared/public_footer" %>

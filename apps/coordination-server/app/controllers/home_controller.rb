@@ -1,7 +1,7 @@
 class HomeController < ApplicationController
   allow_unauthenticated_access
-  layout "public", only: %i[show privacy security glossary]
-  after_action :set_public_page_cache_policy, only: %i[show privacy security glossary]
+  layout "public", only: %i[show privacy security glossary compare comparison]
+  after_action :set_public_page_cache_policy, only: %i[show privacy security glossary compare comparison]
 
   def show
     assign_public_context
@@ -18,6 +18,18 @@ class HomeController < ApplicationController
   def glossary
     assign_public_context
     @glossary_sections = CanonicalGlossary.load
+  end
+
+  def compare
+    assign_public_context
+    @comparison_categories = ComparisonCatalog.categories
+    @comparisons = ComparisonCatalog.all
+  end
+
+  def comparison
+    assign_public_context
+    @comparison = ComparisonCatalog.find(params[:slug])
+    raise ActionController::RoutingError, "Not Found" unless @comparison
   end
 
   def design_system

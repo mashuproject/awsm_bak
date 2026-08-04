@@ -3,6 +3,9 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="application-name" content="Coordination Server">
 <meta name="mobile-web-app-capable" content="yes">
+<% if content_for?(:meta_description) %>
+  <%= tag.meta name: "description", content: content_for(:meta_description) %>
+<% end %>
 <%= csp_meta_tag %>
 
 <%= yield :head %>

@@ -18,6 +18,7 @@ RSpec.describe "Plan 16 product site", type: :request do
       "Attach a Hosted Replica when you choose.",
       "Optional synchronization through opaque Replicas.",
       "Why not just use the Wayback Machine?",
+      "Compare AWSM with other archive tools",
       "Mozilla-signed Linux beta",
       "Sign in"
     )
@@ -33,6 +34,7 @@ RSpec.describe "Plan 16 product site", type: :request do
     expect(response.body).to include('href="/glossary#hosted-replica"')
     expect(response.body).to include('href="/glossary#local-first"')
     expect(response.body).to include('href="/glossary#zero-knowledge-synchronization"')
+    expect(response.body).to include('href="/compare/wayback-machine"')
 
     document = Nokogiri::HTML(response.body)
     expect(document.css("#optional-sync .section-heading").map(&:text)).to eq(

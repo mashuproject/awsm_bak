@@ -290,6 +290,60 @@ test("renders trust, Account, validation, and design-reference surfaces", async 
   await expect(page.getByText("Signed in as")).toBeHidden();
 });
 
+test("renders the comparison guide at desktop and narrow widths", async ({ page }) => {
+  const comparisonPages = [
+    ["/compare", "Choose the archive that fits your work.", "comparison-hub"],
+    ["/compare/wayback-machine", /AWSM and the Wayback Machine/, "comparison-wayback"],
+    ["/compare/archivebox", /AWSM and ArchiveBox/, "comparison-archivebox"],
+    ["/compare/singlefile", /AWSM and SingleFile/, "comparison-singlefile"],
+    ["/compare/wallabag", /AWSM and wallabag/, "comparison-wallabag"],
+    ["/compare/raindrop", /AWSM and Raindrop\.io/, "comparison-raindrop"],
+    ["/compare/karakeep", /AWSM and Karakeep/, "comparison-karakeep"],
+  ] as const;
+
+  await page.setViewportSize({ width: 1280, height: 900 });
+  for (const [path, heading, screenshot] of comparisonPages) {
+    await page.goto(path);
+    await expect(page.getByRole("heading", { name: heading })).toBeVisible();
+    await expect(page.locator(".compare-page")).toBeVisible();
+    if (path !== "/compare") {
+      await expect(page.locator(".compare-matrix")).toBeVisible();
+      await expect(page.getByText("Sources", { exact: true })).toBeVisible();
+    }
+    const firstComparisonLink = page.locator(
+      path === "/compare" ? ".compare-card__link" : ".compare-sources a",
+    ).first();
+    await firstComparisonLink.focus();
+    await expect(firstComparisonLink).toHaveCSS("outline-width", "3px");
+    await page.evaluate(() => {
+      (document.activeElement as HTMLElement | null)?.blur();
+      window.scrollTo(0, 0);
+    });
+    await expect
+      .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth))
+      .toBe(true);
+    await expectReadableContrast(page);
+    await expect(page).toHaveScreenshot(`${screenshot}-desktop.png`, { fullPage: true });
+  }
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  for (const [path, heading, screenshot] of comparisonPages) {
+    await page.goto(path);
+    await expect(page.getByRole("heading", { name: heading })).toBeVisible();
+    if (path !== "/compare") {
+      await expect(page.locator(".compare-matrix tbody td").first()).toHaveAttribute(
+        "data-label",
+        /AWSM|.+/u,
+      );
+    }
+    await expect
+      .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth))
+      .toBe(true);
+    await expectReadableContrast(page);
+    await expect(page).toHaveScreenshot(`${screenshot}-narrow.png`, { fullPage: true });
+  }
+});
+
 test("renders a non-personal loading shell before private session status resolves", async ({
   browser,
 }) => {

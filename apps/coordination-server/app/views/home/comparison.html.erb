@@ -1,0 +1,109 @@
+<% content_for :title, @comparison.title %>
+<% content_for :meta_description, "AWSM and #{@comparison.name}: #{@comparison.description}" %>
+<% content_for :body_class, "public-site" %>
+
+<%= render "shared/public_header" %>
+
+<main class="site-container compare-page compare-detail">
+  <header class="compare-page__header compare-detail__header">
+    <p class="compare-badge"><%= @comparison.badge %></p>
+    <h1><%= @comparison.title %></h1>
+    <p class="compare-page__lede"><%= @comparison.description %></p>
+    <div class="button-row">
+      <%= link_to "Official #{@comparison.name} site", @comparison.official_url, class: "awsm-button awsm-button--secondary" %>
+      <%= link_to "All comparisons", compare_path, class: "awsm-button awsm-button--quiet" %>
+    </div>
+  </header>
+
+  <p class="compare-disclosure"><strong>No affiliation:</strong> AWSM is not affiliated with, endorsed by, or sponsored by <%= @comparison.name %>. This comparison is an independent product guide based on the linked official sources.</p>
+
+  <section class="compare-choice-grid" aria-labelledby="compare-decision-title">
+    <div class="compare-section-heading compare-choice-heading">
+      <p class="eyebrow">Decision guide</p>
+      <h2 id="compare-decision-title">Choose based on the work</h2>
+    </div>
+    <article class="compare-choice compare-choice--alternative">
+      <p class="eyebrow">Choose <%= @comparison.name %> when</p>
+      <p class="compare-choice__intro"><%= @comparison.alternative_intro %></p>
+      <ul>
+        <% @comparison.alternative_strengths.each do |strength| %>
+          <li><%= strength %></li>
+        <% end %>
+      </ul>
+    </article>
+    <article class="compare-choice compare-choice--awsm">
+      <p class="eyebrow">Choose AWSM when</p>
+      <p class="compare-choice__intro"><%= @comparison.awsm_intro %></p>
+      <ul>
+        <% @comparison.awsm_strengths.each do |strength| %>
+          <li><%= strength %></li>
+        <% end %>
+      </ul>
+    </article>
+  </section>
+
+  <section class="compare-matrix-section" aria-labelledby="compare-matrix-title">
+    <div class="compare-section-heading">
+      <p class="eyebrow">At a glance</p>
+      <h2 id="compare-matrix-title">The practical differences</h2>
+    </div>
+    <div class="compare-matrix-wrap">
+      <table class="compare-matrix">
+        <caption>Feature comparison between <%= @comparison.name %> and AWSM</caption>
+        <thead>
+          <tr>
+            <th scope="col">Dimension</th>
+            <th scope="col"><%= @comparison.name %></th>
+            <th scope="col">AWSM</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% @comparison.matrix.each do |row| %>
+            <tr>
+              <th scope="row"><%= row.label %></th>
+              <td data-label="<%= @comparison.name %>"><%= row.alternative %></td>
+              <td data-label="AWSM"><%= row.awsm %></td>
+            </tr>
+          <% end %>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <div class="compare-essay">
+    <% @comparison.essay.each do |section| %>
+      <section>
+        <h2><%= section.title %></h2>
+        <p><%= section.body %></p>
+      </section>
+    <% end %>
+  </div>
+
+  <section class="compare-sources" aria-labelledby="compare-sources-title">
+    <div>
+      <p class="eyebrow">Evidence</p>
+      <h2 id="compare-sources-title">Sources</h2>
+    </div>
+    <div>
+      <ul>
+        <% @comparison.sources.each do |source| %>
+          <li><%= link_to source.label, source.url %></li>
+        <% end %>
+      </ul>
+      <p class="compare-reviewed">Reviewed <time datetime="<%= Date.parse(@comparison.reviewed_on).iso8601 %>"><%= @comparison.reviewed_on %></time>.</p>
+    </div>
+  </section>
+
+  <section class="compare-footer" aria-label="Next steps">
+    <div>
+      <p class="eyebrow">Try the local-first path</p>
+      <h2>Start with a Vault. Add synchronization only when it serves you.</h2>
+    </div>
+    <div class="button-row">
+      <%= link_to "Get AWSM", "#{root_path}#install-awsm", class: "awsm-button awsm-button--cta" %>
+      <%= link_to "Visit official #{@comparison.name} site", @comparison.official_url, class: "awsm-button awsm-button--secondary" %>
+    </div>
+  </section>
+</main>
+
+<%= render "shared/public_footer" %>

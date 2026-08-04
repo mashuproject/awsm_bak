@@ -99,6 +99,10 @@ must update every affected living document before its work is complete.
   documentation. Whenever a feature, browser capability, distribution status, trust boundary,
   setup step, or public limitation changes, audit and update the corresponding website copy,
   diagrams, links, and visible states in the same change.
+- Treat the public comparison hub and comparison pages as evergreen product documentation too.
+  Whenever AWSM capabilities, trust boundaries, distribution, supported platforms, limits, or
+  roadmap status changes materially, audit and update affected comparison copy, matrix values,
+  official source links, and reviewed dates in the same change.
 - Product marketing must claim only behavior proven by current code and tests. Keep local-only use,
   optional synchronization, Account versus Recovery Phrase boundaries, best-effort Capture
   representations, browser distribution status, and server-visible metadata aligned with the

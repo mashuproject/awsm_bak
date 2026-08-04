@@ -46,6 +46,8 @@ Rails.application.routes.draw do
   get "privacy", to: "home#privacy"
   get "security", to: "home#security"
   get "glossary", to: "home#glossary"
+  get "compare", to: "home#compare", as: :compare
+  get "compare/:slug", to: "home#comparison", as: :comparison
   get "design-system", to: "home#design_system" unless Rails.env.production?
   root "home#show"
 end
