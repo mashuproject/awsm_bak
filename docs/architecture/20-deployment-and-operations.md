@@ -19,6 +19,23 @@ bundled code, and receive real-browser proof before publication. Desktop, mobile
 Clients must prove the same codec, cryptographic, storage, and synchronization vectors. Required
 Feature support is declared by implementation, not inferred from package version.
 
+The reference Client process is one Go executable with desktop and headless launch modes. Desktop
+mode uses a Wails shell and a loopback Runtime API. Its current Vault-management slice uses the
+same tagged Command boundary as the browser Client; extension page capture remains available for
+extension-owned local Vaults, while desktop-owned Capture Bundles are not bridged yet. Full Go
+Event/DAG, cryptographic, synchronization, hydration, and Export/Import semantics converge.
+Headless mode is reserved for a deployment-selected listener for the opaque Replica Host protocol
+once its Host adapter is enabled; network TLS and ingress are deployment responsibilities. Both
+modes use the same Runtime, the PocketBase Collection adapter, the streaming encrypted Artifact
+Driver, and the conformance vectors. PocketBase's generic dashboard, record API, authentication,
+and file API are not deployed surfaces.
+
+The process adapter's standalone smoke lane uses an atomic ready file and an ephemeral loopback
+port; the browser transport uses the canonical desktop port `127.0.0.1:37373`. Native Wails startup
+is verified under Xvfb where GTK/WebKitGTK are installed. The Wails management panel and browser
+extension use the same loopback API, while the extension's installation-wrapped grant and the
+management summaries keep bearer tokens out of UI and logs.
+
 # Replica Host service
 
 A reference Host deploys an HTTP application, relational Host Policy State, optional ephemeral
@@ -62,9 +79,10 @@ response alone is not proof of served behavior.
 # Current reference status
 
 The repository Rails Host has converged on the opaque schema and executable transport foundation;
-the packaged browser Client and synchronization consumers have not yet converged. This repository
-state proves nothing about a named deployment. Reference staging and production facts must be
-freshly inspected before every operational claim or mutation.
+the Go process provides the reference desktop/headless process, persistence, API, and
+artifact-driver boundary plus a partial Vault-management service set. This repository state proves
+nothing about a named deployment. Reference staging and production facts must be freshly inspected
+before every operational claim or mutation.
 
 # References
 

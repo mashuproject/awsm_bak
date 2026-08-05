@@ -1,0 +1,20 @@
+AWSM Go Runtime — Third-Party Notices
+
+The Go Runtime links permissively licensed dependencies. The dependency versions are pinned in
+go.mod and go.sum; this file identifies the direct framework dependencies used by the reference
+process.
+
+PocketBase 0.39.10
+Source: https://github.com/pocketbase/pocketbase
+License: MIT
+
+Wails v2.13.0
+Source: https://github.com/wailsapp/wails
+License: MIT
+
+google/uuid 1.6.0
+Source: https://github.com/google/uuid
+License: BSD-3-Clause
+
+Transitive dependencies retain their upstream notices and license terms as distributed with their
+source modules. No GPL or AGPL dependency is used by this module.

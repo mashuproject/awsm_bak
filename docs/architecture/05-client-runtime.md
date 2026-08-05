@@ -52,6 +52,49 @@ First-party and extension code submits capability-scoped Commands. A headless in
 offer an HTTP API for operating its local Replica; API credentials authorize that Client surface,
 not portable Vault membership. The selected Client Credential still signs every resulting Event.
 
+# Reference process adapter
+
+The reference desktop/headless Runtime process is `apps/runtime-go`. One executable provides a
+Wails desktop shell and a headless/server mode around the same trusted Runtime boundary. Its
+default desktop transport is one loopback HTTP Runtime API available to the Wails UI and a paired
+browser extension transport adapter. The extension is an API Client and does not become a Vault
+Member merely by using that API. Pairing issues a local revocable API Grant that remains valid
+until explicit revocation.
+
+The current process implements a persistent Vault-management slice behind the canonical tagged
+Command contract: creation, selection, Recovery Phrase ceremonies, recovery, Fork, Closure,
+Vacuum, and Hosted Replica metadata configuration. Hosted Replica attachment, materialization, and
+synchronization return explicit unavailable errors. The extension's backend router merges local and desktop
+Vault summaries, then routes Commands by Vault ID; it does not copy desktop Vault bytes into the
+browser. Desktop page acquisition is intentionally unavailable. Capture remains available for
+extension-owned local Vaults; the extension-to-desktop Capture Bundle bridge is not implemented.
+The Go process does not yet claim full authenticated Event/DAG replay, cryptographic
+cross-language conformance, Library projection, pull synchronization, hydration, Storage Relief,
+or Complete Export/Import parity.
+
+The move boundary is an explicit one-use transfer ceremony, not synchronization. The source
+Client seals a transfer package with the transfer secret, the desktop process authenticates and
+stages it, and the user must accept the staged package before a separate source-retirement action.
+The staged payload is not a Vault Event and is not included in Vault synchronization.
+
+The process may also expose the Replica Host role, but Host Accounts, Channel Principals, and
+Replica Access Grants remain separate from Runtime API Grants. PocketBase is a replaceable local
+Collection and schema adapter for AWSM-owned state; its generic Collections API, dashboard,
+built-in authentication, and file routes are not part of the AWSM surface. Large Artifact wrappers
+remain behind an AWSM streaming Storage Driver and are stored only as already-encrypted bytes.
+Once its Host adapter is enabled, headless network deployment exposes the opaque Replica Host
+protocol through deployment-managed TLS. The current reserved Host routes are fail-closed, and
+the plaintext Runtime API remains a loopback surface.
+
+The extension's explicit Desktop Runtime mode requests loopback permission from its Connect click,
+creates a one-use local pairing with the `runtime.vault` scope, waits for trusted desktop approval,
+and stores the resulting grant only as installation-wrapped state. Disconnect deletes that local
+grant; a later health or grant check that receives revocation clears the state and reports the
+consequence without exposing the bearer token. The transfer endpoints use the same scope and an
+`AWSMTR1` XChaCha20-Poly1305 envelope with the secret in the `Awsm-Transfer-Secret` header. The
+process proofs cover this transport, authorization, and staging boundary; they do not substitute
+for the formal semantic Vault vectors.
+
 # State boundaries
 
 The Runtime uses the eleven logical storage families in the storage specification. It keeps
@@ -70,5 +113,6 @@ stores, and Channels.
 # References
 
 - `docs/specifications/runtime/runtime.md`
+- `docs/specifications/runtime/desktop-command.md`
 - `docs/specifications/runtime/storage.md`
 - `docs/architecture/17-extension-framework.md`

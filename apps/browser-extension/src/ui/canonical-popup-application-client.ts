@@ -22,7 +22,7 @@ export class CanonicalPopupApplicationClientError extends Error {
   }
 }
 
-interface CanonicalPopupApplicationTransport {
+export interface CanonicalPopupApplicationTransport {
   request(request: CanonicalApplicationRequest): Promise<unknown>;
   subscribe(listener: () => void): () => void;
 }

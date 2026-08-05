@@ -17,6 +17,11 @@ This specification fixes logical persistence semantics without requiring one dat
 backend per family. Storage Drivers may combine or split physical stores only while preserving
 authority, encryption, scope, transactions, and deletion safety.
 
+The reference Go process uses an internal PocketBase Collection adapter for compact Runtime state
+and an AWSM streaming Artifact Driver for already-encrypted heavy wrappers. These are replaceable
+implementations of the Driver boundary: PocketBase's generic record API and file storage are not
+Runtime authority, and no logical namespace is defined by a PocketBase collection name.
+
 # 2. Logical storage families
 
 Every durable namespace belongs to exactly one family:
@@ -38,7 +43,11 @@ Every durable namespace belongs to exactly one family:
     and Hosted Replica lifecycle.
 
 Ephemeral Coordination State, user-owned Transfer Artifacts, and Observability State are adjacent
-classes, not application persistence families. There is no `misc` family.
+classes, not application persistence families. There is no `misc` family. The desktop move
+ceremony stores its authenticated, one-use transfer payload as a local Transfer Artifact beside
+the Runtime state; it is not Vault Records, Vault Objects, or synchronized data. The payload is
+sealed with the `AWSMTR1` XChaCha20-Poly1305 envelope and is removed after explicit acceptance or
+rejection. An unsubmitted transfer secret is discarded on process restart.
 
 # 3. Namespace registry
 
@@ -65,6 +74,7 @@ The canonical Client registry currently declares these revision-1 namespaces:
 | `awsm.storage.logical-resolution`             | Replica Safety State | Replica      | mutable resolution        |
 | `awsm.storage.vault-directory`                | Installation State   | Installation | mutable                   |
 | `awsm.storage.installation-selection`         | Installation State   | Installation | mutable                   |
+| `awsm.storage.desktop-runtime-grant`          | Installation State   | Installation | mutable                   |
 | `awsm.storage.replica-remote`                 | Installation State   | Vault        | mutable                   |
 | `awsm.storage.installation-wrapping-key`      | Trusted Secrets      | Installation | immutable                 |
 | `awsm.storage.client-secret`                  | Trusted Secrets      | Vault        | mutable lifecycle         |
@@ -95,6 +105,12 @@ Refreshing an expired access token conditionally replaces the exact prior sealed
 same Client coalesces concurrent refreshes for one Remote so that a single-use refresh credential is
 presented once. Local expiry is scheduling information, while the Host remains authoritative only
 for channel access.
+
+The `desktop-runtime-grant` namespace is an installation-local, installation-wrapped singleton.
+It contains the local loopback endpoint, grant metadata, scopes, and bearer token needed by the
+paired extension transport. It is excluded from Export and Backup, never synchronized, and is
+deleted by explicit disconnect, invalid-grant handling, revocation detection, or Storage Realm
+reset. Management summaries expose only its non-secret metadata.
 
 The `remote-materialization-ledger` is installation-wrapped local Execution State keyed by one
 Replica Remote and protected logical item identity. It records the exact fresh destination Storage

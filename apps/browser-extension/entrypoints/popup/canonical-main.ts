@@ -4,6 +4,13 @@ import {
   sendCanonicalApplicationRequest,
   subscribeCanonicalApplicationState,
 } from "../../src/app/canonical-application-client";
+import { requestDesktopRuntimePermission } from "../../src/hosts/desktop/permission";
+import { DesktopRuntimeApplicationRouter } from "../../src/hosts/desktop/runtime-application-router";
+import type {
+  CanonicalDesktopRuntimeConnection,
+  DesktopRuntimeConnectionStatus,
+} from "../../src/hosts/desktop/runtime-connection";
+import { getDesktopRuntimeConnection } from "../../src/hosts/desktop/runtime-connection-factory";
 import {
   requestHostedReplicaPermission,
   requestHostedReplicaPermissions,
@@ -81,15 +88,22 @@ type CanonicalPopupVaultScreen =
 
 const app = requiredElement("#app");
 const announcer = requiredElement("#announcer");
-const client: CanonicalPopupApplicationClient = createCanonicalPopupApplicationClient({
+const applicationRouter = new DesktopRuntimeApplicationRouter({
   request: sendCanonicalApplicationRequest,
   subscribe: subscribeCanonicalApplicationState,
 });
+const client: CanonicalPopupApplicationClient =
+  createCanonicalPopupApplicationClient(applicationRouter);
 let pendingRecoveryConfirmation: CanonicalPopupRecoveryConfirmation | undefined;
 let renderedView: CanonicalPopupView | undefined;
 let transientError: string | undefined;
 let capturePending = false;
 let vaultScreen: CanonicalPopupVaultScreen = { kind: "Capture" };
+let desktopRuntimeConnection: CanonicalDesktopRuntimeConnection | undefined;
+let desktopRuntimeStatus: DesktopRuntimeConnectionStatus = { kind: "Disconnected" };
+let desktopRuntimeBusy = false;
+let desktopRuntimeLoading = false;
+let desktopRuntimeLoadAttempted = false;
 
 const controller = new CanonicalPopupController(client, (view) => {
   renderedView = view;
@@ -109,6 +123,126 @@ function action(button: HTMLButtonElement, operation: () => Promise<void>): void
     .finally(() => {
       button.disabled = false;
     });
+}
+
+async function loadDesktopRuntime(): Promise<CanonicalDesktopRuntimeConnection> {
+  if (desktopRuntimeConnection !== undefined) return desktopRuntimeConnection;
+  desktopRuntimeConnection = await getDesktopRuntimeConnection();
+  desktopRuntimeStatus = await desktopRuntimeConnection.restore();
+  applicationRouter.setDesktopConnection(desktopRuntimeConnection);
+  if (renderedView !== undefined) {
+    render(renderedView);
+    void controller.refresh().catch(showError);
+  }
+  return desktopRuntimeConnection;
+}
+
+function desktopRuntimeStatusText(): string {
+  switch (desktopRuntimeStatus.kind) {
+    case "Connected":
+      return `Connected · ${desktopRuntimeStatus.scopes.join(", ")}`;
+    case "WaitingForApproval":
+      return "Waiting for approval in the Desktop Runtime window.";
+    case "Unavailable":
+      return desktopRuntimeStatus.message;
+    case "Disconnected":
+      return desktopRuntimeStatus.message ?? "Not connected.";
+  }
+}
+
+function renderDesktopRuntime(view: CanonicalPopupView, content: DocumentFragment): void {
+  const section = element("section", undefined, "canonical-popup__desktop-runtime");
+  section.append(
+    element("h2", "Desktop Runtime"),
+    element(
+      "p",
+      "Connect this extension to a Desktop Runtime on this computer. Browser-local Vault storage remains the default.",
+      "canonical-popup__muted",
+    ),
+    element("p", desktopRuntimeStatusText(), "canonical-popup__context"),
+  );
+  const controls = element("div", undefined, "canonical-popup__actions");
+  if (desktopRuntimeStatus.kind === "Connected") {
+    const disconnect = element(
+      "button",
+      "Disconnect Desktop Runtime",
+      "canonical-popup__danger",
+    ) as HTMLButtonElement;
+    disconnect.type = "button";
+    disconnect.disabled = desktopRuntimeBusy;
+    disconnect.addEventListener("click", () => {
+      action(disconnect, async () => {
+        desktopRuntimeBusy = true;
+        try {
+          const connection = await loadDesktopRuntime();
+          await connection.disconnect();
+          desktopRuntimeStatus = connection.status();
+          applicationRouter.setDesktopConnection(connection);
+          announcer.textContent = "Desktop Runtime disconnected.";
+          render(view);
+        } finally {
+          desktopRuntimeBusy = false;
+          if (renderedView !== undefined) render(renderedView);
+        }
+      });
+    });
+    controls.append(disconnect);
+  } else {
+    const connect = element(
+      "button",
+      "Connect Desktop Runtime",
+      "canonical-popup__primary",
+    ) as HTMLButtonElement;
+    connect.type = "button";
+    connect.disabled = desktopRuntimeBusy;
+    connect.addEventListener("click", () => {
+      action(connect, async () => {
+        desktopRuntimeBusy = true;
+        desktopRuntimeStatus = { kind: "WaitingForApproval" };
+        render(view);
+        try {
+          // Firefox requires permissions.request to remain inside the original
+          // click gesture. Do this before awaiting IndexedDB or connection setup.
+          await requestDesktopRuntimePermission();
+          const connection = await loadDesktopRuntime();
+          desktopRuntimeStatus = await connection.connect({ permissionAlreadyGranted: true });
+          applicationRouter.setDesktopConnection(connection);
+          announcer.textContent =
+            desktopRuntimeStatus.kind === "Connected"
+              ? "Desktop Runtime connected."
+              : "Desktop Runtime could not connect.";
+          render(view);
+        } catch (error) {
+          desktopRuntimeStatus = {
+            kind: "Unavailable",
+            message: errorMessage(error),
+          };
+          throw error;
+        } finally {
+          desktopRuntimeBusy = false;
+          if (renderedView !== undefined) render(renderedView);
+        }
+      });
+    });
+    controls.append(connect);
+  }
+  section.append(controls);
+  content.append(section);
+  if (!desktopRuntimeLoadAttempted && !desktopRuntimeLoading) {
+    desktopRuntimeLoadAttempted = true;
+    desktopRuntimeLoading = true;
+    void loadDesktopRuntime()
+      .catch(() => {
+        desktopRuntimeStatus = {
+          kind: "Unavailable",
+          message: "Desktop Runtime storage is unavailable.",
+        };
+      })
+      .finally(() => {
+        desktopRuntimeLoading = false;
+        if (renderedView !== undefined) render(renderedView);
+      });
+  }
 }
 
 function heading(subtitle: string): DocumentFragment {
@@ -537,6 +671,7 @@ function renderVaultSettings(view: CanonicalPopupView, content: DocumentFragment
   }
   content.append(actions);
   renderHostedReplicas(view, content);
+  renderDesktopRuntime(view, content);
 }
 
 function renderHostedReplicas(view: CanonicalPopupView, content: DocumentFragment): void {

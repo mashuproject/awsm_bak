@@ -65,6 +65,14 @@ The browser extension currently supports:
 - explicit hydration of an available large Capture Artifact after a configured Hosted Replica
   supplies and the Client verifies it.
 
+The reference Go Runtime also provides a desktop/headless Client mode for Vault management. It
+can create, select, recover, Fork, close, Vacuum, and save Hosted Replica metadata for its own
+Vaults, and a paired extension can operate those Vaults through the loopback Runtime API. Hosted
+Replica attachment, materialization, and synchronization are fail-closed until their semantic
+services are implemented. The desktop window does not capture pages. Extension page capture
+remains available for extension-owned local Vaults; a Capture Bundle bridge for desktop-owned Vaults
+is not implemented.
+
 The trusted extension validates all Vault semantics locally. A Replica Host stores opaque encrypted
 bytes and Host-local Account, Grant, quota, and operational data; it does not receive Vault IDs,
 decryption keys, page titles, or Capture content. Hosted recovery creates a Sparse Replica from the
@@ -77,10 +85,13 @@ repository-pinned Firefox Stable and ESR versions on desktop Linux. Chrome and F
 only the permissions needed for Capture and an explicitly selected Host origin; denying optional
 Host permission leaves local Vault work available and prevents that Host channel call.
 
-Current limits are intentional: direct peer and headless transports, complete Authority-branch
-synchronization, global freshness claims, automatic redundancy tracking, and user-facing AI
-features are not shipped in this release. See the living specifications for the broader canonical
-model and its currently unimplemented branches.
+Current limits are intentional: direct peer transports, complete Authority-branch synchronization,
+global freshness claims, automatic redundancy tracking, and user-facing AI features are not shipped
+in this release. The Go Runtime's desktop/headless mode is a supported Vault-management surface,
+but its semantic Event/DAG replay, cryptographic conformance, Library projection, synchronization,
+hydration, Storage Relief, and complete Export/Import remain incomplete. Desktop page capture and
+the extension-to-desktop Capture Bundle bridge are not available. See the living specifications and
+the forward-looking roadmap for the remaining branches.
 
 The Coordination Server root is the public AWSM product and installation guide on hosted and
 self-hosted deployments. Its privacy, security, setup, Account, and comparison pages are evergreen
@@ -235,14 +246,30 @@ future work.
 
 Use the repository-pinned pnpm through Corepack:
 
+The Runtime commands additionally require Go 1.25. Native Wails startup also requires GTK 3,
+WebKitGTK 4, and `xvfb-run` on Linux.
+
 ```bash
 corepack pnpm build
 corepack pnpm typecheck
+corepack pnpm typecheck:runtime
 corepack pnpm lint
 corepack pnpm test
+corepack pnpm test:runtime
 corepack pnpm test:integration
 corepack pnpm test:e2e
+corepack pnpm test:e2e:desktop-runtime
+corepack pnpm test:e2e:desktop-runtime:firefox
+corepack pnpm test:runtime:smoke
+corepack pnpm test:runtime:wails
 ```
+
+The Desktop Runtime browser proofs pair the extension with the real loopback Go process in Chrome,
+Firefox Stable, and Firefox ESR, then prove encrypted grant persistence, revocation, the canonical
+Vault Command envelope, and one-use transfer staging. The Wails bridge proof exercises the same
+Vault-management presentation without exposing bearer tokens. Native Wails startup is an
+additional local lane; run `corepack pnpm test:runtime:wails` on a host with GTK 3, WebKitGTK 4,
+and `xvfb-run`. The CI equivalent is `AWSM_RUNTIME_WAILS=1 corepack pnpm test:runtime:smoke`.
 
 Create a distributable Chrome ZIP with:
 
@@ -254,6 +281,7 @@ The repository is organized as follows:
 
 ```text
 apps/browser-extension/     Chrome Host, Runtime, local storage, and user interface
+apps/runtime-go/            Reference Go Runtime, desktop shell, and headless process
 apps/coordination-server/   Rails coordination service for opaque encrypted data
 docs/architecture/          architectural intent and system boundaries
 docs/specifications/        formal formats, protocols, and Runtime contracts

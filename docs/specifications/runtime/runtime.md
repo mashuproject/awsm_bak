@@ -29,6 +29,47 @@ An installation may additionally expose one or more Replicas as a Host. Client a
 composable capabilities, not mutually exclusive product types. A thin Client may operate without
 hosting, and an opaque Host may operate without Vault keys.
 
+The reference Go process may run as a desktop Client or as a headless/server installation. Desktop
+mode serves one loopback Runtime API for its Wails UI and paired API Clients. A paired API Client
+receives a local API Grant that limits Runtime operations; it never creates portable membership.
+Headless network mode may expose the opaque Replica Host protocol, but it does not expose a public
+plaintext Runtime API by default.
+
+The browser extension requests loopback permission from the explicit Connect action, then sends a
+pairing request over `http://127.0.0.1:37373`. The Wails management surface approves pending requests
+and revokes grants. The persisted grant token is installation-wrapped Trusted Secret state and is
+never rendered in the extension or management summary. The Go process currently implements a
+persistent Vault-management slice behind the same tagged Command names as the extension: creation,
+selection, Recovery Phrase ceremonies, recovery, Fork, Closure, Vacuum, and Hosted Replica
+metadata configuration. Attachment, materialization, and synchronization remain explicit
+unavailable Commands. Its desktop window deliberately does not acquire pages. Extension page capture
+continues for extension-owned local Vaults, while the extension-to-desktop Capture Bundle bridge is
+not implemented. Authenticated Event/DAG replay, cryptographic cross-language conformance, Library projections, pull synchronization,
+hydration, Storage Relief, and complete Export/Import remain future semantic work.
+
+## 2.1 Desktop Command and move boundary
+
+The paired extension uses `POST /api/awsm/runtime/command` with a bearer Grant scoped to
+`runtime.vault`. The JSON request is one member of `CanonicalApplicationRequest`, including the
+same Vault-management names used by the browser Runtime. Successful responses are
+`{"ok":true,"value":...}`. A Runtime Command failure is an application result with
+`{"ok":false,"error":{"id":...,"message":...}}`; transport and authorization failures remain
+HTTP failures. The Wails UI calls the same Runtime boundary in-process rather than inventing a
+second Vault model.
+
+The extension may merge local and desktop-owned Vault summaries for selection. A selected Vault ID
+chooses exactly one backend for later Commands; the router never copies protected Vault bytes into
+the other backend. A shared Vault ID across the two backends is rejected as an identity collision.
+
+Moving a Vault is separate from synchronization. The source Client creates a one-use transfer with
+`POST /api/awsm/runtime/transfers`, seals its transfer package using an `AWSMTR1` XChaCha20-
+Poly1305 envelope, and stages it with `PUT /api/awsm/runtime/transfers/{id}` and the secret in the
+`Awsm-Transfer-Secret` header. The desktop verifies the envelope and stores the authenticated
+package as a transfer artifact. Wails management lists staged moves and explicitly accepts or
+rejects them. Acceptance imports the package before the source may run its separate retirement
+action. Transfer artifacts are not Vault Events, are not synchronized, and are not included in
+ordinary Vault Export or Backup.
+
 # 3. Vault selection and opening
 
 The Runtime has one explicit selected Vault context per user-facing session. Selecting another
@@ -121,6 +162,7 @@ a pseudonymous value. Observability never becomes Vault authority.
 
 # References
 
+- `docs/specifications/runtime/desktop-command.md`
 - `docs/specifications/runtime/jobs.md`
 - `docs/specifications/runtime/synchronization.md`
 - `docs/specifications/runtime/capture.md`

@@ -15,3 +15,9 @@ blob-report/
 .omo/
 tmp/
 AGENTS.override.md
+apps/runtime-go/pb_data/
+apps/runtime-go/awsm
+apps/runtime-go/e2e-fixture
+apps/runtime-go/*.test
+/.tmp-debug-*
+/.tmp-runtime-*

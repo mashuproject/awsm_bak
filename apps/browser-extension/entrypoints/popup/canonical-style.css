@@ -62,6 +62,7 @@ h2 {
 .canonical-popup__choices,
 .canonical-popup__management,
 .canonical-popup__hosted-replicas,
+.canonical-popup__desktop-runtime,
 .canonical-popup__recent,
 .canonical-popup__form {
   display: grid;
@@ -172,6 +173,11 @@ h2 {
 }
 
 .canonical-popup__hosted-replicas {
+  border-top: 1px solid var(--awsm-border-subtle);
+  padding-top: var(--awsm-space-4);
+}
+
+.canonical-popup__desktop-runtime {
   border-top: 1px solid var(--awsm-border-subtle);
   padding-top: var(--awsm-space-4);
 }

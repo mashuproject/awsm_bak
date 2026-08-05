@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <title>AWSM</title>
+    <style>
+      :root { color-scheme: dark; font-family: system-ui, sans-serif; }
+      body { margin: 0; min-height: 100vh; background: #101418; color: #edf2f7; }
+      main { max-width: 70rem; margin: 0 auto; padding: 3rem 2.5rem 5rem; }
+      h1 { margin: 0 0 0.5rem; font-size: 2.25rem; letter-spacing: -0.03em; }
+      h2 { margin: 0 0 0.75rem; font-size: 1.25rem; }
+      h3 { margin: 1.5rem 0 0.5rem; font-size: 1rem; }
+      p { line-height: 1.55; color: #d6dde5; }
+      section { margin-top: 1.25rem; padding: 1.35rem; border: 1px solid #3d4b58; border-radius: 0.9rem; background: #151b20; }
+      #status { margin-top: 2rem; }
+      #vault { display: grid; gap: 1.25rem; }
+      .vault-grid { display: grid; grid-template-columns: minmax(13rem, 0.35fr) minmax(0, 1fr); gap: 1.25rem; }
+      .vault-list, .library-list, .remote-list { display: grid; gap: 0.65rem; margin: 0; padding: 0; list-style: none; }
+      .vault-list li, .library-list li, .remote-list li { display: grid; gap: 0.35rem; padding: 0.8rem; border: 1px solid #3d4b58; border-radius: 0.55rem; }
+      .vault-list li.selected { border-color: #f4c95d; background: #20252a; }
+      .muted { color: #d6dde5; }
+      .warning { color: #ffe3a1; }
+      .error { color: #ffb4ab; }
+      .actions { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-top: 0.85rem; }
+      button { width: fit-content; min-height: 2.5rem; padding: 0.55rem 0.85rem; border: 1px solid #92a4b4; border-radius: 0.45rem; color: #101418; background: #f4c95d; font: inherit; font-weight: 700; cursor: pointer; }
+      button.quiet { color: #edf2f7; background: #27313a; }
+      button.danger { color: #fff4f1; background: #7b302b; border-color: #ffb4ab; }
+      button:focus-visible { outline: 3px solid #f4c95d; outline-offset: 3px; }
+      button:disabled { cursor: wait; opacity: 0.6; }
+      form { display: grid; gap: 0.75rem; max-width: 34rem; }
+      label { display: grid; gap: 0.35rem; color: #edf2f7; font-weight: 600; }
+      input, textarea { width: 100%; box-sizing: border-box; padding: 0.65rem 0.7rem; color: #edf2f7; background: #101418; border: 1px solid #92a4b4; border-radius: 0.4rem; font: inherit; }
+      input:focus-visible, textarea:focus-visible { outline: 3px solid #f4c95d; outline-offset: 2px; }
+      #management h2 { margin-bottom: 0.75rem; }
+      #management ul { display: grid; gap: 0.75rem; margin: 0; padding: 0; list-style: none; }
+      #management li { display: grid; gap: 0.4rem; padding: 0.8rem; border: 1px solid #3d4b58; border-radius: 0.55rem; }
+      @media (max-width: 720px) { main { padding: 2rem 1rem 3rem; } .vault-grid { grid-template-columns: 1fr; } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>AWSM</h1>
+      <p>The desktop Runtime is running. The browser extension connects through the local Runtime API.</p>
+      <div id="status" role="status">Checking Runtime API…</div>
+      <section id="vault" aria-labelledby="vault-title"></section>
+      <section id="management" aria-labelledby="management-title"></section>
+    </main>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

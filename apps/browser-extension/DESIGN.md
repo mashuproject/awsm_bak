@@ -8,6 +8,12 @@ The library is a full extension page. Vault switching and creation are secondary
 
 Vault-level maintenance follows the Library content in a lightly elevated neutral panel. Reversible storage relief is described as reducing **device storage**, never as receiving “free” storage. Permanent Vault Vacuum remains visually separated and uses the destructive treatment. Remote-only Artifacts retain their supported semantic actions and show that they are stored on the server and retrieved when opened. Screenshot retrieval, text inspection, and MHTML download surface loading, retry, success, and failure states without moving unrelated Library content.
 
+Settings also contains a compact **Desktop Runtime** section. It explains that browser-local storage
+remains the default, exposes one explicit Connect or Disconnect action, and reports only the
+connection state and non-secret scope summary. When connected, the Vault selector may show local and
+desktop-owned Vaults together; selecting one changes the backend for that Vault without copying its
+protected bytes. Desktop page acquisition is not presented as available in the desktop window.
+
 Account settings distinguish Sign out from Reset this device. Sign out preserves local Vaults. Reset this device is a separate destructive section and typed-confirmation dialog that deletes all extension-local databases, keys, Vaults, captures, settings, and cached files while explicitly stating that server-side Account and Vault data are untouched.
 
 Library list/detail navigation is reflected in the extension-page URL. Opening a Capture writes its `bundleId`; returning to the list removes it. Live-state reconciliation always follows the current URL so focus, synchronization, or Artifact availability invalidations cannot bounce an open detail view back to the list. While the user has a non-collapsed text selection, non-security detail rerenders wait until the selection collapses; lock and Vault-context changes still discard decrypted content immediately.

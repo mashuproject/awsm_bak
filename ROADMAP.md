@@ -101,19 +101,23 @@ streaming, uncertain completion, rollback and omission detection, quota, relocat
 loopback impersonation, TLS, and unavailable-backend Prepared Data. Two independent Runtimes must
 not co-own one Replica namespace; that becomes ordinary Replica synchronization.
 
-## API-driven headless Client Installation
+## Complete Go Runtime semantic parity
 
-**Status:** Discovery
+**Status:** Candidate
 
-Define a full trusted headless Client with local Replicas, Client Credentials, and Runtime services
-exposed through a protected API. API Grants are Client-local capabilities, not Vault membership or
-Replica Access Grants. Web UIs, command-line tools, and automation act through the selected Client
-Credential.
+Complete the Go Runtime's semantic Vault services behind the existing desktop/headless process
+boundary. The current slice covers persistent Vault-management Commands and one-use move staging;
+this entry is only for the unresolved work: authenticated Record/Object and Event-DAG replay,
+cross-language cryptographic vectors, real Client Credentials and Key Epoch handling, Library
+projections, pull synchronization, hydration, Storage Relief, Garbage Collection, and complete
+Export/Import. Capture remains an extension surface, but the Runtime still needs a narrow
+extension-created Capture Bundle bridge if desktop-owned Vaults are to receive captures without
+duplicating Vault data.
 
-Resolve local versus network transport, bearer or stronger authentication, Vault selection,
-unattended key availability, capability discovery, plaintext operator trust, audit attribution,
-rate limits, browser security, and revocation. A third-party headless operator is trusted with any
-plaintext it processes and is not zero knowledge relative to that operator.
+Promotion requires the formal Runtime vectors and restart/crash, conflict, authority, sparse
+Replica, and cross-surface tests to pass against both implementations. Keep the current Command
+contract and move ceremony owned by the living Runtime documents; do not duplicate those contracts
+here.
 
 ## Zero-knowledge web Client
 

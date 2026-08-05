@@ -310,9 +310,9 @@ test("renders the comparison guide at desktop and narrow widths", async ({ page 
       await expect(page.locator(".compare-matrix")).toBeVisible();
       await expect(page.getByText("Sources", { exact: true })).toBeVisible();
     }
-    const firstComparisonLink = page.locator(
-      path === "/compare" ? ".compare-card__link" : ".compare-sources a",
-    ).first();
+    const firstComparisonLink = page
+      .locator(path === "/compare" ? ".compare-card__link" : ".compare-sources a")
+      .first();
     await firstComparisonLink.focus();
     await expect(firstComparisonLink).toHaveCSS("outline-width", "3px");
     await page.evaluate(() => {

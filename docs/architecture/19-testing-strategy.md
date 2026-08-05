@@ -13,6 +13,35 @@ AWSM verifies deterministic portable contracts at several boundaries: pure codec
 transactional storage, adversarial synchronization, real Client surfaces, and black-box Hosts.
 Passing one layer never substitutes for evidence at another.
 
+# Go process and desktop Client tests
+
+The reference Go process runs `corepack pnpm test:runtime` and
+`corepack pnpm typecheck:runtime`. Its focused tests prove PocketBase Collection round-trips
+through AWSM-owned interfaces, restart persistence for local API Grants and Vault-management state,
+one-use pairing and explicit revocation, the canonical Vault Command envelope, transfer-envelope
+authentication and staging, loopback health, absence of generic PocketBase routes, opaque Host-route
+separation, and atomic streaming Artifact wrapper writes. The standalone smoke lane starts the real
+executable on `127.0.0.1:0`, verifies its atomic ready file and health route, and proves ready-file
+cleanup after shutdown: `corepack pnpm test:runtime:smoke`.
+
+The packaged desktop boundary has two browser lanes. `corepack pnpm test:e2e:desktop-runtime` runs
+Chrome against the real Go fixture and a separate Playwright bridge proof for the Wails management
+panel. `corepack pnpm test:e2e:desktop-runtime:firefox` runs the same pairing, encrypted-grant,
+and revocation journey in Firefox Stable and ESR (or one lane selected with `AWSM_FIREFOX_LANE`).
+The browser tests pre-grant loopback only in their copied test package; the shipped permission
+request remains exercised from the user click path, including Firefox's user-gesture requirement.
+The Wails bridge proof never supplies or renders a bearer token. It exercises the Vault-management
+presentation and exposes only pending-pairing, token-free grant, and staged-transfer summaries.
+
+Native Wails startup is run locally with `corepack pnpm test:runtime:wails` and under `xvfb-run`; CI
+keeps that lane opt-in with `AWSM_RUNTIME_WAILS=1 corepack pnpm test:runtime:smoke` because GTK 3 and
+WebKitGTK are host prerequisites.
+The native Wails build uses both `desktop` and `production` tags. These process tests cover pairing,
+approval, connection, encrypted grant persistence, revocation, the Vault Command boundary, and
+transfer staging; they do not prove full Go Vault semantics. Before the Go Runtime claims semantic
+parity, every owning formal vector and the cross-language replay, cryptography, storage, and
+synchronization scenarios below must run against both implementations.
+
 # Canonical vectors
 
 Golden fixtures cover deterministic CBOR rejection and encoding, every transcript and ID, Event
