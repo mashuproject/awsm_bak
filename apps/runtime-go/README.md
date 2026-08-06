@@ -70,10 +70,11 @@ Hosted Replica attachment, materialization, and synchronization commands fail cl
 until the Go Runtime has the authenticated Host and Event/DAG services they require.
 
 The `internal/canonical` package now provides the first interoperable semantic substrate: strict
-canonical CBOR values, transcript framing, and authenticated Vault Event encoding, decoding, and
-Record ID derivation. Its deterministic test vector is generated from the browser Runtime's
-canonical implementation. The Runtime command path does not yet persist or replay these records;
-that integration remains part of semantic parity work.
+canonical CBOR values, transcript framing, authenticated Event and Baseline Record encoding and
+decoding, Record ID derivation, and causal DAG validation. `internal/crypto` adds the BIP39
+Recovery Phrase, credential, and Key Epoch derivations. Deterministic vectors are generated from
+the browser Runtime's canonical implementation. The Runtime command path does not yet persist or
+replay these records; that integration remains part of semantic parity work.
 
 This slice does not claim full semantic parity with the browser Runtime. The Go
 implementation still needs Runtime-integrated Event/DAG and cryptographic

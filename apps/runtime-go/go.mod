@@ -6,6 +6,7 @@ require (
 	github.com/fxamacker/cbor/v2 v2.7.0
 	github.com/google/uuid v1.6.0
 	github.com/pocketbase/pocketbase v0.39.10
+	github.com/tyler-smith/go-bip39 v1.1.0
 	github.com/wailsapp/wails/v2 v2.13.0
 	golang.org/x/crypto v0.54.0
 	golang.org/x/text v0.40.0

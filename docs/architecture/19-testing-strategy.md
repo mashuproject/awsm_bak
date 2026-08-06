@@ -62,9 +62,10 @@ resolution. Continuity fixtures prove Authority Parent completeness, cross-Gener
 anchors, exact authority reduction with unrelated Content parents absent, and rejection of a
 self-asserted successor Baseline.
 
-The Go Runtime's current canonical substrate includes a cross-language Event signature and Record
-ID vector generated from the browser implementation. This is a first conformance proof, not a
-claim that the Go command path has integrated replay or the complete vector suite.
+The Go Runtime's current canonical substrate includes cross-language Event signature, Baseline
+shape, Record ID, Recovery Phrase, and Key Epoch vectors generated from the browser implementation,
+plus pure causal-DAG collision and cycle tests. This is an initial conformance proof, not a claim
+that the Go command path has integrated replay or the complete vector suite.
 
 # Reducer model tests
 
