@@ -54,6 +54,7 @@ type ReplicaState struct {
 type AuthorityState struct {
 	ActiveMemberIDs                []canonical.Identifier
 	AdministratorIDs               []canonical.Identifier
+	AdministratorConflicts         []AuthorityAdministratorConflict
 	ActiveClientCredentialIDs      []canonical.Identifier
 	EffectiveRecoveryCredentialIDs []canonical.Identifier
 	RecoveryConflicts              []AuthorityRecoveryConflict
@@ -65,6 +66,16 @@ type AuthorityState struct {
 type AuthorityRecoveryConflict struct {
 	MemberID   canonical.Identifier
 	Candidates []AuthorityRecoveryConflictCandidate
+}
+
+type AuthorityAdministratorConflict struct {
+	MemberID   canonical.Identifier
+	Candidates []AuthorityAdministratorConflictCandidate
+}
+
+type AuthorityAdministratorConflictCandidate struct {
+	HeadRecordID  canonical.Identifier
+	Administrator bool
 }
 
 type AuthorityRecoveryConflictCandidate struct {
@@ -485,6 +496,18 @@ func (r *Replica) AuthorityState() (AuthorityState, error) {
 		CurrentKeyEpochIDs:             sortedIdentifierKeys(replayed.heads),
 		Lifecycle:                      "Open",
 	}
+	for memberID, candidates := range replayed.administratorConflicts {
+		conflict := AuthorityAdministratorConflict{MemberID: memberID, Candidates: make([]AuthorityAdministratorConflictCandidate, 0, len(candidates))}
+		for _, candidate := range candidates {
+			conflict.Candidates = append(conflict.Candidates, AuthorityAdministratorConflictCandidate{
+				HeadRecordID: candidate.headRecordID, Administrator: candidate.administrator,
+			})
+		}
+		state.AdministratorConflicts = append(state.AdministratorConflicts, conflict)
+	}
+	sort.Slice(state.AdministratorConflicts, func(left, right int) bool {
+		return bytes.Compare(state.AdministratorConflicts[left].MemberID[:], state.AdministratorConflicts[right].MemberID[:]) < 0
+	})
 	for memberID, candidates := range replayed.recoveryConflicts {
 		conflict := AuthorityRecoveryConflict{MemberID: memberID, Candidates: make([]AuthorityRecoveryConflictCandidate, 0, len(candidates))}
 		for _, candidate := range candidates {

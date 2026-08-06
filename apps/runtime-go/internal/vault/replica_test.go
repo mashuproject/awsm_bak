@@ -423,6 +423,63 @@ func TestReplicaSurfacesAndResolvesConcurrentKeyEpochConflict(t *testing.T) {
 	}
 }
 
+func TestReplicaSurfacesAndResolvesAdministratorConflict(t *testing.T) {
+	prepared := deterministicCreation(t)
+	replica, err := NewReplica(prepared.Baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := replica.AdmitEvent(prepared.Genesis, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit Genesis: %v", err)
+	}
+	capabilities := []canonical.Value{canonical.Map{
+		0: "awsm.vault", 1: prepared.IDs.FirstMemberID[:], 2: prepared.IDs.VaultID[:], 3: "awsm.vault.join", 4: []byte{},
+	}}
+	creation, acceptance, _ := signInvitationAcceptanceFixture(t, prepared, capabilities, capabilities)
+	if err := replica.AdmitEvent(creation, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit Invitation Creation: %v", err)
+	}
+	if err := replica.AdmitEvent(acceptance, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit Invitation Acceptance: %v", err)
+	}
+	accepted, err := parseInvitationAcceptance(acceptance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grantOne := signAdministratorRoleFixture(t, prepared, acceptance.RecordID, accepted.memberID, 3, nil, 224)
+	grantTwo := signAdministratorRoleFixture(t, prepared, acceptance.RecordID, accepted.memberID, 3, nil, 225)
+	if err := replica.AdmitEvent(grantOne, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit first Administrator Grant: %v", err)
+	}
+	if err := replica.AdmitEvent(grantTwo, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit concurrent Administrator Grant: %v", err)
+	}
+	end := signAdministratorRoleFixture(t, prepared, grantOne.RecordID, accepted.memberID, 4, nil, 226)
+	if err := replica.AdmitEvent(end, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit Administrator End branch: %v", err)
+	}
+	state, err := replica.AuthorityState()
+	if err != nil {
+		t.Fatalf("AuthorityState: %v", err)
+	}
+	if len(state.AdministratorConflicts) != 1 || state.AdministratorConflicts[0].MemberID != accepted.memberID || len(state.AdministratorConflicts[0].Candidates) != 2 {
+		t.Fatalf("AuthorityState AdministratorConflicts = %#v", state.AdministratorConflicts)
+	}
+	parents := []canonical.Identifier{end.RecordID, grantTwo.RecordID}
+	sort.Slice(parents, func(left, right int) bool { return bytes.Compare(parents[left][:], parents[right][:]) < 0 })
+	resolution := signAdministratorRoleFixtureWithParents(t, prepared, parents, accepted.memberID, 4, []canonical.Identifier{end.RecordID, grantTwo.RecordID}, 227)
+	if err := replica.AdmitEvent(resolution, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit Administrator Conflict resolution: %v", err)
+	}
+	state, err = replica.AuthorityState()
+	if err != nil {
+		t.Fatalf("AuthorityState after Administrator Conflict resolution: %v", err)
+	}
+	if len(state.AdministratorConflicts) != 0 {
+		t.Fatalf("Administrator conflict remained after resolution: %#v", state.AdministratorConflicts)
+	}
+}
+
 func TestReplicaRejectsInvitationWithMismatchedCapabilityIssuer(t *testing.T) {
 	prepared := deterministicCreation(t)
 	replica, err := NewReplica(prepared.Baseline)
@@ -970,6 +1027,26 @@ func signKeyEpochTransitionFixture(t *testing.T, prepared PreparedCanonicalVault
 		t.Fatalf("sign Key Epoch Transition: %v", err)
 	}
 	return returnEvent
+}
+
+func signAdministratorRoleFixture(t *testing.T, prepared PreparedCanonicalVaultCreation, parent canonical.Identifier, target canonical.Identifier, eventType uint64, resolved []canonical.Identifier, assertedAt int64) canonical.Event {
+	t.Helper()
+	return signAdministratorRoleFixtureWithParents(t, prepared, []canonical.Identifier{parent}, target, eventType, resolved, assertedAt)
+}
+
+func signAdministratorRoleFixtureWithParents(t *testing.T, prepared PreparedCanonicalVaultCreation, parents []canonical.Identifier, target canonical.Identifier, eventType uint64, resolved []canonical.Identifier, assertedAt int64) canonical.Event {
+	t.Helper()
+	resolvedValues := identifiersToValues(resolved)
+	event, err := canonical.SignEvent(canonical.EventInput{
+		VaultID: prepared.IDs.VaultID, GenerationID: prepared.IDs.GenerationID, ParentRecordIDs: parents, AuthorityParentIDs: parents,
+		RequiredFeatureSetID: prepared.RequiredFeatureSetID, Extensions: map[string][]byte{}, Family: canonical.AuthorityFamily, Type: eventType,
+		SignerCredentialID: prepared.IDs.ClientCredentialID, AssertedAt: assertedAt,
+		Body: canonical.Map{0: target[:], 1: canonicalSetValues(resolvedValues)},
+	}, ed25519.PrivateKey(prepared.ClientKeys.SigningSecretKey))
+	if err != nil {
+		t.Fatalf("sign Administrator role Event: %v", err)
+	}
+	return event
 }
 
 func TestReplicaAdmitsContentAddressedObject(t *testing.T) {
