@@ -473,6 +473,7 @@ func prepareCompleteImport(manifest completeexport.Manifest, inventory completee
 		GenesisID:                     hexIdentifier(genesis.RecordID),
 		KeyEpochID:                    hexIdentifier(epochID),
 		RequiredFeatureSetID:          hexIdentifier(manifest.RequiredFeatureSetID),
+		BaselineRequiredFeatureSetID:  hexIdentifier(baseline.RequiredFeatureSetID),
 		MemberID:                      hexIdentifier(memberID),
 		RecoveryCredentialID:          hexIdentifier(recoveryCredentialID),
 		ClientCredentialID:            hexIdentifier(clientCredentialID),

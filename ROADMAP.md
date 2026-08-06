@@ -109,13 +109,14 @@ Finish the remaining canonical desktop/headless Vault boundaries behind the exis
 contract. The Go Runtime now covers authenticated Record/Object and Event-DAG replay, browser-derived
 cryptographic primitives, Library projection, Hosted Replica creation/attachment/materialization,
 receiver pull, Artifact hydration, Storage Relief, Garbage Collection, and encrypted Go-to-Go
-transfer closure import/export. It also accepts and produces the browser-compatible Complete Export
+transfer closure import/export, including authenticated Membership, Administrator role, Client
+Credential, Key Delivery, Feature Activation, and Key Epoch authority events. It also accepts and produces the browser-compatible Complete Export
 container for the supported single-Key-Epoch closure and installs it as an authoring-free readable
 Replica.
 
 Remaining work is deliberately narrower: implement Event Re-authoring for eligible unpublished Capture
 work; implement the remaining Authority and Key-Epoch event families beyond Membership/Administrator
-role changes, Client Credential ending, Key Envelope delivery, and the authenticated Administrator type-12 rotation; expose conflict/rebase and sparse-Replica state; and finish Wails
+role changes, Client Credential ending, Key Envelope delivery, Feature Activation, and the authenticated Administrator type-12 rotation; expose conflict/rebase and sparse-Replica state; and finish Wails
 workflow coverage beyond the current Vault-management controls, plus cross-surface journeys. State-only Fork now copies the authenticated Library checkpoint, remaps content identities,
 and rewraps its object and Feature Manifest closure without source Content Event re-authoring.
 Capture remains extension-only and the extension-to-desktop Capture Bundle bridge is out of scope for

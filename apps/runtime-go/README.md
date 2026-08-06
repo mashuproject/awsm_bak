@@ -62,7 +62,7 @@ verification. A Runtime API bearer token never authorizes that surface.
 The Go Runtime implements the canonical tagged Command contract for persistent Vault management:
 creation and selection, Recovery Phrase confirmation/replacement and same-member recovery, state-only
 Fork for the authenticated Library checkpoint and referenced Artifact/Bundle/Note object closure,
-Closure, authenticated Membership and Administrator role changes, Client Credential ending, Key Envelope delivery, and Administrator Key Epoch rotation, Vacuum adoption, Library projection, authenticated Event/Object replay,
+Closure, authenticated Membership and Administrator role changes, Client Credential ending, Key Envelope delivery, Feature Activation, and Administrator Key Epoch rotation, Vacuum adoption, Library projection, authenticated Event/Object replay,
 Storage Relief, Garbage Collection, Hosted Replica creation and attachment, Compact materialization,
 receiver-initiated pull, and explicit Artifact hydration. The Wails surface and loopback API also
 expose the read-only `GetAuthorityState` projection derived from authenticated Authority and
@@ -90,7 +90,7 @@ The Runtime command boundary also produces and accepts the browser-compatible Co
 container for the supported single-Key-Epoch closure, including authenticated Feature Manifest and
 Streamable Artifact wrappers. Imported Replicas are readable but have no selected authoring Credential or private key.
 Event Re-authoring for eligible unpublished Capture work, remaining Authority/Key-Epoch event families
-beyond Membership/Administrator role changes, Client Credential ending, Key Envelope delivery, and Administrator rotation, conflict/rebase projections, sparse-Replica state, and the remaining Wails workflow coverage beyond
+beyond Membership/Administrator role changes, Client Credential ending, Key Envelope delivery, Feature Activation, and Administrator rotation, conflict/rebase projections, sparse-Replica state, and the remaining Wails workflow coverage beyond
 the current Vault-management controls and cross-surface journeys.
 
 The move boundary is deliberately separate from Vault synchronization. A source Client seals the

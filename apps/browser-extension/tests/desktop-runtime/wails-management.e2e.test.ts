@@ -149,7 +149,9 @@ test("Wails Vault surface renders the selected Vault management slice", async ({
   await expect(page.getByRole("button", { name: "End this Client Credential" })).toBeVisible();
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "End this Client Credential" }).click();
-  await expect(page.getByText("This Client Credential has ended; the Vault is now read-only here.")).toBeVisible();
+  await expect(
+    page.getByText("This Client Credential has ended; the Vault is now read-only here."),
+  ).toBeVisible();
   await expect(page.getByRole("button", { name: "Change Recovery Phrase" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Rotate Key Epoch" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Run Garbage Collection" })).toBeVisible();

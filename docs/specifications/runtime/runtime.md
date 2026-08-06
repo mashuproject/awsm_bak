@@ -46,14 +46,14 @@ not implemented. The Go `internal/canonical` package provides strict canonical C
 transcript framing, authenticated Event/Baseline codecs, Record IDs, and causal DAG primitives.
 The Go Runtime now provides browser-compatible BIP39, Credential, Key Epoch, compact-encryption,
 HPKE, Key Envelope, opaque Compact/Streamable envelopes, authenticated Event/DAG replay, Library
-projection, state-only Fork checkpointing, Membership and Administrator role changes, Client Credential ending, Key Envelope delivery, Storage Relief, Garbage Collection, Hosted Replica
+projection, state-only Fork checkpointing, Membership and Administrator role changes, Client Credential ending, Key Envelope delivery, Feature Activation, Storage Relief, Garbage Collection, Hosted Replica
 creation/attachment/materialization, receiver pull, Artifact hydration, the read-only
 `GetAuthorityState` projection (including Invitation state), and encrypted Go-to-Go
 transfer import/export. Focused tests use browser-derived vectors and restart/Host-boundary proofs.
 The Go Runtime also exposes browser-compatible Complete Export/Import for the supported
 single-Key-Epoch closure, including authenticated Feature Manifest and Streamable Artifact wrappers;
 Complete Import remains authoring-free, including authenticated multi-Key-Epoch and adopted-Vacuum
-closures. Remaining Authority and Key-Epoch event families beyond Membership/Administrator role changes, Client Credential ending, Key Envelope delivery, and Administrator rotation, conflict/rebase projections, sparse-Replica state,
+closures. Remaining Authority and Key-Epoch event families beyond Membership/Administrator role changes, Client Credential ending, Key Envelope delivery, Feature Activation, and Administrator rotation, conflict/rebase projections, sparse-Replica state,
 and the remaining Wails workflow controls and cross-surface journeys remain explicit parity
 boundaries. Capture remains extension-only, and Event Re-authoring for eligible unpublished Capture
 work remains a separate unresolved boundary; Fork itself copies authenticated state into a fresh
@@ -116,6 +116,11 @@ feature boundary.
 Unsupported Required Features stop semantic processing at the last fully understood Frontier.
 Exact outer bytes may be retained in Quarantine, but the Runtime does not author descendants,
 Vacuum, render, or collect unknown authoritative state.
+
+Feature Activation advances the current Required Feature Set through an authenticated type-14
+Authority Event and stores each complete Feature Manifest as a typed dependency. The persisted
+Replica state keeps the Baseline/Genesis Required Feature Set identity separate from the current
+set, so later Feature Activation does not rewrite the authenticated Initial Baseline or Genesis.
 
 ## 4.1 Joining a locally known Vault
 

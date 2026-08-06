@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -1104,6 +1105,77 @@ func TestEndAdministratorAuthorsAuthenticatedEventAndClosesLastAdministrator(t *
 	}
 	if _, err := New(ctx, state, dependencies); err != nil {
 		t.Fatalf("restart after Administrator End: %v", err)
+	}
+}
+
+func TestActivateFeatureAuthorsAuthenticatedEventAndUpdatesRequiredSet(t *testing.T) {
+	ctx := context.Background()
+	state := store.NewMemoryState()
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vaultID, _ := createVaultWithPhraseForTest(t, runtime, "Feature activation")
+	previousFeatureSetID := runtime.vaults[vaultID].Canonical.RequiredFeatureSetID
+	baselineFeatureSetID := runtime.vaults[vaultID].Canonical.BaselineRequiredFeatureSetID
+	if baselineFeatureSetID != previousFeatureSetID {
+		t.Fatalf("initial Baseline Required Feature Set = %s, want current %s", baselineFeatureSetID, previousFeatureSetID)
+	}
+	firstManifestBytes, err := canonical.EncodeFeatureManifest(canonical.FeatureManifestInput{
+		FeatureKey: "awsm.alpha", Revision: 1, Parameters: bytes.Repeat([]byte{0x41}, 64),
+		RequiredManifestIDs: []canonical.Identifier{}, IncompatibleKeys: []string{},
+	})
+	if err != nil {
+		t.Fatalf("encode first Feature Manifest: %v", err)
+	}
+	secondManifestBytes, err := canonical.EncodeFeatureManifest(canonical.FeatureManifestInput{
+		FeatureKey: "awsm.gamma", Revision: 1, Parameters: []byte{},
+		RequiredManifestIDs: []canonical.Identifier{}, IncompatibleKeys: []string{},
+	})
+	if err != nil {
+		t.Fatalf("encode second Feature Manifest: %v", err)
+	}
+	result, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "ActivateFeature", "expectedVaultId": vaultID,
+		"manifests": []string{
+			base64.RawURLEncoding.EncodeToString(firstManifestBytes),
+			base64.RawURLEncoding.EncodeToString(secondManifestBytes),
+		},
+	}))
+	if err != nil {
+		t.Fatalf("ActivateFeature: %v", err)
+	}
+	activated, ok := result.(map[string]string)
+	if !ok || !validDigest(activated["requiredFeatureSetId"]) || !validDigest(activated["eventRecordId"]) {
+		t.Fatalf("ActivateFeature result = %#v", result)
+	}
+	if activated["requiredFeatureSetId"] == previousFeatureSetID {
+		t.Fatalf("ActivateFeature did not advance Required Feature Set = %#v", activated)
+	}
+	record, ok := runtime.replicas[vaultID].Record(mustIdentifier(t, activated["eventRecordId"]))
+	if !ok || record.Event == nil || record.Event.Family != canonical.AuthorityFamily || record.Event.Type != 14 {
+		t.Fatalf("ActivateFeature record = %#v", record)
+	}
+	activation, err := parseFeatureActivation(*record.Event)
+	if err != nil || len(activation.addedManifests) != 2 {
+		t.Fatalf("Feature Activation replay = %#v, error = %v", activation, err)
+	}
+	if runtime.vaults[vaultID].Canonical.RequiredFeatureSetID != activated["requiredFeatureSetId"] {
+		t.Fatalf("canonical Required Feature Set = %s, want %s", runtime.vaults[vaultID].Canonical.RequiredFeatureSetID, activated["requiredFeatureSetId"])
+	}
+	if runtime.vaults[vaultID].Canonical.BaselineRequiredFeatureSetID != baselineFeatureSetID {
+		t.Fatalf("canonical Baseline Required Feature Set = %s, want unchanged %s", runtime.vaults[vaultID].Canonical.BaselineRequiredFeatureSetID, baselineFeatureSetID)
+	}
+	restarted, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatalf("restart after Feature Activation: %v", err)
+	}
+	if restarted.vaults[vaultID].Canonical.RequiredFeatureSetID != activated["requiredFeatureSetId"] {
+		t.Fatalf("restarted Required Feature Set = %s, want %s", restarted.vaults[vaultID].Canonical.RequiredFeatureSetID, activated["requiredFeatureSetId"])
+	}
+	if restarted.vaults[vaultID].Canonical.BaselineRequiredFeatureSetID != baselineFeatureSetID {
+		t.Fatalf("restarted Baseline Required Feature Set = %s, want unchanged %s", restarted.vaults[vaultID].Canonical.BaselineRequiredFeatureSetID, baselineFeatureSetID)
 	}
 }
 

@@ -164,6 +164,7 @@ type canonicalReplicaState struct {
 	GenesisID                     string            `json:"genesisId"`
 	KeyEpochID                    string            `json:"keyEpochId"`
 	RequiredFeatureSetID          string            `json:"requiredFeatureSetId"`
+	BaselineRequiredFeatureSetID  string            `json:"baselineRequiredFeatureSetId"`
 	MemberID                      string            `json:"memberId"`
 	RecoveryCredentialID          string            `json:"recoveryCredentialId"`
 	ClientCredentialID            string            `json:"clientCredentialId"`
@@ -1278,6 +1279,16 @@ func (r *Runtime) Handle(ctx context.Context, raw json.RawMessage) (any, error) 
 			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "EndAdministrator contains invalid fields")
 		}
 		return r.changeAdministrator(ctx, input.ExpectedVaultID, input.TargetMemberID, false)
+	case "ActivateFeature":
+		var input struct {
+			Type            string   `json:"type"`
+			ExpectedVaultID string   `json:"expectedVaultId"`
+			Manifests       []string `json:"manifests"`
+		}
+		if err := decode(raw, &input); err != nil {
+			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "ActivateFeature contains invalid fields")
+		}
+		return r.activateFeature(ctx, input.ExpectedVaultID, input.Manifests)
 	case "ExportComplete":
 		var input struct {
 			Type            string `json:"type"`
@@ -3128,7 +3139,7 @@ func validatePersistedVault(value persistedVault) error {
 	}
 	if value.Canonical != nil {
 		for _, identifier := range []string{
-			value.Canonical.VaultID, value.Canonical.GenerationID, value.Canonical.BaselineID, value.Canonical.GenesisID, value.Canonical.KeyEpochID, value.Canonical.RequiredFeatureSetID,
+			value.Canonical.VaultID, value.Canonical.GenerationID, value.Canonical.BaselineID, value.Canonical.GenesisID, value.Canonical.KeyEpochID, value.Canonical.RequiredFeatureSetID, value.Canonical.BaselineRequiredFeatureSetID,
 			value.Canonical.MemberID, value.Canonical.ClientCredentialID,
 			value.Canonical.RecoveryCredentialID,
 			value.Canonical.BaselineStorageItemID, value.Canonical.GenesisStorageItemID,
@@ -3413,25 +3424,26 @@ func canonicalReplicaFromCreation(prepared PreparedCanonicalVaultCreation) *cano
 		featureMappings[hexIdentifier(feature.ID)] = hexIdentifier(feature.Envelope.StorageItemID)
 	}
 	canonicalState := &canonicalReplicaState{
-		VaultID:                   hexIdentifier(prepared.IDs.VaultID),
-		GenerationID:              hexIdentifier(prepared.IDs.GenerationID),
-		BaselineID:                hexIdentifier(prepared.Baseline.RecordID),
-		GenesisID:                 hexIdentifier(prepared.Genesis.RecordID),
-		KeyEpochID:                hexIdentifier(prepared.KeyEpochID),
-		RequiredFeatureSetID:      hexIdentifier(prepared.RequiredFeatureSetID),
-		MemberID:                  hexIdentifier(prepared.IDs.FirstMemberID),
-		RecoveryCredentialID:      hexIdentifier(prepared.IDs.RecoveryCredentialID),
-		ClientCredentialID:        hexIdentifier(prepared.IDs.ClientCredentialID),
-		BaselineStorageItemID:     hexIdentifier(prepared.BaselineEnvelope.StorageItemID),
-		GenesisStorageItemID:      hexIdentifier(prepared.GenesisEnvelope.StorageItemID),
-		RecoveryEnvelopeID:        hexIdentifier(prepared.RecoveryKeyEnvelope.ID),
-		RecoveryEnvelopeStorageID: hexIdentifier(prepared.RecoveryKeyEnvelope.Envelope.StorageItemID),
-		ClientEnvelopeID:          hexIdentifier(prepared.ClientKeyEnvelope.ID),
-		ClientEnvelopeStorageID:   hexIdentifier(prepared.ClientKeyEnvelope.Envelope.StorageItemID),
-		AuthoringAvailable:        true,
-		CausalFrontier:            []string{hexIdentifier(prepared.Genesis.RecordID)},
-		AuthorityFrontier:         []string{hexIdentifier(prepared.Genesis.RecordID)},
-		ContinuityRecordIDs:       []string{hexIdentifier(prepared.Genesis.RecordID)},
+		VaultID:                      hexIdentifier(prepared.IDs.VaultID),
+		GenerationID:                 hexIdentifier(prepared.IDs.GenerationID),
+		BaselineID:                   hexIdentifier(prepared.Baseline.RecordID),
+		GenesisID:                    hexIdentifier(prepared.Genesis.RecordID),
+		KeyEpochID:                   hexIdentifier(prepared.KeyEpochID),
+		RequiredFeatureSetID:         hexIdentifier(prepared.RequiredFeatureSetID),
+		BaselineRequiredFeatureSetID: hexIdentifier(prepared.RequiredFeatureSetID),
+		MemberID:                     hexIdentifier(prepared.IDs.FirstMemberID),
+		RecoveryCredentialID:         hexIdentifier(prepared.IDs.RecoveryCredentialID),
+		ClientCredentialID:           hexIdentifier(prepared.IDs.ClientCredentialID),
+		BaselineStorageItemID:        hexIdentifier(prepared.BaselineEnvelope.StorageItemID),
+		GenesisStorageItemID:         hexIdentifier(prepared.GenesisEnvelope.StorageItemID),
+		RecoveryEnvelopeID:           hexIdentifier(prepared.RecoveryKeyEnvelope.ID),
+		RecoveryEnvelopeStorageID:    hexIdentifier(prepared.RecoveryKeyEnvelope.Envelope.StorageItemID),
+		ClientEnvelopeID:             hexIdentifier(prepared.ClientKeyEnvelope.ID),
+		ClientEnvelopeStorageID:      hexIdentifier(prepared.ClientKeyEnvelope.Envelope.StorageItemID),
+		AuthoringAvailable:           true,
+		CausalFrontier:               []string{hexIdentifier(prepared.Genesis.RecordID)},
+		AuthorityFrontier:            []string{hexIdentifier(prepared.Genesis.RecordID)},
+		ContinuityRecordIDs:          []string{hexIdentifier(prepared.Genesis.RecordID)},
 		RecordStorageItemIDs: map[string]string{
 			hexIdentifier(prepared.Baseline.RecordID): hexIdentifier(prepared.BaselineEnvelope.StorageItemID),
 			hexIdentifier(prepared.Genesis.RecordID):  hexIdentifier(prepared.GenesisEnvelope.StorageItemID),
@@ -3572,7 +3584,7 @@ func (r *Runtime) openCanonicalReplica(value persistedVault) (*Replica, error) {
 	if err != nil {
 		return nil, fmt.Errorf("decode Initial Baseline: %w", err)
 	}
-	if baseline.VaultID != vaultID || baseline.GenerationID != generationID || hexIdentifier(baseline.RecordID) != state.BaselineID || hexIdentifier(baseline.RequiredFeatureSetID) != state.RequiredFeatureSetID {
+	if baseline.VaultID != vaultID || baseline.GenerationID != generationID || hexIdentifier(baseline.RecordID) != state.BaselineID || hexIdentifier(baseline.RequiredFeatureSetID) != state.BaselineRequiredFeatureSetID {
 		return nil, errors.New("Initial Baseline identity does not match persisted Replica state")
 	}
 	genesisBytes, err := readArtifact(state.GenesisStorageItemID)
@@ -3593,7 +3605,7 @@ func (r *Runtime) openCanonicalReplica(value persistedVault) (*Replica, error) {
 	if err != nil {
 		return nil, fmt.Errorf("decode Genesis: %w", err)
 	}
-	if genesis.VaultID != vaultID || (state.AdoptionEventID == "" && genesis.GenerationID != generationID) || hexIdentifier(genesis.RecordID) != state.GenesisID || hexIdentifier(genesis.RequiredFeatureSetID) != state.RequiredFeatureSetID {
+	if genesis.VaultID != vaultID || (state.AdoptionEventID == "" && genesis.GenerationID != generationID) || hexIdentifier(genesis.RecordID) != state.GenesisID || hexIdentifier(genesis.RequiredFeatureSetID) != state.BaselineRequiredFeatureSetID {
 		return nil, errors.New("Genesis identity does not match persisted Replica state")
 	}
 	clientEnvelopeBytes, err := readArtifact(state.ClientEnvelopeStorageID)
