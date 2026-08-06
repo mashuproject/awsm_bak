@@ -300,7 +300,7 @@ func TestReplicaAdvancesFeatureSetAfterAuthenticatedActivation(t *testing.T) {
 		VaultID: prepared.IDs.VaultID, GenerationID: prepared.IDs.GenerationID,
 		ParentRecordIDs: []canonical.Identifier{activation.RecordID}, AuthorityParentIDs: []canonical.Identifier{activation.RecordID},
 		RequiredFeatureSetID: resulting, Extensions: map[string][]byte{}, Family: canonical.ContentFamily, Type: 21,
-		SignerCredentialID: prepared.IDs.ClientCredentialID, AssertedAt: 216, Body: canonical.Map{},
+		SignerCredentialID: prepared.IDs.ClientCredentialID, AssertedAt: 216, Body: canonical.Map{0: canonicalSetValues([]canonical.Value{prepared.Genesis.RecordID[:]})},
 	}, ed25519.PrivateKey(prepared.ClientKeys.SigningSecretKey))
 	if err != nil {
 		t.Fatalf("sign post-activation Event: %v", err)
@@ -312,7 +312,7 @@ func TestReplicaAdvancesFeatureSetAfterAuthenticatedActivation(t *testing.T) {
 		VaultID: prepared.IDs.VaultID, GenerationID: prepared.IDs.GenerationID,
 		ParentRecordIDs: []canonical.Identifier{activation.RecordID}, AuthorityParentIDs: []canonical.Identifier{activation.RecordID},
 		RequiredFeatureSetID: prepared.RequiredFeatureSetID, Extensions: map[string][]byte{}, Family: canonical.ContentFamily, Type: 22,
-		SignerCredentialID: prepared.IDs.ClientCredentialID, AssertedAt: 217, Body: canonical.Map{},
+		SignerCredentialID: prepared.IDs.ClientCredentialID, AssertedAt: 217, Body: canonical.Map{0: prepared.Genesis.RecordID[:]},
 	}, ed25519.PrivateKey(prepared.ClientKeys.SigningSecretKey))
 	if err != nil {
 		t.Fatalf("sign stale-feature Event: %v", err)
@@ -697,11 +697,15 @@ func TestReplicaAdmitsAuthenticatedInvitationAcceptanceAndActivatesClient(t *tes
 	if len(state.ActiveMemberIDs) != 2 || len(state.ActiveClientCredentialIDs) != 2 || len(state.EffectiveRecoveryCredentialIDs) != 2 {
 		t.Fatalf("AuthorityState after Invitation Acceptance = %#v", state)
 	}
+	assignmentID := filledCreationID(239)
+	tagID := filledCreationID(240)
+	targetCollectionID := filledCreationID(241)
 	child, err := canonical.SignEvent(canonical.EventInput{
 		VaultID: prepared.IDs.VaultID, GenerationID: prepared.IDs.GenerationID,
 		ParentRecordIDs: []canonical.Identifier{acceptance.RecordID}, AuthorityParentIDs: []canonical.Identifier{acceptance.RecordID},
 		RequiredFeatureSetID: prepared.RequiredFeatureSetID, Extensions: map[string][]byte{}, Family: canonical.ContentFamily, Type: 20,
-		SignerCredentialID: accepted.clientCredentialID, AssertedAt: 209, Body: canonical.Map{},
+		SignerCredentialID: accepted.clientCredentialID, AssertedAt: 209,
+		Body: canonical.Map{0: assignmentID[:], 1: tagID[:], 2: canonical.Map{0: uint64(1), 1: targetCollectionID[:]}},
 	}, ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x74}, ed25519.SeedSize)))
 	if err != nil {
 		t.Fatalf("sign post-acceptance Content Event: %v", err)
@@ -1294,6 +1298,30 @@ func TestReplicaRejectsBundleRegistrationWithoutDescriptorDependency(t *testing.
 	}
 }
 
+func TestReplicaRejectsCollectionTitleWithIncompleteBody(t *testing.T) {
+	prepared := deterministicCreation(t)
+	replica, err := NewReplica(prepared.Baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := replica.AdmitEvent(prepared.Genesis, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatal(err)
+	}
+	collectionID := filledCreationID(238)
+	event, err := canonical.SignEvent(canonical.EventInput{
+		VaultID: prepared.IDs.VaultID, GenerationID: prepared.IDs.GenerationID,
+		ParentRecordIDs: []canonical.Identifier{prepared.Genesis.RecordID}, AuthorityParentIDs: []canonical.Identifier{prepared.Genesis.RecordID},
+		RequiredFeatureSetID: prepared.RequiredFeatureSetID, Extensions: map[string][]byte{}, Family: canonical.ContentFamily, Type: 7,
+		SignerCredentialID: prepared.IDs.ClientCredentialID, AssertedAt: 1236, Body: canonical.Map{0: collectionID[:]},
+	}, ed25519.PrivateKey(prepared.ClientKeys.SigningSecretKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := replica.AdmitEvent(event, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err == nil {
+		t.Fatal("Replica accepted Collection Title with an incomplete body")
+	}
+}
+
 func validTestArtifactObjectBytes(t *testing.T, vaultID, featureSetID canonical.Identifier, label string) []byte {
 	t.Helper()
 	payload := []byte(label)
@@ -1346,13 +1374,25 @@ func signReplicaChild(t *testing.T, prepared PreparedCanonicalVaultCreation, par
 
 func signReplicaChildWithCredential(t *testing.T, prepared PreparedCanonicalVaultCreation, parent canonical.Identifier, eventType uint64, credential canonical.Identifier) canonical.Event {
 	t.Helper()
+	body := canonical.Map{0: uint64(eventType)}
+	switch eventType {
+	case 7:
+		collectionID := filledCreationID(byte(100 + eventType))
+		body = canonical.Map{0: collectionID[:], 1: "Collection"}
+	case 8:
+		sourceID := filledCreationID(byte(100 + eventType))
+		destinationID := filledCreationID(byte(110 + eventType))
+		body = canonical.Map{0: canonicalSetValues([]canonical.Value{sourceID[:]}), 1: destinationID[:]}
+	case 9:
+		body = canonical.Map{0: parent[:]}
+	}
 	event, err := canonical.SignEvent(canonical.EventInput{
 		VaultID: prepared.IDs.VaultID, GenerationID: prepared.IDs.GenerationID,
 		ParentRecordIDs: []canonical.Identifier{parent}, AuthorityParentIDs: []canonical.Identifier{parent},
 		Dependencies: []canonical.Dependency{}, RequiredFeatureSetID: prepared.RequiredFeatureSetID,
 		Extensions: map[string][]byte{}, Family: canonical.ContentFamily, Type: eventType,
 		SignerCredentialID: credential, AssertedAt: 124 + int64(eventType),
-		Body: canonical.Map{0: uint64(eventType)},
+		Body: body,
 	}, ed25519.PrivateKey(prepared.ClientKeys.SigningSecretKey))
 	if err != nil {
 		t.Fatalf("Sign child: %v", err)

@@ -249,7 +249,7 @@ func TestForkReauthorsNoteLifecycleAndConflictResolutionEvents(t *testing.T) {
 	branchB := signAndAdmitForkNoteEvent(t, runtime, dependencies, sourceID, 28, canonical.Map{0: noteID[:], 1: []canonical.Value{restoredID[:]}, 2: contentObjectID[:]}, []canonical.Dependency{{Type: 6, ID: contentObjectID}}, branchParents)
 	resolutionParents := runtime.replicas[sourceID].State().CausalFrontier
 	resolutionID := signAndAdmitForkNoteEvent(t, runtime, dependencies, sourceID, 31, canonical.Map{
-		0: noteID[:], 1: []canonical.Value{branchA[:], branchB[:]}, 2: contentObjectID[:], 3: []canonical.Value{},
+		0: noteID[:], 1: canonicalSetValues([]canonical.Value{branchA[:], branchB[:]}), 2: contentObjectID[:], 3: []canonical.Value{},
 	}, []canonical.Dependency{{Type: 6, ID: contentObjectID}}, resolutionParents)
 
 	started, err := runtime.Handle(ctx, mustJSON(map[string]any{"type": "BeginVaultFork", "expectedVaultId": sourceID}))
