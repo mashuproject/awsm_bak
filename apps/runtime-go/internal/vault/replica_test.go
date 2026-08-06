@@ -322,6 +322,52 @@ func TestReplicaAdvancesFeatureSetAfterAuthenticatedActivation(t *testing.T) {
 	}
 }
 
+func TestReplicaAdmitsObjectBoundToAuthenticatedFeatureSet(t *testing.T) {
+	prepared := deterministicCreation(t)
+	replica, err := NewReplica(prepared.Baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := replica.AdmitEvent(prepared.Genesis, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatal(err)
+	}
+	manifestBytes, err := canonical.EncodeFeatureManifest(canonical.FeatureManifestInput{
+		FeatureKey: "awsm.object.feature", Revision: 1, Parameters: []byte{2}, RequiredManifestIDs: []canonical.Identifier{}, IncompatibleKeys: []string{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := canonical.DecodeFeatureManifest(manifestBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resulting, err := canonical.RequiredFeatureSetID([]canonical.FeatureManifestInput{manifest.FeatureManifestInput})
+	if err != nil {
+		t.Fatal(err)
+	}
+	activation, err := canonical.SignEvent(canonical.EventInput{
+		VaultID: prepared.IDs.VaultID, GenerationID: prepared.IDs.GenerationID,
+		ParentRecordIDs: []canonical.Identifier{prepared.Genesis.RecordID}, AuthorityParentIDs: []canonical.Identifier{prepared.Genesis.RecordID},
+		Dependencies: []canonical.Dependency{{Type: 8, ID: manifest.ID}}, RequiredFeatureSetID: prepared.RequiredFeatureSetID,
+		Extensions: map[string][]byte{}, Family: canonical.AuthorityFamily, Type: 14, SignerCredentialID: prepared.IDs.ClientCredentialID,
+		AssertedAt: 218, Body: canonical.Map{0: prepared.RequiredFeatureSetID[:], 1: []canonical.Value{manifestBytes}, 2: resulting[:]},
+	}, ed25519.PrivateKey(prepared.ClientKeys.SigningSecretKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := replica.AdmitEvent(activation, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatal(err)
+	}
+	objectBytes := validTestArtifactObjectBytes(t, prepared.IDs.VaultID, resulting, "post activation object")
+	objectID, err := canonical.VaultObjectID(prepared.IDs.VaultID, 2, objectBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := replica.AdmitObject(objectID, objectBytes); err != nil {
+		t.Fatalf("AdmitObject rejected an authenticated Feature Set: %v", err)
+	}
+}
+
 func TestReplicaSurfacesConcurrentRecoveryReplacementConflict(t *testing.T) {
 	prepared := deterministicCreation(t)
 	replica, err := NewReplica(prepared.Baseline)

@@ -272,7 +272,7 @@ func (r *Replica) AdmitObject(objectID canonical.Identifier, encoded []byte) err
 	if err != nil {
 		return err
 	}
-	if object.VaultID != r.vaultID || object.RequiredFeatureSetID != r.baseline.RequiredFeatureSetID {
+	if object.VaultID != r.vaultID || !r.acceptsRequiredFeatureSet(object.RequiredFeatureSetID) {
 		return errors.New("Object belongs to another accepted Vault context")
 	}
 	if existing, ok := r.objects[objectID]; ok {
@@ -283,6 +283,21 @@ func (r *Replica) AdmitObject(objectID canonical.Identifier, encoded []byte) err
 	}
 	r.objects[objectID] = object
 	return nil
+}
+
+func (r *Replica) acceptsRequiredFeatureSet(featureSetID canonical.Identifier) bool {
+	if featureSetID == r.baseline.RequiredFeatureSetID {
+		return true
+	}
+	if r.genesisID == (canonical.Identifier{}) {
+		return false
+	}
+	genesis, ok := r.records[r.genesisID]
+	if !ok || genesis.Event == nil {
+		return false
+	}
+	replayed, err := replayAuthenticatedKeyEpochs(r.Events(), *genesis.Event, nil)
+	return err == nil && !replayed.featureSetConflict && replayed.featureSetID == featureSetID
 }
 
 // AdmitFeatureManifest verifies one immutable Feature Manifest content address
