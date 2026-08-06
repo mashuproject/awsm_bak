@@ -455,7 +455,7 @@ func admitForkBundleRegisteredEvent(t *testing.T, runtime *Runtime, dependencies
 	descriptorBody := canonical.Map{
 		0: uint64(1), 1: bundleID[:], 2: int64(1234), 3: "https://example.test/a", 4: "https://example.test/b",
 		5: "awsm.capture.web-page-snapshot", 6: "awsm.adapter.browser-web-page", 7: uint64(1), 8: "Example",
-		9: []canonical.Value{canonical.Map{0: artifactID[:], 1: "awsm.artifact.primary"}}, 10: []canonical.Value{}, 11: canonical.Map{0: uint64(1), 1: []byte{1}},
+		9: []canonical.Value{canonical.Map{0: artifactID[:], 1: "awsm.artifact.primary"}}, 10: []canonical.Value{}, 11: canonical.Map{0: uint64(1), 1: []byte{0xa1, 0x00, 0x01}},
 	}
 	descriptorBytes, err := canonical.EncodeValue(canonical.Map{
 		0: uint64(1), 1: vaultIdentifier[:], 2: uint64(1), 3: featureSetID[:], 4: descriptorBody, 5: map[string][]byte{},

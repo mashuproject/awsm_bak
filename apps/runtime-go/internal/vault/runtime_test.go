@@ -395,10 +395,7 @@ func TestRuntimeAdmitsAuthenticatedOpaqueObjectAndReloadsIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	featureIdentifier := mustIdentifier(t, value.Canonical.RequiredFeatureSetID)
-	objectBytes, err := canonical.EncodeValue(canonical.Map{0: uint64(1), 1: vaultIdentifier[:], 2: uint64(2), 3: featureIdentifier[:], 4: canonical.Map{}, 5: map[string][]byte{}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	objectBytes := validTestArtifactObjectBytes(t, vaultIdentifier, featureIdentifier, "runtime object")
 	objectID, err := canonical.VaultObjectID(vaultIdentifier, 2, objectBytes)
 	if err != nil {
 		t.Fatal(err)
@@ -511,10 +508,7 @@ func TestStorageReliefEvictsOnlyLocalObjectBytesWithWarning(t *testing.T) {
 		t.Fatal(err)
 	}
 	featureIdentifier := mustIdentifier(t, value.Canonical.RequiredFeatureSetID)
-	objectBytes, err := canonical.EncodeValue(canonical.Map{0: uint64(1), 1: vaultIdentifier[:], 2: uint64(2), 3: featureIdentifier[:], 4: canonical.Map{}, 5: map[string][]byte{}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	objectBytes := validTestArtifactObjectBytes(t, vaultIdentifier, featureIdentifier, "storage relief object")
 	objectID, err := canonical.VaultObjectID(vaultIdentifier, 2, objectBytes)
 	if err != nil {
 		t.Fatal(err)
@@ -1383,13 +1377,7 @@ func TestHostedReplicaHydratesKnownArtifactStream(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	objectBytes, err := canonical.EncodeValue(canonical.Map{
-		0: uint64(1), 1: vaultIdentifier[:], 2: uint64(2), 3: featureSetID[:],
-		4: canonical.Map{0: "Artifact"}, 5: canonical.Map{},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	objectBytes := validTestArtifactObjectBytes(t, vaultIdentifier, featureSetID, "hosted artifact")
 	objectID, err := objectIDFromBytes(vaultIdentifier, objectBytes)
 	if err != nil {
 		t.Fatal(err)

@@ -1118,14 +1118,15 @@ func TestReplicaAdmitsContentAddressedObject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	contentBody := canonical.Map{0: uint64(1), 1: "Example", 2: "Body", 3: "awsm.note.commonmark"}
 	objectBytes, err := canonical.EncodeValue(canonical.Map{
-		0: uint64(1), 1: prepared.IDs.VaultID[:], 2: uint64(1), 3: prepared.RequiredFeatureSetID[:],
-		4: canonical.Map{}, 5: map[string][]byte{},
+		0: uint64(1), 1: prepared.IDs.VaultID[:], 2: uint64(3), 3: prepared.RequiredFeatureSetID[:],
+		4: contentBody, 5: map[string][]byte{},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	objectID, err := canonical.VaultObjectID(prepared.IDs.VaultID, 1, objectBytes)
+	objectID, err := canonical.VaultObjectID(prepared.IDs.VaultID, 3, objectBytes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1138,6 +1139,29 @@ func TestReplicaAdmitsContentAddressedObject(t *testing.T) {
 	}
 	if err := replica.AdmitObject(objectID, append([]byte(nil), objectBytes...)); err != nil {
 		t.Fatalf("duplicate Object admission: %v", err)
+	}
+}
+
+func TestReplicaRejectsUnsafeNoteContentObject(t *testing.T) {
+	prepared := deterministicCreation(t)
+	replica, err := NewReplica(prepared.Baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contentBody := canonical.Map{0: uint64(1), 1: "Unsafe", 2: "<script>alert(1)</script>", 3: "awsm.note.commonmark"}
+	objectBytes, err := canonical.EncodeValue(canonical.Map{
+		0: uint64(1), 1: prepared.IDs.VaultID[:], 2: uint64(3), 3: prepared.RequiredFeatureSetID[:],
+		4: contentBody, 5: map[string][]byte{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	objectID, err := canonical.VaultObjectID(prepared.IDs.VaultID, 3, objectBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := replica.AdmitObject(objectID, objectBytes); err == nil {
+		t.Fatal("Replica accepted Note Content Object containing HTML")
 	}
 }
 
@@ -1185,8 +1209,14 @@ func TestProjectLibraryReducesBundleRegistrationAndDescriptor(t *testing.T) {
 	}
 	bundleID := filledCreationID(210)
 	collectionID := filledCreationID(211)
+	artifactDigest := awsmcrypto.ArtifactPayloadDigest([]byte("library artifact"))
 	artifactObjectBytes, err := canonical.EncodeValue(canonical.Map{
-		0: uint64(1), 1: prepared.IDs.VaultID[:], 2: uint64(2), 3: prepared.RequiredFeatureSetID[:], 4: canonical.Map{}, 5: map[string][]byte{},
+		0: uint64(1), 1: prepared.IDs.VaultID[:], 2: uint64(2), 3: prepared.RequiredFeatureSetID[:], 4: canonical.Map{
+			0: uint64(1), 1: "awsm.artifact.capture", 2: "application/vnd.awsm.web-page+zip", 3: "awsm.representation.web-page-zip",
+			4: uint64(16), 5: artifactDigest[:],
+			6: canonical.Map{0: uint64(1), 1: uint64(1_048_576), 2: uint64(16), 3: uint64(16), 4: artifactDigest[:]},
+			7: []byte{0xa1, 0x00, 0x01},
+		}, 5: map[string][]byte{},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1198,7 +1228,7 @@ func TestProjectLibraryReducesBundleRegistrationAndDescriptor(t *testing.T) {
 	descriptorBody := canonical.Map{
 		0: uint64(1), 1: bundleID[:], 2: int64(1234), 3: "https://example.test/a", 4: "https://example.test/b",
 		5: "awsm.capture.web-page-snapshot", 6: "awsm.adapter.browser-web-page", 7: uint64(1), 8: "Example",
-		9: []canonical.Value{canonical.Map{0: artifactObjectID[:], 1: "awsm.artifact.primary"}}, 10: []canonical.Value{}, 11: canonical.Map{0: uint64(1), 1: []byte{1}},
+		9: []canonical.Value{canonical.Map{0: artifactObjectID[:], 1: "awsm.artifact.primary"}}, 10: []canonical.Value{}, 11: canonical.Map{0: uint64(1), 1: []byte{0xa1, 0x00, 0x01}},
 	}
 	descriptorBytes, err := canonical.EncodeValue(canonical.Map{
 		0: uint64(1), 1: prepared.IDs.VaultID[:], 2: uint64(1), 3: prepared.RequiredFeatureSetID[:], 4: descriptorBody, 5: map[string][]byte{},
@@ -1262,6 +1292,25 @@ func TestReplicaRejectsBundleRegistrationWithoutDescriptorDependency(t *testing.
 	if err := replica.AdmitEvent(event, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err == nil {
 		t.Fatal("Replica accepted Bundle Registered without its descriptor dependency")
 	}
+}
+
+func validTestArtifactObjectBytes(t *testing.T, vaultID, featureSetID canonical.Identifier, label string) []byte {
+	t.Helper()
+	payload := []byte(label)
+	digest := awsmcrypto.ArtifactPayloadDigest(payload)
+	encoded, err := canonical.EncodeValue(canonical.Map{
+		0: uint64(1), 1: vaultID[:], 2: uint64(2), 3: featureSetID[:],
+		4: canonical.Map{
+			0: uint64(1), 1: "awsm.artifact.capture", 2: "application/vnd.awsm.web-page+zip", 3: "awsm.representation.web-page-zip",
+			4: uint64(len(payload)), 5: digest[:],
+			6: canonical.Map{0: uint64(1), 1: uint64(1_048_576), 2: uint64(16), 3: uint64(len(payload)), 4: digest[:]},
+			7: []byte{0xa1, 0x00, 0x01},
+		}, 5: map[string][]byte{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encoded
 }
 
 func deterministicCreation(t *testing.T) PreparedCanonicalVaultCreation {

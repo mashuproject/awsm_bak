@@ -433,6 +433,9 @@ func decodeReplicaObject(objectID canonical.Identifier, encoded []byte) (Replica
 	if _, ok := replicaMapEntry(value, 5); !ok {
 		return ReplicaObject{}, errors.New("Vault Object extensions are missing")
 	}
+	if err := validateReplicaObjectBody(objectType, body); err != nil {
+		return ReplicaObject{}, err
+	}
 	derived, err := canonical.VaultObjectID(vaultID, objectType, encoded)
 	if err != nil {
 		return ReplicaObject{}, err

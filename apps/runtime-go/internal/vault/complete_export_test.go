@@ -95,9 +95,15 @@ func TestRuntimeCompleteExportPreservesPerItemKeyEpochsAcrossImportAndRestart(t 
 	if err != nil {
 		t.Fatalf("decode Required Feature Set ID: %v", err)
 	}
+	descriptorBundleID := filledCreationID(230)
+	descriptorArtifactID := filledCreationID(231)
 	objectBytes, err := canonical.EncodeValue(canonical.Map{
 		0: uint64(1), 1: vaultIdentifier[:], 2: uint64(1), 3: featureSetID[:],
-		4: canonical.Map{}, 5: map[string][]byte{},
+		4: canonical.Map{
+			0: uint64(1), 1: descriptorBundleID[:], 2: int64(1234), 3: "https://example.test/a", 4: "https://example.test/b",
+			5: "awsm.capture.web-page-snapshot", 6: "awsm.adapter.browser-web-page", 7: uint64(1), 8: "Example",
+			9: []canonical.Value{canonical.Map{0: descriptorArtifactID[:], 1: "awsm.artifact.primary"}}, 10: []canonical.Value{}, 11: canonical.Map{0: uint64(1), 1: []byte{0xa1, 0x00, 0x01}},
+		}, 5: map[string][]byte{},
 	})
 	if err != nil {
 		t.Fatalf("encode second-epoch Object: %v", err)
@@ -284,9 +290,15 @@ func TestRuntimeCompleteImportRejectsUnestablishedKeyEpoch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode Required Feature Set ID: %v", err)
 	}
+	descriptorBundleID := filledCreationID(232)
+	descriptorArtifactID := filledCreationID(233)
 	objectBytes, err := canonical.EncodeValue(canonical.Map{
 		0: uint64(1), 1: vaultIdentifier[:], 2: uint64(1), 3: featureSetID[:],
-		4: canonical.Map{}, 5: map[string][]byte{},
+		4: canonical.Map{
+			0: uint64(1), 1: descriptorBundleID[:], 2: int64(1234), 3: "https://example.test/a", 4: "https://example.test/b",
+			5: "awsm.capture.web-page-snapshot", 6: "awsm.adapter.browser-web-page", 7: uint64(1), 8: "Example",
+			9: []canonical.Value{canonical.Map{0: descriptorArtifactID[:], 1: "awsm.artifact.primary"}}, 10: []canonical.Value{}, 11: canonical.Map{0: uint64(1), 1: []byte{0xa1, 0x00, 0x01}},
+		}, 5: map[string][]byte{},
 	})
 	if err != nil {
 		t.Fatalf("encode unestablished Object: %v", err)
@@ -623,7 +635,7 @@ func admitCompleteExportArtifact(t *testing.T, runtime *Runtime, dependencies De
 		0: uint64(1), 1: "awsm.artifact.capture", 2: "application/vnd.awsm.web-page+zip",
 		3: "awsm.representation.web-page-zip", 4: uint64(len(plaintext)), 5: digest[:],
 		6: canonical.Map{0: uint64(1), 1: uint64(storage.FramePlaintextLimit), 2: uint64(storage.FrameTagLength), 3: uint64(len(plaintext)), 4: digest[:]},
-		7: []byte{0x01},
+		7: []byte{0xa1, 0x00, 0x01},
 	}
 	objectBytes, err := canonical.EncodeValue(canonical.Map{
 		0: uint64(1), 1: vaultIdentifier[:], 2: uint64(2), 3: featureSetID[:], 4: artifactBody, 5: map[string][]byte{},
