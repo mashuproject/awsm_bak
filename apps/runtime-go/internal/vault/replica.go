@@ -234,6 +234,44 @@ func (r *Replica) ReleaseObject(objectID canonical.Identifier) bool {
 	return true
 }
 
+// AdoptVacuum validates the predecessor-generation Vacuum Event against this
+// Replica, then installs its authenticated successor Baseline as the active
+// root while retaining the event and prior continuity records for restart and
+// audit. The event is never rewritten into the successor generation.
+func (r *Replica) AdoptVacuum(baseline canonical.Baseline, event canonical.Event) (*Replica, error) {
+	if r == nil {
+		return nil, errors.New("Replica is required")
+	}
+	if event.Family != canonical.LifecycleFamily || event.Type != 1 {
+		return nil, errors.New("Record is not a Vacuum Event")
+	}
+	if baseline.VaultID != r.vaultID || baseline.GenerationID == r.generationID {
+		return nil, errors.New("Vacuum successor Baseline has an invalid context")
+	}
+	if !hasDependency(event.Dependencies, 2, baseline.RecordID) {
+		return nil, errors.New("Vacuum Event does not depend on its successor Baseline")
+	}
+	candidate := r.Clone()
+	if err := candidate.AdmitKnownEvent(event); err != nil {
+		return nil, fmt.Errorf("admit Vacuum Event: %w", err)
+	}
+	if err := candidate.graph.AddBaseline(baseline.RecordID, nil); err != nil {
+		return nil, fmt.Errorf("add successor Baseline: %w", err)
+	}
+	decodedBaseline, err := canonical.DecodeBaseline(baseline.Bytes)
+	if err != nil || decodedBaseline.RecordID != baseline.RecordID {
+		return nil, errors.New("successor Baseline identity is invalid")
+	}
+	candidate.baseline = decodedBaseline
+	candidate.baselineID = baseline.RecordID
+	candidate.generationID = baseline.GenerationID
+	candidate.records[baseline.RecordID] = canonical.Record{Kind: canonical.BaselineKind, Baseline: &decodedBaseline, Bytes: append([]byte(nil), decodedBaseline.Bytes...), RecordID: decodedBaseline.RecordID}
+	candidate.causalFrontier = []canonical.Identifier{baseline.RecordID}
+	candidate.authorityFrontier = []canonical.Identifier{event.RecordID}
+	candidate.continuityRecordIDs = appendUniqueSorted(candidate.continuityRecordIDs, event.RecordID)
+	return candidate, nil
+}
+
 func decodeReplicaObject(objectID canonical.Identifier, encoded []byte) (ReplicaObject, error) {
 	value, err := canonical.DecodeValue(encoded)
 	if err != nil {

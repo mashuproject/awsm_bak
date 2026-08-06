@@ -96,6 +96,8 @@ type remoteState struct {
 type canonicalReplicaState struct {
 	VaultID                   string            `json:"vaultId"`
 	GenerationID              string            `json:"generationId"`
+	PredecessorGenerationID   string            `json:"predecessorGenerationId,omitempty"`
+	AdoptionEventID           string            `json:"adoptionEventId,omitempty"`
 	BaselineID                string            `json:"baselineId"`
 	GenesisID                 string            `json:"genesisId"`
 	KeyEpochID                string            `json:"keyEpochId"`
@@ -1689,26 +1691,142 @@ func (r *Runtime) vacuumVault(ctx context.Context, id string) (any, error) {
 	if value.Lifecycle != "Open" {
 		return nil, commandError("VAULT_READ_ONLY", "A closed Vault cannot be vacuumed.")
 	}
-	predecessor := value.GenerationID
-	successor, err := randomID()
+	if value.Canonical == nil || r.replicas[id] == nil || r.deps.Artifacts == nil || r.deps.Secrets == nil {
+		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The authenticated Vault Replica is unavailable.")
+	}
+	if len(r.replicas[id].Events()) > 1 || len(r.replicas[id].objects) > 0 {
+		return nil, commandError("VAULT_VACUUM_REQUIRES_REPLAY", "This Runtime cannot vacuum synchronized content until its complete projection is available.")
+	}
+	vaultID, err := decodeHexIdentifier(id)
+	if err != nil {
+		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The Vault identity is invalid.")
+	}
+	clientCredentialID, err := decodeHexIdentifier(value.Canonical.ClientCredentialID)
+	if err != nil {
+		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The Client Credential identity is invalid.")
+	}
+	memberID, err := decodeHexIdentifier(value.Canonical.MemberID)
+	if err != nil {
+		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The Member identity is invalid.")
+	}
+	clientBytes, err := r.deps.Secrets.Get(trustedSecretService, clientSecretAccount(id, value.Canonical.ClientCredentialID))
+	if err != nil {
+		return nil, commandError("TRUSTED_SECRET_UNAVAILABLE", "The Client Credential could not be opened.")
+	}
+	clientSecret, err := decodeClientSecret(clientBytes, vaultID, memberID, clientCredentialID)
+	if err != nil {
+		return nil, commandError("TRUSTED_SECRET_UNAVAILABLE", "The Client Credential is invalid.")
+	}
+	epochID, err := decodeHexIdentifier(value.Canonical.KeyEpochID)
+	if err != nil {
+		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The Key Epoch identity is invalid.")
+	}
+	epochBytes, err := r.deps.Secrets.Get(trustedSecretService, epochSecretAccount(id, value.Canonical.KeyEpochID))
+	if err != nil {
+		return nil, commandError("TRUSTED_SECRET_UNAVAILABLE", "The Key Epoch could not be opened.")
+	}
+	epochSecret, err := decodeEpochSecret(epochBytes, vaultID, epochID)
+	if err != nil {
+		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The Key Epoch is invalid.")
+	}
+	defer zeroBytes(epochSecret.key)
+	predecessorGenerationID, err := decodeHexIdentifier(value.GenerationID)
+	if err != nil {
+		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The predecessor Generation identity is invalid.")
+	}
+	successorGenerationText, err := randomID()
 	if err != nil {
 		return nil, err
 	}
-	vacuumEvent, err := randomID()
+	successorGenerationID, err := decodeHexIdentifier(successorGenerationText)
 	if err != nil {
 		return nil, err
 	}
-	baseline, err := randomID()
+	baseline, err := canonical.EncodeBaseline(canonical.BaselineInput{
+		VaultID: vaultID, GenerationID: successorGenerationID,
+		Dependencies:         append([]canonical.Dependency(nil), r.replicas[id].baseline.Dependencies...),
+		RequiredFeatureSetID: r.replicas[id].baseline.RequiredFeatureSetID,
+		Extensions:           cloneExtensions(r.replicas[id].baseline.Extensions), Body: r.replicas[id].baseline.Body,
+	})
 	if err != nil {
-		return nil, err
+		return nil, commandError("VAULT_VACUUM_INVALID", "The successor Baseline could not be created.")
 	}
-	value.GenerationID = successor
+	baselineEnvelopeBytes, err := awsmcrypto.SealCompactItem(awsmcrypto.CompactItemInput{VaultID: vaultID, KeyEpochID: epochID, KeyEpochKey: epochSecret.key, PayloadType: 1, PayloadBytes: baseline.Bytes})
+	if err != nil {
+		return nil, commandError("VAULT_VACUUM_INVALID", "The successor Baseline could not be protected.")
+	}
+	baselineEnvelope, err := storage.DecodeOpaqueEnvelope(baselineEnvelopeBytes)
+	if err != nil {
+		return nil, commandError("VAULT_VACUUM_INVALID", "The successor Baseline envelope is invalid.")
+	}
+	frontier := r.replicas[id].State()
+	predecessorBodyBytes, err := canonical.EncodeValue(r.replicas[id].baseline.Body)
+	if err != nil {
+		return nil, commandError("VAULT_VACUUM_INVALID", "The predecessor Baseline state is invalid.")
+	}
+	predecessorDigestTranscript, _ := canonical.Transcript("awsm:vacuum-predecessor-state:v1", predecessorBodyBytes, mustCanonical(canonicalSetValues(identifiersToValues(frontier.CausalFrontier))))
+	predecessorDigest := sha256.Sum256(predecessorDigestTranscript)
+	successorDigestTranscript, _ := canonical.Transcript("awsm:vacuum-successor-state:v1", predecessorBodyBytes, mustCanonical(canonicalSetValues(identifiersToValues(frontier.AuthorityFrontier))))
+	successorDigest := sha256.Sum256(successorDigestTranscript)
+	omissionTranscript, _ := canonical.Transcript("awsm:vacuum-omission:v1", []byte{})
+	omissionDigest := sha256.Sum256(omissionTranscript)
+	featureSetID, err := decodeHexIdentifier(value.Canonical.RequiredFeatureSetID)
+	if err != nil {
+		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The Required Feature Set identity is invalid.")
+	}
+	event, err := canonical.SignEvent(canonical.EventInput{
+		VaultID: vaultID, GenerationID: predecessorGenerationID, ParentRecordIDs: frontier.CausalFrontier, AuthorityParentIDs: frontier.AuthorityFrontier,
+		Dependencies: []canonical.Dependency{{Type: 2, ID: baseline.RecordID}}, RequiredFeatureSetID: featureSetID,
+		Extensions: map[string][]byte{}, Family: canonical.LifecycleFamily, Type: 1, SignerCredentialID: clientCredentialID,
+		AssertedAt: time.Now().UnixMilli(), Body: canonical.Map{0: predecessorGenerationID[:], 1: canonicalSetValues(identifiersToValues(frontier.CausalFrontier)), 2: successorGenerationID[:], 3: baseline.RecordID[:], 4: predecessorDigest[:], 5: successorDigest[:], 6: omissionDigest[:]},
+	}, ed25519.PrivateKey(clientSecret.signingSecretKey))
+	if err != nil {
+		return nil, commandError("VAULT_VACUUM_INVALID", "The Vacuum Event could not be authored.")
+	}
+	eventEnvelopeBytes, err := awsmcrypto.SealCompactItem(awsmcrypto.CompactItemInput{VaultID: vaultID, KeyEpochID: epochID, KeyEpochKey: epochSecret.key, PayloadType: 1, PayloadBytes: event.Bytes})
+	if err != nil {
+		return nil, commandError("VAULT_VACUUM_INVALID", "The Vacuum Event could not be protected.")
+	}
+	eventEnvelope, err := storage.DecodeOpaqueEnvelope(eventEnvelopeBytes)
+	if err != nil {
+		return nil, commandError("VAULT_VACUUM_INVALID", "The Vacuum Event envelope is invalid.")
+	}
+	nextReplica, err := r.replicas[id].AdoptVacuum(baseline, event)
+	if err != nil {
+		return nil, commandError("VAULT_VACUUM_INVALID", "The Vacuum Event could not be adopted.")
+	}
+	if err := storeOpaqueCreationItem(r.deps.Artifacts, baselineEnvelope.StorageItemID, baselineEnvelope.Bytes); err != nil {
+		return nil, commandError("VAULT_CREATION_STORAGE_FAILED", "The successor Baseline could not be stored.")
+	}
+	if err := storeOpaqueCreationItem(r.deps.Artifacts, eventEnvelope.StorageItemID, eventEnvelope.Bytes); err != nil {
+		deleteOpaqueCreationItem(r.deps.Artifacts, baselineEnvelope.StorageItemID)
+		return nil, commandError("VAULT_CREATION_STORAGE_FAILED", "The Vacuum Event could not be stored.")
+	}
+	predecessorGenerationText := value.GenerationID
+	value.GenerationID = successorGenerationText
+	value.Canonical.GenerationID = successorGenerationText
+	value.Canonical.PredecessorGenerationID = predecessorGenerationText
+	value.Canonical.BaselineID = hexIdentifier(baseline.RecordID)
+	value.Canonical.BaselineStorageItemID = hexIdentifier(baselineEnvelope.StorageItemID)
+	value.Canonical.AdoptionEventID = hexIdentifier(event.RecordID)
+	nextState := nextReplica.State()
+	value.Canonical.CausalFrontier = identifiersToHex(nextState.CausalFrontier)
+	value.Canonical.AuthorityFrontier = identifiersToHex(nextState.AuthorityFrontier)
+	value.Canonical.ContinuityRecordIDs = identifiersToHex(nextState.ContinuityRecordIDs)
+	if value.Canonical.RecordStorageItemIDs == nil {
+		value.Canonical.RecordStorageItemIDs = map[string]string{}
+	}
+	value.Canonical.RecordStorageItemIDs[hexIdentifier(baseline.RecordID)] = hexIdentifier(baselineEnvelope.StorageItemID)
+	value.Canonical.RecordStorageItemIDs[hexIdentifier(event.RecordID)] = hexIdentifier(eventEnvelope.StorageItemID)
+	r.replicas[id] = nextReplica
 	if err := r.persistLocked(ctx); err != nil {
 		r.restoreLocked(before)
+		deleteOpaqueCreationItem(r.deps.Artifacts, baselineEnvelope.StorageItemID)
+		deleteOpaqueCreationItem(r.deps.Artifacts, eventEnvelope.StorageItemID)
 		return nil, err
 	}
 	r.signal()
-	return map[string]string{"predecessorGenerationId": predecessor, "successorGenerationId": successor, "vacuumEventRecordId": vacuumEvent, "successorBaselineId": baseline}, nil
+	return map[string]string{"predecessorGenerationId": hexIdentifier(predecessorGenerationID), "successorGenerationId": successorGenerationText, "vacuumEventRecordId": hexIdentifier(event.RecordID), "successorBaselineId": hexIdentifier(baseline.RecordID)}, nil
 }
 
 func (r *Runtime) listRemotes(id string) (any, error) {
@@ -1993,6 +2111,13 @@ func validatePersistedVault(value persistedVault) error {
 				return errors.New("Vault state contains an invalid canonical identity")
 			}
 		}
+		if value.Canonical.AdoptionEventID != "" {
+			if !validDigest(value.Canonical.AdoptionEventID) || !validDigest(value.Canonical.PredecessorGenerationID) || value.Canonical.AdoptionEventID == value.Canonical.GenesisID {
+				return errors.New("Vault state contains an invalid Vacuum Adoption")
+			}
+		} else if value.Canonical.PredecessorGenerationID != "" {
+			return errors.New("Vault state contains an incomplete Vacuum Adoption")
+		}
 		if len(value.Canonical.CausalFrontier) == 0 || len(value.Canonical.AuthorityFrontier) == 0 || len(value.Canonical.ContinuityRecordIDs) == 0 {
 			return errors.New("Vault state contains incomplete canonical frontiers")
 		}
@@ -2225,7 +2350,7 @@ func (r *Runtime) openCanonicalReplica(value persistedVault) (*Replica, error) {
 	if err != nil {
 		return nil, fmt.Errorf("decode Genesis: %w", err)
 	}
-	if genesis.VaultID != vaultID || genesis.GenerationID != generationID || hexIdentifier(genesis.RecordID) != state.GenesisID || hexIdentifier(genesis.RequiredFeatureSetID) != state.RequiredFeatureSetID {
+	if genesis.VaultID != vaultID || (state.AdoptionEventID == "" && genesis.GenerationID != generationID) || hexIdentifier(genesis.RecordID) != state.GenesisID || hexIdentifier(genesis.RequiredFeatureSetID) != state.RequiredFeatureSetID {
 		return nil, errors.New("Genesis identity does not match persisted Replica state")
 	}
 	clientEnvelopeBytes, err := readArtifact(state.ClientEnvelopeStorageID)
@@ -2250,6 +2375,12 @@ func (r *Runtime) openCanonicalReplica(value persistedVault) (*Replica, error) {
 		}
 		return nil, err
 	}
+	if state.RecordStorageItemIDs[state.BaselineID] != state.BaselineStorageItemID || state.RecordStorageItemIDs[state.GenesisID] != state.GenesisStorageItemID {
+		return nil, errors.New("initial Record storage mappings do not match canonical Replica state")
+	}
+	if state.AdoptionEventID != "" {
+		return r.openAdoptedCanonicalReplica(value, state, vaultID, generationID, epochSecret, baseline, genesis, readArtifact)
+	}
 	replica, err := NewReplica(baseline)
 	if err != nil {
 		return nil, err
@@ -2260,9 +2391,6 @@ func (r *Runtime) openCanonicalReplica(value persistedVault) (*Replica, error) {
 	}
 	if err := replica.AdmitEvent(genesis, ed25519.PublicKey(genesisSigningKey)); err != nil {
 		return nil, fmt.Errorf("admit persisted Genesis: %w", err)
-	}
-	if state.RecordStorageItemIDs[state.BaselineID] != state.BaselineStorageItemID || state.RecordStorageItemIDs[state.GenesisID] != state.GenesisStorageItemID {
-		return nil, errors.New("initial Record storage mappings do not match canonical Replica state")
 	}
 	additional := make(map[string]canonical.Event)
 	for recordID, storageItemID := range state.RecordStorageItemIDs {
@@ -2334,6 +2462,157 @@ func (r *Runtime) openCanonicalReplica(value persistedVault) (*Replica, error) {
 		return nil, errors.New("persisted Replica frontiers do not match authenticated records")
 	}
 	return replica, nil
+}
+
+func (r *Runtime) openAdoptedCanonicalReplica(value persistedVault, state *canonicalReplicaState, vaultID, generationID canonical.Identifier, epochSecret decodedEpochSecret, baseline canonical.Baseline, genesis canonical.Event, readArtifact func(string) ([]byte, error)) (*Replica, error) {
+	predecessorGenerationID, err := decodeHexIdentifier(state.PredecessorGenerationID)
+	if err != nil {
+		return nil, errors.New("Vacuum predecessor Generation identity is invalid")
+	}
+	var predecessorBaselineID canonical.Identifier
+	for _, dependency := range genesis.Dependencies {
+		if dependency.Type == 2 {
+			predecessorBaselineID = dependency.ID
+			break
+		}
+	}
+	if predecessorBaselineID == (canonical.Identifier{}) {
+		return nil, errors.New("Genesis does not identify its predecessor Baseline")
+	}
+	predecessorStorageItemID, ok := state.RecordStorageItemIDs[hexIdentifier(predecessorBaselineID)]
+	if !ok {
+		return nil, errors.New("Vacuum predecessor Baseline storage mapping is missing")
+	}
+	predecessorBytes, err := readArtifact(predecessorStorageItemID)
+	if err != nil {
+		return nil, fmt.Errorf("read predecessor Baseline: %w", err)
+	}
+	openedPredecessor, err := awsmcrypto.OpenCompactItem(vaultID, epochSecretKeyID(state), epochSecret.key, predecessorBytes)
+	if err != nil || openedPredecessor.PayloadType != 1 {
+		return nil, errors.New("predecessor Baseline envelope is invalid")
+	}
+	predecessorBaseline, err := canonical.DecodeBaseline(openedPredecessor.PayloadBytes)
+	if err != nil || predecessorBaseline.RecordID != predecessorBaselineID || predecessorBaseline.GenerationID != predecessorGenerationID || predecessorBaseline.VaultID != vaultID {
+		return nil, errors.New("predecessor Baseline identity is invalid")
+	}
+	oldReplica, err := NewReplica(predecessorBaseline)
+	if err != nil {
+		return nil, err
+	}
+	_, genesisSigningKey, err := genesisCredential(genesis)
+	if err != nil {
+		return nil, err
+	}
+	if err := oldReplica.AdmitEvent(genesis, ed25519.PublicKey(genesisSigningKey)); err != nil {
+		return nil, fmt.Errorf("admit predecessor Genesis: %w", err)
+	}
+	oldEvents := make(map[string]canonical.Event)
+	newEvents := make(map[string]canonical.Event)
+	var adoption canonical.Event
+	foundAdoption := false
+	for recordID, storageItemID := range state.RecordStorageItemIDs {
+		if recordID == state.BaselineID || recordID == state.GenesisID || recordID == hexIdentifier(predecessorBaselineID) {
+			continue
+		}
+		encoded, err := readArtifact(storageItemID)
+		if err != nil {
+			return nil, fmt.Errorf("read persisted Record %s: %w", recordID, err)
+		}
+		opened, err := awsmcrypto.OpenCompactItem(vaultID, epochSecretKeyID(state), epochSecret.key, encoded)
+		if err != nil || opened.PayloadType != 1 {
+			return nil, errors.New("persisted Vacuum Record envelope is invalid")
+		}
+		event, err := canonical.DecodeEvent(opened.PayloadBytes)
+		if err != nil || hexIdentifier(event.RecordID) != recordID || hexIdentifier(opened.Envelope.StorageItemID) != storageItemID {
+			return nil, errors.New("persisted Vacuum Record identity is invalid")
+		}
+		if recordID == state.AdoptionEventID {
+			adoption = event
+			foundAdoption = true
+			continue
+		}
+		if event.GenerationID == predecessorGenerationID {
+			oldEvents[recordID] = event
+		} else if event.GenerationID == generationID {
+			newEvents[recordID] = event
+		} else {
+			return nil, errors.New("persisted Record belongs to an unknown Vacuum Generation")
+		}
+	}
+	if !foundAdoption || adoption.Family != canonical.LifecycleFamily || adoption.Type != 1 {
+		return nil, errors.New("Vacuum Adoption Event is missing or invalid")
+	}
+	for len(oldEvents) > 0 {
+		progress := false
+		for _, recordID := range sortedStringKeys(oldEvents) {
+			event := oldEvents[recordID]
+			if !replicaParentsAdmitted(oldReplica, event) {
+				continue
+			}
+			if err := oldReplica.AdmitKnownEvent(event); err != nil {
+				return nil, fmt.Errorf("admit predecessor Record %s: %w", recordID, err)
+			}
+			delete(oldEvents, recordID)
+			progress = true
+		}
+		if !progress {
+			return nil, errors.New("predecessor Vacuum graph cannot reach its admitted parents")
+		}
+	}
+	if !replicaParentsAdmitted(oldReplica, adoption) {
+		return nil, errors.New("Vacuum Adoption Event parents are not admitted")
+	}
+	replica, err := oldReplica.AdoptVacuum(baseline, adoption)
+	if err != nil {
+		return nil, err
+	}
+	for len(newEvents) > 0 {
+		progress := false
+		for _, recordID := range sortedStringKeys(newEvents) {
+			event := newEvents[recordID]
+			if !replicaParentsAdmitted(replica, event) {
+				continue
+			}
+			if err := replica.AdmitKnownEvent(event); err != nil {
+				return nil, fmt.Errorf("admit successor Record %s: %w", recordID, err)
+			}
+			delete(newEvents, recordID)
+			progress = true
+		}
+		if !progress {
+			return nil, errors.New("successor Vacuum graph cannot reach its admitted parents")
+		}
+	}
+	for objectID, storageItemID := range state.ObjectStorageItemIDs {
+		encoded, err := readArtifact(storageItemID)
+		if err != nil {
+			return nil, fmt.Errorf("read persisted Object %s: %w", objectID, err)
+		}
+		opened, err := awsmcrypto.OpenCompactItem(vaultID, epochSecretKeyID(state), epochSecret.key, encoded)
+		if err != nil || opened.PayloadType != 2 {
+			return nil, errors.New("persisted Object envelope is invalid")
+		}
+		objectIdentifier, err := decodeHexIdentifier(objectID)
+		if err != nil {
+			return nil, err
+		}
+		if err := replica.AdmitObject(objectIdentifier, opened.PayloadBytes); err != nil {
+			return nil, fmt.Errorf("admit persisted Object %s: %w", objectID, err)
+		}
+		if hexIdentifier(opened.Envelope.StorageItemID) != storageItemID {
+			return nil, errors.New("persisted Object Storage Item identity changed")
+		}
+	}
+	actual := replica.State()
+	if !identifierSetEqual(actual.CausalFrontier, state.CausalFrontier) || !identifierSetEqual(actual.AuthorityFrontier, state.AuthorityFrontier) || !identifierSetEqual(actual.ContinuityRecordIDs, state.ContinuityRecordIDs) {
+		return nil, errors.New("persisted adopted Replica frontiers do not match authenticated records")
+	}
+	return replica, nil
+}
+
+func epochSecretKeyID(state *canonicalReplicaState) canonical.Identifier {
+	identifier, _ := decodeHexIdentifier(state.KeyEpochID)
+	return identifier
 }
 
 type decodedEpochSecret struct {
@@ -2621,6 +2900,17 @@ func identifiersToValues(values []canonical.Identifier) []canonical.Value {
 	result := make([]canonical.Value, len(values))
 	for index, value := range values {
 		result[index] = append([]byte(nil), value[:]...)
+	}
+	return result
+}
+
+func cloneExtensions(value map[string][]byte) map[string][]byte {
+	if value == nil {
+		return map[string][]byte{}
+	}
+	result := make(map[string][]byte, len(value))
+	for key, bytesValue := range value {
+		result[key] = append([]byte(nil), bytesValue...)
 	}
 	return result
 }

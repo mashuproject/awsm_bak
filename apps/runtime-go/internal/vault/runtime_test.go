@@ -624,6 +624,41 @@ func TestRecoveryPhraseReplacementAuthorsAuthenticatedAuthorityEvent(t *testing.
 	}
 }
 
+func TestVacuumAdoptsAuthenticatedSuccessorBaselineAndReopens(t *testing.T) {
+	ctx := context.Background()
+	state := store.NewMemoryState()
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vaultID := createVaultForTest(t, runtime, "Vacuum")
+	before := cloneCanonicalState(runtime.vaults[vaultID].Canonical)
+	resultValue, err := runtime.Handle(ctx, mustJSON(map[string]any{"type": "VacuumVault", "expectedVaultId": vaultID}))
+	if err != nil {
+		t.Fatalf("VacuumVault: %v", err)
+	}
+	result, ok := resultValue.(map[string]string)
+	if !ok || result["successorGenerationId"] == "" || result["successorBaselineId"] == "" || result["vacuumEventRecordId"] == "" {
+		t.Fatalf("Vacuum result = %#v", resultValue)
+	}
+	value := runtime.vaults[vaultID]
+	if value.GenerationID == before.GenerationID || value.Canonical.GenerationID != result["successorGenerationId"] || value.Canonical.BaselineID != result["successorBaselineId"] || value.Canonical.AdoptionEventID != result["vacuumEventRecordId"] {
+		t.Fatalf("Vacuum state = %#v, before = %#v", value, before)
+	}
+	record, ok := runtime.replicas[vaultID].Record(mustIdentifier(t, result["vacuumEventRecordId"]))
+	if !ok || record.Event == nil || record.Event.Family != canonical.LifecycleFamily || record.Event.Type != 1 {
+		t.Fatalf("Vacuum Event = %#v", record)
+	}
+	restarted, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatalf("restart after Vacuum: %v", err)
+	}
+	if restarted.vaults[vaultID].Canonical.BaselineID != result["successorBaselineId"] || restarted.vaults[vaultID].Canonical.AdoptionEventID != result["vacuumEventRecordId"] {
+		t.Fatalf("restarted Vacuum state = %#v", restarted.vaults[vaultID])
+	}
+}
+
 func mustIdentifier(t *testing.T, value string) canonical.Identifier {
 	t.Helper()
 	identifier, err := decodeHexIdentifier(value)
