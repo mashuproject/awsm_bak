@@ -932,6 +932,149 @@ func TestRotateKeyEpochAuthorsAuthenticatedTransitionAndReopens(t *testing.T) {
 	}
 }
 
+func TestEndMembershipAuthorsAuthenticatedEventAndClosesLastAdministrator(t *testing.T) {
+	ctx := context.Background()
+	state := store.NewMemoryState()
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vaultID, _ := createVaultWithPhraseForTest(t, runtime, "Membership end")
+	targetMemberID := runtime.vaults[vaultID].Canonical.MemberID
+	result, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "EndMembership", "expectedVaultId": vaultID, "targetMemberId": targetMemberID,
+	}))
+	if err != nil {
+		t.Fatalf("EndMembership: %v", err)
+	}
+	ended, ok := result.(map[string]string)
+	if !ok {
+		t.Fatalf("EndMembership result = %#v", result)
+	}
+	recordID := ended["eventRecordId"]
+	if !validDigest(recordID) {
+		t.Fatalf("EndMembership event record = %#v", ended["eventRecordId"])
+	}
+	record, ok := runtime.replicas[vaultID].Record(mustIdentifier(t, recordID))
+	if !ok || record.Event == nil || record.Event.Family != canonical.AuthorityFamily || record.Event.Type != 2 {
+		t.Fatalf("EndMembership record = %#v", record)
+	}
+	if runtime.vaults[vaultID].Lifecycle != "Closed" || runtime.vaults[vaultID].Canonical.AuthoringAvailable {
+		t.Fatalf("ended last Administrator state = %#v", runtime.vaults[vaultID])
+	}
+	authority, err := runtime.replicas[vaultID].AuthorityState()
+	if err != nil {
+		t.Fatalf("AuthorityState after Membership End: %v", err)
+	}
+	if len(authority.ActiveMemberIDs) != 0 || len(authority.AdministratorIDs) != 0 || authority.Lifecycle != "Closed" {
+		t.Fatalf("AuthorityState after Membership End = %#v", authority)
+	}
+	restarted, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatalf("restart after Membership End: %v", err)
+	}
+	if restarted.vaults[vaultID].Lifecycle != "Closed" || restarted.vaults[vaultID].Canonical.AuthoringAvailable {
+		t.Fatalf("restarted Membership End state = %#v", restarted.vaults[vaultID])
+	}
+}
+
+func TestAdmitOpaqueMembershipEndClosesReadOnlyReplica(t *testing.T) {
+	ctx := context.Background()
+	sourceDependencies := memoryDependencies(t)
+	source, err := New(ctx, store.NewMemoryState(), sourceDependencies)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vaultID, _ := createVaultWithPhraseForTest(t, source, "Remote Membership end")
+	payload, err := source.ExportTransfer(vaultID)
+	if err != nil {
+		t.Fatalf("ExportTransfer: %v", err)
+	}
+	destinationState := store.NewMemoryState()
+	destinationDependencies := memoryDependencies(t)
+	destination, err := New(ctx, destinationState, destinationDependencies)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := destination.ImportTransfer(ctx, payload); err != nil {
+		t.Fatalf("ImportTransfer: %v", err)
+	}
+	result, err := source.Handle(ctx, mustJSON(map[string]any{
+		"type": "EndMembership", "expectedVaultId": vaultID,
+		"targetMemberId": source.vaults[vaultID].Canonical.MemberID,
+	}))
+	if err != nil {
+		t.Fatalf("source EndMembership: %v", err)
+	}
+	ended := result.(map[string]string)
+	storageItemID := source.vaults[vaultID].Canonical.RecordStorageItemIDs[ended["eventRecordId"]]
+	reader, err := sourceDependencies.Artifacts.Open(storageItemID)
+	if err != nil {
+		t.Fatalf("open source Membership End Event: %v", err)
+	}
+	encoded, err := io.ReadAll(reader)
+	_ = reader.Close()
+	if err != nil {
+		t.Fatalf("read source Membership End Event: %v", err)
+	}
+	if err := destination.AdmitOpaqueEvent(ctx, vaultID, encoded); err != nil {
+		t.Fatalf("destination AdmitOpaqueEvent: %v", err)
+	}
+	if destination.vaults[vaultID].Lifecycle != "Closed" || destination.vaults[vaultID].Canonical.AuthoringAvailable {
+		t.Fatalf("destination Membership End state = %#v", destination.vaults[vaultID])
+	}
+	restarted, err := New(ctx, destinationState, destinationDependencies)
+	if err != nil {
+		t.Fatalf("restart destination: %v", err)
+	}
+	if restarted.vaults[vaultID].Lifecycle != "Closed" || restarted.vaults[vaultID].Canonical.AuthoringAvailable {
+		t.Fatalf("restarted destination Membership End state = %#v", restarted.vaults[vaultID])
+	}
+}
+
+func TestDeliverKeyEnvelopeAuthorsAuthenticatedDeliveryForMissingClientSlot(t *testing.T) {
+	ctx := context.Background()
+	state := store.NewMemoryState()
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vaultID, _ := createVaultWithPhraseForTest(t, runtime, "Key delivery")
+	value := runtime.vaults[vaultID]
+	oldStorageID := value.Canonical.ClientEnvelopeStorageID
+	deleteOpaqueCreationItem(dependencies.Artifacts, mustIdentifier(t, oldStorageID))
+	result, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "DeliverKeyEnvelope", "expectedVaultId": vaultID,
+		"keyEpochId": value.Canonical.KeyEpochID, "targetKind": uint64(2),
+		"targetCredentialId": value.Canonical.ClientCredentialID,
+	}))
+	if err != nil {
+		t.Fatalf("DeliverKeyEnvelope: %v", err)
+	}
+	delivered, ok := result.(map[string]string)
+	if !ok {
+		t.Fatalf("DeliverKeyEnvelope result = %#v", result)
+	}
+	if delivered["keyEpochId"] != value.Canonical.KeyEpochID || delivered["targetCredentialId"] != value.Canonical.ClientCredentialID || !validDigest(delivered["envelopeId"]) || !validDigest(delivered["eventRecordId"]) {
+		t.Fatalf("DeliverKeyEnvelope result = %#v", delivered)
+	}
+	if delivered["eventRecordId"] == "" {
+		t.Fatalf("DeliverKeyEnvelope did not record a delivery Event = %#v", delivered)
+	}
+	record, ok := runtime.replicas[vaultID].Record(mustIdentifier(t, delivered["eventRecordId"]))
+	if !ok || record.Event == nil || record.Event.Family != canonical.AuthorityFamily || record.Event.Type != 13 {
+		t.Fatalf("DeliverKeyEnvelope record = %#v", record)
+	}
+	if _, err := dependencies.Artifacts.Open(value.Canonical.ClientEnvelopeStorageID); err != nil {
+		t.Fatalf("delivered local Client envelope is unavailable: %v", err)
+	}
+	if _, err := New(ctx, state, dependencies); err != nil {
+		t.Fatalf("restart after Key Delivery: %v", err)
+	}
+}
+
 func TestEndClientCredentialAuthorsAuthenticatedEventAndReopensReadOnly(t *testing.T) {
 	ctx := context.Background()
 	state := store.NewMemoryState()
