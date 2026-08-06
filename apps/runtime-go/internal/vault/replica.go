@@ -99,6 +99,21 @@ func (r *Replica) AdmitEvent(event canonical.Event, signerPublicKey ed25519.Publ
 	if !canonical.VerifyEventSignature(decoded, signerPublicKey) {
 		return errors.New("Event signature is invalid")
 	}
+	if decoded.Family == canonical.AuthorityFamily && decoded.Type == 12 {
+		events := r.Events()
+		events = append(events, decoded)
+		genesisEvent := decoded
+		if r.genesisID != (canonical.Identifier{}) {
+			genesisRecord, exists := r.records[r.genesisID]
+			if !exists || genesisRecord.Event == nil {
+				return errors.New("Key Epoch Transition has no authenticated Genesis")
+			}
+			genesisEvent = *genesisRecord.Event
+		}
+		if _, replayErr := replayAuthenticatedKeyEpochs(events, genesisEvent, nil); replayErr != nil {
+			return fmt.Errorf("admit Key Epoch Transition: %w", replayErr)
+		}
+	}
 	var enrollment *enrollmentCredential
 	if decoded.Family == canonical.AuthorityFamily && decoded.Type == 9 {
 		parsed, err := parseEnrollmentCredential(decoded)

@@ -118,6 +118,7 @@ type canonicalReplicaState struct {
 	RecoveryEnvelopeStorageID     string            `json:"recoveryEnvelopeStorageItemId"`
 	ClientEnvelopeID              string            `json:"clientEnvelopeId"`
 	ClientEnvelopeStorageID       string            `json:"clientEnvelopeStorageItemId"`
+	KeyEnvelopeStorageItemIDs     map[string]string `json:"keyEnvelopeStorageItemIds"`
 	AuthoringAvailable            bool              `json:"authoringAvailable"`
 	CausalFrontier                []string          `json:"causalFrontier"`
 	AuthorityFrontier             []string          `json:"authorityFrontier"`
@@ -380,9 +381,14 @@ func (r *Runtime) ExportTransfer(vaultID string) ([]byte, error) {
 		artifacts[storageItemID] = encoded
 		return nil
 	}
-	for _, storageItemID := range []string{value.Canonical.BaselineStorageItemID, value.Canonical.GenesisStorageItemID, value.Canonical.RecoveryEnvelopeStorageID, value.Canonical.ClientEnvelopeStorageID} {
+	for _, storageItemID := range []string{value.Canonical.BaselineStorageItemID, value.Canonical.GenesisStorageItemID} {
 		if err := addArtifact(storageItemID); err != nil {
 			return nil, commandError("TRANSFER_PACKAGE_UNAVAILABLE", "A required Vault closure item is unavailable.")
+		}
+	}
+	for _, storageItemID := range value.Canonical.KeyEnvelopeStorageItemIDs {
+		if err := addArtifact(storageItemID); err != nil {
+			return nil, commandError("TRANSFER_PACKAGE_UNAVAILABLE", "A required Key Envelope is unavailable.")
 		}
 	}
 	for _, storageItemID := range value.Canonical.RecordStorageItemIDs {
@@ -1708,11 +1714,10 @@ func (r *Runtime) recoverMember(ctx context.Context, id, phrase string) (any, er
 		deleteOpaqueCreationItem(r.deps.Artifacts, envelope.StorageItemID)
 		return nil, commandError("TRUSTED_SECRET_UNAVAILABLE", "The recovered Client Credential could not be stored.")
 	}
-	previousClientEnvelopeStorageID := value.Canonical.ClientEnvelopeStorageID
 	value.Canonical.ClientCredentialID = credentialBytes
 	value.Canonical.ClientEnvelopeID = hexIdentifier(clientEnvelope.ID)
 	value.Canonical.ClientEnvelopeStorageID = hexIdentifier(clientEnvelope.Envelope.StorageItemID)
-	delete(value.Canonical.StorageItemKeyEpochIDs, previousClientEnvelopeStorageID)
+	value.Canonical.KeyEnvelopeStorageItemIDs[value.Canonical.ClientEnvelopeID] = value.Canonical.ClientEnvelopeStorageID
 	bindStorageItemKeyEpoch(value.Canonical, value.Canonical.ClientEnvelopeStorageID, epochID)
 	value.Canonical.AuthoringAvailable = true
 	nextState := nextReplica.State()
@@ -1910,11 +1915,10 @@ func (r *Runtime) confirmReplacement(ctx context.Context, setupID, phrase string
 	}
 	value.RecoveryHash = pending.PhraseHash
 	value.RecoveryRevision = pending.RecoveryRevision
-	previousRecoveryEnvelopeStorageID := value.Canonical.RecoveryEnvelopeStorageID
 	value.Canonical.RecoveryCredentialID = newRecoveryIDText
 	value.Canonical.RecoveryEnvelopeID = hexIdentifier(recoveryEnvelope.ID)
 	value.Canonical.RecoveryEnvelopeStorageID = hexIdentifier(recoveryEnvelope.Envelope.StorageItemID)
-	delete(value.Canonical.StorageItemKeyEpochIDs, previousRecoveryEnvelopeStorageID)
+	value.Canonical.KeyEnvelopeStorageItemIDs[value.Canonical.RecoveryEnvelopeID] = value.Canonical.RecoveryEnvelopeStorageID
 	bindStorageItemKeyEpoch(value.Canonical, value.Canonical.RecoveryEnvelopeStorageID, epochID)
 	nextState := nextReplica.State()
 	value.Canonical.CausalFrontier = identifiersToHex(nextState.CausalFrontier)
@@ -2543,6 +2547,17 @@ func validatePersistedVault(value persistedVault) error {
 				return errors.New("Vault state contains an invalid canonical Artifact storage mapping")
 			}
 		}
+		for envelopeID, storageItemID := range value.Canonical.KeyEnvelopeStorageItemIDs {
+			if !validDigest(envelopeID) || !validDigest(storageItemID) {
+				return errors.New("Vault state contains an invalid canonical Key Envelope storage mapping")
+			}
+		}
+		for _, envelopeID := range []string{value.Canonical.RecoveryEnvelopeID, value.Canonical.ClientEnvelopeID} {
+			storageItemID, ok := value.Canonical.KeyEnvelopeStorageItemIDs[envelopeID]
+			if !ok || storageItemID == "" {
+				return errors.New("Vault state is missing a current Key Envelope storage mapping")
+			}
+		}
 		for storageItemID, epochID := range value.Canonical.StorageItemKeyEpochIDs {
 			if !validDigest(storageItemID) || !validDigest(epochID) {
 				return errors.New("Vault state contains an invalid canonical Storage Item Key Epoch mapping")
@@ -2602,7 +2617,7 @@ func canonicalStorageItemIDs(state *canonicalReplicaState) []string {
 		}
 	}
 	for _, mappings := range []map[string]string{
-		state.RecordStorageItemIDs, state.ObjectStorageItemIDs,
+		state.RecordStorageItemIDs, state.ObjectStorageItemIDs, state.KeyEnvelopeStorageItemIDs,
 		state.FeatureManifestStorageItemIDs, state.ArtifactStorageItemIDs,
 	} {
 		for _, storageItemID := range mappings {
@@ -2729,6 +2744,10 @@ func cloneCanonicalState(value *canonicalReplicaState) *canonicalReplicaState {
 	for artifactID, storageItemID := range value.ArtifactStorageItemIDs {
 		copyValue.ArtifactStorageItemIDs[artifactID] = storageItemID
 	}
+	copyValue.KeyEnvelopeStorageItemIDs = make(map[string]string, len(value.KeyEnvelopeStorageItemIDs))
+	for envelopeID, storageItemID := range value.KeyEnvelopeStorageItemIDs {
+		copyValue.KeyEnvelopeStorageItemIDs[envelopeID] = storageItemID
+	}
 	copyValue.StorageItemKeyEpochIDs = make(map[string]string, len(value.StorageItemKeyEpochIDs))
 	for storageItemID, epochID := range value.StorageItemKeyEpochIDs {
 		copyValue.StorageItemKeyEpochIDs[storageItemID] = epochID
@@ -2768,6 +2787,10 @@ func canonicalReplicaFromCreation(prepared PreparedCanonicalVaultCreation) *cano
 		ObjectStorageItemIDs:          map[string]string{},
 		FeatureManifestStorageItemIDs: featureMappings,
 		ArtifactStorageItemIDs:        map[string]string{},
+		KeyEnvelopeStorageItemIDs: map[string]string{
+			hexIdentifier(prepared.RecoveryKeyEnvelope.ID): hexIdentifier(prepared.RecoveryKeyEnvelope.Envelope.StorageItemID),
+			hexIdentifier(prepared.ClientKeyEnvelope.ID):   hexIdentifier(prepared.ClientKeyEnvelope.Envelope.StorageItemID),
+		},
 		StorageItemKeyEpochIDs: map[string]string{
 			hexIdentifier(prepared.BaselineEnvelope.StorageItemID):             hexIdentifier(prepared.KeyEpochID),
 			hexIdentifier(prepared.GenesisEnvelope.StorageItemID):              hexIdentifier(prepared.KeyEpochID),
@@ -3007,6 +3030,9 @@ func (r *Runtime) openCanonicalReplica(value persistedVault) (*Replica, error) {
 		if !progress {
 			return nil, errors.New("persisted Record graph cannot reach its admitted parents")
 		}
+	}
+	if err := validateReplicaKeyEpochHistory(replica, state); err != nil {
+		return nil, fmt.Errorf("persisted Key Epoch Authority history is invalid: %w", err)
 	}
 	for objectID, storageItemID := range state.ObjectStorageItemIDs {
 		encoded, err := readArtifact(storageItemID)

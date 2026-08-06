@@ -3,10 +3,12 @@ package vault
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"sort"
 	"testing"
 
 	"github.com/mashuproject/awsm_bak/apps/runtime-go/internal/canonical"
@@ -67,7 +69,12 @@ func TestRuntimeCompleteExportPreservesPerItemKeyEpochsAcrossImportAndRestart(t 
 	if err != nil {
 		t.Fatalf("create Runtime: %v", err)
 	}
-	vaultID, phrase := createVaultWithPhraseForTest(t, runtime, "Multiple epochs")
+	phrase := "abandon amount liar amount expire adjust cage candy arch gather drum buyer"
+	prepared, err := PrepareCanonicalVaultCreation(CreationInput{RecoveryPhrase: phrase})
+	if err != nil {
+		t.Fatalf("prepare multi-epoch Vault: %v", err)
+	}
+	vaultID := installPreparedCreationForTest(t, runtime, dependencies, prepared)
 	value := runtime.vaults[vaultID]
 	vaultIdentifier, err := decodeHexIdentifier(vaultID)
 	if err != nil {
@@ -81,6 +88,9 @@ func TestRuntimeCompleteExportPreservesPerItemKeyEpochsAcrossImportAndRestart(t 
 	if err := dependencies.Secrets.Put(trustedSecretService, epochSecretAccount(vaultID, hexIdentifier(newEpochID)), mustEncodeImportedEpochSecret(vaultIdentifier, newEpochID, newKey)); err != nil {
 		t.Fatalf("store second Key Epoch: %v", err)
 	}
+	transitionEvent, transitionStorage := admitTestKeyEpochTransition(t, runtime, dependencies, vaultID, prepared, newEpochID, newKey)
+	value.Canonical.RecordStorageItemIDs[hexIdentifier(transitionEvent.RecordID)] = hexIdentifier(transitionStorage.StorageItemID)
+	bindStorageItemKeyEpoch(value.Canonical, hexIdentifier(transitionStorage.StorageItemID), prepared.KeyEpochID)
 	featureSetID, err := decodeHexIdentifier(value.Canonical.RequiredFeatureSetID)
 	if err != nil {
 		t.Fatalf("decode Required Feature Set ID: %v", err)
@@ -167,6 +177,150 @@ func TestRuntimeCompleteExportPreservesPerItemKeyEpochsAcrossImportAndRestart(t 
 	}
 	if _, ok := restarted.replicas[vaultID].Object(objectID); !ok {
 		t.Fatalf("restarted Replica omitted second-epoch Object %s", hexIdentifier(objectID))
+	}
+}
+
+func admitTestKeyEpochTransition(t *testing.T, runtime *Runtime, dependencies Dependencies, vaultID string, prepared PreparedCanonicalVaultCreation, newEpochID [32]byte, newKey []byte) (canonical.Event, storage.OpaqueEnvelope) {
+	t.Helper()
+	vaultIdentifier, err := decodeHexIdentifier(vaultID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recoveryRevision := uint64(0)
+	recoveryEnvelope, err := awsmcrypto.SealKeyEnvelope(awsmcrypto.KeyEnvelopeInput{
+		VaultID: vaultIdentifier, KeyEpochID: newEpochID, KeyEpochKey: newKey,
+		TargetKind: awsmcrypto.RecoveryCredentialTarget, TargetCredentialID: prepared.IDs.RecoveryCredentialID,
+		TargetRevision: &recoveryRevision, RecipientWrappingPublicKey: prepared.RecoveryKeys.WrappingPublicKey,
+	})
+	if err != nil {
+		t.Fatalf("seal transition Recovery Envelope: %v", err)
+	}
+	clientEnvelope, err := awsmcrypto.SealKeyEnvelope(awsmcrypto.KeyEnvelopeInput{
+		VaultID: vaultIdentifier, KeyEpochID: newEpochID, KeyEpochKey: newKey,
+		TargetKind: awsmcrypto.ClientCredentialTarget, TargetCredentialID: prepared.IDs.ClientCredentialID,
+		RecipientWrappingPublicKey: prepared.ClientKeys.WrappingPublicKey,
+	})
+	if err != nil {
+		t.Fatalf("seal transition Client Envelope: %v", err)
+	}
+	for _, envelope := range []awsmcrypto.KeyEnvelope{recoveryEnvelope, clientEnvelope} {
+		if err := storeOpaqueCreationItem(dependencies.Artifacts, envelope.Envelope.StorageItemID, envelope.Envelope.Bytes); err != nil {
+			t.Fatalf("store transition Key Envelope: %v", err)
+		}
+		runtime.vaults[vaultID].Canonical.KeyEnvelopeStorageItemIDs[hexIdentifier(envelope.ID)] = hexIdentifier(envelope.Envelope.StorageItemID)
+		bindStorageItemKeyEpoch(runtime.vaults[vaultID].Canonical, hexIdentifier(envelope.Envelope.StorageItemID), newEpochID)
+	}
+	recoverySlot := canonical.Map{0: newEpochID[:], 1: uint64(1), 2: prepared.IDs.RecoveryCredentialID[:], 3: uint64(0), 4: recoveryEnvelope.ID[:]}
+	clientSlot := canonical.Map{0: newEpochID[:], 1: uint64(2), 2: prepared.IDs.ClientCredentialID[:], 3: nil, 4: clientEnvelope.ID[:]}
+	state := runtime.replicas[vaultID].State()
+	dependenciesList := []canonical.Dependency{{Type: 7, ID: recoveryEnvelope.ID}, {Type: 7, ID: clientEnvelope.ID}}
+	sort.Slice(dependenciesList, func(left, right int) bool {
+		return bytes.Compare(dependenciesList[left].ID[:], dependenciesList[right].ID[:]) < 0
+	})
+	event, err := canonical.SignEvent(canonical.EventInput{
+		VaultID: vaultIdentifier, GenerationID: prepared.IDs.GenerationID,
+		ParentRecordIDs: state.CausalFrontier, AuthorityParentIDs: state.AuthorityFrontier,
+		Dependencies: dependenciesList, RequiredFeatureSetID: prepared.RequiredFeatureSetID,
+		Extensions: map[string][]byte{}, Family: canonical.AuthorityFamily, Type: 12,
+		SignerCredentialID: prepared.IDs.ClientCredentialID, AssertedAt: prepared.Genesis.AssertedAt + 1,
+		Body: canonical.Map{0: canonicalSetValues([]canonical.Value{prepared.KeyEpochID[:]}), 1: newEpochID[:], 2: uint64(1), 3: canonicalSetValues([]canonical.Value{recoverySlot, clientSlot})},
+	}, ed25519.PrivateKey(prepared.ClientKeys.SigningSecretKey))
+	if err != nil {
+		t.Fatalf("sign transition Event: %v", err)
+	}
+	encoded, err := awsmcrypto.SealCompactItem(awsmcrypto.CompactItemInput{
+		VaultID: vaultIdentifier, KeyEpochID: prepared.KeyEpochID, KeyEpochKey: prepared.KeyEpochKey,
+		PayloadType: 1, PayloadBytes: event.Bytes,
+	})
+	if err != nil {
+		t.Fatalf("seal transition Event: %v", err)
+	}
+	envelope, err := storage.DecodeOpaqueEnvelope(encoded)
+	if err != nil {
+		t.Fatalf("decode transition Event envelope: %v", err)
+	}
+	if err := storeOpaqueCreationItem(dependencies.Artifacts, envelope.StorageItemID, encoded); err != nil {
+		t.Fatalf("store transition Event: %v", err)
+	}
+	next := runtime.replicas[vaultID].Clone()
+	if err := next.AdmitEvent(event, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("admit transition Event: %v", err)
+	}
+	runtime.replicas[vaultID] = next
+	state = next.State()
+	runtime.vaults[vaultID].Canonical.CausalFrontier = identifiersToHex(state.CausalFrontier)
+	runtime.vaults[vaultID].Canonical.AuthorityFrontier = identifiersToHex(state.AuthorityFrontier)
+	runtime.vaults[vaultID].Canonical.ContinuityRecordIDs = identifiersToHex(state.ContinuityRecordIDs)
+	runtime.vaults[vaultID].Canonical.KeyEpochID = hexIdentifier(newEpochID)
+	runtime.vaults[vaultID].Canonical.RecoveryEnvelopeID = hexIdentifier(recoveryEnvelope.ID)
+	runtime.vaults[vaultID].Canonical.RecoveryEnvelopeStorageID = hexIdentifier(recoveryEnvelope.Envelope.StorageItemID)
+	runtime.vaults[vaultID].Canonical.ClientEnvelopeID = hexIdentifier(clientEnvelope.ID)
+	runtime.vaults[vaultID].Canonical.ClientEnvelopeStorageID = hexIdentifier(clientEnvelope.Envelope.StorageItemID)
+	return event, envelope
+}
+
+func TestRuntimeCompleteImportRejectsUnestablishedKeyEpoch(t *testing.T) {
+	ctx := context.Background()
+	dependencies := memoryDependencies(t)
+	source, err := New(ctx, store.NewMemoryState(), dependencies)
+	if err != nil {
+		t.Fatalf("create source Runtime: %v", err)
+	}
+	vaultID, phrase := createVaultWithPhraseForTest(t, source, "Unestablished epoch")
+	value := source.vaults[vaultID]
+	vaultIdentifier, err := decodeHexIdentifier(vaultID)
+	if err != nil {
+		t.Fatalf("decode Vault ID: %v", err)
+	}
+	newKey := bytes.Repeat([]byte{0x6b}, 32)
+	newEpochID, err := awsmcrypto.KeyEpochID(vaultIdentifier, newKey)
+	if err != nil {
+		t.Fatalf("derive unestablished Key Epoch ID: %v", err)
+	}
+	if err := dependencies.Secrets.Put(trustedSecretService, epochSecretAccount(vaultID, hexIdentifier(newEpochID)), mustEncodeImportedEpochSecret(vaultIdentifier, newEpochID, newKey)); err != nil {
+		t.Fatalf("store unestablished Key Epoch: %v", err)
+	}
+	featureSetID, err := decodeHexIdentifier(value.Canonical.RequiredFeatureSetID)
+	if err != nil {
+		t.Fatalf("decode Required Feature Set ID: %v", err)
+	}
+	objectBytes, err := canonical.EncodeValue(canonical.Map{
+		0: uint64(1), 1: vaultIdentifier[:], 2: uint64(1), 3: featureSetID[:],
+		4: canonical.Map{}, 5: map[string][]byte{},
+	})
+	if err != nil {
+		t.Fatalf("encode unestablished Object: %v", err)
+	}
+	objectID, err := canonical.VaultObjectID(vaultIdentifier, 1, objectBytes)
+	if err != nil {
+		t.Fatalf("derive unestablished Object ID: %v", err)
+	}
+	encoded, err := awsmcrypto.SealCompactItem(awsmcrypto.CompactItemInput{
+		VaultID: vaultIdentifier, KeyEpochID: newEpochID, KeyEpochKey: newKey,
+		PayloadType: 2, PayloadBytes: objectBytes,
+	})
+	if err != nil {
+		t.Fatalf("seal unestablished Object: %v", err)
+	}
+	envelope, err := storage.DecodeOpaqueEnvelope(encoded)
+	if err != nil {
+		t.Fatalf("decode unestablished Object envelope: %v", err)
+	}
+	if err := storeOpaqueCreationItem(dependencies.Artifacts, envelope.StorageItemID, encoded); err != nil {
+		t.Fatalf("store unestablished Object: %v", err)
+	}
+	if err := source.replicas[vaultID].AdmitObject(objectID, objectBytes); err != nil {
+		t.Fatalf("admit unestablished Object: %v", err)
+	}
+	value.Canonical.ObjectStorageItemIDs[hexIdentifier(objectID)] = hexIdentifier(envelope.StorageItemID)
+	value.Canonical.StorageItemKeyEpochIDs[hexIdentifier(envelope.StorageItemID)] = hexIdentifier(newEpochID)
+	if _, err := source.ExportComplete(vaultID, phrase); err == nil {
+		t.Fatal("ExportComplete accepted a Key Epoch absent from authenticated Authority history")
+	} else {
+		var commandErr *CommandError
+		if !errors.As(err, &commandErr) || commandErr.ID != "COMPLETE_EXPORT_UNAVAILABLE" {
+			t.Fatalf("ExportComplete error = %v, want COMPLETE_EXPORT_UNAVAILABLE", err)
+		}
 	}
 }
 

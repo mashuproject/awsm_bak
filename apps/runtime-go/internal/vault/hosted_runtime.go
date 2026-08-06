@@ -312,11 +312,8 @@ func (r *Runtime) materializationTargetsLocked(state *canonicalReplicaState) ([]
 			return nil, commandError("REMOTE_MATERIALIZATION_FAILED", "A local Vault Record could not be opened.")
 		}
 	}
-	for _, value := range []struct{ logicalID, storageItemID string }{
-		{state.RecoveryEnvelopeID, state.RecoveryEnvelopeStorageID},
-		{state.ClientEnvelopeID, state.ClientEnvelopeStorageID},
-	} {
-		if err := appendItem(hostedNamespaceKeyEnvelope, value.logicalID, value.storageItemID); err != nil {
+	for logicalID, storageItemID := range state.KeyEnvelopeStorageItemIDs {
+		if err := appendItem(hostedNamespaceKeyEnvelope, logicalID, storageItemID); err != nil {
 			return nil, commandError("REMOTE_MATERIALIZATION_FAILED", "A local Key Envelope could not be opened.")
 		}
 	}

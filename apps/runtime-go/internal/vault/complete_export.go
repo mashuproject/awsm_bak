@@ -391,6 +391,24 @@ func prepareCompleteImport(manifest completeexport.Manifest, inventory completee
 			return preparedCompleteImport{}, errors.New("Complete Export Record DAG cannot reach its parents")
 		}
 	}
+	epochKeys := make(map[canonical.Identifier][]byte, len(keyBytesByID))
+	for epochIDText, keyBytes := range keyBytesByID {
+		epochID, decodeErr := decodeHexIdentifier(epochIDText)
+		if decodeErr != nil {
+			return preparedCompleteImport{}, errors.New("Complete Export Key Epoch identity is invalid")
+		}
+		epochKeys[epochID] = append([]byte(nil), keyBytes...)
+	}
+	events := make([]canonical.Event, 0, len(allRecordValues))
+	for _, record := range allRecordValues {
+		if record.Event != nil {
+			events = append(events, *record.Event)
+		}
+	}
+	epochReplay, err := replayAuthenticatedKeyEpochs(events, *genesis, epochKeys)
+	if err != nil {
+		return preparedCompleteImport{}, fmt.Errorf("Complete Export Key Epoch Authority history is invalid: %w", err)
+	}
 	for _, object := range objectValues {
 		if err := replica.AdmitObject(object.id, object.bytes); err != nil {
 			return preparedCompleteImport{}, fmt.Errorf("admit Complete Export Object: %w", err)
@@ -446,6 +464,29 @@ func prepareCompleteImport(manifest completeexport.Manifest, inventory completee
 	if err != nil {
 		return preparedCompleteImport{}, err
 	}
+	if len(epochReplay.heads) == 1 {
+		for headID := range epochReplay.heads {
+			if slots := epochReplay.headSlots[headID]; len(slots) > 0 {
+				currentEnvelopeIDs := make(map[uint64]canonical.Identifier, 2)
+				for _, slot := range slots {
+					if _, exists := currentEnvelopeIDs[slot.targetKind]; exists {
+						return preparedCompleteImport{}, errors.New("Complete Export current Key Epoch repeats a target kind")
+					}
+					currentEnvelopeIDs[slot.targetKind] = slot.envelopeID
+					if slot.targetKind == awsmcrypto.RecoveryCredentialTarget {
+						recoveryCredentialID = slot.targetID
+					} else if slot.targetKind == awsmcrypto.ClientCredentialTarget {
+						clientCredentialID = slot.targetID
+					}
+				}
+				if len(currentEnvelopeIDs) != 2 {
+					return preparedCompleteImport{}, errors.New("Complete Export current Key Epoch omits a required target")
+				}
+				epochID = headID
+				envelopeIDs = currentEnvelopeIDs
+			}
+		}
+	}
 	if _, ok := keyBytesByID[hexIdentifier(epochID)]; !ok || clientCredentialID != genesisCredentialID {
 		return preparedCompleteImport{}, errors.New("Complete Export Genesis authority does not match its Key Inventory")
 	}
@@ -457,6 +498,7 @@ func prepareCompleteImport(manifest completeexport.Manifest, inventory completee
 	objectMappings := make(map[string]string)
 	featureMappings := make(map[string]string)
 	artifactMappings := make(map[string]string)
+	keyEnvelopeMappings := make(map[string]string)
 	storageItemKeyEpochIDs := make(map[string]string, len(manifest.OpaqueItemInventory))
 	for _, item := range manifest.OpaqueItemInventory {
 		storageID := hexIdentifier(item.StorageItemID)
@@ -464,6 +506,8 @@ func prepareCompleteImport(manifest completeexport.Manifest, inventory completee
 		switch item.Namespace {
 		case 1:
 			recordMappings[hexIdentifier(item.LogicalID)] = storageID
+		case 2:
+			keyEnvelopeMappings[hexIdentifier(item.LogicalID)] = storageID
 		case 3:
 			objectMappings[hexIdentifier(item.LogicalID)] = storageID
 		case 4:
@@ -496,6 +540,7 @@ func prepareCompleteImport(manifest completeexport.Manifest, inventory completee
 		ObjectStorageItemIDs:          objectMappings,
 		FeatureManifestStorageItemIDs: featureMappings,
 		ArtifactStorageItemIDs:        artifactMappings,
+		KeyEnvelopeStorageItemIDs:     keyEnvelopeMappings,
 		StorageItemKeyEpochIDs:        storageItemKeyEpochIDs,
 	}
 	importedSecrets := make([]completeImportSecret, 0, len(inventory.Entries))
@@ -888,22 +933,17 @@ func (r *Runtime) prepareCompleteExportEntries(state *canonicalReplicaState, rep
 		}
 		entries = append(entries, prepared)
 	}
-	keyEnvelopePairs := [][2]string{{state.RecoveryEnvelopeID, state.RecoveryEnvelopeStorageID}, {state.ClientEnvelopeID, state.ClientEnvelopeStorageID}}
-	seenEnvelopes := make(map[string]struct{}, len(keyEnvelopePairs))
-	for _, pair := range keyEnvelopePairs {
-		if _, seen := seenEnvelopes[pair[0]]; seen {
-			continue
-		}
-		seenEnvelopes[pair[0]] = struct{}{}
-		logicalID, err := decodeHexIdentifier(pair[0])
+	for _, logicalIDText := range sortedStringKeys(state.KeyEnvelopeStorageItemIDs) {
+		logicalID, err := decodeHexIdentifier(logicalIDText)
 		if err != nil {
 			return nil, errors.New("Complete Export Key Envelope identity is invalid")
 		}
-		epochID, _, err := r.completeExportEpochForStorageItem(hexIdentifier(vaultID), state, pair[1])
+		storageItemID := state.KeyEnvelopeStorageItemIDs[logicalIDText]
+		epochID, _, err := r.completeExportEpochForStorageItem(hexIdentifier(vaultID), state, storageItemID)
 		if err != nil {
 			return nil, err
 		}
-		prepared, err := r.prepareOpaqueCompleteExportEntry(2, logicalID, pair[1], epochID)
+		prepared, err := r.prepareOpaqueCompleteExportEntry(2, logicalID, storageItemID, epochID)
 		if err != nil {
 			return nil, err
 		}
@@ -998,6 +1038,9 @@ func validateCompleteExportDependencies(replica *Replica, state *canonicalReplic
 	if replica == nil || state == nil {
 		return errors.New("Complete Export authenticated Replica is unavailable")
 	}
+	if err := validateReplicaKeyEpochHistory(replica, state); err != nil {
+		return fmt.Errorf("Complete Export Key Epoch Authority history is invalid: %w", err)
+	}
 	for _, storageItemID := range canonicalStorageItemIDs(state) {
 		epochID, ok := state.StorageItemKeyEpochIDs[storageItemID]
 		if !ok || !validDigest(epochID) {
@@ -1038,8 +1081,8 @@ func validateCompleteExportDependencies(replica *Replica, state *canonicalReplic
 		}
 	}
 	allowedEnvelopes := map[canonical.Identifier]struct{}{}
-	for _, value := range []string{state.RecoveryEnvelopeID, state.ClientEnvelopeID} {
-		id, err := decodeHexIdentifier(value)
+	for envelopeID := range state.KeyEnvelopeStorageItemIDs {
+		id, err := decodeHexIdentifier(envelopeID)
 		if err != nil {
 			return errors.New("Complete Export Key Envelope identity is invalid")
 		}
