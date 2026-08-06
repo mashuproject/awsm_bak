@@ -113,8 +113,8 @@ transfer closure import/export. It also accepts and produces the browser-compati
 container for the supported single-Key-Epoch closure and installs it as an authoring-free readable
 Replica.
 
-Remaining work is deliberately narrower: complete multi-Key-Epoch and adopted-Vacuum Complete Export
-reachability/import; implement Event Re-authoring for eligible unpublished Capture work; implement
+Remaining work is deliberately narrower: implement Event Re-authoring for eligible unpublished Capture
+work; implement
 the broader Authority and Key-Epoch event families; expose conflict/rebase and sparse-Replica state;
 and finish Wails workflow coverage beyond the current Vault-management controls, plus cross-surface
 journeys. State-only Fork now copies the authenticated Library checkpoint, remaps content identities,

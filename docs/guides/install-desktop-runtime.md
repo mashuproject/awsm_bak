@@ -93,14 +93,12 @@ semantics or authentication by itself.
 
 The desktop Runtime currently supports Vault management, authenticated Event/DAG replay and
 cryptographic conformance, Library projection, pull synchronization, hydration, Storage Relief,
-Garbage Collection, Hosted Replica operations, and single-Key-Epoch browser-compatible Complete
-Export/Import with authenticated Streamable Artifact wrappers. The following remain outside this
+Garbage Collection, Hosted Replica operations, and browser-compatible Complete Export/Import for
+authenticated multi-Key-Epoch and adopted-Vacuum closures with Streamable Artifact wrappers. The following remain outside this
 release:
 
 - page capture from the desktop window;
 - the extension-to-desktop Capture Bundle bridge;
-- multi-Key-Epoch and adopted-Vacuum Complete Export closures (single-Key-Epoch Feature Manifest
-  closures are supported);
 - Event Re-authoring for eligible unpublished Capture work and broader Authority/Key-Epoch events;
 - conflict/rebase and sparse-Replica projections; and
 - remaining Wails workflow coverage beyond the current Vault-management and Library controls.

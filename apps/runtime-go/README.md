@@ -81,7 +81,6 @@ its encrypted transfer envelope, so an accepted package reopens the Replica on t
 The Runtime command boundary also produces and accepts the browser-compatible Complete Export
 container for the supported single-Key-Epoch closure, including authenticated Feature Manifest and
 Streamable Artifact wrappers. Imported Replicas are readable but have no selected authoring Credential or private key.
-Multi-Key-Epoch and adopted-Vacuum Complete Export semantics remain explicit limits, along with
 Event Re-authoring for eligible unpublished Capture work, broader Authority/Key-Epoch event families,
 conflict/rebase projections, sparse-Replica state, and the remaining Wails workflow coverage beyond
 the current Vault-management controls and cross-surface journeys.

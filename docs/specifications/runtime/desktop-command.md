@@ -37,11 +37,11 @@ Content-Type: application/json
 ```
 
 The body is one tagged `CanonicalApplicationRequest`. The Go Runtime implements `GetState`, Vault
-creation and selection, Recovery Phrase ceremonies, `RecoverMember`, empty-state Fork,
-Artifact/Bundle/Note content-closure Fork, and dependency-free label Fork, `CloseVault`,
-`VacuumVault`, `ListLibrary`, Storage Relief/GC through the Runtime API, Hosted Replica
-creation/attachment/materialization, receiver pull, and Artifact hydration. Capture remains an
-extension-only surface; the extension-to-desktop Capture Bundle bridge is not implemented.
+creation and selection, Recovery Phrase ceremonies, `RecoverMember`, state-only Fork from the
+authenticated Library checkpoint, `CloseVault`, `VacuumVault`, `ListLibrary`, Storage Relief/GC
+through the Runtime API, Hosted Replica creation/attachment/materialization, receiver pull, and
+Artifact hydration. Capture remains an extension-only surface; the extension-to-desktop Capture
+Bundle bridge is not implemented.
 Unsupported desktop capabilities return a canonical application error rather than pretending that
 the operation succeeded. Desktop page acquisition is intentionally unsupported.
 
@@ -54,10 +54,9 @@ The same boundary exposes these portability Commands:
 
 `ExportComplete` returns `{ "package": "<unpadded-base64url>" }`. `ImportComplete` atomically
 installs a readable Replica without importing a Client Credential private key. The current Go
-implementation accepts the browser Complete Export container for a single-Key-Epoch closure,
-including authenticated Feature Manifest and Streamable Artifact wrappers, and fails closed for
-unsupported multi-Epoch or adopted-Vacuum semantic closures until those mappings are implemented. Commands never log passphrases, package
-bytes, keys, or bearer tokens.
+implementation accepts the browser Complete Export container for authenticated multi-Key-Epoch
+and adopted-Vacuum closures, including Feature Manifest and Streamable Artifact wrappers. Commands
+never log passphrases, package bytes, keys, or bearer tokens.
 
 The Wails Vault view exposes these same Commands through its Complete Export and Import panel and
 its Library list. The panel keeps the package encrypted, requires an explicit passphrase for each

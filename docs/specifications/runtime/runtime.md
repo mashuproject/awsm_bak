@@ -51,8 +51,8 @@ creation/attachment/materialization, receiver pull, Artifact hydration, and encr
 transfer import/export. Focused tests use browser-derived vectors and restart/Host-boundary proofs.
 The Go Runtime also exposes browser-compatible Complete Export/Import for the supported
 single-Key-Epoch closure, including authenticated Feature Manifest and Streamable Artifact wrappers;
-Complete Import remains authoring-free. Multi-Key-Epoch and adopted-Vacuum closure semantics,
-broader Authority and Key-Epoch event families, conflict/rebase projections, sparse-Replica state,
+Complete Import remains authoring-free, including authenticated multi-Key-Epoch and adopted-Vacuum
+closures. Broader Authority and Key-Epoch event families, conflict/rebase projections, sparse-Replica state,
 and the remaining Wails workflow controls and cross-surface journeys remain explicit parity
 boundaries. Capture remains extension-only, and Event Re-authoring for eligible unpublished Capture
 work remains a separate unresolved boundary; Fork itself copies authenticated state into a fresh
