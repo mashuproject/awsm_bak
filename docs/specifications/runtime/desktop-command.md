@@ -54,9 +54,9 @@ The same boundary exposes these portability Commands:
 
 `ExportComplete` returns `{ "package": "<unpadded-base64url>" }`. `ImportComplete` atomically
 installs a readable Replica without importing a Client Credential private key. The current Go
-implementation accepts the browser Complete Export container for a single-Key-Epoch closure and
-fails closed for unsupported multi-Epoch, Feature Manifest, Streamable Artifact, or adopted-Vacuum
-semantic closures until those mappings are implemented. Commands never log passphrases, package
+implementation accepts the browser Complete Export container for a single-Key-Epoch closure,
+including authenticated Streamable Artifact wrappers, and fails closed for unsupported multi-Epoch,
+Feature Manifest, or adopted-Vacuum semantic closures until those mappings are implemented. Commands never log passphrases, package
 bytes, keys, or bearer tokens.
 
 Successful responses use:

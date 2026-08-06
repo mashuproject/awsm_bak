@@ -22,6 +22,16 @@ type preparedCompleteExportEntry struct {
 	entry     completeexport.Entry
 }
 
+type artifactPayloadContract struct {
+	PlaintextLength uint64
+	PlaintextDigest [32]byte
+}
+
+type completeImportArtifact struct {
+	item  completeexport.OpaqueItem
+	bytes []byte
+}
+
 // ExportComplete produces the portable browser-compatible Complete Export for
 // the authenticated local Replica. It only reads the source Vault and never
 // includes the local Client Credential private key or Host-local state.
@@ -187,6 +197,39 @@ func parseCompleteExportEntries(plaintext []byte) ([]completeexport.Entry, error
 	return entries, nil
 }
 
+func decodeArtifactPayloadContract(object ReplicaObject) (artifactPayloadContract, error) {
+	if object.ObjectType != 2 {
+		return artifactPayloadContract{}, errors.New("Artifact Object type is invalid")
+	}
+	body, ok := replicaMapValue(object.Body)
+	if !ok || !replicaMapHasKeys(body, 8) {
+		return artifactPayloadContract{}, errors.New("Artifact Object body is invalid")
+	}
+	plaintextLength, ok := replicaMapNumber(body, 4)
+	if !ok {
+		return artifactPayloadContract{}, errors.New("Artifact plaintext length is invalid")
+	}
+	digestBytes, ok := replicaMapBytes(body, 5, 32)
+	if !ok {
+		return artifactPayloadContract{}, errors.New("Artifact plaintext digest is invalid")
+	}
+	contract, ok := replicaMapValue(replicaMapEntryMust(body, 6))
+	if !ok || !replicaMapHasKeys(contract, 5) {
+		return artifactPayloadContract{}, errors.New("Artifact wrapper contract is invalid")
+	}
+	format, formatOK := replicaMapNumber(contract, 0)
+	frameLimit, frameLimitOK := replicaMapNumber(contract, 1)
+	frameTagLength, frameTagLengthOK := replicaMapNumber(contract, 2)
+	contractLength, lengthOK := replicaMapNumber(contract, 3)
+	contractDigest, digestOK := replicaMapBytes(contract, 4, 32)
+	if !formatOK || format != 1 || !frameLimitOK || frameLimit != storage.FramePlaintextLimit || !frameTagLengthOK || frameTagLength != storage.FrameTagLength || !lengthOK || contractLength != plaintextLength || !digestOK || !bytes.Equal(contractDigest, digestBytes) {
+		return artifactPayloadContract{}, errors.New("Artifact wrapper contract does not match its Object")
+	}
+	var digest [32]byte
+	copy(digest[:], digestBytes)
+	return artifactPayloadContract{PlaintextLength: plaintextLength, PlaintextDigest: digest}, nil
+}
+
 func prepareCompleteImport(manifest completeexport.Manifest, inventory completeexport.KeyInventory, entries []completeexport.Entry) (preparedCompleteImport, error) {
 	itemsByStorage := make(map[string]completeexport.OpaqueItem, len(manifest.OpaqueItemInventory))
 	for _, item := range manifest.OpaqueItemInventory {
@@ -213,6 +256,7 @@ func prepareCompleteImport(manifest completeexport.Manifest, inventory completee
 		id    canonical.Identifier
 		bytes []byte
 	}, 0)
+	artifactValues := make([]completeImportArtifact, 0)
 	currentEpochIDs := make(map[string]struct{})
 	for _, entry := range opaqueEntries {
 		envelope, err := storage.DecodeOpaqueEnvelope(entry.Bytes)
@@ -233,7 +277,8 @@ func prepareCompleteImport(manifest completeexport.Manifest, inventory completee
 			continue
 		}
 		if item.Namespace == 5 {
-			return preparedCompleteImport{}, errors.New("Complete Export Streamable Artifact import is not implemented by this Runtime")
+			artifactValues = append(artifactValues, completeImportArtifact{item: item, bytes: append([]byte(nil), entry.Bytes...)})
+			continue
 		}
 		key := keyBytesByID[hexIdentifier(item.KeyEpochID)]
 		opened, err := awsmcrypto.OpenCompactItem(manifest.VaultID, item.KeyEpochID, key, entry.Bytes)
@@ -332,6 +377,24 @@ func prepareCompleteImport(manifest completeexport.Manifest, inventory completee
 	for _, object := range objectValues {
 		if err := replica.AdmitObject(object.id, object.bytes); err != nil {
 			return preparedCompleteImport{}, fmt.Errorf("admit Complete Export Object: %w", err)
+		}
+	}
+	for _, artifact := range artifactValues {
+		object, ok := replica.Object(artifact.item.LogicalID)
+		if !ok {
+			return preparedCompleteImport{}, errors.New("Complete Export Artifact Object is unavailable")
+		}
+		contract, err := decodeArtifactPayloadContract(object)
+		if err != nil {
+			return preparedCompleteImport{}, fmt.Errorf("Complete Export Artifact Object contract is invalid: %w", err)
+		}
+		key := keyBytesByID[hexIdentifier(artifact.item.KeyEpochID)]
+		if _, err := awsmcrypto.OpenArtifactStream(awsmcrypto.ArtifactStreamOpenInput{
+			VaultID: manifest.VaultID, KeyEpochID: artifact.item.KeyEpochID, KeyEpochKey: key,
+			ArtifactID: artifact.item.LogicalID, PlaintextLength: contract.PlaintextLength,
+			PlaintextDigest: contract.PlaintextDigest, EnvelopeBytes: artifact.bytes,
+		}); err != nil {
+			return preparedCompleteImport{}, fmt.Errorf("Complete Export Artifact wrapper is not authenticated: %w", err)
 		}
 	}
 	state := replica.State()
@@ -656,7 +719,15 @@ func (r *Runtime) prepareCompleteExportEntries(state *canonicalReplicaState, rep
 		if err != nil {
 			return nil, errors.New("Complete Export Artifact identity is invalid")
 		}
-		prepared, err := r.prepareOpaqueCompleteExportEntry(5, artifactID, state.ArtifactStorageItemIDs[artifactIDText], epochID)
+		object, ok := replica.Object(artifactID)
+		if !ok {
+			return nil, fmt.Errorf("Complete Export Artifact Object %s is unavailable", artifactIDText)
+		}
+		contract, err := decodeArtifactPayloadContract(object)
+		if err != nil {
+			return nil, fmt.Errorf("Complete Export Artifact Object %s is invalid: %w", artifactIDText, err)
+		}
+		prepared, err := r.prepareArtifactCompleteExportEntry(vaultID, artifactID, state.ArtifactStorageItemIDs[artifactIDText], epochID, epochKey, contract)
 		if err != nil {
 			return nil, err
 		}
@@ -710,6 +781,32 @@ func (r *Runtime) prepareOpaqueCompleteExportEntry(namespace uint64, logicalID c
 	return preparedCompleteExportEntry{inventory: completeexport.OpaqueItem{Namespace: namespace, LogicalID: logicalID, StorageItemID: envelope.StorageItemID, KeyEpochID: epochID, ByteLength: uint64(len(encoded)), ByteDigest: sha256.Sum256(encoded)}, entry: entry}, nil
 }
 
+func (r *Runtime) prepareArtifactCompleteExportEntry(vaultID canonical.Identifier, artifactID canonical.Identifier, storageItemID string, epochID canonical.Identifier, epochKey []byte, contract artifactPayloadContract) (preparedCompleteExportEntry, error) {
+	encoded, envelope, err := r.readCompleteExportOpaque(storageItemID)
+	if err != nil {
+		return preparedCompleteExportEntry{}, err
+	}
+	if envelope.StorageClass != storage.StreamableStorageClass {
+		return preparedCompleteExportEntry{}, fmt.Errorf("Complete Export Artifact Storage Item %s is not Streamable", storageItemID)
+	}
+	if _, err := awsmcrypto.OpenArtifactStream(awsmcrypto.ArtifactStreamOpenInput{
+		VaultID:         vaultID,
+		KeyEpochID:      epochID,
+		KeyEpochKey:     epochKey,
+		ArtifactID:      artifactID,
+		PlaintextLength: contract.PlaintextLength,
+		PlaintextDigest: contract.PlaintextDigest,
+		EnvelopeBytes:   encoded,
+	}); err != nil {
+		return preparedCompleteExportEntry{}, fmt.Errorf("Complete Export Artifact Storage Item %s is not authenticated: %w", storageItemID, err)
+	}
+	entry, err := completeexport.PrepareEntry(completeexport.OpaqueEntryKind, encoded)
+	if err != nil {
+		return preparedCompleteExportEntry{}, err
+	}
+	return preparedCompleteExportEntry{inventory: completeexport.OpaqueItem{Namespace: 5, LogicalID: artifactID, StorageItemID: envelope.StorageItemID, KeyEpochID: epochID, ByteLength: uint64(len(encoded)), ByteDigest: sha256.Sum256(encoded)}, entry: entry}, nil
+}
+
 func (r *Runtime) readCompleteExportOpaque(storageItemID string) ([]byte, storage.OpaqueEnvelope, error) {
 	if !validDigest(storageItemID) {
 		return nil, storage.OpaqueEnvelope{}, errors.New("Complete Export Storage Item identity is invalid")
@@ -742,8 +839,18 @@ func validateCompleteExportDependencies(replica *Replica, state *canonicalReplic
 	if replica == nil || state == nil {
 		return errors.New("Complete Export authenticated Replica is unavailable")
 	}
-	if len(state.ArtifactStorageItemIDs) > 0 {
-		return errors.New("Complete Export Streamable Artifact verification is not implemented by this Runtime")
+	for artifactIDText := range state.ArtifactStorageItemIDs {
+		artifactID, err := decodeHexIdentifier(artifactIDText)
+		if err != nil {
+			return errors.New("Complete Export Artifact identity is invalid")
+		}
+		object, ok := replica.Object(artifactID)
+		if !ok {
+			return fmt.Errorf("Complete Export Artifact Object %s is unavailable", artifactIDText)
+		}
+		if _, err := decodeArtifactPayloadContract(object); err != nil {
+			return fmt.Errorf("Complete Export Artifact Object %s is invalid: %w", artifactIDText, err)
+		}
 	}
 	allowedEnvelopes := map[canonical.Identifier]struct{}{}
 	for _, value := range []string{state.RecoveryEnvelopeID, state.ClientEnvelopeID} {

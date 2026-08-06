@@ -9,7 +9,9 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/mashuproject/awsm_bak/apps/runtime-go/internal/canonical"
 	"github.com/mashuproject/awsm_bak/apps/runtime-go/internal/completeexport"
+	awsmcrypto "github.com/mashuproject/awsm_bak/apps/runtime-go/internal/crypto"
 	"github.com/mashuproject/awsm_bak/apps/runtime-go/internal/storage"
 	"github.com/mashuproject/awsm_bak/apps/runtime-go/internal/store"
 )
@@ -174,6 +176,82 @@ func TestRuntimeCompleteExportRejectsUnverifiedStreamableArtifact(t *testing.T) 
 	}
 }
 
+func TestRuntimeCompleteExportAuthenticatesReachableArtifactStream(t *testing.T) {
+	ctx := context.Background()
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, store.NewMemoryState(), dependencies)
+	if err != nil {
+		t.Fatalf("create Runtime: %v", err)
+	}
+	vaultID, phrase := createVaultWithPhraseForTest(t, runtime, "Streamable export")
+	artifactID := admitCompleteExportArtifact(t, runtime, dependencies, vaultID)
+
+	encoded, err := runtime.ExportComplete(vaultID, phrase)
+	if err != nil {
+		t.Fatalf("ExportComplete: %v", err)
+	}
+	opened, err := completeexport.OpenStream(phrase, encoded)
+	if err != nil {
+		t.Fatalf("open Complete Export: %v", err)
+	}
+	entries, err := decodeCompleteExportEntries(opened.Plaintext)
+	if err != nil {
+		t.Fatalf("decode Complete Export entries: %v", err)
+	}
+	manifest, err := completeexport.DecodeManifest(entries[0].Bytes)
+	if err != nil {
+		t.Fatalf("decode Manifest: %v", err)
+	}
+	found := false
+	for _, item := range manifest.OpaqueItemInventory {
+		if item.Namespace == 5 && item.LogicalID == artifactID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("Complete Export Manifest omitted authenticated Artifact %s", hexIdentifier(artifactID))
+	}
+}
+
+func TestRuntimeImportsAuthenticatedArtifactStream(t *testing.T) {
+	ctx := context.Background()
+	sourceDependencies := memoryDependencies(t)
+	source, err := New(ctx, store.NewMemoryState(), sourceDependencies)
+	if err != nil {
+		t.Fatalf("create source Runtime: %v", err)
+	}
+	vaultID, phrase := createVaultWithPhraseForTest(t, source, "Streamable import")
+	artifactID := admitCompleteExportArtifact(t, source, sourceDependencies, vaultID)
+	encoded, err := source.ExportComplete(vaultID, phrase)
+	if err != nil {
+		t.Fatalf("ExportComplete: %v", err)
+	}
+
+	destinationDependencies := memoryDependencies(t)
+	destination, err := New(ctx, store.NewMemoryState(), destinationDependencies)
+	if err != nil {
+		t.Fatalf("create destination Runtime: %v", err)
+	}
+	state, err := destination.ImportComplete(ctx, phrase, encoded)
+	if err != nil {
+		t.Fatalf("ImportComplete: %v", err)
+	}
+	if len(state.Vaults) != 1 || destination.replicas[vaultID] == nil {
+		t.Fatalf("imported state = %#v", state)
+	}
+	if _, ok := destination.replicas[vaultID].Object(artifactID); !ok {
+		t.Fatalf("imported Replica omitted Artifact Object %s", hexIdentifier(artifactID))
+	}
+	storageItemID := destination.vaults[vaultID].Canonical.ArtifactStorageItemIDs[hexIdentifier(artifactID)]
+	if storageItemID == "" {
+		t.Fatal("imported state omitted Artifact Storage Item mapping")
+	}
+	if _, err := destinationDependencies.Artifacts.Open(storageItemID); err != nil {
+		t.Fatalf("imported Artifact wrapper unavailable: %v", err)
+	}
+}
+
 func TestRuntimeCompleteExportHonorsExpectedVaultContext(t *testing.T) {
 	ctx := context.Background()
 	runtime, err := New(ctx, store.NewMemoryState(), memoryDependencies(t))
@@ -189,6 +267,76 @@ func TestRuntimeCompleteExportHonorsExpectedVaultContext(t *testing.T) {
 	if !errors.As(err, &commandErr) || commandErr.ID != "VAULT_CONTEXT_CHANGED" {
 		t.Fatalf("stale ExportComplete error = %v, want VAULT_CONTEXT_CHANGED", err)
 	}
+}
+
+func admitCompleteExportArtifact(t *testing.T, runtime *Runtime, dependencies Dependencies, vaultID string) canonical.Identifier {
+	t.Helper()
+	value := runtime.vaults[vaultID]
+	vaultIdentifier, err := decodeHexIdentifier(vaultID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	featureSetID, err := decodeHexIdentifier(value.Canonical.RequiredFeatureSetID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	epochID, err := decodeHexIdentifier(value.Canonical.KeyEpochID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secretBytes, err := dependencies.Secrets.Get(trustedSecretService, epochSecretAccount(vaultID, value.Canonical.KeyEpochID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	epoch, err := decodeEpochSecret(secretBytes, vaultIdentifier, epochID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plaintext := []byte("authenticated Artifact export payload")
+	digest := awsmcrypto.ArtifactPayloadDigest(plaintext)
+	artifactBody := canonical.Map{
+		0: uint64(1), 1: "awsm.artifact.capture", 2: "application/vnd.awsm.web-page+zip",
+		3: "awsm.representation.web-page-zip", 4: uint64(len(plaintext)), 5: digest[:],
+		6: canonical.Map{0: uint64(1), 1: uint64(storage.FramePlaintextLimit), 2: uint64(storage.FrameTagLength), 3: uint64(len(plaintext)), 4: digest[:]},
+		7: []byte{0x01},
+	}
+	objectBytes, err := canonical.EncodeValue(canonical.Map{
+		0: uint64(1), 1: vaultIdentifier[:], 2: uint64(2), 3: featureSetID[:], 4: artifactBody, 5: map[string][]byte{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifactID, err := canonical.VaultObjectID(vaultIdentifier, 2, objectBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compact, err := awsmcrypto.SealCompactItem(awsmcrypto.CompactItemInput{
+		VaultID: vaultIdentifier, KeyEpochID: epochID, KeyEpochKey: epoch.key,
+		PayloadType: 2, PayloadBytes: objectBytes,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.AdmitOpaqueObject(context.Background(), vaultID, compact); err != nil {
+		t.Fatalf("admit Artifact Object: %v", err)
+	}
+	stream, err := awsmcrypto.SealArtifactStream(awsmcrypto.ArtifactStreamInput{
+		VaultID: vaultIdentifier, KeyEpochID: epochID, KeyEpochKey: epoch.key,
+		ArtifactID: artifactID, Plaintext: plaintext, PlaintextDigest: digest,
+		ProtectionParameters: bytes.Repeat([]byte{0x27}, 64),
+	})
+	if err != nil {
+		t.Fatalf("seal Artifact stream: %v", err)
+	}
+	envelope, err := storage.DecodeOpaqueEnvelope(stream)
+	if err != nil {
+		t.Fatalf("decode Artifact stream: %v", err)
+	}
+	if err := dependencies.Artifacts.Put(hexIdentifier(envelope.StorageItemID), bytes.NewReader(stream)); err != nil {
+		t.Fatal(err)
+	}
+	value.Canonical.ArtifactStorageItemIDs[hexIdentifier(artifactID)] = hexIdentifier(envelope.StorageItemID)
+	return artifactID
 }
 
 func decodeCompleteExportEntries(plaintext []byte) ([]completeexport.Entry, error) {

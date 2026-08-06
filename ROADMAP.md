@@ -113,8 +113,8 @@ transfer closure import/export. It also accepts and produces the browser-compati
 container for the supported single-Key-Epoch closure and installs it as an authoring-free readable
 Replica.
 
-Remaining work is deliberately narrower: complete multi-Key-Epoch, Feature Manifest, Streamable
-Artifact, and adopted-Vacuum Complete Export reachability/import; re-author object/dependency-bearing
+Remaining work is deliberately narrower: complete multi-Key-Epoch, Feature Manifest, and adopted-Vacuum
+Complete Export reachability/import; re-author object/dependency-bearing
 Content Forks with correct object and event dependencies; implement the broader Authority and Key-Epoch event
 families; expose conflict/rebase and sparse-Replica state; and finish Wails workflow controls and
 cross-surface journeys. Capture remains extension-only and the extension-to-desktop Capture Bundle

@@ -78,9 +78,9 @@ extension-to-desktop Capture Bundle bridge is intentionally out of scope for thi
 one-use move boundary now carries the authenticated opaque closure and trusted local secrets inside
 its encrypted transfer envelope, so an accepted package reopens the Replica on the destination.
 The Runtime command boundary also produces and accepts the browser-compatible Complete Export
-container for the supported single-Key-Epoch closure. Imported Replicas are readable but have no
-selected authoring Credential or private key. Multi-Key-Epoch, Feature Manifest, Streamable Artifact,
-and adopted-Vacuum Complete Export semantics remain explicit limits, along with object/dependency-bearing
+container for the supported single-Key-Epoch closure, including authenticated Streamable Artifact
+wrappers. Imported Replicas are readable but have no selected authoring Credential or private key.
+Multi-Key-Epoch, Feature Manifest, and adopted-Vacuum Complete Export semantics remain explicit limits, along with object/dependency-bearing
 Content Fork re-authoring, broader Authority/Key-Epoch event families, conflict/rebase projections, and
 full Wails workflow coverage.
 

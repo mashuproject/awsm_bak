@@ -91,14 +91,18 @@ semantics or authentication by itself.
 
 ## Current boundary
 
-The desktop Runtime currently supports Vault management, including creation and selection, Recovery
-Phrase recovery and replacement, Fork, Closure, Vacuum, and Hosted Replica metadata. The following
-are not part of this release:
+The desktop Runtime currently supports Vault management, authenticated Event/DAG replay and
+cryptographic conformance, Library projection, pull synchronization, hydration, Storage Relief,
+Garbage Collection, Hosted Replica operations, and single-Key-Epoch browser-compatible Complete
+Export/Import with authenticated Streamable Artifact wrappers. The following remain outside this
+release:
 
 - page capture from the desktop window;
 - the extension-to-desktop Capture Bundle bridge;
-- authenticated Event/DAG replay and cryptographic conformance;
-- pull synchronization, hydration, Storage Relief, and complete Export/Import.
+- multi-Key-Epoch, Feature Manifest, and adopted-Vacuum Complete Export closures;
+- object/dependency-bearing Content Fork re-authoring and broader Authority/Key-Epoch events;
+- conflict/rebase and sparse-Replica projections; and
+- complete Wails workflow coverage.
 
 The desktop Runtime is therefore a Vault-management surface, not a second web host or a replacement
 for the browser extension's page-capture surface.
