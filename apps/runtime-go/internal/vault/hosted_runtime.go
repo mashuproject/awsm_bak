@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/mashuproject/awsm_bak/apps/runtime-go/internal/canonical"
 	awsmcrypto "github.com/mashuproject/awsm_bak/apps/runtime-go/internal/crypto"
 	"github.com/mashuproject/awsm_bak/apps/runtime-go/internal/storage"
 )
@@ -413,9 +414,34 @@ func (r *Runtime) pullHostedReplicas(ctx context.Context, id string) (any, error
 				}
 				switch opened.PayloadType {
 				case 1:
-					_ = r.AdmitOpaqueEvent(ctx, id, encoded)
+					if baseline, baselineErr := canonical.DecodeBaseline(opened.PayloadBytes); baselineErr == nil {
+						r.mu.RLock()
+						current := r.vaults[id]
+						var generationID canonical.Identifier
+						var generationErr error
+						if current != nil {
+							generationID, generationErr = decodeHexIdentifier(current.GenerationID)
+						}
+						matches := current != nil && current.Canonical != nil && generationErr == nil &&
+							baseline.VaultID == vaultID &&
+							baseline.GenerationID == generationID &&
+							hexIdentifier(baseline.RecordID) == current.Canonical.BaselineID
+						r.mu.RUnlock()
+						if !matches {
+							failed = true
+						}
+					} else if admitErr := r.AdmitOpaqueEvent(ctx, id, encoded); admitErr != nil {
+						failed = true
+					}
 				case 2:
-					_ = r.AdmitOpaqueObject(ctx, id, encoded)
+					if admitErr := r.AdmitOpaqueObject(ctx, id, encoded); admitErr != nil {
+						failed = true
+					}
+				default:
+					failed = true
+				}
+				if failed {
+					break
 				}
 			}
 			if failed || page.NextPosition == nil {

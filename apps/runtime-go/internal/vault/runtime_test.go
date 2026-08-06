@@ -1004,6 +1004,57 @@ func TestHostedReplicaAttachmentMaterializationAndPull(t *testing.T) {
 	}
 }
 
+func TestHostedReplicaPullReportsAuthenticatedAdmissionFailure(t *testing.T) {
+	ctx := context.Background()
+	fixture := newHostedSyncFixture(t)
+	dependencies := memoryDependencies(t)
+	dependencies.HTTPClient = fixture.Client
+	runtime, err := New(ctx, store.NewMemoryState(), dependencies)
+	if err != nil {
+		t.Fatalf("create Runtime: %v", err)
+	}
+	vaultID := createVaultForTest(t, runtime, "Hosted admission failure")
+	created, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "CreateHostedReplica", "expectedVaultId": vaultID,
+		"endpoint": fixture.Endpoint, "name": "Archive", "username": "alice", "password": "secret",
+	}))
+	if err != nil {
+		t.Fatalf("create Hosted Replica: %v", err)
+	}
+	remote := created.(RemoteSummary)
+	vaultIdentifier := mustIdentifier(t, vaultID)
+	value := runtime.vaults[vaultID]
+	epochID := mustIdentifier(t, value.Canonical.KeyEpochID)
+	secretBytes, err := dependencies.Secrets.Get(trustedSecretService, epochSecretAccount(vaultID, value.Canonical.KeyEpochID))
+	if err != nil {
+		t.Fatalf("read Key Epoch: %v", err)
+	}
+	epoch, err := decodeEpochSecret(secretBytes, vaultIdentifier, epochID)
+	if err != nil {
+		t.Fatalf("decode Key Epoch: %v", err)
+	}
+	logicalID := filledCreationID(253)
+	encoded, err := awsmcrypto.SealCompactItem(awsmcrypto.CompactItemInput{
+		VaultID: vaultIdentifier, KeyEpochID: epochID, KeyEpochKey: epoch.key, PayloadType: 2, PayloadBytes: []byte("not a canonical Object"),
+	})
+	if err != nil {
+		t.Fatalf("seal invalid Object: %v", err)
+	}
+	locator, err := deriveHostedReplicaLocator(fixture.Salt, hostedNamespaceObject, logicalID)
+	if err != nil {
+		t.Fatalf("derive invalid Object locator: %v", err)
+	}
+	fixture.addItem(t, locator, encoded)
+	pulledValue, err := runtime.Handle(ctx, mustJSON(map[string]any{"type": "PullHostedReplicas", "expectedVaultId": vaultID}))
+	if err != nil {
+		t.Fatalf("pull Hosted Replica: %v", err)
+	}
+	pulled := pulledValue.([]map[string]string)
+	if len(pulled) != 1 || pulled[0]["remoteId"] != remote.RemoteID || pulled[0]["status"] != "Failed" {
+		t.Fatalf("pull failure summary = %#v", pulled)
+	}
+}
+
 func TestHostedReplicaHydratesKnownArtifactStream(t *testing.T) {
 	ctx := context.Background()
 	fixture := newHostedSyncFixture(t)
