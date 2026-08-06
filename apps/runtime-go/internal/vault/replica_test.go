@@ -480,6 +480,69 @@ func TestReplicaSurfacesAndResolvesAdministratorConflict(t *testing.T) {
 	}
 }
 
+func TestReplicaSurfacesConcurrentFeatureSetConflict(t *testing.T) {
+	prepared := deterministicCreation(t)
+	replica, err := NewReplica(prepared.Baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := replica.AdmitEvent(prepared.Genesis, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit Genesis: %v", err)
+	}
+	leftBytes, err := canonical.EncodeFeatureManifest(canonical.FeatureManifestInput{FeatureKey: "awsm.conflict", Revision: 1, Parameters: []byte{1}, RequiredManifestIDs: []canonical.Identifier{}, IncompatibleKeys: []string{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rightBytes, err := canonical.EncodeFeatureManifest(canonical.FeatureManifestInput{FeatureKey: "awsm.conflict", Revision: 2, Parameters: []byte{2}, RequiredManifestIDs: []canonical.Identifier{}, IncompatibleKeys: []string{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	left, err := canonical.DecodeFeatureManifest(leftBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	right, err := canonical.DecodeFeatureManifest(rightBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leftSet, err := canonical.RequiredFeatureSetID([]canonical.FeatureManifestInput{left.FeatureManifestInput})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rightSet, err := canonical.RequiredFeatureSetID([]canonical.FeatureManifestInput{right.FeatureManifestInput})
+	if err != nil {
+		t.Fatal(err)
+	}
+	signActivation := func(manifest []byte, manifestID, resulting [32]byte, assertedAt int64) canonical.Event {
+		event, signErr := canonical.SignEvent(canonical.EventInput{
+			VaultID: prepared.IDs.VaultID, GenerationID: prepared.IDs.GenerationID,
+			ParentRecordIDs: []canonical.Identifier{prepared.Genesis.RecordID}, AuthorityParentIDs: []canonical.Identifier{prepared.Genesis.RecordID},
+			Dependencies: []canonical.Dependency{{Type: 8, ID: manifestID}}, RequiredFeatureSetID: prepared.RequiredFeatureSetID,
+			Extensions: map[string][]byte{}, Family: canonical.AuthorityFamily, Type: 14, SignerCredentialID: prepared.IDs.ClientCredentialID,
+			AssertedAt: assertedAt, Body: canonical.Map{0: prepared.RequiredFeatureSetID[:], 1: []canonical.Value{manifest}, 2: resulting[:]},
+		}, ed25519.PrivateKey(prepared.ClientKeys.SigningSecretKey))
+		if signErr != nil {
+			t.Fatalf("sign Feature Activation: %v", signErr)
+		}
+		return event
+	}
+	leftEvent := signActivation(leftBytes, left.ID, leftSet, 228)
+	rightEvent := signActivation(rightBytes, right.ID, rightSet, 229)
+	if err := replica.AdmitEvent(leftEvent, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit left Feature Activation: %v", err)
+	}
+	if err := replica.AdmitEvent(rightEvent, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit right Feature Activation: %v", err)
+	}
+	state, err := replica.AuthorityState()
+	if err != nil {
+		t.Fatalf("AuthorityState: %v", err)
+	}
+	if state.FeatureSetConflict == nil || len(state.FeatureSetConflict.CandidateRecordIDs) != 2 || len(state.FeatureSetConflict.ManifestIDs) != 2 {
+		t.Fatalf("AuthorityState FeatureSetConflict = %#v", state.FeatureSetConflict)
+	}
+}
+
 func TestReplicaRejectsInvitationWithMismatchedCapabilityIssuer(t *testing.T) {
 	prepared := deterministicCreation(t)
 	replica, err := NewReplica(prepared.Baseline)

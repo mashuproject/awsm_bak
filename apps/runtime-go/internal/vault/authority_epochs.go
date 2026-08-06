@@ -18,35 +18,38 @@ import (
 // validator deliberately keeps the Epoch boundary strict while those reducers
 // are still being ported.
 type keyEpochReplayState struct {
-	firstClientCredential  canonical.Identifier
-	featureSetID           canonical.Identifier
-	featureManifests       map[canonical.Identifier]canonical.FeatureManifest
-	featureSetConflict     bool
-	activeMembers          map[canonical.Identifier]struct{}
-	administrators         map[canonical.Identifier]struct{}
-	administratorHeads     map[canonical.Identifier]map[canonical.Identifier]bool
-	administratorConflicts map[canonical.Identifier][]administratorConflictCandidate
-	clientMembers          map[canonical.Identifier]canonical.Identifier
-	epochs                 map[canonical.Identifier]uint64
-	epochCauses            map[canonical.Identifier]canonical.Identifier
-	heads                  map[canonical.Identifier]struct{}
-	headSlots              map[canonical.Identifier][]keyEpochEnvelopeSlot
-	keyEpochConflicts      []keyEpochConflictCandidate
-	recoveryMembers        map[canonical.Identifier]canonical.Identifier
-	recoveryRevisions      map[canonical.Identifier]uint64
-	recoverySigningKeys    map[canonical.Identifier]ed25519.PublicKey
-	recoveryCauses         map[canonical.Identifier]canonical.Identifier
-	recoveryTargets        map[canonical.Identifier]uint64
-	recoveryConflicts      map[canonical.Identifier][]recoveryConflictCandidate
-	clientTargets          map[canonical.Identifier]struct{}
-	deliveredSlots         map[string]struct{}
-	members                map[canonical.Identifier]struct{}
-	invitations            map[canonical.Identifier]invitationCreation
-	invitationTerminals    map[canonical.Identifier]struct{}
-	invitationCandidates   map[canonical.Identifier]map[canonical.Identifier]invitationTerminalCandidate
-	invitationConflicts    map[canonical.Identifier]struct{}
-	invitationResolutions  map[canonical.Identifier]struct{}
-	closed                 bool
+	firstClientCredential    canonical.Identifier
+	featureSetID             canonical.Identifier
+	featureSetCause          canonical.Identifier
+	featureManifests         map[canonical.Identifier]canonical.FeatureManifest
+	featureSetConflict       bool
+	featureConflictRecords   []canonical.Identifier
+	featureConflictManifests []canonical.Identifier
+	activeMembers            map[canonical.Identifier]struct{}
+	administrators           map[canonical.Identifier]struct{}
+	administratorHeads       map[canonical.Identifier]map[canonical.Identifier]bool
+	administratorConflicts   map[canonical.Identifier][]administratorConflictCandidate
+	clientMembers            map[canonical.Identifier]canonical.Identifier
+	epochs                   map[canonical.Identifier]uint64
+	epochCauses              map[canonical.Identifier]canonical.Identifier
+	heads                    map[canonical.Identifier]struct{}
+	headSlots                map[canonical.Identifier][]keyEpochEnvelopeSlot
+	keyEpochConflicts        []keyEpochConflictCandidate
+	recoveryMembers          map[canonical.Identifier]canonical.Identifier
+	recoveryRevisions        map[canonical.Identifier]uint64
+	recoverySigningKeys      map[canonical.Identifier]ed25519.PublicKey
+	recoveryCauses           map[canonical.Identifier]canonical.Identifier
+	recoveryTargets          map[canonical.Identifier]uint64
+	recoveryConflicts        map[canonical.Identifier][]recoveryConflictCandidate
+	clientTargets            map[canonical.Identifier]struct{}
+	deliveredSlots           map[string]struct{}
+	members                  map[canonical.Identifier]struct{}
+	invitations              map[canonical.Identifier]invitationCreation
+	invitationTerminals      map[canonical.Identifier]struct{}
+	invitationCandidates     map[canonical.Identifier]map[canonical.Identifier]invitationTerminalCandidate
+	invitationConflicts      map[canonical.Identifier]struct{}
+	invitationResolutions    map[canonical.Identifier]struct{}
+	closed                   bool
 }
 
 type recoveryReplacement struct {
@@ -183,6 +186,7 @@ func replayAuthenticatedKeyEpochs(events []canonical.Event, genesis canonical.Ev
 	state := keyEpochReplayState{
 		firstClientCredential:  firstClient,
 		featureSetID:           genesis.RequiredFeatureSetID,
+		featureSetCause:        genesisID,
 		featureManifests:       map[canonical.Identifier]canonical.FeatureManifest{},
 		activeMembers:          map[canonical.Identifier]struct{}{firstMember: {}},
 		members:                map[canonical.Identifier]struct{}{firstMember: {}},
@@ -685,6 +689,7 @@ func replayAuthenticatedKeyEpochs(events []canonical.Event, genesis canonical.Ev
 				current.featureManifests[manifest.ID] = cloneFeatureManifest(manifest)
 			}
 			current.featureSetID = activation.resultingFeatureSetID
+			current.featureSetCause = event.RecordID
 		}
 		if event.Family == canonical.LifecycleFamily && event.Type == 2 {
 			body, ok := replicaMapValue(event.Body)
@@ -764,35 +769,38 @@ func replayAuthenticatedKeyEpochs(events []canonical.Event, genesis canonical.Ev
 
 func cloneKeyEpochReplayState(value keyEpochReplayState) keyEpochReplayState {
 	clone := keyEpochReplayState{
-		firstClientCredential:  value.firstClientCredential,
-		featureSetID:           value.featureSetID,
-		featureManifests:       make(map[canonical.Identifier]canonical.FeatureManifest, len(value.featureManifests)),
-		featureSetConflict:     value.featureSetConflict,
-		activeMembers:          make(map[canonical.Identifier]struct{}, len(value.activeMembers)),
-		members:                make(map[canonical.Identifier]struct{}, len(value.members)),
-		administrators:         make(map[canonical.Identifier]struct{}, len(value.administrators)),
-		administratorHeads:     make(map[canonical.Identifier]map[canonical.Identifier]bool, len(value.administratorHeads)),
-		administratorConflicts: make(map[canonical.Identifier][]administratorConflictCandidate, len(value.administratorConflicts)),
-		clientMembers:          make(map[canonical.Identifier]canonical.Identifier, len(value.clientMembers)),
-		epochs:                 make(map[canonical.Identifier]uint64, len(value.epochs)),
-		epochCauses:            make(map[canonical.Identifier]canonical.Identifier, len(value.epochCauses)),
-		heads:                  make(map[canonical.Identifier]struct{}, len(value.heads)),
-		headSlots:              make(map[canonical.Identifier][]keyEpochEnvelopeSlot, len(value.headSlots)),
-		keyEpochConflicts:      append([]keyEpochConflictCandidate(nil), value.keyEpochConflicts...),
-		recoveryMembers:        make(map[canonical.Identifier]canonical.Identifier, len(value.recoveryMembers)),
-		recoveryRevisions:      make(map[canonical.Identifier]uint64, len(value.recoveryRevisions)),
-		recoverySigningKeys:    make(map[canonical.Identifier]ed25519.PublicKey, len(value.recoverySigningKeys)),
-		recoveryCauses:         make(map[canonical.Identifier]canonical.Identifier, len(value.recoveryCauses)),
-		recoveryTargets:        make(map[canonical.Identifier]uint64, len(value.recoveryTargets)),
-		recoveryConflicts:      make(map[canonical.Identifier][]recoveryConflictCandidate, len(value.recoveryConflicts)),
-		clientTargets:          make(map[canonical.Identifier]struct{}, len(value.clientTargets)),
-		deliveredSlots:         make(map[string]struct{}, len(value.deliveredSlots)),
-		invitations:            make(map[canonical.Identifier]invitationCreation, len(value.invitations)),
-		invitationTerminals:    make(map[canonical.Identifier]struct{}, len(value.invitationTerminals)),
-		invitationCandidates:   make(map[canonical.Identifier]map[canonical.Identifier]invitationTerminalCandidate, len(value.invitationCandidates)),
-		invitationConflicts:    make(map[canonical.Identifier]struct{}, len(value.invitationConflicts)),
-		invitationResolutions:  make(map[canonical.Identifier]struct{}, len(value.invitationResolutions)),
-		closed:                 value.closed,
+		firstClientCredential:    value.firstClientCredential,
+		featureSetID:             value.featureSetID,
+		featureSetCause:          value.featureSetCause,
+		featureManifests:         make(map[canonical.Identifier]canonical.FeatureManifest, len(value.featureManifests)),
+		featureSetConflict:       value.featureSetConflict,
+		featureConflictRecords:   append([]canonical.Identifier(nil), value.featureConflictRecords...),
+		featureConflictManifests: append([]canonical.Identifier(nil), value.featureConflictManifests...),
+		activeMembers:            make(map[canonical.Identifier]struct{}, len(value.activeMembers)),
+		members:                  make(map[canonical.Identifier]struct{}, len(value.members)),
+		administrators:           make(map[canonical.Identifier]struct{}, len(value.administrators)),
+		administratorHeads:       make(map[canonical.Identifier]map[canonical.Identifier]bool, len(value.administratorHeads)),
+		administratorConflicts:   make(map[canonical.Identifier][]administratorConflictCandidate, len(value.administratorConflicts)),
+		clientMembers:            make(map[canonical.Identifier]canonical.Identifier, len(value.clientMembers)),
+		epochs:                   make(map[canonical.Identifier]uint64, len(value.epochs)),
+		epochCauses:              make(map[canonical.Identifier]canonical.Identifier, len(value.epochCauses)),
+		heads:                    make(map[canonical.Identifier]struct{}, len(value.heads)),
+		headSlots:                make(map[canonical.Identifier][]keyEpochEnvelopeSlot, len(value.headSlots)),
+		keyEpochConflicts:        append([]keyEpochConflictCandidate(nil), value.keyEpochConflicts...),
+		recoveryMembers:          make(map[canonical.Identifier]canonical.Identifier, len(value.recoveryMembers)),
+		recoveryRevisions:        make(map[canonical.Identifier]uint64, len(value.recoveryRevisions)),
+		recoverySigningKeys:      make(map[canonical.Identifier]ed25519.PublicKey, len(value.recoverySigningKeys)),
+		recoveryCauses:           make(map[canonical.Identifier]canonical.Identifier, len(value.recoveryCauses)),
+		recoveryTargets:          make(map[canonical.Identifier]uint64, len(value.recoveryTargets)),
+		recoveryConflicts:        make(map[canonical.Identifier][]recoveryConflictCandidate, len(value.recoveryConflicts)),
+		clientTargets:            make(map[canonical.Identifier]struct{}, len(value.clientTargets)),
+		deliveredSlots:           make(map[string]struct{}, len(value.deliveredSlots)),
+		invitations:              make(map[canonical.Identifier]invitationCreation, len(value.invitations)),
+		invitationTerminals:      make(map[canonical.Identifier]struct{}, len(value.invitationTerminals)),
+		invitationCandidates:     make(map[canonical.Identifier]map[canonical.Identifier]invitationTerminalCandidate, len(value.invitationCandidates)),
+		invitationConflicts:      make(map[canonical.Identifier]struct{}, len(value.invitationConflicts)),
+		invitationResolutions:    make(map[canonical.Identifier]struct{}, len(value.invitationResolutions)),
+		closed:                   value.closed,
 	}
 	for id, manifest := range value.featureManifests {
 		clone.featureManifests[id] = cloneFeatureManifest(manifest)
@@ -912,6 +920,18 @@ func mergeKeyEpochReplayStates(values []keyEpochReplayState) keyEpochReplayState
 		}
 		if merged.featureSetID != value.featureSetID {
 			merged.featureSetConflict = true
+			merged.featureConflictRecords = append(merged.featureConflictRecords, merged.featureSetCause, value.featureSetCause)
+			for manifestID := range merged.featureManifests {
+				merged.featureConflictManifests = append(merged.featureConflictManifests, manifestID)
+			}
+			for manifestID := range value.featureManifests {
+				merged.featureConflictManifests = append(merged.featureConflictManifests, manifestID)
+			}
+		}
+		if value.featureSetConflict {
+			merged.featureSetConflict = true
+			merged.featureConflictRecords = append(merged.featureConflictRecords, value.featureConflictRecords...)
+			merged.featureConflictManifests = append(merged.featureConflictManifests, value.featureConflictManifests...)
 		}
 		for id, manifest := range value.featureManifests {
 			if existing, exists := merged.featureManifests[id]; !exists {
@@ -1017,6 +1037,8 @@ func mergeKeyEpochReplayStates(values []keyEpochReplayState) keyEpochReplayState
 		}
 		merged.closed = merged.closed || value.closed
 	}
+	merged.featureConflictRecords = uniqueSortedIdentifiers(merged.featureConflictRecords)
+	merged.featureConflictManifests = uniqueSortedIdentifiers(merged.featureConflictManifests)
 	deriveAdministratorConflicts(&merged)
 	deriveKeyEpochConflicts(&merged)
 	deriveRecoveryConflicts(&merged)
@@ -1089,6 +1111,22 @@ func deriveAdministratorConflicts(state *keyEpochReplayState) {
 			delete(state.administrators, memberID)
 		}
 	}
+}
+
+func uniqueSortedIdentifiers(values []canonical.Identifier) []canonical.Identifier {
+	if len(values) == 0 {
+		return nil
+	}
+	sort.Slice(values, func(left, right int) bool {
+		return bytes.Compare(values[left][:], values[right][:]) < 0
+	})
+	result := values[:1]
+	for _, value := range values[1:] {
+		if value != result[len(result)-1] {
+			result = append(result, value)
+		}
+	}
+	return result
 }
 
 func deriveKeyEpochConflicts(state *keyEpochReplayState) {

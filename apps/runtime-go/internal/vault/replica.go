@@ -59,6 +59,7 @@ type AuthorityState struct {
 	EffectiveRecoveryCredentialIDs []canonical.Identifier
 	RecoveryConflicts              []AuthorityRecoveryConflict
 	KeyEpochConflicts              []AuthorityKeyEpochConflict
+	FeatureSetConflict             *AuthorityFeatureSetConflict
 	CurrentKeyEpochIDs             []canonical.Identifier
 	Lifecycle                      string
 }
@@ -90,6 +91,11 @@ type AuthorityKeyEpochConflict struct {
 type AuthorityKeyEpochConflictCandidate struct {
 	HeadRecordID canonical.Identifier
 	KeyEpochID   canonical.Identifier
+}
+
+type AuthorityFeatureSetConflict struct {
+	CandidateRecordIDs []canonical.Identifier
+	ManifestIDs        []canonical.Identifier
 }
 
 func NewReplica(baseline canonical.Baseline) (*Replica, error) {
@@ -528,6 +534,12 @@ func (r *Replica) AuthorityState() (AuthorityState, error) {
 			})
 		}
 		state.KeyEpochConflicts = []AuthorityKeyEpochConflict{conflict}
+	}
+	if replayed.featureSetConflict {
+		state.FeatureSetConflict = &AuthorityFeatureSetConflict{
+			CandidateRecordIDs: cloneIdentifiers(replayed.featureConflictRecords),
+			ManifestIDs:        cloneIdentifiers(replayed.featureConflictManifests),
+		}
 	}
 	for credentialID := range replayed.clientTargets {
 		if _, active := replayed.activeClientMember(credentialID); active {
