@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"testing"
 
+	"github.com/mashuproject/awsm_bak/apps/runtime-go/internal/canonical"
 	awsmcrypto "github.com/mashuproject/awsm_bak/apps/runtime-go/internal/crypto"
 )
 
@@ -63,6 +64,41 @@ func TestPrepareCanonicalVaultCreationBuildsAuthenticatedGenesis(t *testing.T) {
 	}
 	if got := hex.EncodeToString(prepared.RequiredFeatureSetID[:]); got != "ed3dd98a4e6cc13d9d14ca4d62eb6b33e11ed471172346ab5d38ac91f57d7ada" {
 		t.Fatalf("empty Required Feature Set ID = %s", got)
+	}
+}
+
+func TestPrepareCanonicalVaultCreationProtectsInitialFeatureManifestClosure(t *testing.T) {
+	feature := canonical.FeatureManifestInput{
+		FeatureKey: "awsm.initial.feature", Revision: 1, Parameters: []byte{1, 2},
+		RequiredManifestIDs: []canonical.Identifier{}, IncompatibleKeys: []string{},
+	}
+	prepared, err := PrepareCanonicalVaultCreation(CreationInput{
+		RecoveryPhrase:   "abandon amount liar amount expire adjust cage candy arch gather drum buyer",
+		FeatureManifests: []canonical.FeatureManifestInput{feature},
+	})
+	if err != nil {
+		t.Fatalf("PrepareCanonicalVaultCreation: %v", err)
+	}
+	wantSetID, err := canonical.RequiredFeatureSetID([]canonical.FeatureManifestInput{feature})
+	if err != nil {
+		t.Fatalf("RequiredFeatureSetID: %v", err)
+	}
+	if prepared.RequiredFeatureSetID != wantSetID || len(prepared.FeatureManifests) != 1 {
+		t.Fatalf("prepared Feature Manifest closure = %#v, want set %x", prepared.FeatureManifests, wantSetID)
+	}
+	manifest := prepared.FeatureManifests[0]
+	foundDependency := false
+	for _, dependency := range prepared.Baseline.Dependencies {
+		if dependency.Type == 8 && dependency.ID == manifest.ID {
+			foundDependency = true
+		}
+	}
+	if !foundDependency {
+		t.Fatalf("Baseline dependencies omitted Feature Manifest %x", manifest.ID)
+	}
+	opened, err := awsmcrypto.OpenCompactItem(prepared.IDs.VaultID, prepared.KeyEpochID, prepared.KeyEpochKey, manifest.Envelope.Bytes)
+	if err != nil || opened.PayloadType != 3 || !bytes.Equal(opened.PayloadBytes, manifest.Bytes) {
+		t.Fatalf("opened Feature Manifest envelope = %#v, %v", opened, err)
 	}
 }
 

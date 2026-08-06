@@ -302,7 +302,11 @@ test("Wails Vault surface runs hosted pull, materialization, and Artifact hydrat
                 (globalThis as unknown as { __awsmCalls?: string[] }).__awsmCalls?.push(
                   request.type,
                 );
-                library[0].availableLocally = true;
+                const firstLibraryItem = library[0];
+                if (firstLibraryItem === undefined) {
+                  throw new Error("fixture library is unexpectedly empty");
+                }
+                firstLibraryItem.availableLocally = true;
                 return { artifactId, storageItemId: "e".repeat(64), remoteId: "remote-1" };
               }
               throw new Error(`unexpected command: ${request.type}`);

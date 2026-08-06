@@ -26,6 +26,7 @@ type Replica struct {
 	continuityRecordIDs []canonical.Identifier
 	credentialKeys      map[canonical.Identifier]ed25519.PublicKey
 	objects             map[canonical.Identifier]ReplicaObject
+	featureManifests    map[canonical.Identifier]canonical.FeatureManifest
 }
 
 type ReplicaObject struct {
@@ -63,14 +64,15 @@ func NewReplica(baseline canonical.Baseline) (*Replica, error) {
 		return nil, fmt.Errorf("add Replica Baseline: %w", err)
 	}
 	return &Replica{
-		vaultID:        baseline.VaultID,
-		generationID:   baseline.GenerationID,
-		baseline:       decoded,
-		baselineID:     baseline.RecordID,
-		records:        map[canonical.Identifier]canonical.Record{baseline.RecordID: {Kind: canonical.BaselineKind, Baseline: &decoded, Bytes: append([]byte(nil), decoded.Bytes...), RecordID: decoded.RecordID}},
-		graph:          graph,
-		credentialKeys: make(map[canonical.Identifier]ed25519.PublicKey),
-		objects:        make(map[canonical.Identifier]ReplicaObject),
+		vaultID:          baseline.VaultID,
+		generationID:     baseline.GenerationID,
+		baseline:         decoded,
+		baselineID:       baseline.RecordID,
+		records:          map[canonical.Identifier]canonical.Record{baseline.RecordID: {Kind: canonical.BaselineKind, Baseline: &decoded, Bytes: append([]byte(nil), decoded.Bytes...), RecordID: decoded.RecordID}},
+		graph:            graph,
+		credentialKeys:   make(map[canonical.Identifier]ed25519.PublicKey),
+		objects:          make(map[canonical.Identifier]ReplicaObject),
+		featureManifests: make(map[canonical.Identifier]canonical.FeatureManifest),
 	}, nil
 }
 
@@ -209,6 +211,58 @@ func (r *Replica) AdmitObject(objectID canonical.Identifier, encoded []byte) err
 	}
 	r.objects[objectID] = object
 	return nil
+}
+
+// AdmitFeatureManifest verifies one immutable Feature Manifest content address
+// before retaining it for Required Feature Set resolution and export.
+func (r *Replica) AdmitFeatureManifest(manifestID canonical.Identifier, encoded []byte) error {
+	if r == nil {
+		return errors.New("Replica is required")
+	}
+	manifest, err := canonical.DecodeFeatureManifest(encoded)
+	if err != nil {
+		return fmt.Errorf("decode Feature Manifest: %w", err)
+	}
+	if manifest.ID != manifestID {
+		return errors.New("Feature Manifest content address does not match its bytes")
+	}
+	if existing, ok := r.featureManifests[manifestID]; ok {
+		if bytes.Equal(existing.Bytes, encoded) {
+			return nil
+		}
+		return errors.New("Feature Manifest identity collision")
+	}
+	manifest.Bytes = append([]byte(nil), manifest.Bytes...)
+	manifest.Parameters = append([]byte(nil), manifest.Parameters...)
+	manifest.RequiredManifestIDs = append([]canonical.Identifier(nil), manifest.RequiredManifestIDs...)
+	manifest.IncompatibleKeys = append([]string(nil), manifest.IncompatibleKeys...)
+	r.featureManifests[manifestID] = manifest
+	return nil
+}
+
+func (r *Replica) FeatureManifest(manifestID canonical.Identifier) (canonical.FeatureManifest, bool) {
+	if r == nil {
+		return canonical.FeatureManifest{}, false
+	}
+	manifest, ok := r.featureManifests[manifestID]
+	if !ok {
+		return canonical.FeatureManifest{}, false
+	}
+	return cloneFeatureManifest(manifest), true
+}
+
+func (r *Replica) FeatureManifests() []canonical.FeatureManifest {
+	if r == nil {
+		return nil
+	}
+	entries := make([]canonical.FeatureManifest, 0, len(r.featureManifests))
+	for _, manifest := range r.featureManifests {
+		entries = append(entries, cloneFeatureManifest(manifest))
+	}
+	sort.Slice(entries, func(left, right int) bool {
+		return bytes.Compare(entries[left].ID[:], entries[right].ID[:]) < 0
+	})
+	return entries
 }
 
 func (r *Replica) Object(objectID canonical.Identifier) (ReplicaObject, bool) {
@@ -375,6 +429,7 @@ func (r *Replica) Clone() *Replica {
 		continuityRecordIDs: cloneIdentifiers(r.continuityRecordIDs),
 		credentialKeys:      make(map[canonical.Identifier]ed25519.PublicKey, len(r.credentialKeys)),
 		objects:             make(map[canonical.Identifier]ReplicaObject, len(r.objects)),
+		featureManifests:    make(map[canonical.Identifier]canonical.FeatureManifest, len(r.featureManifests)),
 	}
 	for id, key := range r.credentialKeys {
 		clone.credentialKeys[id] = append(ed25519.PublicKey(nil), key...)
@@ -383,6 +438,9 @@ func (r *Replica) Clone() *Replica {
 		copyObject := object
 		copyObject.Bytes = append([]byte(nil), object.Bytes...)
 		clone.objects[id] = copyObject
+	}
+	for id, manifest := range r.featureManifests {
+		clone.featureManifests[id] = cloneFeatureManifest(manifest)
 	}
 	clone.baseline.Bytes = append([]byte(nil), r.baseline.Bytes...)
 	_ = clone.graph.AddBaseline(clone.baselineID, nil)
@@ -443,6 +501,15 @@ func (r *Replica) Clone() *Replica {
 		}
 	}
 	return clone
+}
+
+func cloneFeatureManifest(manifest canonical.FeatureManifest) canonical.FeatureManifest {
+	copyValue := manifest
+	copyValue.Bytes = append([]byte(nil), manifest.Bytes...)
+	copyValue.Parameters = append([]byte(nil), manifest.Parameters...)
+	copyValue.RequiredManifestIDs = append([]canonical.Identifier(nil), manifest.RequiredManifestIDs...)
+	copyValue.IncompatibleKeys = append([]string(nil), manifest.IncompatibleKeys...)
+	return copyValue
 }
 
 func (r *Replica) Events() []canonical.Event {

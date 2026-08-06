@@ -425,6 +425,65 @@ func TestRuntimeAdmitsAuthenticatedOpaqueObjectAndReloadsIt(t *testing.T) {
 	}
 }
 
+func TestRuntimeAdmitsAuthenticatedOpaqueFeatureManifestAndReloadsIt(t *testing.T) {
+	ctx := context.Background()
+	state := store.NewMemoryState()
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vaultID := createVaultForTest(t, runtime, "Feature")
+	value := runtime.vaults[vaultID]
+	vaultIdentifier, err := decodeHexIdentifier(vaultID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	epochIdentifier, err := decodeHexIdentifier(value.Canonical.KeyEpochID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	epochBytes, err := dependencies.Secrets.Get(trustedSecretService, epochSecretAccount(vaultID, value.Canonical.KeyEpochID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	epochSecret, err := decodeEpochSecret(epochBytes, vaultIdentifier, epochIdentifier)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestBytes, err := canonical.EncodeFeatureManifest(canonical.FeatureManifestInput{
+		FeatureKey: "awsm.runtime.feature", Revision: 1, Parameters: []byte{4},
+		RequiredManifestIDs: []canonical.Identifier{}, IncompatibleKeys: []string{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestID, err := canonical.FeatureManifestID(manifestBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := awsmcrypto.SealCompactItem(awsmcrypto.CompactItemInput{VaultID: vaultIdentifier, KeyEpochID: epochIdentifier, KeyEpochKey: epochSecret.key, PayloadType: 3, PayloadBytes: manifestBytes})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.AdmitOpaqueFeatureManifest(ctx, vaultID, encoded); err != nil {
+		t.Fatalf("admit opaque Feature Manifest: %v", err)
+	}
+	if value.Canonical.FeatureManifestStorageItemIDs[hexIdentifier(manifestID)] == "" {
+		t.Fatalf("Feature Manifest storage mapping = %#v", value.Canonical.FeatureManifestStorageItemIDs)
+	}
+	if stored, ok := runtime.replicas[vaultID].FeatureManifest(manifestID); !ok || !bytes.Equal(stored.Bytes, manifestBytes) {
+		t.Fatalf("Runtime did not retain Feature Manifest = %#v", stored)
+	}
+	restarted, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatalf("restart Runtime: %v", err)
+	}
+	if stored, ok := restarted.replicas[vaultID].FeatureManifest(manifestID); !ok || !bytes.Equal(stored.Bytes, manifestBytes) {
+		t.Fatalf("restart did not retain Feature Manifest = %#v", stored)
+	}
+}
+
 func TestStorageReliefEvictsOnlyLocalObjectBytesWithWarning(t *testing.T) {
 	ctx := context.Background()
 	state := store.NewMemoryState()
@@ -1001,6 +1060,108 @@ func TestHostedReplicaAttachmentMaterializationAndPull(t *testing.T) {
 	pulled := pulledValue.([]map[string]string)
 	if len(pulled) != 2 || pulled[0]["status"] != "Completed" || pulled[1]["status"] != "Completed" {
 		t.Fatalf("pull summary = %#v", pulled)
+	}
+}
+
+func TestHostedReplicaMaterializesFeatureManifestItems(t *testing.T) {
+	ctx := context.Background()
+	fixture := newHostedSyncFixture(t)
+	dependencies := memoryDependencies(t)
+	dependencies.HTTPClient = fixture.Client
+	runtime, err := New(ctx, store.NewMemoryState(), dependencies)
+	if err != nil {
+		t.Fatalf("create Runtime: %v", err)
+	}
+	feature := canonical.FeatureManifestInput{FeatureKey: "awsm.hosted.feature", Revision: 1, Parameters: []byte{3}, RequiredManifestIDs: []canonical.Identifier{}, IncompatibleKeys: []string{}}
+	prepared, err := PrepareCanonicalVaultCreation(CreationInput{RecoveryPhrase: "abandon amount liar amount expire adjust cage candy arch gather drum buyer", FeatureManifests: []canonical.FeatureManifestInput{feature}})
+	if err != nil {
+		t.Fatalf("prepare feature Vault: %v", err)
+	}
+	vaultID := installPreparedCreationForTest(t, runtime, dependencies, prepared)
+	created, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "CreateHostedReplica", "expectedVaultId": vaultID,
+		"endpoint": fixture.Endpoint, "name": "Feature Host", "username": "alice", "password": "secret",
+	}))
+	if err != nil {
+		t.Fatalf("create Hosted Replica: %v", err)
+	}
+	remote := created.(RemoteSummary)
+	if _, err := runtime.Handle(ctx, mustJSON(map[string]any{"type": "MaterializeHostedReplica", "expectedVaultId": vaultID, "remoteId": remote.RemoteID})); err != nil {
+		t.Fatalf("materialize Hosted Replica: %v", err)
+	}
+	featureID := prepared.FeatureManifests[0].ID
+	locator, err := deriveHostedReplicaLocator(fixture.Salt, hostedNamespaceFeatureSet, featureID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, item := range fixture.Items {
+		if item.Locator == locator {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("Hosted Replica materialization omitted Feature Manifest %s", hexIdentifier(featureID))
+	}
+}
+
+func TestHostedReplicaPullAdmitsFeatureManifestItems(t *testing.T) {
+	ctx := context.Background()
+	fixture := newHostedSyncFixture(t)
+	dependencies := memoryDependencies(t)
+	dependencies.HTTPClient = fixture.Client
+	runtime, err := New(ctx, store.NewMemoryState(), dependencies)
+	if err != nil {
+		t.Fatalf("create Runtime: %v", err)
+	}
+	vaultID := createVaultForTest(t, runtime, "Feature pull")
+	created, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "CreateHostedReplica", "expectedVaultId": vaultID,
+		"endpoint": fixture.Endpoint, "name": "Feature Pull Host", "username": "alice", "password": "secret",
+	}))
+	if err != nil {
+		t.Fatalf("create Hosted Replica: %v", err)
+	}
+	remote := created.(RemoteSummary)
+	vaultIdentifier := mustIdentifier(t, vaultID)
+	value := runtime.vaults[vaultID]
+	epochID := mustIdentifier(t, value.Canonical.KeyEpochID)
+	secretBytes, err := dependencies.Secrets.Get(trustedSecretService, epochSecretAccount(vaultID, value.Canonical.KeyEpochID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	epoch, err := decodeEpochSecret(secretBytes, vaultIdentifier, epochID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestBytes, err := canonical.EncodeFeatureManifest(canonical.FeatureManifestInput{FeatureKey: "awsm.pull.feature", Revision: 1, Parameters: []byte{6}, RequiredManifestIDs: []canonical.Identifier{}, IncompatibleKeys: []string{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestID, err := canonical.FeatureManifestID(manifestBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compact, err := awsmcrypto.SealCompactItem(awsmcrypto.CompactItemInput{VaultID: vaultIdentifier, KeyEpochID: epochID, KeyEpochKey: epoch.key, PayloadType: 3, PayloadBytes: manifestBytes})
+	if err != nil {
+		t.Fatal(err)
+	}
+	locator, err := deriveHostedReplicaLocator(fixture.Salt, hostedNamespaceFeatureSet, manifestID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.addItem(t, locator, compact)
+	result, err := runtime.Handle(ctx, mustJSON(map[string]any{"type": "PullHostedReplicas", "expectedVaultId": vaultID}))
+	if err != nil {
+		t.Fatalf("pull Hosted Replica: %v", err)
+	}
+	status := result.([]map[string]string)
+	if len(status) != 1 || status[0]["remoteId"] != remote.RemoteID || status[0]["status"] != "Completed" {
+		t.Fatalf("pull status = %#v", status)
+	}
+	if stored, ok := runtime.replicas[vaultID].FeatureManifest(manifestID); !ok || !bytes.Equal(stored.Bytes, manifestBytes) {
+		t.Fatalf("pulled Feature Manifest = %#v", stored)
 	}
 }
 

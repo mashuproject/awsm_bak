@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	cryptorand "crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -29,6 +28,7 @@ type CreationInput struct {
 	Label                        *string
 	AssertedAt                   int64
 	RecoveryPhrase               string
+	FeatureManifests             []canonical.FeatureManifestInput
 	IDs                          *CreationIDs
 	ClientSigningSeed            []byte
 	ClientWrappingPrivateKey     []byte
@@ -37,6 +37,13 @@ type CreationInput struct {
 	EnvelopeEphemeralSeed        []byte
 	BaselineProtectionParameters []byte
 	GenesisProtectionParameters  []byte
+}
+
+type PreparedCanonicalFeatureManifest struct {
+	Manifest canonical.FeatureManifest
+	ID       [32]byte
+	Bytes    []byte
+	Envelope storage.OpaqueEnvelope
 }
 
 type PreparedCanonicalVaultCreation struct {
@@ -51,6 +58,7 @@ type PreparedCanonicalVaultCreation struct {
 	RecoveryCredential   canonical.Value
 	ClientKeyEnvelope    awsmcrypto.KeyEnvelope
 	RecoveryKeyEnvelope  awsmcrypto.KeyEnvelope
+	FeatureManifests     []PreparedCanonicalFeatureManifest
 	BaselineEnvelope     storage.OpaqueEnvelope
 	GenesisEnvelope      storage.OpaqueEnvelope
 	Baseline             canonical.Baseline
@@ -91,7 +99,35 @@ func PrepareCanonicalVaultCreation(input CreationInput) (PreparedCanonicalVaultC
 	if err != nil {
 		return PreparedCanonicalVaultCreation{}, err
 	}
-	requiredFeatureSetID := emptyRequiredFeatureSetID()
+	requiredFeatureSetID, err := canonical.RequiredFeatureSetID(input.FeatureManifests)
+	if err != nil {
+		return PreparedCanonicalVaultCreation{}, fmt.Errorf("prepare Required Feature Set: %w", err)
+	}
+	featureManifests := make([]PreparedCanonicalFeatureManifest, 0, len(input.FeatureManifests))
+	for _, featureInput := range input.FeatureManifests {
+		manifestBytes, encodeErr := canonical.EncodeFeatureManifest(featureInput)
+		if encodeErr != nil {
+			return PreparedCanonicalVaultCreation{}, fmt.Errorf("encode Feature Manifest: %w", encodeErr)
+		}
+		manifest, decodeErr := canonical.DecodeFeatureManifest(manifestBytes)
+		if decodeErr != nil {
+			return PreparedCanonicalVaultCreation{}, fmt.Errorf("decode Feature Manifest: %w", decodeErr)
+		}
+		manifestEnvelopeBytes, sealErr := awsmcrypto.SealCompactItem(awsmcrypto.CompactItemInput{
+			VaultID: ids.VaultID, KeyEpochID: epochID, KeyEpochKey: epochKey,
+			PayloadType: 3, PayloadBytes: manifestBytes,
+		})
+		if sealErr != nil {
+			return PreparedCanonicalVaultCreation{}, fmt.Errorf("protect Feature Manifest: %w", sealErr)
+		}
+		manifestEnvelope, decodeErr := storage.DecodeOpaqueEnvelope(manifestEnvelopeBytes)
+		if decodeErr != nil {
+			return PreparedCanonicalVaultCreation{}, fmt.Errorf("decode Feature Manifest envelope: %w", decodeErr)
+		}
+		featureManifests = append(featureManifests, PreparedCanonicalFeatureManifest{
+			Manifest: manifest, ID: manifest.ID, Bytes: manifestBytes, Envelope: manifestEnvelope,
+		})
+	}
 	recoveryRevision := uint64(0)
 	recoveryEnvelope, err := awsmcrypto.SealKeyEnvelope(awsmcrypto.KeyEnvelopeInput{
 		VaultID: ids.VaultID, KeyEpochID: epochID, KeyEpochKey: epochKey,
@@ -151,6 +187,9 @@ func PrepareCanonicalVaultCreation(input CreationInput) (PreparedCanonicalVaultC
 	dependencies := []canonical.Dependency{
 		{Type: 7, ID: clientEnvelope.ID}, {Type: 7, ID: recoveryEnvelope.ID},
 	}
+	for _, feature := range featureManifests {
+		dependencies = append(dependencies, canonical.Dependency{Type: 8, ID: feature.ID})
+	}
 	sort.Slice(dependencies, func(left, right int) bool {
 		if dependencies[left].Type != dependencies[right].Type {
 			return dependencies[left].Type < dependencies[right].Type
@@ -207,6 +246,7 @@ func PrepareCanonicalVaultCreation(input CreationInput) (PreparedCanonicalVaultC
 		ClientKeys: clientKeys, RecoveryKeys: recoveryKeys, KeyEpochKey: epochKey, KeyEpochID: epochID,
 		ClientCertificate: clientCertificate, RecoveryCredential: recoveryCredential,
 		ClientKeyEnvelope: clientEnvelope, RecoveryKeyEnvelope: recoveryEnvelope,
+		FeatureManifests: featureManifests,
 		BaselineEnvelope: baselineEnvelope, GenesisEnvelope: genesisEnvelope,
 		Baseline: baseline, Genesis: genesis,
 	}, nil
@@ -271,16 +311,6 @@ func creationIDs(supplied *CreationIDs) (CreationIDs, error) {
 		}
 	}
 	return ids, nil
-}
-
-func emptyRequiredFeatureSetID() [32]byte {
-	value, err := hex.DecodeString("ed3dd98a4e6cc13d9d14ca4d62eb6b33e11ed471172346ab5d38ac91f57d7ada")
-	if err != nil {
-		panic(err)
-	}
-	var result [32]byte
-	copy(result[:], value)
-	return result
 }
 
 func cloneLabel(label *string) canonical.Value {

@@ -113,8 +113,8 @@ transfer closure import/export. It also accepts and produces the browser-compati
 container for the supported single-Key-Epoch closure and installs it as an authoring-free readable
 Replica.
 
-Remaining work is deliberately narrower: complete multi-Key-Epoch, Feature Manifest, and adopted-Vacuum
-Complete Export reachability/import; complete the remaining organization and other dependency-bearing
+Remaining work is deliberately narrower: complete multi-Key-Epoch and adopted-Vacuum Complete Export
+reachability/import; complete the remaining organization and other dependency-bearing
 Content Fork re-authoring; implement the broader Authority and Key-Epoch event families; expose
 conflict/rebase and sparse-Replica state; and finish Wails workflow controls and cross-surface journeys.
 The Go Runtime now re-authors Note Content Objects and Note Created/Revised/Deleted/Restored/Conflict

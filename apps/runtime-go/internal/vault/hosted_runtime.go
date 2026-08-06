@@ -241,7 +241,7 @@ func (r *Runtime) materializeHostedReplica(ctx context.Context, id, remoteID str
 			return nil, commandError("REMOTE_CONFIGURATION_INVALID", "The Hosted Replica locator configuration is invalid.")
 		}
 		encoded := target.encoded
-		if target.payloadType == 1 || target.payloadType == 2 {
+		if target.payloadType == 1 || target.payloadType == 2 || target.payloadType == 3 {
 			opened, openErr := awsmcrypto.OpenCompactItem(vaultIdentifier, epochIdentifier, epochSecret.key, encoded)
 			if openErr != nil {
 				return nil, commandError("REMOTE_MATERIALIZATION_FAILED", "A local Compact item could not be opened.")
@@ -295,6 +295,8 @@ func (r *Runtime) materializationTargetsLocked(state *canonicalReplicaState) ([]
 			payloadType = 1
 		} else if namespace == hostedNamespaceObject {
 			payloadType = 2
+		} else if namespace == hostedNamespaceFeatureSet {
+			payloadType = 3
 		}
 		targets = append(targets, hostedMaterializationTarget{namespace: namespace, logicalID: logicalID, payloadType: payloadType, encoded: encoded})
 		return nil
@@ -315,6 +317,11 @@ func (r *Runtime) materializationTargetsLocked(state *canonicalReplicaState) ([]
 	for logicalID, storageItemID := range state.ObjectStorageItemIDs {
 		if err := appendItem(hostedNamespaceObject, logicalID, storageItemID); err != nil {
 			return nil, commandError("REMOTE_MATERIALIZATION_FAILED", "A local Vault Object could not be opened.")
+		}
+	}
+	for logicalID, storageItemID := range state.FeatureManifestStorageItemIDs {
+		if err := appendItem(hostedNamespaceFeatureSet, logicalID, storageItemID); err != nil {
+			return nil, commandError("REMOTE_MATERIALIZATION_FAILED", "A local Feature Manifest could not be opened.")
 		}
 	}
 	sort.Slice(targets, func(left, right int) bool {
@@ -435,6 +442,10 @@ func (r *Runtime) pullHostedReplicas(ctx context.Context, id string) (any, error
 					}
 				case 2:
 					if admitErr := r.AdmitOpaqueObject(ctx, id, encoded); admitErr != nil {
+						failed = true
+					}
+				case 3:
+					if admitErr := r.AdmitOpaqueFeatureManifest(ctx, id, encoded); admitErr != nil {
 						failed = true
 					}
 				default:

@@ -101,6 +101,65 @@ func TestRuntimeImportsCompleteExportAsAuthoringFreeReplica(t *testing.T) {
 	}
 }
 
+func TestRuntimeExportsAndImportsFeatureManifestClosure(t *testing.T) {
+	ctx := context.Background()
+	feature := canonical.FeatureManifestInput{
+		FeatureKey: "awsm.export.feature", Revision: 1, Parameters: []byte{8},
+		RequiredManifestIDs: []canonical.Identifier{}, IncompatibleKeys: []string{},
+	}
+	sourceDependencies := memoryDependencies(t)
+	source, err := New(ctx, store.NewMemoryState(), sourceDependencies)
+	if err != nil {
+		t.Fatalf("create source Runtime: %v", err)
+	}
+	prepared, err := PrepareCanonicalVaultCreation(CreationInput{
+		RecoveryPhrase:   "abandon amount liar amount expire adjust cage candy arch gather drum buyer",
+		FeatureManifests: []canonical.FeatureManifestInput{feature},
+	})
+	if err != nil {
+		t.Fatalf("prepare feature Vault: %v", err)
+	}
+	vaultID := installPreparedCreationForTest(t, source, sourceDependencies, prepared)
+	complete, err := source.ExportComplete(vaultID, prepared.RecoveryPhrase)
+	if err != nil {
+		t.Fatalf("export feature Complete Export: %v", err)
+	}
+	opened, err := completeexport.OpenStream(prepared.RecoveryPhrase, complete)
+	if err != nil {
+		t.Fatalf("open feature Complete Export: %v", err)
+	}
+	entries, err := decodeCompleteExportEntries(opened.Plaintext)
+	if err != nil {
+		t.Fatalf("decode feature Complete Export: %v", err)
+	}
+	manifest, err := completeexport.DecodeManifest(entries[0].Bytes)
+	if err != nil {
+		t.Fatalf("decode feature Manifest: %v", err)
+	}
+	featureID := prepared.FeatureManifests[0].ID
+	foundFeature := false
+	for _, item := range manifest.OpaqueItemInventory {
+		if item.Namespace == 4 && item.LogicalID == featureID {
+			foundFeature = true
+		}
+	}
+	if !foundFeature {
+		t.Fatalf("Complete Export omitted Feature Manifest %s", hexIdentifier(featureID))
+	}
+	destinationDependencies := memoryDependencies(t)
+	destination, err := New(ctx, store.NewMemoryState(), destinationDependencies)
+	if err != nil {
+		t.Fatalf("create destination Runtime: %v", err)
+	}
+	if _, err := destination.ImportComplete(ctx, prepared.RecoveryPhrase, complete); err != nil {
+		t.Fatalf("import feature Complete Export: %v", err)
+	}
+	stored, ok := destination.replicas[vaultID].FeatureManifest(featureID)
+	if !ok || !bytes.Equal(stored.Bytes, prepared.FeatureManifests[0].Bytes) {
+		t.Fatalf("imported Feature Manifest = %#v", stored)
+	}
+}
+
 func TestRuntimeCommandsExposeCompleteExportAndImport(t *testing.T) {
 	ctx := context.Background()
 	source, err := New(ctx, store.NewMemoryState(), memoryDependencies(t))
@@ -337,6 +396,52 @@ func admitCompleteExportArtifact(t *testing.T, runtime *Runtime, dependencies De
 	}
 	value.Canonical.ArtifactStorageItemIDs[hexIdentifier(artifactID)] = hexIdentifier(envelope.StorageItemID)
 	return artifactID
+}
+
+func installPreparedCreationForTest(t *testing.T, runtime *Runtime, dependencies Dependencies, prepared PreparedCanonicalVaultCreation) string {
+	t.Helper()
+	canonicalState := canonicalReplicaFromCreation(prepared)
+	for _, item := range []struct {
+		id   [32]byte
+		data []byte
+	}{
+		{prepared.BaselineEnvelope.StorageItemID, prepared.BaselineEnvelope.Bytes},
+		{prepared.GenesisEnvelope.StorageItemID, prepared.GenesisEnvelope.Bytes},
+		{prepared.RecoveryKeyEnvelope.Envelope.StorageItemID, prepared.RecoveryKeyEnvelope.Envelope.Bytes},
+		{prepared.ClientKeyEnvelope.Envelope.StorageItemID, prepared.ClientKeyEnvelope.Envelope.Bytes},
+	} {
+		if err := storeOpaqueCreationItem(dependencies.Artifacts, item.id, item.data); err != nil {
+			t.Fatalf("store prepared closure item: %v", err)
+		}
+	}
+	for _, feature := range prepared.FeatureManifests {
+		if err := storeOpaqueCreationItem(dependencies.Artifacts, feature.Envelope.StorageItemID, feature.Envelope.Bytes); err != nil {
+			t.Fatalf("store prepared Feature Manifest: %v", err)
+		}
+	}
+	clientSecret, err := encodeClientSecret(prepared)
+	if err != nil {
+		t.Fatalf("encode prepared Client secret: %v", err)
+	}
+	if err := dependencies.Secrets.Put(trustedSecretService, clientSecretAccount(canonicalState.VaultID, canonicalState.ClientCredentialID), clientSecret); err != nil {
+		t.Fatalf("store prepared Client secret: %v", err)
+	}
+	epochSecret, err := encodeEpochSecret(prepared)
+	if err != nil {
+		t.Fatalf("encode prepared Epoch secret: %v", err)
+	}
+	if err := dependencies.Secrets.Put(trustedSecretService, epochSecretAccount(canonicalState.VaultID, canonicalState.KeyEpochID), epochSecret); err != nil {
+		t.Fatalf("store prepared Epoch secret: %v", err)
+	}
+	vaultID := canonicalState.VaultID
+	runtime.vaults[vaultID] = &persistedVault{VaultID: vaultID, Label: nil, Lifecycle: "Open", RecoveryHash: hashPhrase(prepared.RecoveryPhrase), GenerationID: canonicalState.GenerationID, Remotes: []remoteState{}, Canonical: canonicalState}
+	replica, err := newReplicaFromPreparedCreation(prepared)
+	if err != nil {
+		t.Fatalf("open prepared Replica: %v", err)
+	}
+	runtime.replicas[vaultID] = replica
+	runtime.selected = vaultID
+	return vaultID
 }
 
 func decodeCompleteExportEntries(plaintext []byte) ([]completeexport.Entry, error) {

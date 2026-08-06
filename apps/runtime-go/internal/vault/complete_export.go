@@ -256,6 +256,10 @@ func prepareCompleteImport(manifest completeexport.Manifest, inventory completee
 		id    canonical.Identifier
 		bytes []byte
 	}, 0)
+	featureValues := make([]struct {
+		id    canonical.Identifier
+		bytes []byte
+	}, 0)
 	artifactValues := make([]completeImportArtifact, 0)
 	currentEpochIDs := make(map[string]struct{})
 	for _, entry := range opaqueEntries {
@@ -304,7 +308,17 @@ func prepareCompleteImport(manifest completeexport.Manifest, inventory completee
 				bytes []byte
 			}{id: item.LogicalID, bytes: append([]byte(nil), opened.PayloadBytes...)})
 		case 4:
-			return preparedCompleteImport{}, errors.New("Complete Export Feature Manifest import is not implemented by this Runtime")
+			if opened.PayloadType != 3 {
+				return preparedCompleteImport{}, errors.New("Complete Export Feature Manifest payload type is invalid")
+			}
+			manifestID, manifestErr := canonical.FeatureManifestID(opened.PayloadBytes)
+			if manifestErr != nil || manifestID != item.LogicalID {
+				return preparedCompleteImport{}, errors.New("Complete Export Feature Manifest identity is invalid")
+			}
+			featureValues = append(featureValues, struct {
+				id    canonical.Identifier
+				bytes []byte
+			}{id: item.LogicalID, bytes: append([]byte(nil), opened.PayloadBytes...)})
 		default:
 			return preparedCompleteImport{}, errors.New("Complete Export namespace is unsupported")
 		}
@@ -350,6 +364,7 @@ func prepareCompleteImport(manifest completeexport.Manifest, inventory completee
 	if err := replica.AdmitEvent(*genesis, genesisSigningKey); err != nil {
 		return preparedCompleteImport{}, fmt.Errorf("admit Complete Export Genesis: %w", err)
 	}
+	allRecordValues := append([]canonical.Record(nil), recordValues...)
 	for len(recordValues) > 0 {
 		progress := false
 		for index := 0; index < len(recordValues); index++ {
@@ -378,6 +393,30 @@ func prepareCompleteImport(manifest completeexport.Manifest, inventory completee
 		if err := replica.AdmitObject(object.id, object.bytes); err != nil {
 			return preparedCompleteImport{}, fmt.Errorf("admit Complete Export Object: %w", err)
 		}
+	}
+	for _, feature := range featureValues {
+		if err := replica.AdmitFeatureManifest(feature.id, feature.bytes); err != nil {
+			return preparedCompleteImport{}, fmt.Errorf("admit Complete Export Feature Manifest: %w", err)
+		}
+	}
+	featureIDs := make(map[canonical.Identifier]struct{}, len(featureValues))
+	for _, feature := range featureValues {
+		featureIDs[feature.id] = struct{}{}
+	}
+	if err := validateImportedFeatureManifestDependencies(*baseline, allRecordValues, featureIDs); err != nil {
+		return preparedCompleteImport{}, err
+	}
+	featureInputs := make([]canonical.FeatureManifestInput, 0, len(featureValues))
+	for _, feature := range featureValues {
+		manifest, ok := replica.FeatureManifest(feature.id)
+		if !ok {
+			return preparedCompleteImport{}, errors.New("Complete Export Feature Manifest is unavailable after admission")
+		}
+		featureInputs = append(featureInputs, manifest.FeatureManifestInput)
+	}
+	featureSetID, err := canonical.RequiredFeatureSetID(featureInputs)
+	if err != nil || featureSetID != manifest.RequiredFeatureSetID {
+		return preparedCompleteImport{}, errors.New("Complete Export Feature Manifest closure does not match its Required Feature Set")
 	}
 	for _, artifact := range artifactValues {
 		object, ok := replica.Object(artifact.item.LogicalID)
@@ -414,6 +453,7 @@ func prepareCompleteImport(manifest completeexport.Manifest, inventory completee
 	}
 	recordMappings := make(map[string]string)
 	objectMappings := make(map[string]string)
+	featureMappings := make(map[string]string)
 	artifactMappings := make(map[string]string)
 	for _, item := range manifest.OpaqueItemInventory {
 		storageID := hexIdentifier(item.StorageItemID)
@@ -422,33 +462,36 @@ func prepareCompleteImport(manifest completeexport.Manifest, inventory completee
 			recordMappings[hexIdentifier(item.LogicalID)] = storageID
 		case 3:
 			objectMappings[hexIdentifier(item.LogicalID)] = storageID
+		case 4:
+			featureMappings[hexIdentifier(item.LogicalID)] = storageID
 		case 5:
 			artifactMappings[hexIdentifier(item.LogicalID)] = storageID
 		}
 	}
 	canonicalState := &canonicalReplicaState{
-		VaultID:                   hexIdentifier(manifest.VaultID),
-		GenerationID:              hexIdentifier(manifest.GenerationID),
-		BaselineID:                hexIdentifier(baseline.RecordID),
-		GenesisID:                 hexIdentifier(genesis.RecordID),
-		KeyEpochID:                hexIdentifier(epochID),
-		RequiredFeatureSetID:      hexIdentifier(manifest.RequiredFeatureSetID),
-		MemberID:                  hexIdentifier(memberID),
-		RecoveryCredentialID:      hexIdentifier(recoveryCredentialID),
-		ClientCredentialID:        hexIdentifier(clientCredentialID),
-		BaselineStorageItemID:     recordMappings[hexIdentifier(baseline.RecordID)],
-		GenesisStorageItemID:      recordMappings[hexIdentifier(genesis.RecordID)],
-		RecoveryEnvelopeID:        hexIdentifier(envelopeIDs[1]),
-		RecoveryEnvelopeStorageID: recoveryEnvelopeStorageID,
-		ClientEnvelopeID:          hexIdentifier(envelopeIDs[2]),
-		ClientEnvelopeStorageID:   clientEnvelopeStorageID,
-		AuthoringAvailable:        false,
-		CausalFrontier:            identifiersToHex(state.CausalFrontier),
-		AuthorityFrontier:         identifiersToHex(state.AuthorityFrontier),
-		ContinuityRecordIDs:       identifiersToHex(state.ContinuityRecordIDs),
-		RecordStorageItemIDs:      recordMappings,
-		ObjectStorageItemIDs:      objectMappings,
-		ArtifactStorageItemIDs:    artifactMappings,
+		VaultID:                       hexIdentifier(manifest.VaultID),
+		GenerationID:                  hexIdentifier(manifest.GenerationID),
+		BaselineID:                    hexIdentifier(baseline.RecordID),
+		GenesisID:                     hexIdentifier(genesis.RecordID),
+		KeyEpochID:                    hexIdentifier(epochID),
+		RequiredFeatureSetID:          hexIdentifier(manifest.RequiredFeatureSetID),
+		MemberID:                      hexIdentifier(memberID),
+		RecoveryCredentialID:          hexIdentifier(recoveryCredentialID),
+		ClientCredentialID:            hexIdentifier(clientCredentialID),
+		BaselineStorageItemID:         recordMappings[hexIdentifier(baseline.RecordID)],
+		GenesisStorageItemID:          recordMappings[hexIdentifier(genesis.RecordID)],
+		RecoveryEnvelopeID:            hexIdentifier(envelopeIDs[1]),
+		RecoveryEnvelopeStorageID:     recoveryEnvelopeStorageID,
+		ClientEnvelopeID:              hexIdentifier(envelopeIDs[2]),
+		ClientEnvelopeStorageID:       clientEnvelopeStorageID,
+		AuthoringAvailable:            false,
+		CausalFrontier:                identifiersToHex(state.CausalFrontier),
+		AuthorityFrontier:             identifiersToHex(state.AuthorityFrontier),
+		ContinuityRecordIDs:           identifiersToHex(state.ContinuityRecordIDs),
+		RecordStorageItemIDs:          recordMappings,
+		ObjectStorageItemIDs:          objectMappings,
+		FeatureManifestStorageItemIDs: featureMappings,
+		ArtifactStorageItemIDs:        artifactMappings,
 	}
 	return preparedCompleteImport{
 		value:   persistedVault{VaultID: hexIdentifier(manifest.VaultID), Label: nil, Lifecycle: "Open", RecoveryHash: "", GenerationID: hexIdentifier(manifest.GenerationID), Remotes: []remoteState{}, RecoveryRevision: 0, Canonical: canonicalState},
@@ -465,6 +508,44 @@ func findTypedRoot(roots []canonical.Dependency, kind uint64) canonical.Identifi
 		}
 	}
 	return canonical.Identifier{}
+}
+
+func validateImportedFeatureManifestDependencies(baseline canonical.Baseline, records []canonical.Record, featureIDs map[canonical.Identifier]struct{}) error {
+	baselineIDs := make(map[canonical.Identifier]struct{})
+	for _, dependency := range baseline.Dependencies {
+		if dependency.Type != 8 {
+			continue
+		}
+		if _, exists := featureIDs[dependency.ID]; !exists {
+			return errors.New("Complete Export Baseline references an unavailable Feature Manifest")
+		}
+		baselineIDs[dependency.ID] = struct{}{}
+	}
+	if len(baselineIDs) != len(featureIDs) {
+		return errors.New("Complete Export Baseline Feature Manifest dependencies are incomplete")
+	}
+	for featureID := range featureIDs {
+		if _, ok := baselineIDs[featureID]; !ok {
+			return errors.New("Complete Export Feature Manifest is not reachable from the Baseline")
+		}
+	}
+	for _, record := range records {
+		var dependencies []canonical.Dependency
+		if record.Event != nil {
+			dependencies = record.Event.Dependencies
+		} else if record.Baseline != nil {
+			dependencies = record.Baseline.Dependencies
+		}
+		for _, dependency := range dependencies {
+			if dependency.Type != 8 {
+				continue
+			}
+			if _, ok := featureIDs[dependency.ID]; !ok {
+				return errors.New("Complete Export Record references an unavailable Feature Manifest")
+			}
+		}
+	}
+	return nil
 }
 
 func onlyEpochID(ids map[string]struct{}) canonical.Identifier {
@@ -682,7 +763,7 @@ func (r *Runtime) exportCompleteLocked(vaultID, passphrase string, salt [16]byte
 }
 
 func (r *Runtime) prepareCompleteExportEntries(state *canonicalReplicaState, replica *Replica, vaultID, epochID canonical.Identifier, epochKey []byte) ([]preparedCompleteExportEntry, error) {
-	entries := make([]preparedCompleteExportEntry, 0, len(state.RecordStorageItemIDs)+len(state.ObjectStorageItemIDs)+len(state.ArtifactStorageItemIDs)+2)
+	entries := make([]preparedCompleteExportEntry, 0, len(state.RecordStorageItemIDs)+len(state.ObjectStorageItemIDs)+len(state.FeatureManifestStorageItemIDs)+len(state.ArtifactStorageItemIDs)+2)
 	for _, recordIDText := range sortedStringKeys(state.RecordStorageItemIDs) {
 		recordID, err := decodeHexIdentifier(recordIDText)
 		if err != nil {
@@ -709,6 +790,21 @@ func (r *Runtime) prepareCompleteExportEntries(state *canonicalReplicaState, rep
 			return nil, fmt.Errorf("Complete Export Object %s is unavailable", objectIDText)
 		}
 		prepared, err := r.prepareCompactCompleteExportEntry(3, objectID, state.ObjectStorageItemIDs[objectIDText], 2, object.Bytes, vaultID, epochID, epochKey)
+		if err != nil {
+			return nil, err
+		}
+		entries = append(entries, prepared)
+	}
+	for _, manifestIDText := range sortedStringKeys(state.FeatureManifestStorageItemIDs) {
+		manifestID, err := decodeHexIdentifier(manifestIDText)
+		if err != nil {
+			return nil, errors.New("Complete Export Feature Manifest identity is invalid")
+		}
+		manifest, ok := replica.FeatureManifest(manifestID)
+		if !ok || len(manifest.Bytes) == 0 {
+			return nil, fmt.Errorf("Complete Export Feature Manifest %s is unavailable", manifestIDText)
+		}
+		prepared, err := r.prepareCompactCompleteExportEntry(4, manifestID, state.FeatureManifestStorageItemIDs[manifestIDText], 3, manifest.Bytes, vaultID, epochID, epochKey)
 		if err != nil {
 			return nil, err
 		}
@@ -839,6 +935,26 @@ func validateCompleteExportDependencies(replica *Replica, state *canonicalReplic
 	if replica == nil || state == nil {
 		return errors.New("Complete Export authenticated Replica is unavailable")
 	}
+	featureInputs := make([]canonical.FeatureManifestInput, 0, len(state.FeatureManifestStorageItemIDs))
+	for featureIDText, storageItemID := range state.FeatureManifestStorageItemIDs {
+		featureID, err := decodeHexIdentifier(featureIDText)
+		if err != nil || storageItemID == "" {
+			return errors.New("Complete Export Feature Manifest storage mapping is invalid")
+		}
+		manifest, ok := replica.FeatureManifest(featureID)
+		if !ok || manifest.ID != featureID || len(manifest.Bytes) == 0 {
+			return fmt.Errorf("Complete Export Feature Manifest %s is unavailable", featureIDText)
+		}
+		featureInputs = append(featureInputs, manifest.FeatureManifestInput)
+	}
+	featureSetID, err := canonical.RequiredFeatureSetID(featureInputs)
+	if err != nil {
+		return fmt.Errorf("Complete Export Required Feature Set is invalid: %w", err)
+	}
+	declaredFeatureSetID, err := decodeHexIdentifier(state.RequiredFeatureSetID)
+	if err != nil || featureSetID != declaredFeatureSetID {
+		return errors.New("Complete Export Feature Manifest closure does not match its Required Feature Set")
+	}
 	for artifactIDText := range state.ArtifactStorageItemIDs {
 		artifactID, err := decodeHexIdentifier(artifactIDText)
 		if err != nil {
@@ -882,7 +998,12 @@ func validateCompleteExportDependencies(replica *Replica, state *canonicalReplic
 					return fmt.Errorf("Complete Export dependency Key Envelope %s is unavailable", hexIdentifier(dependency.ID))
 				}
 			case 8:
-				return fmt.Errorf("Complete Export Feature Manifest %s is unavailable", hexIdentifier(dependency.ID))
+				if _, ok := replica.FeatureManifest(dependency.ID); !ok {
+					return fmt.Errorf("Complete Export Feature Manifest %s is unavailable", hexIdentifier(dependency.ID))
+				}
+				if _, ok := state.FeatureManifestStorageItemIDs[hexIdentifier(dependency.ID)]; !ok {
+					return fmt.Errorf("Complete Export Feature Manifest %s has no Storage Item mapping", hexIdentifier(dependency.ID))
+				}
 			default:
 				return fmt.Errorf("Complete Export dependency type %d is unsupported", dependency.Type)
 			}

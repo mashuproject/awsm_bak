@@ -65,12 +65,13 @@ The current process implements the canonical tagged Command contract for persist
 authenticated Event/Object replay, Library projection, Storage Relief, Garbage Collection, Hosted
 Replica creation/attachment/materialization, receiver pull, Artifact hydration, and encrypted
 Go-to-Go transfer import/export. It also exposes browser-compatible Complete Export/Import for the
-supported single-Key-Epoch closure, including authenticated Streamable Artifact wrappers; Complete Import creates a readable Replica without a local
-authoring Credential. The extension's backend router merges local and desktop Vault
+supported single-Key-Epoch closure, including authenticated Feature Manifest and Streamable Artifact
+closures; Complete Import creates a readable Replica without a local authoring Credential. The
+extension's backend router merges local and desktop Vault
 summaries, then routes Commands by Vault ID; it does not copy desktop Vault bytes into the browser.
 Desktop page acquisition is intentionally unavailable. Capture remains available for extension-owned
-local Vaults; the extension-to-desktop Capture Bundle bridge is not implemented. Multi-Key-Epoch,
-Feature Manifest, and adopted-Vacuum Complete Export semantics, remaining organization and other
+local Vaults; the extension-to-desktop Capture Bundle bridge is not implemented. Multi-Key-Epoch and
+adopted-Vacuum Complete Export semantics, remaining organization and other
 dependency-bearing Content Fork re-authoring, broader Authority and Key-Epoch event families,
 conflict/rebase projections, and the remaining Wails workflow controls and cross-surface journeys
 remain explicit parity boundaries.

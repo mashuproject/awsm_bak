@@ -104,6 +104,39 @@ func TestReplicaAdmitsContentAddressedObject(t *testing.T) {
 	}
 }
 
+func TestReplicaAdmitsContentAddressedFeatureManifest(t *testing.T) {
+	prepared := deterministicCreation(t)
+	replica, err := NewReplica(prepared.Baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestBytes, err := canonical.EncodeFeatureManifest(canonical.FeatureManifestInput{
+		FeatureKey: "awsm.desktop.feature", Revision: 1, Parameters: []byte{1, 2},
+		RequiredManifestIDs: []canonical.Identifier{}, IncompatibleKeys: []string{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestID, err := canonical.FeatureManifestID(manifestBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := replica.AdmitFeatureManifest(manifestID, manifestBytes); err != nil {
+		t.Fatalf("AdmitFeatureManifest: %v", err)
+	}
+	stored, ok := replica.FeatureManifest(manifestID)
+	if !ok || !bytes.Equal(stored.Bytes, manifestBytes) || stored.ID != manifestID {
+		t.Fatalf("stored Feature Manifest = %#v", stored)
+	}
+	if err := replica.AdmitFeatureManifest(manifestID, append([]byte(nil), manifestBytes...)); err != nil {
+		t.Fatalf("duplicate Feature Manifest admission: %v", err)
+	}
+	wrongID := filledCreationID(222)
+	if err := replica.AdmitFeatureManifest(wrongID, manifestBytes); err == nil {
+		t.Fatal("Feature Manifest admitted under the wrong content address")
+	}
+}
+
 func TestProjectLibraryReducesBundleRegistrationAndDescriptor(t *testing.T) {
 	prepared := deterministicCreation(t)
 	replica, err := NewReplica(prepared.Baseline)

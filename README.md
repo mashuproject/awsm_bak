@@ -90,11 +90,11 @@ Host permission leaves local Vault work available and prevents that Host channel
 Current limits are intentional: direct peer transports, complete Authority-branch synchronization,
 global freshness claims, automatic redundancy tracking, and user-facing AI features are not shipped
 in this release. Desktop page capture and the extension-to-desktop Capture Bundle bridge are not
-available. Multi-Key-Epoch, Feature Manifest, and adopted-Vacuum Complete Export semantics,
+available. Multi-Key-Epoch and adopted-Vacuum Complete Export semantics,
 remaining organization and other dependency-bearing Content Fork re-authoring, broader Authority/Key-Epoch event families,
 conflict/rebase projections, and the remaining Wails workflow controls and cross-surface journeys remain explicit parity work; see
 the living specifications and roadmap. The supported single-Key-Epoch Complete Export now
-authenticates and carries Streamable Artifact wrappers.
+authenticates and carries Feature Manifest and Streamable Artifact closures.
 
 The Coordination Server root is the public AWSM product and installation guide on hosted and
 self-hosted deployments. Its privacy, security, setup, Account, and comparison pages are evergreen

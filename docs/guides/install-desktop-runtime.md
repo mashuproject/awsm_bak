@@ -99,7 +99,8 @@ release:
 
 - page capture from the desktop window;
 - the extension-to-desktop Capture Bundle bridge;
-- multi-Key-Epoch, Feature Manifest, and adopted-Vacuum Complete Export closures;
+- multi-Key-Epoch and adopted-Vacuum Complete Export closures (single-Key-Epoch Feature Manifest
+  closures are supported);
 - remaining organization and other dependency-bearing Content Fork re-authoring and broader Authority/Key-Epoch events;
 - conflict/rebase and sparse-Replica projections; and
 - complete Wails workflow coverage.

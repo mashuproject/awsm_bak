@@ -101,30 +101,31 @@ type remoteState struct {
 }
 
 type canonicalReplicaState struct {
-	VaultID                   string            `json:"vaultId"`
-	GenerationID              string            `json:"generationId"`
-	PredecessorGenerationID   string            `json:"predecessorGenerationId,omitempty"`
-	AdoptionEventID           string            `json:"adoptionEventId,omitempty"`
-	BaselineID                string            `json:"baselineId"`
-	GenesisID                 string            `json:"genesisId"`
-	KeyEpochID                string            `json:"keyEpochId"`
-	RequiredFeatureSetID      string            `json:"requiredFeatureSetId"`
-	MemberID                  string            `json:"memberId"`
-	RecoveryCredentialID      string            `json:"recoveryCredentialId"`
-	ClientCredentialID        string            `json:"clientCredentialId"`
-	BaselineStorageItemID     string            `json:"baselineStorageItemId"`
-	GenesisStorageItemID      string            `json:"genesisStorageItemId"`
-	RecoveryEnvelopeID        string            `json:"recoveryEnvelopeId"`
-	RecoveryEnvelopeStorageID string            `json:"recoveryEnvelopeStorageItemId"`
-	ClientEnvelopeID          string            `json:"clientEnvelopeId"`
-	ClientEnvelopeStorageID   string            `json:"clientEnvelopeStorageItemId"`
-	AuthoringAvailable        bool              `json:"authoringAvailable"`
-	CausalFrontier            []string          `json:"causalFrontier"`
-	AuthorityFrontier         []string          `json:"authorityFrontier"`
-	ContinuityRecordIDs       []string          `json:"continuityRecordIds"`
-	RecordStorageItemIDs      map[string]string `json:"recordStorageItemIds"`
-	ObjectStorageItemIDs      map[string]string `json:"objectStorageItemIds"`
-	ArtifactStorageItemIDs    map[string]string `json:"artifactStorageItemIds"`
+	VaultID                       string            `json:"vaultId"`
+	GenerationID                  string            `json:"generationId"`
+	PredecessorGenerationID       string            `json:"predecessorGenerationId,omitempty"`
+	AdoptionEventID               string            `json:"adoptionEventId,omitempty"`
+	BaselineID                    string            `json:"baselineId"`
+	GenesisID                     string            `json:"genesisId"`
+	KeyEpochID                    string            `json:"keyEpochId"`
+	RequiredFeatureSetID          string            `json:"requiredFeatureSetId"`
+	MemberID                      string            `json:"memberId"`
+	RecoveryCredentialID          string            `json:"recoveryCredentialId"`
+	ClientCredentialID            string            `json:"clientCredentialId"`
+	BaselineStorageItemID         string            `json:"baselineStorageItemId"`
+	GenesisStorageItemID          string            `json:"genesisStorageItemId"`
+	RecoveryEnvelopeID            string            `json:"recoveryEnvelopeId"`
+	RecoveryEnvelopeStorageID     string            `json:"recoveryEnvelopeStorageItemId"`
+	ClientEnvelopeID              string            `json:"clientEnvelopeId"`
+	ClientEnvelopeStorageID       string            `json:"clientEnvelopeStorageItemId"`
+	AuthoringAvailable            bool              `json:"authoringAvailable"`
+	CausalFrontier                []string          `json:"causalFrontier"`
+	AuthorityFrontier             []string          `json:"authorityFrontier"`
+	ContinuityRecordIDs           []string          `json:"continuityRecordIds"`
+	RecordStorageItemIDs          map[string]string `json:"recordStorageItemIds"`
+	ObjectStorageItemIDs          map[string]string `json:"objectStorageItemIds"`
+	FeatureManifestStorageItemIDs map[string]string `json:"featureManifestStorageItemIds"`
+	ArtifactStorageItemIDs        map[string]string `json:"artifactStorageItemIds"`
 }
 
 type persistedVault struct {
@@ -393,6 +394,11 @@ func (r *Runtime) ExportTransfer(vaultID string) ([]byte, error) {
 			return nil, commandError("TRANSFER_PACKAGE_UNAVAILABLE", "A required Vault Object is unavailable.")
 		}
 	}
+	for _, storageItemID := range value.Canonical.FeatureManifestStorageItemIDs {
+		if err := addArtifact(storageItemID); err != nil {
+			return nil, commandError("TRANSFER_PACKAGE_UNAVAILABLE", "A required Feature Manifest is unavailable.")
+		}
+	}
 	for _, storageItemID := range value.Canonical.ArtifactStorageItemIDs {
 		if err := addArtifact(storageItemID); err != nil {
 			return nil, commandError("TRANSFER_PACKAGE_UNAVAILABLE", "A required Artifact wrapper is unavailable.")
@@ -560,6 +566,70 @@ func (r *Runtime) AdmitOpaqueObject(ctx context.Context, vaultID string, encoded
 	return nil
 }
 
+// AdmitOpaqueFeatureManifest is the synchronization destination boundary for
+// an authenticated Compact Feature Manifest (payload type 3). Feature
+// Manifest bytes are content-addressed independently from the Event DAG and
+// are retained as a dependency projection for the accepted Replica.
+func (r *Runtime) AdmitOpaqueFeatureManifest(ctx context.Context, vaultID string, encoded []byte) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	value, err := r.vaultLocked(vaultID)
+	if err != nil {
+		return err
+	}
+	if value.Canonical == nil || r.replicas[vaultID] == nil || r.deps.Artifacts == nil || r.deps.Secrets == nil {
+		return commandError("VAULT_REPLAY_UNAVAILABLE", "The authenticated Vault Replica is unavailable.")
+	}
+	vaultIdentifier, err := decodeHexIdentifier(vaultID)
+	if err != nil {
+		return commandError("FEATURE_MANIFEST_INVALID", "The Vault identity is invalid.")
+	}
+	epochIdentifier, err := decodeHexIdentifier(value.Canonical.KeyEpochID)
+	if err != nil {
+		return commandError("FEATURE_MANIFEST_INVALID", "The Key Epoch identity is invalid.")
+	}
+	secretBytes, err := r.deps.Secrets.Get(trustedSecretService, epochSecretAccount(vaultID, value.Canonical.KeyEpochID))
+	if err != nil {
+		return commandError("TRUSTED_SECRET_UNAVAILABLE", "The Key Epoch could not be opened.")
+	}
+	epochSecret, err := decodeEpochSecret(secretBytes, vaultIdentifier, epochIdentifier)
+	if err != nil {
+		return commandError("FEATURE_MANIFEST_INVALID", "The Key Epoch is invalid.")
+	}
+	opened, err := awsmcrypto.OpenCompactItem(vaultIdentifier, epochIdentifier, epochSecret.key, encoded)
+	if err != nil || opened.PayloadType != 3 {
+		return commandError("FEATURE_MANIFEST_INVALID", "The opaque Feature Manifest is invalid.")
+	}
+	manifestID, err := canonical.FeatureManifestID(opened.PayloadBytes)
+	if err != nil {
+		return commandError("FEATURE_MANIFEST_INVALID", "The opaque Feature Manifest is not canonical.")
+	}
+	nextReplica := r.replicas[vaultID].Clone()
+	if err := nextReplica.AdmitFeatureManifest(manifestID, opened.PayloadBytes); err != nil {
+		return commandError("FEATURE_MANIFEST_INVALID", "The Feature Manifest failed authenticated admission.")
+	}
+	envelope, err := storage.DecodeOpaqueEnvelope(encoded)
+	if err != nil || envelope.StorageClass != storage.CompactStorageClass {
+		return commandError("FEATURE_MANIFEST_INVALID", "The opaque Feature Manifest envelope is invalid.")
+	}
+	before := r.snapshotLocked()
+	if err := storeOpaqueCreationItem(r.deps.Artifacts, envelope.StorageItemID, encoded); err != nil {
+		return commandError("VAULT_CREATION_STORAGE_FAILED", "The opaque Feature Manifest could not be stored.")
+	}
+	if value.Canonical.FeatureManifestStorageItemIDs == nil {
+		value.Canonical.FeatureManifestStorageItemIDs = map[string]string{}
+	}
+	value.Canonical.FeatureManifestStorageItemIDs[hexIdentifier(manifestID)] = hexIdentifier(envelope.StorageItemID)
+	r.replicas[vaultID] = nextReplica
+	if err := r.persistLocked(ctx); err != nil {
+		r.restoreLocked(before)
+		deleteOpaqueCreationItem(r.deps.Artifacts, envelope.StorageItemID)
+		return err
+	}
+	r.signal()
+	return nil
+}
+
 type StorageReliefSummary struct {
 	ReleasedObjectIDs []string `json:"releasedObjectIds"`
 	Warning           string   `json:"warning"`
@@ -700,6 +770,9 @@ func (r *Runtime) garbageCollectLocked(ctx context.Context, vaultID string) (Gar
 			retained[storageItemID] = struct{}{}
 		}
 		for _, storageItemID := range value.Canonical.ObjectStorageItemIDs {
+			retained[storageItemID] = struct{}{}
+		}
+		for _, storageItemID := range value.Canonical.FeatureManifestStorageItemIDs {
 			retained[storageItemID] = struct{}{}
 		}
 		for _, storageItemID := range value.Canonical.ArtifactStorageItemIDs {
@@ -1218,6 +1291,9 @@ func (r *Runtime) confirmCreation(ctx context.Context, setupID, phrase string) (
 		prepared.BaselineEnvelope.StorageItemID, prepared.GenesisEnvelope.StorageItemID,
 		prepared.RecoveryKeyEnvelope.Envelope.StorageItemID, prepared.ClientKeyEnvelope.Envelope.StorageItemID,
 	}
+	for _, feature := range prepared.FeatureManifests {
+		storedItems = append(storedItems, feature.Envelope.StorageItemID)
+	}
 	cleanup := func() {
 		for _, itemID := range storedItems {
 			deleteOpaqueCreationItem(r.deps.Artifacts, itemID)
@@ -1241,6 +1317,12 @@ func (r *Runtime) confirmCreation(ctx context.Context, setupID, phrase string) (
 	if err := storeOpaqueCreationItem(r.deps.Artifacts, prepared.ClientKeyEnvelope.Envelope.StorageItemID, prepared.ClientKeyEnvelope.Envelope.Bytes); err != nil {
 		cleanup()
 		return nil, commandError("VAULT_CREATION_STORAGE_FAILED", "The Client Key Envelope could not be stored.")
+	}
+	for _, feature := range prepared.FeatureManifests {
+		if err := storeOpaqueCreationItem(r.deps.Artifacts, feature.Envelope.StorageItemID, feature.Envelope.Bytes); err != nil {
+			cleanup()
+			return nil, commandError("VAULT_CREATION_STORAGE_FAILED", "The Feature Manifest could not be stored.")
+		}
 	}
 	clientSecret, err := encodeClientSecret(prepared)
 	if err != nil {
@@ -2448,6 +2530,11 @@ func validatePersistedVault(value persistedVault) error {
 				return errors.New("Vault state contains an invalid canonical Object storage mapping")
 			}
 		}
+		for manifestID, storageItemID := range value.Canonical.FeatureManifestStorageItemIDs {
+			if !validDigest(manifestID) || !validDigest(storageItemID) {
+				return errors.New("Vault state contains an invalid canonical Feature Manifest storage mapping")
+			}
+		}
 		for artifactID, storageItemID := range value.Canonical.ArtifactStorageItemIDs {
 			if !validDigest(artifactID) || !validDigest(storageItemID) {
 				return errors.New("Vault state contains an invalid canonical Artifact storage mapping")
@@ -2539,6 +2626,10 @@ func cloneCanonicalState(value *canonicalReplicaState) *canonicalReplicaState {
 	for objectID, storageItemID := range value.ObjectStorageItemIDs {
 		copyValue.ObjectStorageItemIDs[objectID] = storageItemID
 	}
+	copyValue.FeatureManifestStorageItemIDs = make(map[string]string, len(value.FeatureManifestStorageItemIDs))
+	for manifestID, storageItemID := range value.FeatureManifestStorageItemIDs {
+		copyValue.FeatureManifestStorageItemIDs[manifestID] = storageItemID
+	}
 	copyValue.ArtifactStorageItemIDs = make(map[string]string, len(value.ArtifactStorageItemIDs))
 	for artifactID, storageItemID := range value.ArtifactStorageItemIDs {
 		copyValue.ArtifactStorageItemIDs[artifactID] = storageItemID
@@ -2547,6 +2638,10 @@ func cloneCanonicalState(value *canonicalReplicaState) *canonicalReplicaState {
 }
 
 func canonicalReplicaFromCreation(prepared PreparedCanonicalVaultCreation) *canonicalReplicaState {
+	featureMappings := make(map[string]string, len(prepared.FeatureManifests))
+	for _, feature := range prepared.FeatureManifests {
+		featureMappings[hexIdentifier(feature.ID)] = hexIdentifier(feature.Envelope.StorageItemID)
+	}
 	return &canonicalReplicaState{
 		VaultID:                   hexIdentifier(prepared.IDs.VaultID),
 		GenerationID:              hexIdentifier(prepared.IDs.GenerationID),
@@ -2571,8 +2666,9 @@ func canonicalReplicaFromCreation(prepared PreparedCanonicalVaultCreation) *cano
 			hexIdentifier(prepared.Baseline.RecordID): hexIdentifier(prepared.BaselineEnvelope.StorageItemID),
 			hexIdentifier(prepared.Genesis.RecordID):  hexIdentifier(prepared.GenesisEnvelope.StorageItemID),
 		},
-		ObjectStorageItemIDs:   map[string]string{},
-		ArtifactStorageItemIDs: map[string]string{},
+		ObjectStorageItemIDs:          map[string]string{},
+		FeatureManifestStorageItemIDs: featureMappings,
+		ArtifactStorageItemIDs:        map[string]string{},
 	}
 }
 
@@ -2583,6 +2679,11 @@ func newReplicaFromPreparedCreation(prepared PreparedCanonicalVaultCreation) (*R
 	}
 	if err := replica.AdmitEvent(prepared.Genesis, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
 		return nil, err
+	}
+	for _, feature := range prepared.FeatureManifests {
+		if err := replica.AdmitFeatureManifest(feature.ID, feature.Bytes); err != nil {
+			return nil, err
+		}
 	}
 	return replica, nil
 }
@@ -2797,6 +2898,9 @@ func (r *Runtime) openCanonicalReplica(value persistedVault) (*Replica, error) {
 			return nil, errors.New("persisted Object Storage Item identity changed")
 		}
 	}
+	if err := admitPersistedFeatureManifests(replica, state.FeatureManifestStorageItemIDs, vaultID, epochID, epochSecret.key, readArtifact); err != nil {
+		return nil, err
+	}
 	actual := replica.State()
 	if !identifierSetEqual(actual.CausalFrontier, state.CausalFrontier) || !identifierSetEqual(actual.AuthorityFrontier, state.AuthorityFrontier) || !identifierSetEqual(actual.ContinuityRecordIDs, state.ContinuityRecordIDs) {
 		return nil, errors.New("persisted Replica frontiers do not match authenticated records")
@@ -2943,6 +3047,9 @@ func (r *Runtime) openAdoptedCanonicalReplica(value persistedVault, state *canon
 			return nil, errors.New("persisted Object Storage Item identity changed")
 		}
 	}
+	if err := admitPersistedFeatureManifests(replica, state.FeatureManifestStorageItemIDs, vaultID, epochSecretKeyID(state), epochSecret.key, readArtifact); err != nil {
+		return nil, err
+	}
 	actual := replica.State()
 	if !identifierSetEqual(actual.CausalFrontier, state.CausalFrontier) || !identifierSetEqual(actual.AuthorityFrontier, state.AuthorityFrontier) || !identifierSetEqual(actual.ContinuityRecordIDs, state.ContinuityRecordIDs) {
 		return nil, errors.New("persisted adopted Replica frontiers do not match authenticated records")
@@ -2953,6 +3060,38 @@ func (r *Runtime) openAdoptedCanonicalReplica(value persistedVault, state *canon
 func epochSecretKeyID(state *canonicalReplicaState) canonical.Identifier {
 	identifier, _ := decodeHexIdentifier(state.KeyEpochID)
 	return identifier
+}
+
+func admitPersistedFeatureManifests(replica *Replica, mappings map[string]string, vaultID, epochID canonical.Identifier, epochKey []byte, readArtifact func(string) ([]byte, error)) error {
+	for manifestIDText, storageItemID := range mappings {
+		encoded, err := readArtifact(storageItemID)
+		if err != nil {
+			return fmt.Errorf("read persisted Feature Manifest %s: %w", manifestIDText, err)
+		}
+		opened, err := awsmcrypto.OpenCompactItem(vaultID, epochID, epochKey, encoded)
+		if err != nil || opened.PayloadType != 3 {
+			if err == nil {
+				err = errors.New("persisted Feature Manifest payload type is invalid")
+			}
+			return fmt.Errorf("open persisted Feature Manifest %s: %w", manifestIDText, err)
+		}
+		manifestID, err := decodeHexIdentifier(manifestIDText)
+		if err != nil {
+			return err
+		}
+		derivedID, err := canonical.FeatureManifestID(opened.PayloadBytes)
+		if err != nil || derivedID != manifestID {
+			return fmt.Errorf("persisted Feature Manifest %s identity is invalid", manifestIDText)
+		}
+		if err := replica.AdmitFeatureManifest(manifestID, opened.PayloadBytes); err != nil {
+			return fmt.Errorf("admit persisted Feature Manifest %s: %w", manifestIDText, err)
+		}
+		envelope, err := storage.DecodeOpaqueEnvelope(encoded)
+		if err != nil || hexIdentifier(envelope.StorageItemID) != storageItemID {
+			return fmt.Errorf("persisted Feature Manifest %s Storage Item identity changed", manifestIDText)
+		}
+	}
+	return nil
 }
 
 type decodedEpochSecret struct {
