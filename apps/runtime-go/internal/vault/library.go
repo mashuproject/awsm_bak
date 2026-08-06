@@ -136,7 +136,19 @@ func ProjectLibraryProjection(replica *Replica) (LibraryProjection, error) {
 	assignments := make(map[canonical.Identifier]libraryTagAssignmentState)
 	removedAssignmentCauses := make(map[canonical.Identifier]struct{})
 	notes := make(map[canonical.Identifier]*libraryNoteState)
-	if err := seedBaselineCollections(replica, collectionTitles); err != nil {
+	if err := seedBaselineCollections(replica, collectionTitles, collectionFolders); err != nil {
+		return LibraryProjection{}, err
+	}
+	if err := seedBaselineFolders(replica, folders); err != nil {
+		return LibraryProjection{}, err
+	}
+	if err := seedBaselineTags(replica, tags, tagRedirects); err != nil {
+		return LibraryProjection{}, err
+	}
+	if err := seedBaselineTagAssignments(replica, tags, assignments); err != nil {
+		return LibraryProjection{}, err
+	}
+	if err := seedBaselineNotes(replica, notes); err != nil {
 		return LibraryProjection{}, err
 	}
 	orderedEvents, err := orderedContentEvents(replica)
@@ -800,10 +812,17 @@ func ProjectLibraryProjection(replica *Replica) (LibraryProjection, error) {
 			return bytes.Compare(headVersions[left].causeID[:], headVersions[right].causeID[:]) < 0
 		})
 		state := "Active"
-		if len(headVersions) > 1 {
-			state = "Conflict"
-		} else if len(headVersions) == 1 && headVersions[0].contentID == nil {
+		allDeleted := len(headVersions) > 0
+		for _, version := range headVersions {
+			if version.contentID != nil {
+				allDeleted = false
+				break
+			}
+		}
+		if allDeleted {
 			state = "Deleted"
+		} else if len(headVersions) > 1 {
+			state = "Conflict"
 		}
 		versions := make([]LibraryNoteVersion, 0, len(headVersions))
 		for _, version := range headVersions {
@@ -838,7 +857,7 @@ func ProjectLibraryProjection(replica *Replica) (LibraryProjection, error) {
 			collection.RedirectedTo = pointerString(hexIdentifier(effective))
 		}
 		if fact, ok := collectionFolders[collectionID]; ok && fact.folderID != nil {
-			if effectiveFolder := nearestActiveFolder(*fact.folderID, folders, folderConflicted); effectiveFolder != nil {
+			if effectiveFolder := effectiveCollectionFolder(*fact.folderID, folders, folderConflicted); effectiveFolder != nil {
 				collection.FolderID = pointerString(hexIdentifier(*effectiveFolder))
 			}
 		}
@@ -1084,7 +1103,7 @@ func replicaMapValueIsMap(value canonical.Value) bool {
 	return ok
 }
 
-func seedBaselineCollections(replica *Replica, collectionTitles map[canonical.Identifier]collectionTitleFact) error {
+func seedBaselineCollections(replica *Replica, collectionTitles map[canonical.Identifier]collectionTitleFact, collectionFolders map[canonical.Identifier]libraryCollectionFolderFact) error {
 	content, err := baselineContentCheckpoint(replica.baseline)
 	if err != nil {
 		return err
@@ -1120,8 +1139,204 @@ func seedBaselineCollections(replica *Replica, collectionTitles map[canonical.Id
 			causeID = causes[0]
 		}
 		collectionTitles[collectionID] = collectionTitleFact{causeID: causeID, title: title}
+		folderID, err := nullableIdentifier(replicaMapEntryMust(entry, 3), "Baseline Collection folder ID")
+		if err != nil {
+			return err
+		}
+		folderCauses, err := parseCanonicalIdentifierSet(replicaMapEntryMust(entry, 4), "Baseline Collection folder causes", false)
+		if err != nil {
+			return err
+		}
+		if folderID != nil && len(folderCauses) == 0 {
+			return fmt.Errorf("Baseline Collection entry %d folder has no cause", index)
+		}
+		folderCauseID := canonical.Identifier{}
+		if len(folderCauses) > 0 {
+			folderCauseID = folderCauses[0]
+		}
+		collectionFolders[collectionID] = libraryCollectionFolderFact{causeID: folderCauseID, folderID: folderID}
 	}
 	return nil
+}
+
+func seedBaselineFolders(replica *Replica, folders map[canonical.Identifier]*libraryFolderState) error {
+	content, err := baselineContentCheckpoint(replica.baseline)
+	if err != nil {
+		return err
+	}
+	entries, ok := replicaMapArray(content, 5)
+	if !ok {
+		return errors.New("Baseline Folder checkpoint is invalid")
+	}
+	for index, entry := range entries {
+		if !replicaMapHasKeys(entry, 7) {
+			return fmt.Errorf("Baseline Folder entry %d is invalid", index)
+		}
+		folderID, ok := replicaIdentifier(entry, 0)
+		if !ok {
+			return fmt.Errorf("Baseline Folder entry %d ID is invalid", index)
+		}
+		name, ok := replicaMapText(entry, 1)
+		if !ok {
+			return fmt.Errorf("Baseline Folder entry %d name is invalid", index)
+		}
+		nameCauses, err := parseCanonicalIdentifierSet(replicaMapEntryMust(entry, 2), "Baseline Folder name causes", false)
+		if err != nil {
+			return err
+		}
+		if len(nameCauses) == 0 {
+			return fmt.Errorf("Baseline Folder entry %d name has no cause", index)
+		}
+		parent, err := nullableIdentifier(replicaMapEntryMust(entry, 3), "Baseline Folder parent ID")
+		if err != nil {
+			return err
+		}
+		parentCauses, err := parseCanonicalIdentifierSet(replicaMapEntryMust(entry, 4), "Baseline Folder parent causes", false)
+		if err != nil {
+			return err
+		}
+		if parent != nil && len(parentCauses) == 0 {
+			return fmt.Errorf("Baseline Folder entry %d parent has no cause", index)
+		}
+		lifecycleCode, ok := replicaUnsignedNumber(replicaMapEntryMust(entry, 5))
+		if !ok || (lifecycleCode != 1 && lifecycleCode != 2) {
+			return fmt.Errorf("Baseline Folder entry %d lifecycle is invalid", index)
+		}
+		lifecycleCauses, err := parseCanonicalIdentifierSet(replicaMapEntryMust(entry, 6), "Baseline Folder lifecycle causes", false)
+		if err != nil {
+			return err
+		}
+		if len(lifecycleCauses) == 0 {
+			return fmt.Errorf("Baseline Folder entry %d lifecycle has no cause", index)
+		}
+		if parent != nil && *parent == folderID {
+			return errors.New("Baseline Folder cannot be its own parent")
+		}
+		if _, exists := folders[folderID]; exists {
+			return fmt.Errorf("Baseline Folder %s is repeated", hexIdentifier(folderID))
+		}
+		folders[folderID] = &libraryFolderState{
+			id: folderID, name: name, nameCause: nameCauses[0], parent: parent,
+			parentCause: firstBaselineCause(parentCauses), lifecycle: baselineLifecycleName(lifecycleCode),
+			lifecycleCause: lifecycleCauses[0],
+		}
+	}
+	return nil
+}
+
+func seedBaselineTags(replica *Replica, tags map[canonical.Identifier]*libraryTagState, redirects map[canonical.Identifier]collectionRedirectFact) error {
+	content, err := baselineContentCheckpoint(replica.baseline)
+	if err != nil {
+		return err
+	}
+	entries, ok := replicaMapArray(content, 6)
+	if !ok {
+		return errors.New("Baseline Tag checkpoint is invalid")
+	}
+	for index, entry := range entries {
+		if !replicaMapHasKeys(entry, 6) {
+			return fmt.Errorf("Baseline Tag entry %d is invalid", index)
+		}
+		tagID, ok := replicaIdentifier(entry, 0)
+		if !ok {
+			return fmt.Errorf("Baseline Tag entry %d ID is invalid", index)
+		}
+		name, ok := replicaMapText(entry, 1)
+		if !ok {
+			return fmt.Errorf("Baseline Tag entry %d name is invalid", index)
+		}
+		nameCauses, err := parseCanonicalIdentifierSet(replicaMapEntryMust(entry, 2), "Baseline Tag name causes", false)
+		if err != nil {
+			return err
+		}
+		if len(nameCauses) == 0 {
+			return fmt.Errorf("Baseline Tag entry %d name has no cause", index)
+		}
+		lifecycleCode, ok := replicaUnsignedNumber(replicaMapEntryMust(entry, 4))
+		if !ok || (lifecycleCode != 1 && lifecycleCode != 2) {
+			return fmt.Errorf("Baseline Tag entry %d lifecycle is invalid", index)
+		}
+		lifecycleCauses, err := parseCanonicalIdentifierSet(replicaMapEntryMust(entry, 5), "Baseline Tag lifecycle causes", false)
+		if err != nil {
+			return err
+		}
+		if len(lifecycleCauses) == 0 {
+			return fmt.Errorf("Baseline Tag entry %d lifecycle has no cause", index)
+		}
+		if _, exists := tags[tagID]; exists {
+			return fmt.Errorf("Baseline Tag %s is repeated", hexIdentifier(tagID))
+		}
+		tags[tagID] = &libraryTagState{id: tagID, name: name, nameCause: nameCauses[0], lifecycle: baselineLifecycleName(lifecycleCode), lifecycleCause: lifecycleCauses[0]}
+		redirectValue := replicaMapEntryMust(entry, 3)
+		if redirectValue == nil {
+			continue
+		}
+		redirect, ok := replicaMapValue(redirectValue)
+		if !ok || !replicaMapHasKeys(redirect, 2) {
+			return fmt.Errorf("Baseline Tag entry %d redirect is invalid", index)
+		}
+		destination, ok := replicaIdentifier(redirect, 0)
+		if !ok || destination == tagID {
+			return fmt.Errorf("Baseline Tag entry %d redirect destination is invalid", index)
+		}
+		cause, ok := replicaIdentifier(redirect, 1)
+		if !ok {
+			return fmt.Errorf("Baseline Tag entry %d redirect cause is invalid", index)
+		}
+		redirects[cause] = collectionRedirectFact{causeID: cause, edges: []collectionRedirectEdge{{sourceID: tagID, destinationID: destination, causeID: cause}}}
+	}
+	return nil
+}
+
+func seedBaselineTagAssignments(replica *Replica, tags map[canonical.Identifier]*libraryTagState, assignments map[canonical.Identifier]libraryTagAssignmentState) error {
+	content, err := baselineContentCheckpoint(replica.baseline)
+	if err != nil {
+		return err
+	}
+	entries, ok := replicaMapArray(content, 7)
+	if !ok {
+		return errors.New("Baseline Tag Assignment checkpoint is invalid")
+	}
+	for index, entry := range entries {
+		if !replicaMapHasKeys(entry, 4) {
+			return fmt.Errorf("Baseline Tag Assignment entry %d is invalid", index)
+		}
+		assignmentID, ok := replicaIdentifier(entry, 0)
+		if !ok {
+			return fmt.Errorf("Baseline Tag Assignment entry %d ID is invalid", index)
+		}
+		causeID, ok := replicaIdentifier(entry, 1)
+		if !ok {
+			return fmt.Errorf("Baseline Tag Assignment entry %d cause is invalid", index)
+		}
+		tagID, ok := replicaIdentifier(entry, 2)
+		if !ok || tags[tagID] == nil {
+			return fmt.Errorf("Baseline Tag Assignment entry %d tag is unknown", index)
+		}
+		targetKind, targetID, err := decodeLibraryTagTarget(replicaMapEntryMust(entry, 3))
+		if err != nil {
+			return err
+		}
+		if _, exists := assignments[assignmentID]; exists {
+			return fmt.Errorf("Baseline Tag Assignment %s is repeated", hexIdentifier(assignmentID))
+		}
+		assignments[assignmentID] = libraryTagAssignmentState{assignmentID: assignmentID, causeID: causeID, tagID: tagID, targetKind: targetKind, targetID: targetID}
+	}
+	return nil
+}
+
+func firstBaselineCause(causes []canonical.Identifier) canonical.Identifier {
+	if len(causes) == 0 {
+		return canonical.Identifier{}
+	}
+	return causes[0]
+}
+
+func baselineLifecycleName(code uint64) string {
+	if code == 2 {
+		return "Deleted"
+	}
+	return "Active"
 }
 
 func freshBaselineCauseID() (canonical.Identifier, error) {
@@ -1136,12 +1351,17 @@ func buildVacuumContentCheckpoint(replica *Replica, projection LibraryProjection
 	if replica == nil {
 		return nil, errors.New("Replica is required")
 	}
-	if len(projection.Captures) != 0 || len(projection.Folders) != 0 || len(projection.Tags) != 0 || len(projection.TagAssignments) != 0 || len(projection.Notes) != 0 || len(projection.Conflicts) != 0 {
-		return nil, errors.New("Vacuum content checkpoint currently supports only Collection title state")
+	if len(projection.Captures) != 0 || len(projection.Notes) != 0 || len(projection.Conflicts) != 0 {
+		return nil, errors.New("Vacuum content checkpoint cannot yet represent captures, Notes, or active conflicts")
 	}
 	for _, collection := range projection.Collections {
-		if collection.RedirectedTo != nil || collection.FolderID != nil || collection.TailBundleID != nil || collection.ActiveCaptureCount != 0 {
-			return nil, errors.New("Vacuum Collection checkpoint cannot represent redirects, folders, or captures")
+		if collection.RedirectedTo != nil || collection.TailBundleID != nil || collection.ActiveCaptureCount != 0 {
+			return nil, errors.New("Vacuum Collection checkpoint cannot represent redirects or captures")
+		}
+	}
+	for _, tag := range projection.Tags {
+		if tag.RedirectedTo != nil {
+			return nil, errors.New("Vacuum Tag checkpoint cannot represent redirects")
 		}
 	}
 	oldContent, err := baselineContentCheckpoint(replica.baseline)
@@ -1152,13 +1372,13 @@ func buildVacuumContentCheckpoint(replica *Replica, projection LibraryProjection
 	if !ok {
 		return nil, errors.New("Baseline Vault label checkpoint is missing")
 	}
-	for _, key := range []uint64{2, 3, 5, 6, 7, 8, 9} {
+	for _, key := range []uint64{2, 3, 8, 9} {
 		entries, entriesOK := replicaMapArray(oldContent, key)
 		if !entriesOK {
 			return nil, fmt.Errorf("Baseline content checkpoint field %d is invalid", key)
 		}
 		if len(entries) != 0 {
-			return nil, errors.New("Vacuum content checkpoint currently supports only Collection title state")
+			return nil, fmt.Errorf("Vacuum content checkpoint cannot yet represent existing field %d", key)
 		}
 	}
 	var labelCheckpoint canonical.Value
@@ -1193,8 +1413,22 @@ func buildVacuumContentCheckpoint(replica *Replica, projection LibraryProjection
 		if decodeErr != nil {
 			return nil, fmt.Errorf("Collection checkpoint identity is invalid: %w", decodeErr)
 		}
+		var folderID canonical.Value
+		folderCauses := []canonical.Value{}
+		if collection.FolderID != nil {
+			decodedFolderID, folderErr := decodeHexIdentifier(*collection.FolderID)
+			if folderErr != nil {
+				return nil, fmt.Errorf("Collection checkpoint folder identity is invalid: %w", folderErr)
+			}
+			folderID = decodedFolderID[:]
+			causeSet, causeErr := freshBaselineCauseSet()
+			if causeErr != nil {
+				return nil, causeErr
+			}
+			folderCauses = causeSet
+		}
 		collectionEntries = append(collectionEntries, canonical.Map{
-			0: collectionID[:], 1: title, 2: causes, 3: nil, 4: []canonical.Value{}, 5: nil, 6: nil, 7: nil,
+			0: collectionID[:], 1: title, 2: causes, 3: folderID, 4: folderCauses, 5: nil, 6: nil, 7: nil,
 		})
 	}
 	sort.Slice(collectionEntries, func(left, right int) bool {
@@ -1202,11 +1436,124 @@ func buildVacuumContentCheckpoint(replica *Replica, projection LibraryProjection
 		rightID, _ := replicaIdentifier(collectionEntries[right], 0)
 		return bytes.Compare(leftID[:], rightID[:]) < 0
 	})
+	folderEntries := make([]canonical.Value, 0, len(projection.Folders))
+	for _, folder := range projection.Folders {
+		folderID, decodeErr := decodeHexIdentifier(folder.FolderID)
+		if decodeErr != nil {
+			return nil, fmt.Errorf("Folder checkpoint identity is invalid: %w", decodeErr)
+		}
+		nameCauseSet, causeErr := freshBaselineCauseSet()
+		if causeErr != nil {
+			return nil, causeErr
+		}
+		var parentID canonical.Value
+		parentCauseSet := []canonical.Value{}
+		if folder.ParentFolderID != nil {
+			decodedParentID, parentErr := decodeHexIdentifier(*folder.ParentFolderID)
+			if parentErr != nil {
+				return nil, fmt.Errorf("Folder checkpoint parent identity is invalid: %w", parentErr)
+			}
+			parentID = decodedParentID[:]
+			parentCauseSet, causeErr = freshBaselineCauseSet()
+			if causeErr != nil {
+				return nil, causeErr
+			}
+		}
+		lifecycleCode, lifecycleOK := vacuumLifecycleCode(folder.Lifecycle)
+		if !lifecycleOK {
+			return nil, fmt.Errorf("Folder checkpoint lifecycle %q is invalid", folder.Lifecycle)
+		}
+		lifecycleCauseSet, causeErr := freshBaselineCauseSet()
+		if causeErr != nil {
+			return nil, causeErr
+		}
+		folderEntries = append(folderEntries, canonical.Map{
+			0: folderID[:], 1: folder.Name, 2: nameCauseSet, 3: parentID, 4: parentCauseSet,
+			5: lifecycleCode, 6: lifecycleCauseSet,
+		})
+	}
+	sort.Slice(folderEntries, func(left, right int) bool {
+		leftID, _ := replicaIdentifier(folderEntries[left], 0)
+		rightID, _ := replicaIdentifier(folderEntries[right], 0)
+		return bytes.Compare(leftID[:], rightID[:]) < 0
+	})
+	tagEntries := make([]canonical.Value, 0, len(projection.Tags))
+	for _, tag := range projection.Tags {
+		tagID, decodeErr := decodeHexIdentifier(tag.TagID)
+		if decodeErr != nil {
+			return nil, fmt.Errorf("Tag checkpoint identity is invalid: %w", decodeErr)
+		}
+		nameCauseSet, causeErr := freshBaselineCauseSet()
+		if causeErr != nil {
+			return nil, causeErr
+		}
+		lifecycleCode, lifecycleOK := vacuumLifecycleCode(tag.Lifecycle)
+		if !lifecycleOK {
+			return nil, fmt.Errorf("Tag checkpoint lifecycle %q is invalid", tag.Lifecycle)
+		}
+		lifecycleCauseSet, causeErr := freshBaselineCauseSet()
+		if causeErr != nil {
+			return nil, causeErr
+		}
+		tagEntries = append(tagEntries, canonical.Map{0: tagID[:], 1: tag.Name, 2: nameCauseSet, 3: nil, 4: lifecycleCode, 5: lifecycleCauseSet})
+	}
+	sort.Slice(tagEntries, func(left, right int) bool {
+		leftID, _ := replicaIdentifier(tagEntries[left], 0)
+		rightID, _ := replicaIdentifier(tagEntries[right], 0)
+		return bytes.Compare(leftID[:], rightID[:]) < 0
+	})
+	assignmentEntries := make([]canonical.Value, 0, len(projection.TagAssignments))
+	for _, assignment := range projection.TagAssignments {
+		assignmentID, decodeErr := decodeHexIdentifier(assignment.AssignmentID)
+		if decodeErr != nil {
+			return nil, fmt.Errorf("Tag Assignment checkpoint identity is invalid: %w", decodeErr)
+		}
+		tagID, decodeErr := decodeHexIdentifier(assignment.TagID)
+		if decodeErr != nil {
+			return nil, fmt.Errorf("Tag Assignment checkpoint Tag identity is invalid: %w", decodeErr)
+		}
+		targetID, decodeErr := decodeHexIdentifier(assignment.TargetID)
+		if decodeErr != nil {
+			return nil, fmt.Errorf("Tag Assignment checkpoint target identity is invalid: %w", decodeErr)
+		}
+		if assignment.TargetKind != 1 && assignment.TargetKind != 2 {
+			return nil, errors.New("Tag Assignment checkpoint target kind is invalid")
+		}
+		causeID, causeErr := freshBaselineCauseID()
+		if causeErr != nil {
+			return nil, causeErr
+		}
+		assignmentEntries = append(assignmentEntries, canonical.Map{0: assignmentID[:], 1: causeID[:], 2: tagID[:], 3: canonical.Map{0: assignment.TargetKind, 1: targetID[:]}})
+	}
+	sort.Slice(assignmentEntries, func(left, right int) bool {
+		leftID, _ := replicaIdentifier(assignmentEntries[left], 0)
+		rightID, _ := replicaIdentifier(assignmentEntries[right], 0)
+		return bytes.Compare(leftID[:], rightID[:]) < 0
+	})
 	return canonical.Map{
 		0: uint64(1), 1: labelCheckpoint, 2: []canonical.Value{}, 3: []canonical.Value{},
-		4: collectionEntries, 5: []canonical.Value{}, 6: []canonical.Value{}, 7: []canonical.Value{},
+		4: collectionEntries, 5: folderEntries, 6: tagEntries, 7: assignmentEntries,
 		8: []canonical.Value{}, 9: []canonical.Value{},
 	}, nil
+}
+
+func freshBaselineCauseSet() ([]canonical.Value, error) {
+	causeID, err := freshBaselineCauseID()
+	if err != nil {
+		return nil, err
+	}
+	return canonicalSetValues([]canonical.Value{causeID[:]}), nil
+}
+
+func vacuumLifecycleCode(value string) (uint64, bool) {
+	switch value {
+	case "Active":
+		return 1, true
+	case "Deleted":
+		return 2, true
+	default:
+		return 0, false
+	}
 }
 
 type collectionTitleFact struct {
@@ -1338,7 +1685,11 @@ func decodeLibraryNoteTarget(value canonical.Value) (uint64, canonical.Identifie
 }
 
 func projectNoteVersion(replica *Replica, event canonical.Event, causeID canonical.Identifier, contentID *canonical.Identifier) (libraryNoteVersionState, error) {
-	version := libraryNoteVersionState{causeID: causeID, assertedAt: event.AssertedAt}
+	return projectNoteContentVersion(replica, causeID, contentID, event.AssertedAt)
+}
+
+func projectNoteContentVersion(replica *Replica, causeID canonical.Identifier, contentID *canonical.Identifier, assertedAt int64) (libraryNoteVersionState, error) {
+	version := libraryNoteVersionState{causeID: causeID, assertedAt: assertedAt}
 	if contentID == nil {
 		return version, nil
 	}
@@ -1369,6 +1720,112 @@ func projectNoteVersion(replica *Replica, event canonical.Event, causeID canonic
 	version.body = &textCopy
 	version.dialect = &dialectCopy
 	return version, nil
+}
+
+func seedBaselineNotes(replica *Replica, notes map[canonical.Identifier]*libraryNoteState) error {
+	content, err := baselineContentCheckpoint(replica.baseline)
+	if err != nil {
+		return err
+	}
+	entries, ok := replicaMapArray(content, 8)
+	if !ok {
+		return errors.New("Baseline Note checkpoint is invalid")
+	}
+	for index, entry := range entries {
+		if !replicaMapHasKeys(entry, 4) {
+			return fmt.Errorf("Baseline Note entry %d is invalid", index)
+		}
+		noteID, ok := replicaIdentifier(entry, 0)
+		if !ok {
+			return fmt.Errorf("Baseline Note entry %d ID is invalid", index)
+		}
+		targetKind, targetID, err := decodeLibraryNoteTarget(replicaMapEntryMust(entry, 1))
+		if err != nil {
+			return err
+		}
+		stateCode, ok := replicaUnsignedNumber(replicaMapEntryMust(entry, 2))
+		if !ok || stateCode < 1 || stateCode > 3 {
+			return fmt.Errorf("Baseline Note entry %d state is invalid", index)
+		}
+		versions, ok := replicaMapArray(entry, 3)
+		if !ok || len(versions) == 0 {
+			return fmt.Errorf("Baseline Note entry %d versions are invalid", index)
+		}
+		if stateCode == 1 && len(versions) != 1 {
+			return fmt.Errorf("Baseline Note entry %d active state must have one version", index)
+		}
+		if _, exists := notes[noteID]; exists {
+			return fmt.Errorf("Baseline Note %s is repeated", hexIdentifier(noteID))
+		}
+		versionState := make(map[canonical.Identifier]libraryNoteVersionState, len(versions))
+		for versionIndex, versionValue := range versions {
+			if !replicaMapHasKeys(versionValue, 4) {
+				return fmt.Errorf("Baseline Note %d version %d is invalid", index, versionIndex)
+			}
+			causeID, ok := replicaIdentifier(versionValue, 0)
+			if !ok {
+				return fmt.Errorf("Baseline Note %d version %d cause is invalid", index, versionIndex)
+			}
+			if _, exists := versionState[causeID]; exists {
+				return fmt.Errorf("Baseline Note %s repeats version cause", hexIdentifier(noteID))
+			}
+			var contentID *canonical.Identifier
+			if raw := replicaMapEntryMust(versionValue, 1); raw != nil {
+				decoded, decodedOK := replicaIdentifierValue(raw)
+				if !decodedOK {
+					return fmt.Errorf("Baseline Note %d version %d content object is invalid", index, versionIndex)
+				}
+				contentID = &decoded
+			}
+			var restoreID *canonical.Identifier
+			if raw := replicaMapEntryMust(versionValue, 2); raw != nil {
+				decoded, decodedOK := replicaIdentifierValue(raw)
+				if !decodedOK {
+					return fmt.Errorf("Baseline Note %d version %d restore object is invalid", index, versionIndex)
+				}
+				restoreID = &decoded
+			}
+			attribution, ok := replicaMapValue(replicaMapEntryMust(versionValue, 3))
+			if !ok || !replicaMapHasKeys(attribution, 4) {
+				return fmt.Errorf("Baseline Note %d version %d attribution is invalid", index, versionIndex)
+			}
+			for _, key := range []uint64{0, 1, 2} {
+				if _, valid := replicaIdentifier(attribution, key); !valid {
+					return fmt.Errorf("Baseline Note %d version %d attribution identity is invalid", index, versionIndex)
+				}
+			}
+			assertedAt, valid := replicaMapSignedNumber(attribution, 3)
+			if !valid {
+				return fmt.Errorf("Baseline Note %d version %d attribution timestamp is invalid", index, versionIndex)
+			}
+			if contentID == nil && restoreID == nil {
+				return fmt.Errorf("Baseline Note %d version %d deletion has no retained content", index, versionIndex)
+			}
+			if contentID != nil && restoreID != nil {
+				return fmt.Errorf("Baseline Note %d version %d has both content and restore objects", index, versionIndex)
+			}
+			version, versionErr := projectNoteContentVersion(replica, causeID, contentID, assertedAt)
+			if versionErr != nil {
+				return versionErr
+			}
+			if restoreID != nil {
+				if _, restoreErr := projectNoteContentVersion(replica, causeID, restoreID, assertedAt); restoreErr != nil {
+					return fmt.Errorf("Baseline Note restore content: %w", restoreErr)
+				}
+			}
+			versionState[causeID] = version
+		}
+		for _, version := range versionState {
+			if stateCode == 1 && version.contentID == nil {
+				return fmt.Errorf("Baseline Note %d active state contains deletion", index)
+			}
+			if stateCode == 2 && version.contentID != nil {
+				return fmt.Errorf("Baseline Note %d deleted state contains active content", index)
+			}
+		}
+		notes[noteID] = &libraryNoteState{noteID: noteID, targetKind: targetKind, targetID: targetID, versions: versionState}
+	}
+	return nil
 }
 
 func nullableIdentifier(value canonical.Value, field string) (*canonical.Identifier, error) {
@@ -1417,6 +1874,17 @@ func nearestActiveFolder(folderID canonical.Identifier, folders map[canonical.Id
 		}
 		current = parentID
 	}
+}
+
+func effectiveCollectionFolder(folderID canonical.Identifier, folders map[canonical.Identifier]*libraryFolderState, conflicted map[canonical.Identifier]struct{}) *canonical.Identifier {
+	folder, ok := folders[folderID]
+	if !ok {
+		return nil
+	}
+	if _, blocked := conflicted[folderID]; !blocked && folder.lifecycle == "Active" {
+		return &folderID
+	}
+	return nearestActiveFolder(folderID, folders, conflicted)
 }
 
 func detectFolderConflicts(folders map[canonical.Identifier]*libraryFolderState) (map[canonical.Identifier]struct{}, []LibraryConflict) {

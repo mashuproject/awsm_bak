@@ -1,7 +1,9 @@
 package vault
 
 import (
+	"bytes"
 	"crypto/ed25519"
+	"sort"
 	"testing"
 
 	"github.com/mashuproject/awsm_bak/apps/runtime-go/internal/canonical"
@@ -90,6 +92,211 @@ func TestProjectLibraryProjectionSeedsCollectionTitleFromBaselineCheckpoint(t *t
 	collection := projection.Collections[0]
 	if collection.CollectionID != hexIdentifier(collectionID) || collection.Title != "Saved pages" || collection.ExplicitTitle == nil || *collection.ExplicitTitle != "Saved pages" {
 		t.Fatalf("checkpointed Collection projection = %#v", collection)
+	}
+}
+
+func TestProjectLibraryProjectionSeedsOrganizationStateFromBaselineCheckpoint(t *testing.T) {
+	prepared := deterministicCreation(t)
+	collectionID := filledCreationID(230)
+	collectionTitleCauseID := filledCreationID(231)
+	folderID := filledCreationID(232)
+	folderCauseID := filledCreationID(233)
+	tagID := filledCreationID(234)
+	tagCauseID := filledCreationID(235)
+	assignmentID := filledCreationID(236)
+	assignmentCauseID := filledCreationID(237)
+	body, ok := replicaMapValue(prepared.Baseline.Body)
+	if !ok {
+		t.Fatal("creation Baseline body is not a map")
+	}
+	contentValue := replicaMapEntryMust(body, 2)
+	contentCheckpoint, ok := contentValue.(map[any]any)
+	if !ok {
+		t.Fatalf("creation content checkpoint is not a canonical map: %T %#v", contentValue, contentValue)
+	}
+	contentCheckpoint[uint64(4)] = []canonical.Value{canonical.Map{
+		0: collectionID[:],
+		1: "Saved pages",
+		2: canonicalSetValues([]canonical.Value{collectionTitleCauseID[:]}),
+		3: folderID[:],
+		4: canonicalSetValues([]canonical.Value{folderCauseID[:]}),
+		5: nil,
+		6: nil,
+		7: nil,
+	}}
+	contentCheckpoint[uint64(5)] = []canonical.Value{canonical.Map{
+		0: folderID[:],
+		1: "Reading",
+		2: canonicalSetValues([]canonical.Value{folderCauseID[:]}),
+		3: nil,
+		4: []canonical.Value{},
+		5: uint64(1),
+		6: canonicalSetValues([]canonical.Value{folderCauseID[:]}),
+	}}
+	contentCheckpoint[uint64(6)] = []canonical.Value{canonical.Map{
+		0: tagID[:],
+		1: "Reading",
+		2: canonicalSetValues([]canonical.Value{tagCauseID[:]}),
+		3: nil,
+		4: uint64(1),
+		5: canonicalSetValues([]canonical.Value{tagCauseID[:]}),
+	}}
+	contentCheckpoint[uint64(7)] = []canonical.Value{canonical.Map{
+		0: assignmentID[:],
+		1: assignmentCauseID[:],
+		2: tagID[:],
+		3: canonical.Map{0: uint64(1), 1: collectionID[:]},
+	}}
+	checkpointedBaseline, err := canonical.EncodeBaseline(canonical.BaselineInput{
+		VaultID:              prepared.Baseline.VaultID,
+		GenerationID:         prepared.Baseline.GenerationID,
+		Dependencies:         prepared.Baseline.Dependencies,
+		RequiredFeatureSetID: prepared.Baseline.RequiredFeatureSetID,
+		Extensions:           prepared.Baseline.Extensions,
+		Body:                 body,
+	})
+	if err != nil {
+		t.Fatalf("encode checkpointed Baseline: %v", err)
+	}
+	replica, err := NewReplica(checkpointedBaseline)
+	if err != nil {
+		t.Fatalf("NewReplica: %v", err)
+	}
+	projection, err := ProjectLibraryProjection(replica)
+	if err != nil {
+		t.Fatalf("ProjectLibraryProjection: %v", err)
+	}
+	if len(projection.Collections) != 1 || projection.Collections[0].FolderID == nil || *projection.Collections[0].FolderID != hexIdentifier(folderID) {
+		t.Fatalf("checkpointed Collection projection = %#v, want folder placement", projection.Collections)
+	}
+	if len(projection.Folders) != 1 || projection.Folders[0].FolderID != hexIdentifier(folderID) || projection.Folders[0].Name != "Reading" || projection.Folders[0].Lifecycle != "Active" {
+		t.Fatalf("checkpointed Folder projection = %#v", projection.Folders)
+	}
+	if len(projection.Tags) != 1 || projection.Tags[0].TagID != hexIdentifier(tagID) || projection.Tags[0].Name != "Reading" || projection.Tags[0].Lifecycle != "Active" {
+		t.Fatalf("checkpointed Tag projection = %#v", projection.Tags)
+	}
+	if len(projection.TagAssignments) != 1 || projection.TagAssignments[0].AssignmentID != hexIdentifier(assignmentID) || projection.TagAssignments[0].TagID != hexIdentifier(tagID) || !projection.TagAssignments[0].Active {
+		t.Fatalf("checkpointed Tag Assignment projection = %#v", projection.TagAssignments)
+	}
+}
+
+func TestBuildVacuumContentCheckpointPreservesOrganizationState(t *testing.T) {
+	prepared := deterministicCreation(t)
+	replica, err := NewReplica(prepared.Baseline)
+	if err != nil {
+		t.Fatalf("NewReplica: %v", err)
+	}
+	collectionID := filledCreationID(240)
+	folderID := filledCreationID(241)
+	tagID := filledCreationID(242)
+	assignmentID := filledCreationID(243)
+	title := "Saved pages"
+	checkpoint, err := buildVacuumContentCheckpoint(replica, LibraryProjection{
+		Collections:    []LibraryCollection{{CollectionID: hexIdentifier(collectionID), ExplicitTitle: &title, Title: title, FolderID: pointerString(hexIdentifier(folderID))}},
+		Folders:        []LibraryFolder{{FolderID: hexIdentifier(folderID), Name: "Reading", Lifecycle: "Active"}},
+		Tags:           []LibraryTag{{TagID: hexIdentifier(tagID), Name: "Reading", Lifecycle: "Active"}},
+		TagAssignments: []LibraryTagAssignment{{AssignmentID: hexIdentifier(assignmentID), TagID: hexIdentifier(tagID), TargetKind: 1, TargetID: hexIdentifier(collectionID), Active: true}},
+	})
+	if err != nil {
+		t.Fatalf("buildVacuumContentCheckpoint: %v", err)
+	}
+	collections, ok := replicaMapArray(checkpoint, 4)
+	if !ok || len(collections) != 1 {
+		t.Fatalf("Collection checkpoint = %#v", collections)
+	}
+	if folder, err := nullableIdentifier(replicaMapEntryMust(collections[0], 3), "Collection folder"); err != nil || folder == nil || *folder != folderID {
+		t.Fatalf("Collection folder checkpoint = %v, %v", folder, err)
+	}
+	folders, ok := replicaMapArray(checkpoint, 5)
+	if !ok || len(folders) != 1 {
+		t.Fatalf("Folder checkpoint = %#v", folders)
+	}
+	if name, ok := replicaMapText(folders[0], 1); !ok || name != "Reading" {
+		t.Fatalf("Folder checkpoint = %#v", folders[0])
+	}
+	tags, ok := replicaMapArray(checkpoint, 6)
+	if !ok || len(tags) != 1 {
+		t.Fatalf("Tag checkpoint = %#v", tags)
+	}
+	assignments, ok := replicaMapArray(checkpoint, 7)
+	if !ok || len(assignments) != 1 {
+		t.Fatalf("Tag assignment checkpoint = %#v", assignments)
+	}
+}
+
+func TestProjectLibraryProjectionSeedsNoteFromBaselineCheckpoint(t *testing.T) {
+	prepared := deterministicCreation(t)
+	noteID := filledCreationID(250)
+	noteCauseID := filledCreationID(251)
+	collectionID := filledCreationID(252)
+	contentBody := canonical.Map{0: uint64(1), 1: "A note", 2: "First body", 3: "awsm.note.commonmark"}
+	contentBytes, err := canonical.EncodeValue(canonical.Map{
+		0: uint64(1), 1: prepared.Baseline.VaultID[:], 2: uint64(3), 3: prepared.Baseline.RequiredFeatureSetID[:], 4: contentBody, 5: map[string][]byte{},
+	})
+	if err != nil {
+		t.Fatalf("encode Note Content Object: %v", err)
+	}
+	contentObjectID, err := canonical.VaultObjectID(prepared.Baseline.VaultID, 3, contentBytes)
+	if err != nil {
+		t.Fatalf("derive Note Content Object ID: %v", err)
+	}
+	body, ok := replicaMapValue(prepared.Baseline.Body)
+	if !ok {
+		t.Fatal("creation Baseline body is not a map")
+	}
+	contentValue := replicaMapEntryMust(body, 2)
+	contentCheckpoint, ok := contentValue.(map[any]any)
+	if !ok {
+		t.Fatalf("creation content checkpoint is not a canonical map: %T %#v", contentValue, contentValue)
+	}
+	contentCheckpoint[uint64(8)] = []canonical.Value{canonical.Map{
+		0: noteID[:],
+		1: canonical.Map{0: uint64(1), 1: collectionID[:]},
+		2: uint64(1),
+		3: []canonical.Value{canonical.Map{
+			0: noteCauseID[:], 1: contentObjectID[:], 2: nil,
+			3: canonical.Map{0: prepared.Baseline.VaultID[:], 1: prepared.IDs.FirstMemberID[:], 2: prepared.IDs.ClientCredentialID[:], 3: int64(250)},
+		}},
+	}}
+	dependencies := append(append([]canonical.Dependency(nil), prepared.Baseline.Dependencies...), canonical.Dependency{Type: 6, ID: contentObjectID})
+	sort.Slice(dependencies, func(left, right int) bool {
+		if dependencies[left].Type != dependencies[right].Type {
+			return dependencies[left].Type < dependencies[right].Type
+		}
+		return bytes.Compare(dependencies[left].ID[:], dependencies[right].ID[:]) < 0
+	})
+	checkpointedBaseline, err := canonical.EncodeBaseline(canonical.BaselineInput{
+		VaultID:              prepared.Baseline.VaultID,
+		GenerationID:         prepared.Baseline.GenerationID,
+		Dependencies:         dependencies,
+		RequiredFeatureSetID: prepared.Baseline.RequiredFeatureSetID,
+		Extensions:           prepared.Baseline.Extensions,
+		Body:                 body,
+	})
+	if err != nil {
+		t.Fatalf("encode checkpointed Baseline: %v", err)
+	}
+	replica, err := NewReplica(checkpointedBaseline)
+	if err != nil {
+		t.Fatalf("NewReplica: %v", err)
+	}
+	if err := replica.AdmitObject(contentObjectID, contentBytes); err != nil {
+		t.Fatalf("Admit Note Content Object: %v", err)
+	}
+	projection, err := ProjectLibraryProjection(replica)
+	if err != nil {
+		t.Fatalf("ProjectLibraryProjection: %v", err)
+	}
+	if len(projection.Notes) != 1 {
+		t.Fatalf("Notes = %#v, want one checkpointed Note", projection.Notes)
+	}
+	note := projection.Notes[0]
+	if note.NoteID != hexIdentifier(noteID) || note.TargetKind != 1 || note.TargetID != hexIdentifier(collectionID) || note.State != "Active" || len(note.Versions) != 1 {
+		t.Fatalf("checkpointed Note projection = %#v", note)
+	}
+	version := note.Versions[0]
+	if version.HeadCauseID != hexIdentifier(noteCauseID) || version.ContentObjectID == nil || *version.ContentObjectID != hexIdentifier(contentObjectID) || version.Title == nil || *version.Title != "A note" || version.Body == nil || *version.Body != "First body" || version.BodyDialect == nil || *version.BodyDialect != "awsm.note.commonmark" || version.AssertedAt != 250 {
+		t.Fatalf("checkpointed Note version = %#v", version)
 	}
 }
 
