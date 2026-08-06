@@ -21,6 +21,7 @@ type hostedMaterializationTarget struct {
 	namespace   byte
 	logicalID   [32]byte
 	payloadType uint64
+	epochID     [32]byte
 	encoded     []byte
 }
 
@@ -221,19 +222,6 @@ func (r *Runtime) materializeHostedReplica(ctx context.Context, id, remoteID str
 	if err != nil {
 		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The Vault identity is invalid.")
 	}
-	epochIdentifier, err := decodeHexIdentifier(canonicalState.KeyEpochID)
-	if err != nil {
-		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The Key Epoch identity is invalid.")
-	}
-	epochBytes, err := r.deps.Secrets.Get(trustedSecretService, epochSecretAccount(id, canonicalState.KeyEpochID))
-	if err != nil {
-		return nil, commandError("TRUSTED_SECRET_UNAVAILABLE", "The Key Epoch could not be opened.")
-	}
-	epochSecret, err := decodeEpochSecret(epochBytes, vaultIdentifier, epochIdentifier)
-	if err != nil {
-		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The Key Epoch is invalid.")
-	}
-	defer zeroBytes(epochSecret.key)
 	materialized, alreadyPresent := 0, 0
 	for _, target := range targets {
 		locator, err := deriveHostedReplicaLocator(locatorSalt, target.namespace, target.logicalID)
@@ -242,14 +230,24 @@ func (r *Runtime) materializeHostedReplica(ctx context.Context, id, remoteID str
 		}
 		encoded := target.encoded
 		if target.payloadType == 1 || target.payloadType == 2 || target.payloadType == 3 {
-			opened, openErr := awsmcrypto.OpenCompactItem(vaultIdentifier, epochIdentifier, epochSecret.key, encoded)
+			epochBytes, epochErr := r.deps.Secrets.Get(trustedSecretService, epochSecretAccount(id, hexIdentifier(target.epochID)))
+			if epochErr != nil {
+				return nil, commandError("TRUSTED_SECRET_UNAVAILABLE", "A required Key Epoch could not be opened.")
+			}
+			epochSecret, epochErr := decodeEpochSecret(epochBytes, vaultIdentifier, target.epochID)
+			if epochErr != nil {
+				return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "A required Key Epoch is invalid.")
+			}
+			opened, openErr := awsmcrypto.OpenCompactItem(vaultIdentifier, target.epochID, epochSecret.key, encoded)
 			if openErr != nil {
+				zeroBytes(epochSecret.key)
 				return nil, commandError("REMOTE_MATERIALIZATION_FAILED", "A local Compact item could not be opened.")
 			}
 			encoded, err = awsmcrypto.SealCompactItem(awsmcrypto.CompactItemInput{
-				VaultID: vaultIdentifier, KeyEpochID: epochIdentifier, KeyEpochKey: epochSecret.key,
+				VaultID: vaultIdentifier, KeyEpochID: target.epochID, KeyEpochKey: epochSecret.key,
 				PayloadType: opened.PayloadType, PayloadBytes: opened.PayloadBytes,
 			})
+			zeroBytes(epochSecret.key)
 			if err != nil {
 				return nil, commandError("REMOTE_MATERIALIZATION_FAILED", "A local Compact item could not be rewrapped.")
 			}
@@ -290,6 +288,14 @@ func (r *Runtime) materializationTargetsLocked(state *canonicalReplicaState) ([]
 		if err != nil || envelope.StorageClass != storage.CompactStorageClass {
 			return errors.New("Hosted materialization requires Compact local items")
 		}
+		epochIDText, ok := state.StorageItemKeyEpochIDs[storageItemID]
+		if !ok || !validDigest(epochIDText) {
+			return errors.New("Hosted materialization requires a Storage Item Key Epoch binding")
+		}
+		epochID, err := decodeHexIdentifier(epochIDText)
+		if err != nil {
+			return err
+		}
 		payloadType := uint64(0)
 		if namespace == hostedNamespaceRecord {
 			payloadType = 1
@@ -298,7 +304,7 @@ func (r *Runtime) materializationTargetsLocked(state *canonicalReplicaState) ([]
 		} else if namespace == hostedNamespaceFeatureSet {
 			payloadType = 3
 		}
-		targets = append(targets, hostedMaterializationTarget{namespace: namespace, logicalID: logicalID, payloadType: payloadType, encoded: encoded})
+		targets = append(targets, hostedMaterializationTarget{namespace: namespace, logicalID: logicalID, payloadType: payloadType, epochID: epochID, encoded: encoded})
 		return nil
 	}
 	for logicalID, storageItemID := range state.RecordStorageItemIDs {
@@ -345,31 +351,15 @@ func (r *Runtime) pullHostedReplicas(ctx context.Context, id string) (any, error
 		return nil, err
 	}
 	remotes := append([]remoteState(nil), value.Remotes...)
-	epochIDText := ""
-	if value.Canonical != nil {
-		epochIDText = value.Canonical.KeyEpochID
-	}
+	canonicalState := cloneCanonicalState(value.Canonical)
 	r.mu.RUnlock()
-	if epochIDText == "" {
+	if canonicalState == nil {
 		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The authenticated Vault Replica is unavailable.")
 	}
 	vaultID, err := decodeHexIdentifier(id)
 	if err != nil {
 		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The Vault identity is invalid.")
 	}
-	epochID, err := decodeHexIdentifier(epochIDText)
-	if err != nil {
-		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The Key Epoch identity is invalid.")
-	}
-	secretBytes, err := r.deps.Secrets.Get(trustedSecretService, epochSecretAccount(id, epochIDText))
-	if err != nil {
-		return nil, commandError("TRUSTED_SECRET_UNAVAILABLE", "The Key Epoch could not be opened.")
-	}
-	epoch, err := decodeEpochSecret(secretBytes, vaultID, epochID)
-	if err != nil {
-		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The Key Epoch is invalid.")
-	}
-	defer zeroBytes(epoch.key)
 	sort.Slice(remotes, func(left, right int) bool { return remotes[left].RemoteID < remotes[right].RemoteID })
 	results := make([]map[string]string, 0, len(remotes))
 	for _, remote := range remotes {
@@ -415,7 +405,7 @@ func (r *Runtime) pullHostedReplicas(ctx context.Context, id string) (any, error
 				if envelopeErr != nil || envelope.StorageItemID != item.StorageItemID || envelope.CiphertextDigest != item.CipherDigest {
 					continue
 				}
-				opened, openErr := awsmcrypto.OpenCompactItem(vaultID, epochID, epoch.key, encoded)
+				opened, openErr := r.openOpaqueWithKnownEpochs(id, canonicalState, vaultID, encoded)
 				if openErr != nil {
 					continue
 				}
@@ -559,8 +549,15 @@ func (r *Runtime) hydrateArtifact(ctx context.Context, id, artifactIDText string
 					if current.Canonical.ArtifactStorageItemIDs == nil {
 						current.Canonical.ArtifactStorageItemIDs = map[string]string{}
 					}
-					current.Canonical.ArtifactStorageItemIDs[artifactIDText] = hexIdentifier(envelope.StorageItemID)
-					currentErr = r.persistLocked(ctx)
+					storageItemID := hexIdentifier(envelope.StorageItemID)
+					current.Canonical.ArtifactStorageItemIDs[artifactIDText] = storageItemID
+					currentEpochID, epochErr := decodeHexIdentifier(current.Canonical.KeyEpochID)
+					if epochErr == nil {
+						bindStorageItemKeyEpoch(current.Canonical, storageItemID, currentEpochID)
+						currentErr = r.persistLocked(ctx)
+					} else {
+						currentErr = epochErr
+					}
 				} else if currentErr == nil {
 					currentErr = errors.New("canonical Vault state is unavailable")
 				}

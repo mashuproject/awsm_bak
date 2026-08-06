@@ -182,6 +182,7 @@ func reauthorForkContentEventsWithMappings(
 			storageItemID := hexIdentifier(envelope.StorageItemID)
 			stored = append(stored, storageItemID)
 			state.RecordStorageItemIDs[hexIdentifier(event.RecordID)] = storageItemID
+			bindStorageItemKeyEpoch(state, storageItemID, creation.KeyEpochID)
 			if err := destination.AdmitEvent(event, ed25519.PublicKey(creation.ClientKeys.SigningPublicKey)); err != nil {
 				cleanup()
 				return fmt.Errorf("admit Fork Content Event: %w", err)
@@ -624,7 +625,9 @@ func reauthorForkArtifactObjects(
 			cleanup()
 			return fmt.Errorf("admit Fork Artifact Object: %w", err)
 		}
-		state.ObjectStorageItemIDs[hexIdentifier(destinationObjectID)] = hexIdentifier(destinationObjectEnvelope.StorageItemID)
+		destinationObjectStorageID := hexIdentifier(destinationObjectEnvelope.StorageItemID)
+		state.ObjectStorageItemIDs[hexIdentifier(destinationObjectID)] = destinationObjectStorageID
+		bindStorageItemKeyEpoch(state, destinationObjectStorageID, creation.KeyEpochID)
 		objectMappings[sourceObjectID] = destinationObjectID
 
 		sourceArtifactStorageID, ok := sourceState.ArtifactStorageItemIDs[sourceObjectIDText]
@@ -669,7 +672,9 @@ func reauthorForkArtifactObjects(
 			return fmt.Errorf("store Fork Artifact wrapper: %w", err)
 		}
 		stored = append(stored, hexIdentifier(destinationArtifactEnvelope.StorageItemID))
-		state.ArtifactStorageItemIDs[hexIdentifier(destinationObjectID)] = hexIdentifier(destinationArtifactEnvelope.StorageItemID)
+		destinationArtifactStorageID := hexIdentifier(destinationArtifactEnvelope.StorageItemID)
+		state.ArtifactStorageItemIDs[hexIdentifier(destinationObjectID)] = destinationArtifactStorageID
+		bindStorageItemKeyEpoch(state, destinationArtifactStorageID, creation.KeyEpochID)
 	}
 	for sourceArtifactIDText := range sourceState.ArtifactStorageItemIDs {
 		if _, ok := sourceState.ObjectStorageItemIDs[sourceArtifactIDText]; !ok {
@@ -765,7 +770,9 @@ func reauthorForkNoteObjects(
 			cleanup()
 			return fmt.Errorf("admit Fork Note Content Object: %w", err)
 		}
-		state.ObjectStorageItemIDs[hexIdentifier(destinationObjectID)] = hexIdentifier(destinationEnvelope.StorageItemID)
+		destinationStorageID := hexIdentifier(destinationEnvelope.StorageItemID)
+		state.ObjectStorageItemIDs[hexIdentifier(destinationObjectID)] = destinationStorageID
+		bindStorageItemKeyEpoch(state, destinationStorageID, creation.KeyEpochID)
 		objectMappings[sourceObjectID] = destinationObjectID
 	}
 	return nil
@@ -832,7 +839,9 @@ func reauthorForkBundleObjects(
 		if err := storeOpaqueCreationItem(artifacts.Artifacts, destinationEnvelope.StorageItemID, destinationEnvelopeBytes); err != nil {
 			return fmt.Errorf("store Fork Bundle Descriptor: %w", err)
 		}
-		state.ObjectStorageItemIDs[hexIdentifier(destinationObjectID)] = hexIdentifier(destinationEnvelope.StorageItemID)
+		destinationStorageID := hexIdentifier(destinationEnvelope.StorageItemID)
+		state.ObjectStorageItemIDs[hexIdentifier(destinationObjectID)] = destinationStorageID
+		bindStorageItemKeyEpoch(state, destinationStorageID, creation.KeyEpochID)
 		objectMappings[sourceObjectID] = destinationObjectID
 		if err := destination.AdmitObject(destinationObjectID, destinationObjectBytes); err != nil {
 			return fmt.Errorf("admit Fork Bundle Descriptor: %w", err)

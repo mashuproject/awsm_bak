@@ -126,6 +126,7 @@ type canonicalReplicaState struct {
 	ObjectStorageItemIDs          map[string]string `json:"objectStorageItemIds"`
 	FeatureManifestStorageItemIDs map[string]string `json:"featureManifestStorageItemIds"`
 	ArtifactStorageItemIDs        map[string]string `json:"artifactStorageItemIds"`
+	StorageItemKeyEpochIDs        map[string]string `json:"storageItemKeyEpochIds"`
 }
 
 type persistedVault struct {
@@ -405,7 +406,16 @@ func (r *Runtime) ExportTransfer(vaultID string) ([]byte, error) {
 		}
 	}
 	trustedSecrets := make(map[string][]byte)
-	for _, account := range []string{clientSecretAccount(vaultID, value.Canonical.ClientCredentialID), epochSecretAccount(vaultID, value.Canonical.KeyEpochID)} {
+	accounts := []string{clientSecretAccount(vaultID, value.Canonical.ClientCredentialID)}
+	epochIDs := make(map[string]struct{})
+	for _, epochID := range value.Canonical.StorageItemKeyEpochIDs {
+		epochIDs[epochID] = struct{}{}
+	}
+	epochIDs[value.Canonical.KeyEpochID] = struct{}{}
+	for epochID := range epochIDs {
+		accounts = append(accounts, epochSecretAccount(vaultID, epochID))
+	}
+	for _, account := range accounts {
 		secret, secretErr := r.deps.Secrets.Get(trustedSecretService, account)
 		if secretErr != nil {
 			return nil, commandError("TRANSFER_PACKAGE_UNAVAILABLE", "A required trusted Vault secret is unavailable.")
@@ -447,19 +457,7 @@ func (r *Runtime) AdmitOpaqueEvent(ctx context.Context, vaultID string, encoded 
 	if err != nil {
 		return commandError("VAULT_EVENT_INVALID", "The Vault identity is invalid.")
 	}
-	epochIdentifier, err := decodeHexIdentifier(value.Canonical.KeyEpochID)
-	if err != nil {
-		return commandError("VAULT_EVENT_INVALID", "The Key Epoch identity is invalid.")
-	}
-	secretBytes, err := r.deps.Secrets.Get(trustedSecretService, epochSecretAccount(vaultID, value.Canonical.KeyEpochID))
-	if err != nil {
-		return commandError("TRUSTED_SECRET_UNAVAILABLE", "The Key Epoch could not be opened.")
-	}
-	epochSecret, err := decodeEpochSecret(secretBytes, vaultIdentifier, epochIdentifier)
-	if err != nil {
-		return commandError("VAULT_EVENT_INVALID", "The Key Epoch is invalid.")
-	}
-	opened, err := awsmcrypto.OpenCompactItem(vaultIdentifier, epochIdentifier, epochSecret.key, encoded)
+	opened, err := r.openOpaqueWithKnownEpochs(vaultID, value.Canonical, vaultIdentifier, encoded)
 	if err != nil || opened.PayloadType != 1 {
 		if err == nil {
 			err = errors.New("opaque item is not a Vault Record")
@@ -492,7 +490,9 @@ func (r *Runtime) AdmitOpaqueEvent(ctx context.Context, vaultID string, encoded 
 	if value.Canonical.RecordStorageItemIDs == nil {
 		value.Canonical.RecordStorageItemIDs = map[string]string{}
 	}
-	value.Canonical.RecordStorageItemIDs[hexIdentifier(event.RecordID)] = hexIdentifier(envelope.StorageItemID)
+	storageItemID := hexIdentifier(envelope.StorageItemID)
+	value.Canonical.RecordStorageItemIDs[hexIdentifier(event.RecordID)] = storageItemID
+	bindStorageItemKeyEpoch(value.Canonical, storageItemID, opened.KeyEpochID)
 	if event.Family == canonical.LifecycleFamily && event.Type == 2 {
 		value.Lifecycle = "Closed"
 	}
@@ -523,19 +523,7 @@ func (r *Runtime) AdmitOpaqueObject(ctx context.Context, vaultID string, encoded
 	if err != nil {
 		return commandError("VAULT_OBJECT_INVALID", "The Vault identity is invalid.")
 	}
-	epochIdentifier, err := decodeHexIdentifier(value.Canonical.KeyEpochID)
-	if err != nil {
-		return commandError("VAULT_OBJECT_INVALID", "The Key Epoch identity is invalid.")
-	}
-	secretBytes, err := r.deps.Secrets.Get(trustedSecretService, epochSecretAccount(vaultID, value.Canonical.KeyEpochID))
-	if err != nil {
-		return commandError("TRUSTED_SECRET_UNAVAILABLE", "The Key Epoch could not be opened.")
-	}
-	epochSecret, err := decodeEpochSecret(secretBytes, vaultIdentifier, epochIdentifier)
-	if err != nil {
-		return commandError("VAULT_OBJECT_INVALID", "The Key Epoch is invalid.")
-	}
-	opened, err := awsmcrypto.OpenCompactItem(vaultIdentifier, epochIdentifier, epochSecret.key, encoded)
+	opened, err := r.openOpaqueWithKnownEpochs(vaultID, value.Canonical, vaultIdentifier, encoded)
 	if err != nil || opened.PayloadType != 2 {
 		return commandError("VAULT_OBJECT_INVALID", "The opaque Object is invalid.")
 	}
@@ -555,7 +543,9 @@ func (r *Runtime) AdmitOpaqueObject(ctx context.Context, vaultID string, encoded
 	if err := storeOpaqueCreationItem(r.deps.Artifacts, envelope.StorageItemID, encoded); err != nil {
 		return commandError("VAULT_CREATION_STORAGE_FAILED", "The opaque Object could not be stored.")
 	}
-	value.Canonical.ObjectStorageItemIDs[hexIdentifier(objectIdentifier)] = hexIdentifier(envelope.StorageItemID)
+	storageItemID := hexIdentifier(envelope.StorageItemID)
+	value.Canonical.ObjectStorageItemIDs[hexIdentifier(objectIdentifier)] = storageItemID
+	bindStorageItemKeyEpoch(value.Canonical, storageItemID, opened.KeyEpochID)
 	r.replicas[vaultID] = nextReplica
 	if err := r.persistLocked(ctx); err != nil {
 		r.restoreLocked(before)
@@ -584,19 +574,7 @@ func (r *Runtime) AdmitOpaqueFeatureManifest(ctx context.Context, vaultID string
 	if err != nil {
 		return commandError("FEATURE_MANIFEST_INVALID", "The Vault identity is invalid.")
 	}
-	epochIdentifier, err := decodeHexIdentifier(value.Canonical.KeyEpochID)
-	if err != nil {
-		return commandError("FEATURE_MANIFEST_INVALID", "The Key Epoch identity is invalid.")
-	}
-	secretBytes, err := r.deps.Secrets.Get(trustedSecretService, epochSecretAccount(vaultID, value.Canonical.KeyEpochID))
-	if err != nil {
-		return commandError("TRUSTED_SECRET_UNAVAILABLE", "The Key Epoch could not be opened.")
-	}
-	epochSecret, err := decodeEpochSecret(secretBytes, vaultIdentifier, epochIdentifier)
-	if err != nil {
-		return commandError("FEATURE_MANIFEST_INVALID", "The Key Epoch is invalid.")
-	}
-	opened, err := awsmcrypto.OpenCompactItem(vaultIdentifier, epochIdentifier, epochSecret.key, encoded)
+	opened, err := r.openOpaqueWithKnownEpochs(vaultID, value.Canonical, vaultIdentifier, encoded)
 	if err != nil || opened.PayloadType != 3 {
 		return commandError("FEATURE_MANIFEST_INVALID", "The opaque Feature Manifest is invalid.")
 	}
@@ -619,7 +597,9 @@ func (r *Runtime) AdmitOpaqueFeatureManifest(ctx context.Context, vaultID string
 	if value.Canonical.FeatureManifestStorageItemIDs == nil {
 		value.Canonical.FeatureManifestStorageItemIDs = map[string]string{}
 	}
-	value.Canonical.FeatureManifestStorageItemIDs[hexIdentifier(manifestID)] = hexIdentifier(envelope.StorageItemID)
+	storageItemID := hexIdentifier(envelope.StorageItemID)
+	value.Canonical.FeatureManifestStorageItemIDs[hexIdentifier(manifestID)] = storageItemID
+	bindStorageItemKeyEpoch(value.Canonical, storageItemID, opened.KeyEpochID)
 	r.replicas[vaultID] = nextReplica
 	if err := r.persistLocked(ctx); err != nil {
 		r.restoreLocked(before)
@@ -715,6 +695,7 @@ func (r *Runtime) storageReliefLocked(ctx context.Context, vaultID string, objec
 		}
 		removed = append(removed, removedItem{id: storageItemID, data: data})
 		delete(value.Canonical.ObjectStorageItemIDs, objectID)
+		delete(value.Canonical.StorageItemKeyEpochIDs, storageItemID)
 		nextReplica.ReleaseObject(objectIdentifier)
 	}
 	r.replicas[vaultID] = nextReplica
@@ -851,12 +832,18 @@ func transferCandidate(packageValue TransferPackage) (persistedVault, error) {
 		}
 	}
 	clientAccount := clientSecretAccount(candidate.VaultID, candidate.Canonical.ClientCredentialID)
-	epochAccount := epochSecretAccount(candidate.VaultID, candidate.Canonical.KeyEpochID)
 	if _, ok := packageValue.TrustedSecrets[clientAccount]; !ok {
 		return persistedVault{}, errors.New("Complete transfer package Client Credential secret is missing")
 	}
-	if _, ok := packageValue.TrustedSecrets[epochAccount]; !ok {
-		return persistedVault{}, errors.New("Complete transfer package Key Epoch secret is missing")
+	epochIDs := make(map[string]struct{})
+	for _, epochID := range candidate.Canonical.StorageItemKeyEpochIDs {
+		epochIDs[epochID] = struct{}{}
+	}
+	epochIDs[candidate.Canonical.KeyEpochID] = struct{}{}
+	for epochID := range epochIDs {
+		if _, ok := packageValue.TrustedSecrets[epochSecretAccount(candidate.VaultID, epochID)]; !ok {
+			return persistedVault{}, errors.New("Complete transfer package Key Epoch secret is missing")
+		}
 	}
 	return candidate, nil
 }
@@ -1721,15 +1708,20 @@ func (r *Runtime) recoverMember(ctx context.Context, id, phrase string) (any, er
 		deleteOpaqueCreationItem(r.deps.Artifacts, envelope.StorageItemID)
 		return nil, commandError("TRUSTED_SECRET_UNAVAILABLE", "The recovered Client Credential could not be stored.")
 	}
+	previousClientEnvelopeStorageID := value.Canonical.ClientEnvelopeStorageID
 	value.Canonical.ClientCredentialID = credentialBytes
 	value.Canonical.ClientEnvelopeID = hexIdentifier(clientEnvelope.ID)
 	value.Canonical.ClientEnvelopeStorageID = hexIdentifier(clientEnvelope.Envelope.StorageItemID)
+	delete(value.Canonical.StorageItemKeyEpochIDs, previousClientEnvelopeStorageID)
+	bindStorageItemKeyEpoch(value.Canonical, value.Canonical.ClientEnvelopeStorageID, epochID)
 	value.Canonical.AuthoringAvailable = true
 	nextState := nextReplica.State()
 	value.Canonical.CausalFrontier = identifiersToHex(nextState.CausalFrontier)
 	value.Canonical.AuthorityFrontier = identifiersToHex(nextState.AuthorityFrontier)
 	value.Canonical.ContinuityRecordIDs = identifiersToHex(nextState.ContinuityRecordIDs)
-	value.Canonical.RecordStorageItemIDs[hexIdentifier(event.RecordID)] = hexIdentifier(envelope.StorageItemID)
+	storageItemID := hexIdentifier(envelope.StorageItemID)
+	value.Canonical.RecordStorageItemIDs[hexIdentifier(event.RecordID)] = storageItemID
+	bindStorageItemKeyEpoch(value.Canonical, storageItemID, epochID)
 	r.replicas[id] = nextReplica
 	r.selected = id
 	if err := r.persistLocked(ctx); err != nil {
@@ -1918,14 +1910,19 @@ func (r *Runtime) confirmReplacement(ctx context.Context, setupID, phrase string
 	}
 	value.RecoveryHash = pending.PhraseHash
 	value.RecoveryRevision = pending.RecoveryRevision
+	previousRecoveryEnvelopeStorageID := value.Canonical.RecoveryEnvelopeStorageID
 	value.Canonical.RecoveryCredentialID = newRecoveryIDText
 	value.Canonical.RecoveryEnvelopeID = hexIdentifier(recoveryEnvelope.ID)
 	value.Canonical.RecoveryEnvelopeStorageID = hexIdentifier(recoveryEnvelope.Envelope.StorageItemID)
+	delete(value.Canonical.StorageItemKeyEpochIDs, previousRecoveryEnvelopeStorageID)
+	bindStorageItemKeyEpoch(value.Canonical, value.Canonical.RecoveryEnvelopeStorageID, epochID)
 	nextState := nextReplica.State()
 	value.Canonical.CausalFrontier = identifiersToHex(nextState.CausalFrontier)
 	value.Canonical.AuthorityFrontier = identifiersToHex(nextState.AuthorityFrontier)
 	value.Canonical.ContinuityRecordIDs = identifiersToHex(nextState.ContinuityRecordIDs)
-	value.Canonical.RecordStorageItemIDs[hexIdentifier(event.RecordID)] = hexIdentifier(envelope.StorageItemID)
+	storageItemID := hexIdentifier(envelope.StorageItemID)
+	value.Canonical.RecordStorageItemIDs[hexIdentifier(event.RecordID)] = storageItemID
+	bindStorageItemKeyEpoch(value.Canonical, storageItemID, epochID)
 	r.replicas[value.VaultID] = nextReplica
 	r.pending = nil
 	if err := r.persistLocked(ctx); err != nil {
@@ -2026,7 +2023,9 @@ func (r *Runtime) closeVault(ctx context.Context, id string) (any, error) {
 	if value.Canonical.RecordStorageItemIDs == nil {
 		value.Canonical.RecordStorageItemIDs = map[string]string{}
 	}
-	value.Canonical.RecordStorageItemIDs[hexIdentifier(event.RecordID)] = hexIdentifier(envelope.StorageItemID)
+	storageItemID := hexIdentifier(envelope.StorageItemID)
+	value.Canonical.RecordStorageItemIDs[hexIdentifier(event.RecordID)] = storageItemID
+	bindStorageItemKeyEpoch(value.Canonical, storageItemID, epochID)
 	if err := r.persistLocked(ctx); err != nil {
 		r.restoreLocked(before)
 		deleteOpaqueCreationItem(r.deps.Artifacts, envelope.StorageItemID)
@@ -2175,8 +2174,12 @@ func (r *Runtime) vacuumVault(ctx context.Context, id string) (any, error) {
 	if value.Canonical.RecordStorageItemIDs == nil {
 		value.Canonical.RecordStorageItemIDs = map[string]string{}
 	}
-	value.Canonical.RecordStorageItemIDs[hexIdentifier(baseline.RecordID)] = hexIdentifier(baselineEnvelope.StorageItemID)
-	value.Canonical.RecordStorageItemIDs[hexIdentifier(event.RecordID)] = hexIdentifier(eventEnvelope.StorageItemID)
+	baselineStorageItemID := hexIdentifier(baselineEnvelope.StorageItemID)
+	eventStorageItemID := hexIdentifier(eventEnvelope.StorageItemID)
+	value.Canonical.RecordStorageItemIDs[hexIdentifier(baseline.RecordID)] = baselineStorageItemID
+	value.Canonical.RecordStorageItemIDs[hexIdentifier(event.RecordID)] = eventStorageItemID
+	bindStorageItemKeyEpoch(value.Canonical, baselineStorageItemID, epochID)
+	bindStorageItemKeyEpoch(value.Canonical, eventStorageItemID, epochID)
 	r.replicas[id] = nextReplica
 	if err := r.persistLocked(ctx); err != nil {
 		r.restoreLocked(before)
@@ -2540,6 +2543,20 @@ func validatePersistedVault(value persistedVault) error {
 				return errors.New("Vault state contains an invalid canonical Artifact storage mapping")
 			}
 		}
+		for storageItemID, epochID := range value.Canonical.StorageItemKeyEpochIDs {
+			if !validDigest(storageItemID) || !validDigest(epochID) {
+				return errors.New("Vault state contains an invalid canonical Storage Item Key Epoch mapping")
+			}
+		}
+		storageItemIDs := canonicalStorageItemIDs(value.Canonical)
+		if len(value.Canonical.StorageItemKeyEpochIDs) != len(storageItemIDs) {
+			return errors.New("Vault state contains an incomplete canonical Storage Item Key Epoch inventory")
+		}
+		for _, storageItemID := range storageItemIDs {
+			if _, ok := value.Canonical.StorageItemKeyEpochIDs[storageItemID]; !ok {
+				return errors.New("Vault state is missing a canonical Storage Item Key Epoch mapping")
+			}
+		}
 	}
 	return nil
 }
@@ -2569,6 +2586,84 @@ func randomID() (string, error) {
 func validDigest(value string) bool {
 	bytes, err := hex.DecodeString(value)
 	return err == nil && len(bytes) == sha256.Size
+}
+
+func canonicalStorageItemIDs(state *canonicalReplicaState) []string {
+	if state == nil {
+		return nil
+	}
+	ids := make(map[string]struct{})
+	for _, storageItemID := range []string{
+		state.BaselineStorageItemID, state.GenesisStorageItemID,
+		state.RecoveryEnvelopeStorageID, state.ClientEnvelopeStorageID,
+	} {
+		if storageItemID != "" {
+			ids[storageItemID] = struct{}{}
+		}
+	}
+	for _, mappings := range []map[string]string{
+		state.RecordStorageItemIDs, state.ObjectStorageItemIDs,
+		state.FeatureManifestStorageItemIDs, state.ArtifactStorageItemIDs,
+	} {
+		for _, storageItemID := range mappings {
+			if storageItemID != "" {
+				ids[storageItemID] = struct{}{}
+			}
+		}
+	}
+	result := make([]string, 0, len(ids))
+	for storageItemID := range ids {
+		result = append(result, storageItemID)
+	}
+	sortStrings(result)
+	return result
+}
+
+func bindStorageItemKeyEpoch(state *canonicalReplicaState, storageItemID string, epochID [32]byte) {
+	if state.StorageItemKeyEpochIDs == nil {
+		state.StorageItemKeyEpochIDs = map[string]string{}
+	}
+	state.StorageItemKeyEpochIDs[storageItemID] = hexIdentifier(epochID)
+}
+
+func (r *Runtime) openOpaqueWithKnownEpochs(vaultID string, state *canonicalReplicaState, vaultIdentifier canonical.Identifier, encoded []byte) (awsmcrypto.OpenedCompactItem, error) {
+	if state == nil {
+		return awsmcrypto.OpenedCompactItem{}, errors.New("canonical Replica state is missing")
+	}
+	epochIDs := make(map[string]struct{})
+	for _, epochIDText := range state.StorageItemKeyEpochIDs {
+		if validDigest(epochIDText) {
+			epochIDs[epochIDText] = struct{}{}
+		}
+	}
+	if validDigest(state.KeyEpochID) {
+		epochIDs[state.KeyEpochID] = struct{}{}
+	}
+	ordered := make([]string, 0, len(epochIDs))
+	for epochIDText := range epochIDs {
+		ordered = append(ordered, epochIDText)
+	}
+	sortStrings(ordered)
+	for _, epochIDText := range ordered {
+		epochID, err := decodeHexIdentifier(epochIDText)
+		if err != nil {
+			continue
+		}
+		encodedSecret, err := r.deps.Secrets.Get(trustedSecretService, epochSecretAccount(vaultID, epochIDText))
+		if err != nil {
+			continue
+		}
+		secret, err := decodeEpochSecret(encodedSecret, vaultIdentifier, epochID)
+		if err != nil {
+			continue
+		}
+		opened, openErr := awsmcrypto.OpenCompactItem(vaultIdentifier, epochID, secret.key, encoded)
+		zeroBytes(secret.key)
+		if openErr == nil {
+			return opened, nil
+		}
+	}
+	return awsmcrypto.OpenedCompactItem{}, errors.New("Compact authentication failed for every known Key Epoch")
 }
 
 func validateEndpoint(value string) error {
@@ -2634,6 +2729,10 @@ func cloneCanonicalState(value *canonicalReplicaState) *canonicalReplicaState {
 	for artifactID, storageItemID := range value.ArtifactStorageItemIDs {
 		copyValue.ArtifactStorageItemIDs[artifactID] = storageItemID
 	}
+	copyValue.StorageItemKeyEpochIDs = make(map[string]string, len(value.StorageItemKeyEpochIDs))
+	for storageItemID, epochID := range value.StorageItemKeyEpochIDs {
+		copyValue.StorageItemKeyEpochIDs[storageItemID] = epochID
+	}
 	return &copyValue
 }
 
@@ -2642,7 +2741,7 @@ func canonicalReplicaFromCreation(prepared PreparedCanonicalVaultCreation) *cano
 	for _, feature := range prepared.FeatureManifests {
 		featureMappings[hexIdentifier(feature.ID)] = hexIdentifier(feature.Envelope.StorageItemID)
 	}
-	return &canonicalReplicaState{
+	canonicalState := &canonicalReplicaState{
 		VaultID:                   hexIdentifier(prepared.IDs.VaultID),
 		GenerationID:              hexIdentifier(prepared.IDs.GenerationID),
 		BaselineID:                hexIdentifier(prepared.Baseline.RecordID),
@@ -2669,7 +2768,17 @@ func canonicalReplicaFromCreation(prepared PreparedCanonicalVaultCreation) *cano
 		ObjectStorageItemIDs:          map[string]string{},
 		FeatureManifestStorageItemIDs: featureMappings,
 		ArtifactStorageItemIDs:        map[string]string{},
+		StorageItemKeyEpochIDs: map[string]string{
+			hexIdentifier(prepared.BaselineEnvelope.StorageItemID):             hexIdentifier(prepared.KeyEpochID),
+			hexIdentifier(prepared.GenesisEnvelope.StorageItemID):              hexIdentifier(prepared.KeyEpochID),
+			hexIdentifier(prepared.RecoveryKeyEnvelope.Envelope.StorageItemID): hexIdentifier(prepared.KeyEpochID),
+			hexIdentifier(prepared.ClientKeyEnvelope.Envelope.StorageItemID):   hexIdentifier(prepared.KeyEpochID),
+		},
 	}
+	for _, feature := range prepared.FeatureManifests {
+		canonicalState.StorageItemKeyEpochIDs[hexIdentifier(feature.Envelope.StorageItemID)] = hexIdentifier(prepared.KeyEpochID)
+	}
+	return canonicalState
 }
 
 func newReplicaFromPreparedCreation(prepared PreparedCanonicalVaultCreation) (*Replica, error) {
@@ -2686,6 +2795,30 @@ func newReplicaFromPreparedCreation(prepared PreparedCanonicalVaultCreation) (*R
 		}
 	}
 	return replica, nil
+}
+
+func (r *Runtime) openPersistedCompact(state *canonicalReplicaState, vaultID [32]byte, storageItemID string, encoded []byte) (awsmcrypto.OpenedCompactItem, error) {
+	if state == nil {
+		return awsmcrypto.OpenedCompactItem{}, errors.New("canonical Replica state is missing")
+	}
+	epochIDText, ok := state.StorageItemKeyEpochIDs[storageItemID]
+	if !ok || !validDigest(epochIDText) {
+		return awsmcrypto.OpenedCompactItem{}, fmt.Errorf("Storage Item %s has no valid Key Epoch binding", storageItemID)
+	}
+	epochID, err := decodeHexIdentifier(epochIDText)
+	if err != nil {
+		return awsmcrypto.OpenedCompactItem{}, err
+	}
+	encodedSecret, err := r.deps.Secrets.Get(trustedSecretService, epochSecretAccount(state.VaultID, epochIDText))
+	if err != nil {
+		return awsmcrypto.OpenedCompactItem{}, fmt.Errorf("read Key Epoch Trusted Secret: %w", err)
+	}
+	secret, err := decodeEpochSecret(encodedSecret, vaultID, epochID)
+	if err != nil {
+		return awsmcrypto.OpenedCompactItem{}, err
+	}
+	defer zeroBytes(secret.key)
+	return awsmcrypto.OpenCompactItem(vaultID, epochID, secret.key, encoded)
 }
 
 func (r *Runtime) openCanonicalReplica(value persistedVault) (*Replica, error) {
@@ -2750,7 +2883,7 @@ func (r *Runtime) openCanonicalReplica(value persistedVault) (*Replica, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read Initial Baseline: %w", err)
 	}
-	openedBaseline, err := awsmcrypto.OpenCompactItem(vaultID, epochID, epochSecret.key, baselineBytes)
+	openedBaseline, err := r.openPersistedCompact(state, vaultID, state.BaselineStorageItemID, baselineBytes)
 	if err != nil || openedBaseline.PayloadType != 1 {
 		if err == nil {
 			err = errors.New("Initial Baseline payload type is invalid")
@@ -2771,7 +2904,7 @@ func (r *Runtime) openCanonicalReplica(value persistedVault) (*Replica, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read Genesis: %w", err)
 	}
-	openedGenesis, err := awsmcrypto.OpenCompactItem(vaultID, epochID, epochSecret.key, genesisBytes)
+	openedGenesis, err := r.openPersistedCompact(state, vaultID, state.GenesisStorageItemID, genesisBytes)
 	if err != nil || openedGenesis.PayloadType != 1 {
 		if err == nil {
 			err = errors.New("Genesis payload type is invalid")
@@ -2842,7 +2975,7 @@ func (r *Runtime) openCanonicalReplica(value persistedVault) (*Replica, error) {
 		if err != nil {
 			return nil, fmt.Errorf("read persisted Record %s: %w", recordID, err)
 		}
-		opened, err := awsmcrypto.OpenCompactItem(vaultID, epochID, epochSecret.key, encoded)
+		opened, err := r.openPersistedCompact(state, vaultID, storageItemID, encoded)
 		if err != nil || opened.PayloadType != 1 {
 			if err == nil {
 				err = errors.New("persisted Record payload type is invalid")
@@ -2880,7 +3013,7 @@ func (r *Runtime) openCanonicalReplica(value persistedVault) (*Replica, error) {
 		if err != nil {
 			return nil, fmt.Errorf("read persisted Object %s: %w", objectID, err)
 		}
-		opened, err := awsmcrypto.OpenCompactItem(vaultID, epochID, epochSecret.key, encoded)
+		opened, err := r.openPersistedCompact(state, vaultID, storageItemID, encoded)
 		if err != nil || opened.PayloadType != 2 {
 			if err == nil {
 				err = errors.New("persisted Object payload type is invalid")
@@ -2898,7 +3031,7 @@ func (r *Runtime) openCanonicalReplica(value persistedVault) (*Replica, error) {
 			return nil, errors.New("persisted Object Storage Item identity changed")
 		}
 	}
-	if err := admitPersistedFeatureManifests(replica, state.FeatureManifestStorageItemIDs, vaultID, epochID, epochSecret.key, readArtifact); err != nil {
+	if err := r.admitPersistedFeatureManifests(replica, state, vaultID, state.FeatureManifestStorageItemIDs, readArtifact); err != nil {
 		return nil, err
 	}
 	actual := replica.State()
@@ -2931,7 +3064,7 @@ func (r *Runtime) openAdoptedCanonicalReplica(value persistedVault, state *canon
 	if err != nil {
 		return nil, fmt.Errorf("read predecessor Baseline: %w", err)
 	}
-	openedPredecessor, err := awsmcrypto.OpenCompactItem(vaultID, epochSecretKeyID(state), epochSecret.key, predecessorBytes)
+	openedPredecessor, err := r.openPersistedCompact(state, vaultID, predecessorStorageItemID, predecessorBytes)
 	if err != nil || openedPredecessor.PayloadType != 1 {
 		return nil, errors.New("predecessor Baseline envelope is invalid")
 	}
@@ -2962,7 +3095,7 @@ func (r *Runtime) openAdoptedCanonicalReplica(value persistedVault, state *canon
 		if err != nil {
 			return nil, fmt.Errorf("read persisted Record %s: %w", recordID, err)
 		}
-		opened, err := awsmcrypto.OpenCompactItem(vaultID, epochSecretKeyID(state), epochSecret.key, encoded)
+		opened, err := r.openPersistedCompact(state, vaultID, storageItemID, encoded)
 		if err != nil || opened.PayloadType != 1 {
 			return nil, errors.New("persisted Vacuum Record envelope is invalid")
 		}
@@ -3032,7 +3165,7 @@ func (r *Runtime) openAdoptedCanonicalReplica(value persistedVault, state *canon
 		if err != nil {
 			return nil, fmt.Errorf("read persisted Object %s: %w", objectID, err)
 		}
-		opened, err := awsmcrypto.OpenCompactItem(vaultID, epochSecretKeyID(state), epochSecret.key, encoded)
+		opened, err := r.openPersistedCompact(state, vaultID, storageItemID, encoded)
 		if err != nil || opened.PayloadType != 2 {
 			return nil, errors.New("persisted Object envelope is invalid")
 		}
@@ -3047,7 +3180,7 @@ func (r *Runtime) openAdoptedCanonicalReplica(value persistedVault, state *canon
 			return nil, errors.New("persisted Object Storage Item identity changed")
 		}
 	}
-	if err := admitPersistedFeatureManifests(replica, state.FeatureManifestStorageItemIDs, vaultID, epochSecretKeyID(state), epochSecret.key, readArtifact); err != nil {
+	if err := r.admitPersistedFeatureManifests(replica, state, vaultID, state.FeatureManifestStorageItemIDs, readArtifact); err != nil {
 		return nil, err
 	}
 	actual := replica.State()
@@ -3057,18 +3190,13 @@ func (r *Runtime) openAdoptedCanonicalReplica(value persistedVault, state *canon
 	return replica, nil
 }
 
-func epochSecretKeyID(state *canonicalReplicaState) canonical.Identifier {
-	identifier, _ := decodeHexIdentifier(state.KeyEpochID)
-	return identifier
-}
-
-func admitPersistedFeatureManifests(replica *Replica, mappings map[string]string, vaultID, epochID canonical.Identifier, epochKey []byte, readArtifact func(string) ([]byte, error)) error {
+func (r *Runtime) admitPersistedFeatureManifests(replica *Replica, state *canonicalReplicaState, vaultID canonical.Identifier, mappings map[string]string, readArtifact func(string) ([]byte, error)) error {
 	for manifestIDText, storageItemID := range mappings {
 		encoded, err := readArtifact(storageItemID)
 		if err != nil {
 			return fmt.Errorf("read persisted Feature Manifest %s: %w", manifestIDText, err)
 		}
-		opened, err := awsmcrypto.OpenCompactItem(vaultID, epochID, epochKey, encoded)
+		opened, err := r.openPersistedCompact(state, vaultID, storageItemID, encoded)
 		if err != nil || opened.PayloadType != 3 {
 			if err == nil {
 				err = errors.New("persisted Feature Manifest payload type is invalid")

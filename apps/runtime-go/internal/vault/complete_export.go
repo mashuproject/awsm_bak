@@ -261,7 +261,7 @@ func prepareCompleteImport(manifest completeexport.Manifest, inventory completee
 		bytes []byte
 	}, 0)
 	artifactValues := make([]completeImportArtifact, 0)
-	currentEpochIDs := make(map[string]struct{})
+	referencedEpochIDs := make(map[string]struct{})
 	for _, entry := range opaqueEntries {
 		envelope, err := storage.DecodeOpaqueEnvelope(entry.Bytes)
 		if err != nil || envelope.StorageItemID != entry.Header.EntryID {
@@ -275,7 +275,7 @@ func prepareCompleteImport(manifest completeexport.Manifest, inventory completee
 		if _, ok := keyBytesByID[hexIdentifier(item.KeyEpochID)]; !ok {
 			return preparedCompleteImport{}, errors.New("Complete Export omits a referenced Key Epoch Key")
 		}
-		currentEpochIDs[hexIdentifier(item.KeyEpochID)] = struct{}{}
+		referencedEpochIDs[hexIdentifier(item.KeyEpochID)] = struct{}{}
 		items = append(items, completeImportItem{storageItemID: storageID, bytes: append([]byte(nil), entry.Bytes...)})
 		if item.Namespace == 2 {
 			continue
@@ -323,11 +323,13 @@ func prepareCompleteImport(manifest completeexport.Manifest, inventory completee
 			return preparedCompleteImport{}, errors.New("Complete Export namespace is unsupported")
 		}
 	}
-	if len(currentEpochIDs) != 1 {
-		return preparedCompleteImport{}, errors.New("Complete Export with multiple Key Epochs is not implemented by this Runtime")
-	}
-	if len(keyBytesByID) != len(currentEpochIDs) {
+	if len(keyBytesByID) != len(referencedEpochIDs) {
 		return preparedCompleteImport{}, errors.New("Complete Export Key Inventory contains an unreferenced Key Epoch Key")
+	}
+	for epochID := range referencedEpochIDs {
+		if _, ok := keyBytesByID[epochID]; !ok {
+			return preparedCompleteImport{}, errors.New("Complete Export omits a referenced Key Epoch Key")
+		}
 	}
 	var baseline *canonical.Baseline
 	var genesis *canonical.Event
@@ -444,7 +446,7 @@ func prepareCompleteImport(manifest completeexport.Manifest, inventory completee
 	if err != nil {
 		return preparedCompleteImport{}, err
 	}
-	if epochID != onlyEpochID(currentEpochIDs) || clientCredentialID != genesisCredentialID {
+	if _, ok := keyBytesByID[hexIdentifier(epochID)]; !ok || clientCredentialID != genesisCredentialID {
 		return preparedCompleteImport{}, errors.New("Complete Export Genesis authority does not match its Key Inventory")
 	}
 	clientEnvelopeStorageID, recoveryEnvelopeStorageID, err := envelopeStorageIDs(envelopeIDs, manifest.OpaqueItemInventory)
@@ -455,8 +457,10 @@ func prepareCompleteImport(manifest completeexport.Manifest, inventory completee
 	objectMappings := make(map[string]string)
 	featureMappings := make(map[string]string)
 	artifactMappings := make(map[string]string)
+	storageItemKeyEpochIDs := make(map[string]string, len(manifest.OpaqueItemInventory))
 	for _, item := range manifest.OpaqueItemInventory {
 		storageID := hexIdentifier(item.StorageItemID)
+		storageItemKeyEpochIDs[storageID] = hexIdentifier(item.KeyEpochID)
 		switch item.Namespace {
 		case 1:
 			recordMappings[hexIdentifier(item.LogicalID)] = storageID
@@ -492,12 +496,20 @@ func prepareCompleteImport(manifest completeexport.Manifest, inventory completee
 		ObjectStorageItemIDs:          objectMappings,
 		FeatureManifestStorageItemIDs: featureMappings,
 		ArtifactStorageItemIDs:        artifactMappings,
+		StorageItemKeyEpochIDs:        storageItemKeyEpochIDs,
+	}
+	importedSecrets := make([]completeImportSecret, 0, len(inventory.Entries))
+	for _, entry := range inventory.Entries {
+		importedSecrets = append(importedSecrets, completeImportSecret{
+			epochID: hexIdentifier(entry.KeyEpochID),
+			encoded: mustEncodeImportedEpochSecret(manifest.VaultID, entry.KeyEpochID, keyBytesByID[hexIdentifier(entry.KeyEpochID)]),
+		})
 	}
 	return preparedCompleteImport{
 		value:   persistedVault{VaultID: hexIdentifier(manifest.VaultID), Label: nil, Lifecycle: "Open", RecoveryHash: "", GenerationID: hexIdentifier(manifest.GenerationID), Remotes: []remoteState{}, RecoveryRevision: 0, Canonical: canonicalState},
 		replica: replica,
 		items:   items,
-		secrets: []completeImportSecret{{epochID: hexIdentifier(epochID), encoded: mustEncodeImportedEpochSecret(manifest.VaultID, epochID, keyBytesByID[hexIdentifier(epochID)])}},
+		secrets: importedSecrets,
 	}, nil
 }
 
@@ -546,16 +558,6 @@ func validateImportedFeatureManifestDependencies(baseline canonical.Baseline, re
 		}
 	}
 	return nil
-}
-
-func onlyEpochID(ids map[string]struct{}) canonical.Identifier {
-	for id := range ids {
-		decoded, err := decodeHexIdentifier(id)
-		if err == nil {
-			return decoded
-		}
-	}
-	return canonical.Identifier{}
 }
 
 func importedAuthorityIdentity(baseline canonical.Baseline, genesis canonical.Event) (canonical.Identifier, canonical.Identifier, canonical.Identifier, canonical.Identifier, map[uint64]canonical.Identifier, error) {
@@ -666,25 +668,11 @@ func (r *Runtime) exportCompleteLocked(vaultID, passphrase string, salt [16]byte
 	if err != nil {
 		return nil, commandError("COMPLETE_EXPORT_UNAVAILABLE", "The Vault identity is invalid.")
 	}
-	epochIdentifier, err := decodeHexIdentifier(value.Canonical.KeyEpochID)
-	if err != nil {
-		return nil, commandError("COMPLETE_EXPORT_UNAVAILABLE", "The Key Epoch identity is invalid.")
-	}
-	epochBytes, err := r.deps.Secrets.Get(trustedSecretService, epochSecretAccount(vaultID, value.Canonical.KeyEpochID))
-	if err != nil {
-		return nil, commandError("COMPLETE_EXPORT_UNAVAILABLE", "The required Key Epoch is unavailable.")
-	}
-	epochSecret, err := decodeEpochSecret(epochBytes, vaultIdentifier, epochIdentifier)
-	if err != nil {
-		return nil, commandError("COMPLETE_EXPORT_UNAVAILABLE", "The required Key Epoch is invalid.")
-	}
-	defer zeroBytes(epochSecret.key)
-
 	replica := r.replicas[vaultID]
 	if err := validateCompleteExportDependencies(replica, value.Canonical); err != nil {
 		return nil, commandError("COMPLETE_EXPORT_UNAVAILABLE", err.Error())
 	}
-	entries, err := r.prepareCompleteExportEntries(value.Canonical, replica, vaultIdentifier, epochIdentifier, epochSecret.key)
+	entries, err := r.prepareCompleteExportEntries(value.Canonical, replica, vaultIdentifier)
 	if err != nil {
 		return nil, commandError("COMPLETE_EXPORT_UNAVAILABLE", err.Error())
 	}
@@ -730,9 +718,33 @@ func (r *Runtime) exportCompleteLocked(vaultID, passphrase string, salt [16]byte
 	if err != nil {
 		return nil, commandError("COMPLETE_EXPORT_UNAVAILABLE", fmt.Sprintf("The Complete Export Manifest entry could not be prepared: %v", err))
 	}
+	keyEntries := make(map[string]completeexport.KeyEpochEntry)
+	for _, prepared := range entries {
+		epochID := prepared.inventory.KeyEpochID
+		epochIDText := hexIdentifier(epochID)
+		if _, ok := keyEntries[epochIDText]; ok {
+			continue
+		}
+		encoded, secretErr := r.deps.Secrets.Get(trustedSecretService, epochSecretAccount(vaultID, epochIDText))
+		if secretErr != nil {
+			return nil, commandError("COMPLETE_EXPORT_UNAVAILABLE", "The required Key Epoch is unavailable.")
+		}
+		secret, decodeErr := decodeEpochSecret(encoded, vaultIdentifier, epochID)
+		if decodeErr != nil {
+			return nil, commandError("COMPLETE_EXPORT_UNAVAILABLE", "The required Key Epoch is invalid.")
+		}
+		keyEntries[epochIDText] = completeexport.KeyEpochEntry{KeyEpochID: epochID, KeyEpochKey: append([]byte(nil), secret.key...)}
+		zeroBytes(secret.key)
+	}
+	orderedKeyEntries := make([]completeexport.KeyEpochEntry, 0, len(keyEntries))
+	for _, entry := range keyEntries {
+		orderedKeyEntries = append(orderedKeyEntries, entry)
+	}
+	sort.Slice(orderedKeyEntries, func(left, right int) bool {
+		return bytes.Compare(orderedKeyEntries[left].KeyEpochID[:], orderedKeyEntries[right].KeyEpochID[:]) < 0
+	})
 	keyInventory, err := completeexport.NewKeyInventory(completeexport.KeyInventoryInput{
-		VaultID: vaultIdentifier, GenerationID: generationID,
-		Entries: []completeexport.KeyEpochEntry{{KeyEpochID: epochIdentifier, KeyEpochKey: append([]byte(nil), epochSecret.key...)}},
+		VaultID: vaultIdentifier, GenerationID: generationID, Entries: orderedKeyEntries,
 	})
 	if err != nil {
 		return nil, commandError("COMPLETE_EXPORT_UNAVAILABLE", fmt.Sprintf("The Complete Export Key Inventory could not be prepared: %v", err))
@@ -762,7 +774,31 @@ func (r *Runtime) exportCompleteLocked(vaultID, passphrase string, salt [16]byte
 	return encrypted, nil
 }
 
-func (r *Runtime) prepareCompleteExportEntries(state *canonicalReplicaState, replica *Replica, vaultID, epochID canonical.Identifier, epochKey []byte) ([]preparedCompleteExportEntry, error) {
+func (r *Runtime) completeExportEpochForStorageItem(vaultID string, state *canonicalReplicaState, storageItemID string) (canonical.Identifier, []byte, error) {
+	epochIDText, ok := state.StorageItemKeyEpochIDs[storageItemID]
+	if !ok || !validDigest(epochIDText) {
+		return canonical.Identifier{}, nil, fmt.Errorf("Complete Export Storage Item %s has no valid Key Epoch binding", storageItemID)
+	}
+	epochID, err := decodeHexIdentifier(epochIDText)
+	if err != nil {
+		return canonical.Identifier{}, nil, err
+	}
+	encoded, err := r.deps.Secrets.Get(trustedSecretService, epochSecretAccount(vaultID, epochIDText))
+	if err != nil {
+		return canonical.Identifier{}, nil, fmt.Errorf("Complete Export Key Epoch %s is unavailable", epochIDText)
+	}
+	vaultIdentifier, err := decodeHexIdentifier(vaultID)
+	if err != nil {
+		return canonical.Identifier{}, nil, err
+	}
+	secret, err := decodeEpochSecret(encoded, vaultIdentifier, epochID)
+	if err != nil {
+		return canonical.Identifier{}, nil, fmt.Errorf("Complete Export Key Epoch %s is invalid", epochIDText)
+	}
+	return epochID, secret.key, nil
+}
+
+func (r *Runtime) prepareCompleteExportEntries(state *canonicalReplicaState, replica *Replica, vaultID canonical.Identifier) ([]preparedCompleteExportEntry, error) {
 	entries := make([]preparedCompleteExportEntry, 0, len(state.RecordStorageItemIDs)+len(state.ObjectStorageItemIDs)+len(state.FeatureManifestStorageItemIDs)+len(state.ArtifactStorageItemIDs)+2)
 	for _, recordIDText := range sortedStringKeys(state.RecordStorageItemIDs) {
 		recordID, err := decodeHexIdentifier(recordIDText)
@@ -774,7 +810,12 @@ func (r *Runtime) prepareCompleteExportEntries(state *canonicalReplicaState, rep
 			return nil, fmt.Errorf("Complete Export Record %s is unavailable", recordIDText)
 		}
 		storageItemID := state.RecordStorageItemIDs[recordIDText]
+		epochID, epochKey, err := r.completeExportEpochForStorageItem(hexIdentifier(vaultID), state, storageItemID)
+		if err != nil {
+			return nil, err
+		}
 		prepared, err := r.prepareCompactCompleteExportEntry(1, recordID, storageItemID, 1, record.Bytes, vaultID, epochID, epochKey)
+		zeroBytes(epochKey)
 		if err != nil {
 			return nil, err
 		}
@@ -789,7 +830,13 @@ func (r *Runtime) prepareCompleteExportEntries(state *canonicalReplicaState, rep
 		if !ok || len(object.Bytes) == 0 {
 			return nil, fmt.Errorf("Complete Export Object %s is unavailable", objectIDText)
 		}
-		prepared, err := r.prepareCompactCompleteExportEntry(3, objectID, state.ObjectStorageItemIDs[objectIDText], 2, object.Bytes, vaultID, epochID, epochKey)
+		storageItemID := state.ObjectStorageItemIDs[objectIDText]
+		epochID, epochKey, err := r.completeExportEpochForStorageItem(hexIdentifier(vaultID), state, storageItemID)
+		if err != nil {
+			return nil, err
+		}
+		prepared, err := r.prepareCompactCompleteExportEntry(3, objectID, storageItemID, 2, object.Bytes, vaultID, epochID, epochKey)
+		zeroBytes(epochKey)
 		if err != nil {
 			return nil, err
 		}
@@ -804,7 +851,13 @@ func (r *Runtime) prepareCompleteExportEntries(state *canonicalReplicaState, rep
 		if !ok || len(manifest.Bytes) == 0 {
 			return nil, fmt.Errorf("Complete Export Feature Manifest %s is unavailable", manifestIDText)
 		}
-		prepared, err := r.prepareCompactCompleteExportEntry(4, manifestID, state.FeatureManifestStorageItemIDs[manifestIDText], 3, manifest.Bytes, vaultID, epochID, epochKey)
+		storageItemID := state.FeatureManifestStorageItemIDs[manifestIDText]
+		epochID, epochKey, err := r.completeExportEpochForStorageItem(hexIdentifier(vaultID), state, storageItemID)
+		if err != nil {
+			return nil, err
+		}
+		prepared, err := r.prepareCompactCompleteExportEntry(4, manifestID, storageItemID, 3, manifest.Bytes, vaultID, epochID, epochKey)
+		zeroBytes(epochKey)
 		if err != nil {
 			return nil, err
 		}
@@ -823,7 +876,13 @@ func (r *Runtime) prepareCompleteExportEntries(state *canonicalReplicaState, rep
 		if err != nil {
 			return nil, fmt.Errorf("Complete Export Artifact Object %s is invalid: %w", artifactIDText, err)
 		}
-		prepared, err := r.prepareArtifactCompleteExportEntry(vaultID, artifactID, state.ArtifactStorageItemIDs[artifactIDText], epochID, epochKey, contract)
+		storageItemID := state.ArtifactStorageItemIDs[artifactIDText]
+		epochID, epochKey, err := r.completeExportEpochForStorageItem(hexIdentifier(vaultID), state, storageItemID)
+		if err != nil {
+			return nil, err
+		}
+		prepared, err := r.prepareArtifactCompleteExportEntry(vaultID, artifactID, storageItemID, epochID, epochKey, contract)
+		zeroBytes(epochKey)
 		if err != nil {
 			return nil, err
 		}
@@ -839,6 +898,10 @@ func (r *Runtime) prepareCompleteExportEntries(state *canonicalReplicaState, rep
 		logicalID, err := decodeHexIdentifier(pair[0])
 		if err != nil {
 			return nil, errors.New("Complete Export Key Envelope identity is invalid")
+		}
+		epochID, _, err := r.completeExportEpochForStorageItem(hexIdentifier(vaultID), state, pair[1])
+		if err != nil {
+			return nil, err
 		}
 		prepared, err := r.prepareOpaqueCompleteExportEntry(2, logicalID, pair[1], epochID)
 		if err != nil {
@@ -934,6 +997,12 @@ func completeExportInventories(entries []preparedCompleteExportEntry) []complete
 func validateCompleteExportDependencies(replica *Replica, state *canonicalReplicaState) error {
 	if replica == nil || state == nil {
 		return errors.New("Complete Export authenticated Replica is unavailable")
+	}
+	for _, storageItemID := range canonicalStorageItemIDs(state) {
+		epochID, ok := state.StorageItemKeyEpochIDs[storageItemID]
+		if !ok || !validDigest(epochID) {
+			return fmt.Errorf("Complete Export Storage Item %s has no valid Key Epoch binding", storageItemID)
+		}
 	}
 	featureInputs := make([]canonical.FeatureManifestInput, 0, len(state.FeatureManifestStorageItemIDs))
 	for featureIDText, storageItemID := range state.FeatureManifestStorageItemIDs {

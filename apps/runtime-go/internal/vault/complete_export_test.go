@@ -60,6 +60,116 @@ func TestRuntimeExportsCanonicalCompleteExportClosure(t *testing.T) {
 	}
 }
 
+func TestRuntimeCompleteExportPreservesPerItemKeyEpochsAcrossImportAndRestart(t *testing.T) {
+	ctx := context.Background()
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, store.NewMemoryState(), dependencies)
+	if err != nil {
+		t.Fatalf("create Runtime: %v", err)
+	}
+	vaultID, phrase := createVaultWithPhraseForTest(t, runtime, "Multiple epochs")
+	value := runtime.vaults[vaultID]
+	vaultIdentifier, err := decodeHexIdentifier(vaultID)
+	if err != nil {
+		t.Fatalf("decode Vault ID: %v", err)
+	}
+	newKey := bytes.Repeat([]byte{0x5a}, 32)
+	newEpochID, err := awsmcrypto.KeyEpochID(vaultIdentifier, newKey)
+	if err != nil {
+		t.Fatalf("derive second Key Epoch ID: %v", err)
+	}
+	if err := dependencies.Secrets.Put(trustedSecretService, epochSecretAccount(vaultID, hexIdentifier(newEpochID)), mustEncodeImportedEpochSecret(vaultIdentifier, newEpochID, newKey)); err != nil {
+		t.Fatalf("store second Key Epoch: %v", err)
+	}
+	featureSetID, err := decodeHexIdentifier(value.Canonical.RequiredFeatureSetID)
+	if err != nil {
+		t.Fatalf("decode Required Feature Set ID: %v", err)
+	}
+	objectBytes, err := canonical.EncodeValue(canonical.Map{
+		0: uint64(1), 1: vaultIdentifier[:], 2: uint64(1), 3: featureSetID[:],
+		4: canonical.Map{}, 5: map[string][]byte{},
+	})
+	if err != nil {
+		t.Fatalf("encode second-epoch Object: %v", err)
+	}
+	objectID, err := canonical.VaultObjectID(vaultIdentifier, 1, objectBytes)
+	if err != nil {
+		t.Fatalf("derive second-epoch Object ID: %v", err)
+	}
+	encoded, err := awsmcrypto.SealCompactItem(awsmcrypto.CompactItemInput{
+		VaultID: vaultIdentifier, KeyEpochID: newEpochID, KeyEpochKey: newKey,
+		PayloadType: 2, PayloadBytes: objectBytes,
+	})
+	if err != nil {
+		t.Fatalf("seal second-epoch Object: %v", err)
+	}
+	envelope, err := storage.DecodeOpaqueEnvelope(encoded)
+	if err != nil {
+		t.Fatalf("decode second-epoch Object envelope: %v", err)
+	}
+	if err := storeOpaqueCreationItem(dependencies.Artifacts, envelope.StorageItemID, encoded); err != nil {
+		t.Fatalf("store second-epoch Object: %v", err)
+	}
+	if err := runtime.replicas[vaultID].AdmitObject(objectID, objectBytes); err != nil {
+		t.Fatalf("admit second-epoch Object: %v", err)
+	}
+	value.Canonical.ObjectStorageItemIDs[hexIdentifier(objectID)] = hexIdentifier(envelope.StorageItemID)
+	value.Canonical.StorageItemKeyEpochIDs[hexIdentifier(envelope.StorageItemID)] = hexIdentifier(newEpochID)
+
+	complete, err := runtime.ExportComplete(vaultID, phrase)
+	if err != nil {
+		t.Fatalf("export multi-epoch Complete Export: %v", err)
+	}
+	opened, err := completeexport.OpenStream(phrase, complete)
+	if err != nil {
+		t.Fatalf("open multi-epoch Complete Export: %v", err)
+	}
+	entries, err := decodeCompleteExportEntries(opened.Plaintext)
+	if err != nil {
+		t.Fatalf("decode multi-epoch Complete Export: %v", err)
+	}
+	manifest, err := completeexport.DecodeManifest(entries[0].Bytes)
+	if err != nil {
+		t.Fatalf("decode multi-epoch Manifest: %v", err)
+	}
+	keyInventory, err := completeexport.DecodeKeyInventory(entries[len(entries)-1].Bytes)
+	if err != nil {
+		t.Fatalf("decode multi-epoch Key Inventory: %v", err)
+	}
+	if len(keyInventory.Entries) != 2 {
+		t.Fatalf("multi-epoch Key Inventory entries = %d, want 2", len(keyInventory.Entries))
+	}
+	foundSecondEpoch := false
+	for _, item := range manifest.OpaqueItemInventory {
+		if item.LogicalID == objectID && item.KeyEpochID == newEpochID {
+			foundSecondEpoch = true
+			break
+		}
+	}
+	if !foundSecondEpoch {
+		t.Fatalf("Manifest did not bind Object %s to its second Key Epoch", hexIdentifier(objectID))
+	}
+
+	destinationDependencies := memoryDependencies(t)
+	destination, err := New(ctx, store.NewMemoryState(), destinationDependencies)
+	if err != nil {
+		t.Fatalf("create destination Runtime: %v", err)
+	}
+	if _, err := destination.ImportComplete(ctx, phrase, complete); err != nil {
+		t.Fatalf("import multi-epoch Complete Export: %v", err)
+	}
+	if _, ok := destination.replicas[vaultID].Object(objectID); !ok {
+		t.Fatalf("imported Replica omitted second-epoch Object %s", hexIdentifier(objectID))
+	}
+	restarted, err := New(ctx, destination.store, destinationDependencies)
+	if err != nil {
+		t.Fatalf("restart imported multi-epoch Runtime: %v", err)
+	}
+	if _, ok := restarted.replicas[vaultID].Object(objectID); !ok {
+		t.Fatalf("restarted Replica omitted second-epoch Object %s", hexIdentifier(objectID))
+	}
+}
+
 func TestRuntimeImportsCompleteExportAsAuthoringFreeReplica(t *testing.T) {
 	ctx := context.Background()
 	sourceDependencies := memoryDependencies(t)
@@ -227,6 +337,8 @@ func TestRuntimeCompleteExportRejectsUnverifiedStreamableArtifact(t *testing.T) 
 	}
 	artifactID := filledCreationID(240)
 	runtime.vaults[vaultID].Canonical.ArtifactStorageItemIDs[hexIdentifier(artifactID)] = hexIdentifier(envelope.StorageItemID)
+	epochID := mustIdentifier(t, runtime.vaults[vaultID].Canonical.KeyEpochID)
+	bindStorageItemKeyEpoch(runtime.vaults[vaultID].Canonical, hexIdentifier(envelope.StorageItemID), epochID)
 
 	_, err = runtime.ExportComplete(vaultID, "correct horse battery staple")
 	var commandErr *CommandError
@@ -395,6 +507,7 @@ func admitCompleteExportArtifact(t *testing.T, runtime *Runtime, dependencies De
 		t.Fatal(err)
 	}
 	value.Canonical.ArtifactStorageItemIDs[hexIdentifier(artifactID)] = hexIdentifier(envelope.StorageItemID)
+	bindStorageItemKeyEpoch(value.Canonical, hexIdentifier(envelope.StorageItemID), epochID)
 	return artifactID
 }
 
