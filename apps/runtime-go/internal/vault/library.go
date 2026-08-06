@@ -156,7 +156,7 @@ func ProjectLibraryProjection(replica *Replica) (LibraryProjection, error) {
 	if err := seedBaselineCaptures(replica, captures); err != nil {
 		return LibraryProjection{}, err
 	}
-	if err := seedBaselineCollections(replica, collectionTitles, collectionFolders); err != nil {
+	if err := seedBaselineCollections(replica, collectionTitles, collectionFolders, collectionRedirects); err != nil {
 		return LibraryProjection{}, err
 	}
 	if err := seedBaselineFolders(replica, folders); err != nil {
@@ -1143,7 +1143,7 @@ func replicaMapValueIsMap(value canonical.Value) bool {
 	return ok
 }
 
-func seedBaselineCollections(replica *Replica, collectionTitles map[canonical.Identifier]collectionTitleFact, collectionFolders map[canonical.Identifier]libraryCollectionFolderFact) error {
+func seedBaselineCollections(replica *Replica, collectionTitles map[canonical.Identifier]collectionTitleFact, collectionFolders map[canonical.Identifier]libraryCollectionFolderFact, redirects map[canonical.Identifier]collectionRedirectFact) error {
 	content, err := baselineContentCheckpoint(replica.baseline)
 	if err != nil {
 		return err
@@ -1195,6 +1195,26 @@ func seedBaselineCollections(replica *Replica, collectionTitles map[canonical.Id
 			folderCauseID = folderCauses[0]
 		}
 		collectionFolders[collectionID] = libraryCollectionFolderFact{causeID: folderCauseID, folderID: folderID}
+		redirectValue := replicaMapEntryMust(entry, 5)
+		if redirectValue == nil {
+			continue
+		}
+		redirect, ok := replicaMapValue(redirectValue)
+		if !ok || !replicaMapHasKeys(redirect, 2) {
+			return fmt.Errorf("Baseline Collection entry %d redirect is invalid", index)
+		}
+		destination, ok := replicaIdentifier(redirect, 0)
+		if !ok || destination == collectionID {
+			return fmt.Errorf("Baseline Collection entry %d redirect destination is invalid", index)
+		}
+		cause, ok := replicaIdentifier(redirect, 1)
+		if !ok {
+			return fmt.Errorf("Baseline Collection entry %d redirect cause is invalid", index)
+		}
+		fact := redirects[cause]
+		fact.causeID = cause
+		fact.edges = append(fact.edges, collectionRedirectEdge{sourceID: collectionID, destinationID: destination, causeID: cause})
+		redirects[cause] = fact
 	}
 	return nil
 }
@@ -1488,12 +1508,14 @@ func buildVacuumContentCheckpoint(replica *Replica, projection LibraryProjection
 	}
 	for _, collection := range projection.Collections {
 		if collection.RedirectedTo != nil {
-			return nil, errors.New("Vacuum Collection checkpoint cannot represent redirects")
+			if *collection.RedirectedTo == collection.CollectionID {
+				return nil, errors.New("Vacuum Collection checkpoint redirect is self-referential")
+			}
 		}
 	}
 	for _, tag := range projection.Tags {
-		if tag.RedirectedTo != nil {
-			return nil, errors.New("Vacuum Tag checkpoint cannot represent redirects")
+		if tag.RedirectedTo != nil && *tag.RedirectedTo == tag.TagID {
+			return nil, errors.New("Vacuum Tag checkpoint redirect is self-referential")
 		}
 	}
 	oldContent, err := baselineContentCheckpoint(replica.baseline)
@@ -1620,6 +1642,18 @@ func buildVacuumContentCheckpoint(replica *Replica, projection LibraryProjection
 			}
 			folderCauses = causeSet
 		}
+		var activeRedirect canonical.Value
+		if collection.RedirectedTo != nil {
+			destinationID, redirectErr := decodeHexIdentifier(*collection.RedirectedTo)
+			if redirectErr != nil {
+				return nil, fmt.Errorf("Collection checkpoint redirect identity is invalid: %w", redirectErr)
+			}
+			causeID, causeErr := freshBaselineCauseID()
+			if causeErr != nil {
+				return nil, causeErr
+			}
+			activeRedirect = canonical.Map{0: destinationID[:], 1: causeID[:]}
+		}
 		var intrinsicTail canonical.Value
 		if tail, exists := tails[collectionID]; exists {
 			bundleID, bundleErr := decodeHexIdentifier(tail.bundleID)
@@ -1633,7 +1667,7 @@ func buildVacuumContentCheckpoint(replica *Replica, projection LibraryProjection
 			intrinsicTail = canonical.Map{0: bundleID[:], 1: registrationCause[:]}
 		}
 		collectionEntries = append(collectionEntries, canonical.Map{
-			0: collectionID[:], 1: title, 2: causes, 3: folderID, 4: folderCauses, 5: nil, 6: intrinsicTail, 7: intrinsicTail,
+			0: collectionID[:], 1: title, 2: causes, 3: folderID, 4: folderCauses, 5: activeRedirect, 6: intrinsicTail, 7: intrinsicTail,
 		})
 	}
 	sort.Slice(collectionEntries, func(left, right int) bool {
@@ -1700,7 +1734,19 @@ func buildVacuumContentCheckpoint(replica *Replica, projection LibraryProjection
 		if causeErr != nil {
 			return nil, causeErr
 		}
-		tagEntries = append(tagEntries, canonical.Map{0: tagID[:], 1: tag.Name, 2: nameCauseSet, 3: nil, 4: lifecycleCode, 5: lifecycleCauseSet})
+		var activeRedirect canonical.Value
+		if tag.RedirectedTo != nil {
+			destinationID, redirectErr := decodeHexIdentifier(*tag.RedirectedTo)
+			if redirectErr != nil {
+				return nil, fmt.Errorf("Tag checkpoint redirect identity is invalid: %w", redirectErr)
+			}
+			causeID, causeErr := freshBaselineCauseID()
+			if causeErr != nil {
+				return nil, causeErr
+			}
+			activeRedirect = canonical.Map{0: destinationID[:], 1: causeID[:]}
+		}
+		tagEntries = append(tagEntries, canonical.Map{0: tagID[:], 1: tag.Name, 2: nameCauseSet, 3: activeRedirect, 4: lifecycleCode, 5: lifecycleCauseSet})
 	}
 	sort.Slice(tagEntries, func(left, right int) bool {
 		leftID, _ := replicaIdentifier(tagEntries[left], 0)

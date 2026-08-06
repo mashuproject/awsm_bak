@@ -180,6 +180,52 @@ func TestProjectLibraryProjectionSeedsOrganizationStateFromBaselineCheckpoint(t 
 	}
 }
 
+func TestProjectLibraryProjectionSeedsCollectionRedirectFromBaselineCheckpoint(t *testing.T) {
+	prepared := deterministicCreation(t)
+	sourceID := filledCreationID(238)
+	destinationID := filledCreationID(239)
+	sourceCauseID := filledCreationID(240)
+	redirectCauseID := filledCreationID(241)
+	body, ok := replicaMapValue(prepared.Baseline.Body)
+	if !ok {
+		t.Fatal("creation Baseline body is not a map")
+	}
+	contentValue := replicaMapEntryMust(body, 2)
+	contentCheckpoint, ok := contentValue.(map[any]any)
+	if !ok {
+		t.Fatalf("creation content checkpoint is not a canonical map: %T %#v", contentValue, contentValue)
+	}
+	contentCheckpoint[uint64(4)] = []canonical.Value{
+		canonical.Map{0: sourceID[:], 1: nil, 2: []canonical.Value{}, 3: nil, 4: []canonical.Value{}, 5: canonical.Map{0: destinationID[:], 1: redirectCauseID[:]}, 6: nil, 7: nil},
+		canonical.Map{0: destinationID[:], 1: "Saved pages", 2: canonicalSetValues([]canonical.Value{sourceCauseID[:]}), 3: nil, 4: []canonical.Value{}, 5: nil, 6: nil, 7: nil},
+	}
+	checkpointedBaseline, err := canonical.EncodeBaseline(canonical.BaselineInput{
+		VaultID: prepared.Baseline.VaultID, GenerationID: prepared.Baseline.GenerationID, Dependencies: prepared.Baseline.Dependencies,
+		RequiredFeatureSetID: prepared.Baseline.RequiredFeatureSetID, Extensions: prepared.Baseline.Extensions, Body: body,
+	})
+	if err != nil {
+		t.Fatalf("encode checkpointed Baseline: %v", err)
+	}
+	replica, err := NewReplica(checkpointedBaseline)
+	if err != nil {
+		t.Fatalf("NewReplica: %v", err)
+	}
+	projection, err := ProjectLibraryProjection(replica)
+	if err != nil {
+		t.Fatalf("ProjectLibraryProjection: %v", err)
+	}
+	if len(projection.Collections) != 2 {
+		t.Fatalf("Collections = %#v, want source and destination", projection.Collections)
+	}
+	for _, collection := range projection.Collections {
+		if collection.CollectionID == hexIdentifier(sourceID) {
+			if collection.RedirectedTo == nil || *collection.RedirectedTo != hexIdentifier(destinationID) {
+				t.Fatalf("checkpointed source redirect = %#v", collection)
+			}
+		}
+	}
+}
+
 func TestBuildVacuumContentCheckpointPreservesOrganizationState(t *testing.T) {
 	prepared := deterministicCreation(t)
 	replica, err := NewReplica(prepared.Baseline)
@@ -221,6 +267,62 @@ func TestBuildVacuumContentCheckpointPreservesOrganizationState(t *testing.T) {
 	assignments, ok := replicaMapArray(checkpoint, 7)
 	if !ok || len(assignments) != 1 {
 		t.Fatalf("Tag assignment checkpoint = %#v", assignments)
+	}
+}
+
+func TestBuildVacuumContentCheckpointPreservesRedirects(t *testing.T) {
+	prepared := deterministicCreation(t)
+	replica, err := NewReplica(prepared.Baseline)
+	if err != nil {
+		t.Fatalf("NewReplica: %v", err)
+	}
+	sourceCollectionID := filledCreationID(244)
+	destinationCollectionID := filledCreationID(245)
+	sourceTagID := filledCreationID(246)
+	destinationTagID := filledCreationID(247)
+	projection := LibraryProjection{
+		Collections: []LibraryCollection{
+			{CollectionID: hexIdentifier(sourceCollectionID), Title: "Source", RedirectedTo: pointerString(hexIdentifier(destinationCollectionID))},
+			{CollectionID: hexIdentifier(destinationCollectionID), Title: "Destination"},
+		},
+		Tags: []LibraryTag{
+			{TagID: hexIdentifier(sourceTagID), Name: "Source", Lifecycle: "Active", RedirectedTo: pointerString(hexIdentifier(destinationTagID))},
+			{TagID: hexIdentifier(destinationTagID), Name: "Destination", Lifecycle: "Active"},
+		},
+	}
+	checkpoint, err := buildVacuumContentCheckpoint(replica, projection)
+	if err != nil {
+		t.Fatalf("buildVacuumContentCheckpoint: %v", err)
+	}
+	collections, ok := replicaMapArray(checkpoint, 4)
+	if !ok || len(collections) != 2 {
+		t.Fatalf("Collection checkpoint = %#v", collections)
+	}
+	tags, ok := replicaMapArray(checkpoint, 6)
+	if !ok || len(tags) != 2 {
+		t.Fatalf("Tag checkpoint = %#v", tags)
+	}
+	var collectionRedirect, tagRedirect bool
+	for _, entry := range collections {
+		id, idOK := replicaIdentifier(entry, 0)
+		redirect, redirectOK := replicaMapValue(replicaMapEntryMust(entry, 5))
+		if idOK && id == sourceCollectionID && redirectOK {
+			if destination, destinationOK := replicaIdentifier(redirect, 0); destinationOK && destination == destinationCollectionID {
+				collectionRedirect = true
+			}
+		}
+	}
+	for _, entry := range tags {
+		id, idOK := replicaIdentifier(entry, 0)
+		redirect, redirectOK := replicaMapValue(replicaMapEntryMust(entry, 3))
+		if idOK && id == sourceTagID && redirectOK {
+			if destination, destinationOK := replicaIdentifier(redirect, 0); destinationOK && destination == destinationTagID {
+				tagRedirect = true
+			}
+		}
+	}
+	if !collectionRedirect || !tagRedirect {
+		t.Fatalf("redirect checkpoints = collections:%v tags:%v", collectionRedirect, tagRedirect)
 	}
 }
 
