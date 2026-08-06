@@ -313,6 +313,45 @@ func TestBuildVacuumContentCheckpointPreservesCredentialLabels(t *testing.T) {
 	}
 }
 
+func TestBuildVacuumContentCheckpointPreservesCurrentVaultLabel(t *testing.T) {
+	prepared := deterministicCreation(t)
+	replica, err := NewReplica(prepared.Baseline)
+	if err != nil {
+		t.Fatalf("NewReplica: %v", err)
+	}
+	if err := replica.AdmitEvent(prepared.Genesis, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit Genesis: %v", err)
+	}
+	labelEvent, err := canonical.SignEvent(canonical.EventInput{
+		VaultID: prepared.IDs.VaultID, GenerationID: prepared.IDs.GenerationID,
+		ParentRecordIDs: []canonical.Identifier{prepared.Genesis.RecordID}, AuthorityParentIDs: []canonical.Identifier{prepared.Genesis.RecordID},
+		RequiredFeatureSetID: prepared.RequiredFeatureSetID, Extensions: map[string][]byte{}, Family: canonical.ContentFamily, Type: 1,
+		SignerCredentialID: prepared.IDs.ClientCredentialID, AssertedAt: 200, Body: canonical.Map{0: "Updated label"},
+	}, ed25519.PrivateKey(prepared.ClientKeys.SigningSecretKey))
+	if err != nil {
+		t.Fatalf("Sign Vault Label: %v", err)
+	}
+	if err := replica.AdmitEvent(labelEvent, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit Vault Label: %v", err)
+	}
+	checkpoint, err := buildVacuumContentCheckpoint(replica, LibraryProjection{})
+	if err != nil {
+		t.Fatalf("buildVacuumContentCheckpoint: %v", err)
+	}
+	label, ok := replicaMapEntry(checkpoint, 1)
+	if !ok || !replicaMapHasKeys(label, 2) {
+		t.Fatalf("Vault label checkpoint = %#v", label)
+	}
+	value, ok := replicaMapNullableText(label, 0)
+	if !ok || value == nil || *value != "Updated label" {
+		t.Fatalf("Vault label value = %#v, want Updated label", label)
+	}
+	causes, err := parseCanonicalIdentifierSet(replicaMapEntryMust(label, 1), "Vault label causes", true)
+	if err != nil || len(causes) != 1 {
+		t.Fatalf("Vault label causes = %#v, %v", causes, err)
+	}
+}
+
 func TestBuildVacuumContentCheckpointPreservesRedirects(t *testing.T) {
 	prepared := deterministicCreation(t)
 	replica, err := NewReplica(prepared.Baseline)

@@ -1674,29 +1674,16 @@ func buildVacuumContentCheckpoint(replica *Replica, projection LibraryProjection
 	if err != nil {
 		return nil, err
 	}
-	oldLabel, ok := replicaMapEntry(oldContent, 1)
-	if !ok {
+	if _, ok := replicaMapEntry(oldContent, 1); !ok {
 		return nil, errors.New("Baseline Vault label checkpoint is missing")
+	}
+	labelCheckpoint, labelErr := buildVacuumVaultLabelCheckpoint(replica, oldContent)
+	if labelErr != nil {
+		return nil, labelErr
 	}
 	credentialLabelEntries, labelErr := buildVacuumCredentialLabelEntries(replica, oldContent)
 	if labelErr != nil {
 		return nil, labelErr
-	}
-	var labelCheckpoint canonical.Value
-	if oldLabel != nil {
-		label, ok := replicaMapNullableText(oldLabel, 0)
-		if !ok {
-			return nil, errors.New("Baseline Vault label checkpoint is invalid")
-		}
-		if label == nil {
-			labelCheckpoint = nil
-		} else {
-			causeID, causeErr := freshBaselineCauseID()
-			if causeErr != nil {
-				return nil, causeErr
-			}
-			labelCheckpoint = canonical.Map{0: *label, 1: canonicalSetValues([]canonical.Value{causeID[:]})}
-		}
 	}
 	captureEntries := make([]canonical.Value, 0, len(projection.captureState))
 	tails := make(map[canonical.Identifier]libraryCaptureCheckpoint)
@@ -2133,6 +2120,74 @@ func buildVacuumCredentialLabelEntries(replica *Replica, oldContent canonical.Va
 		result = append(result, canonical.Map{0: credentialID[:], 1: cloneStringValue(maxima[0].value), 2: canonicalSetValues([]canonical.Value{causeID[:]})})
 	}
 	return result, nil
+}
+
+func buildVacuumVaultLabelCheckpoint(replica *Replica, oldContent canonical.Value) (canonical.Value, error) {
+	oldLabel, ok := replicaMapEntry(oldContent, 1)
+	if !ok || !replicaMapHasKeys(oldLabel, 2) {
+		return nil, errors.New("Baseline Vault label checkpoint is invalid")
+	}
+	value, ok := replicaMapNullableText(oldLabel, 0)
+	if !ok {
+		return nil, errors.New("Baseline Vault label checkpoint value is invalid")
+	}
+	causes, err := parseCanonicalIdentifierSet(replicaMapEntryMust(oldLabel, 1), "Baseline Vault label causes", false)
+	if err != nil {
+		return nil, err
+	}
+	type labelFact struct {
+		causeID canonical.Identifier
+		value   *string
+		event   bool
+	}
+	facts := make([]labelFact, 0, len(causes))
+	for _, causeID := range causes {
+		facts = append(facts, labelFact{causeID: causeID, value: cloneStringPointer(value)})
+	}
+	orderedEvents, err := orderedContentEvents(replica)
+	if err != nil {
+		return nil, err
+	}
+	for _, event := range orderedEvents {
+		if event.Type != 1 {
+			continue
+		}
+		if !replicaMapHasKeys(event.Body, 1) {
+			return nil, errors.New("Vault Label body is invalid")
+		}
+		eventValue, valueOK := replicaMapNullableText(event.Body, 0)
+		if !valueOK {
+			return nil, errors.New("Vault Label value is invalid")
+		}
+		facts = append(facts, labelFact{causeID: event.RecordID, value: cloneStringPointer(eventValue), event: true})
+	}
+	if len(facts) == 0 {
+		return canonical.Map{0: nil, 1: []canonical.Value{}}, nil
+	}
+	maxima := make([]labelFact, 0, len(facts))
+	for index, candidate := range facts {
+		superseded := false
+		for otherIndex, other := range facts {
+			if index != otherIndex && replica.IsAncestor(candidate.causeID, other.causeID) {
+				superseded = true
+				break
+			}
+		}
+		if !superseded {
+			maxima = append(maxima, candidate)
+		}
+	}
+	if len(maxima) == 0 {
+		return nil, errors.New("Vault label checkpoint has no causal maximum")
+	}
+	sort.Slice(maxima, func(left, right int) bool {
+		return bytes.Compare(maxima[left].causeID[:], maxima[right].causeID[:]) > 0
+	})
+	causeID, err := freshBaselineCauseID()
+	if err != nil {
+		return nil, err
+	}
+	return canonical.Map{0: cloneStringValue(maxima[0].value), 1: canonicalSetValues([]canonical.Value{causeID[:]})}, nil
 }
 
 func cloneStringPointer(value *string) *string {
