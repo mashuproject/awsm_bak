@@ -270,6 +270,49 @@ func TestBuildVacuumContentCheckpointPreservesOrganizationState(t *testing.T) {
 	}
 }
 
+func TestBuildVacuumContentCheckpointPreservesCredentialLabels(t *testing.T) {
+	prepared := deterministicCreation(t)
+	replica, err := NewReplica(prepared.Baseline)
+	if err != nil {
+		t.Fatalf("NewReplica: %v", err)
+	}
+	if err := replica.AdmitEvent(prepared.Genesis, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit Genesis: %v", err)
+	}
+	labelEvent, err := canonical.SignEvent(canonical.EventInput{
+		VaultID: prepared.IDs.VaultID, GenerationID: prepared.IDs.GenerationID,
+		ParentRecordIDs: []canonical.Identifier{prepared.Genesis.RecordID}, AuthorityParentIDs: []canonical.Identifier{prepared.Genesis.RecordID},
+		RequiredFeatureSetID: prepared.RequiredFeatureSetID, Extensions: map[string][]byte{}, Family: canonical.ContentFamily, Type: 2,
+		SignerCredentialID: prepared.IDs.ClientCredentialID, AssertedAt: 200, Body: canonical.Map{0: prepared.IDs.ClientCredentialID[:], 1: "Browser profile"},
+	}, ed25519.PrivateKey(prepared.ClientKeys.SigningSecretKey))
+	if err != nil {
+		t.Fatalf("Sign Client Credential Label: %v", err)
+	}
+	if err := replica.AdmitEvent(labelEvent, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit Client Credential Label: %v", err)
+	}
+	checkpoint, err := buildVacuumContentCheckpoint(replica, LibraryProjection{})
+	if err != nil {
+		t.Fatalf("buildVacuumContentCheckpoint: %v", err)
+	}
+	labels, ok := replicaMapArray(checkpoint, 2)
+	if !ok || len(labels) != 1 {
+		t.Fatalf("Credential label checkpoint = %#v, want one label", labels)
+	}
+	credentialID, ok := replicaIdentifier(labels[0], 0)
+	if !ok || credentialID != prepared.IDs.ClientCredentialID {
+		t.Fatalf("Credential label identity = %#v, want %s", labels[0], hexIdentifier(prepared.IDs.ClientCredentialID))
+	}
+	label, ok := replicaMapNullableText(labels[0], 1)
+	if !ok || label == nil || *label != "Browser profile" {
+		t.Fatalf("Credential label value = %#v, want Browser profile", labels[0])
+	}
+	causes, err := parseCanonicalIdentifierSet(replicaMapEntryMust(labels[0], 2), "Credential label causes", true)
+	if err != nil || len(causes) != 1 {
+		t.Fatalf("Credential label causes = %#v, %v", causes, err)
+	}
+}
+
 func TestBuildVacuumContentCheckpointPreservesRedirects(t *testing.T) {
 	prepared := deterministicCreation(t)
 	replica, err := NewReplica(prepared.Baseline)

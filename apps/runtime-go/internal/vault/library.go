@@ -123,6 +123,12 @@ type libraryCaptureCheckpoint struct {
 	registrationAttribution canonical.Value
 }
 
+type credentialLabelFact struct {
+	credentialID canonical.Identifier
+	causeID      canonical.Identifier
+	value        *string
+}
+
 type libraryNoteCheckpoint struct {
 	noteID     canonical.Identifier
 	targetKind uint64
@@ -1672,14 +1678,9 @@ func buildVacuumContentCheckpoint(replica *Replica, projection LibraryProjection
 	if !ok {
 		return nil, errors.New("Baseline Vault label checkpoint is missing")
 	}
-	for _, key := range []uint64{2} {
-		entries, entriesOK := replicaMapArray(oldContent, key)
-		if !entriesOK {
-			return nil, fmt.Errorf("Baseline content checkpoint field %d is invalid", key)
-		}
-		if len(entries) != 0 {
-			return nil, fmt.Errorf("Vacuum content checkpoint cannot yet represent existing field %d", key)
-		}
+	credentialLabelEntries, labelErr := buildVacuumCredentialLabelEntries(replica, oldContent)
+	if labelErr != nil {
+		return nil, labelErr
 	}
 	var labelCheckpoint canonical.Value
 	if oldLabel != nil {
@@ -2039,10 +2040,114 @@ func buildVacuumContentCheckpoint(replica *Replica, projection LibraryProjection
 		activeConflictEntries = append(activeConflictEntries, canonical.Map{0: conflict.kind, 1: canonicalSetValues(subjects), 2: candidates})
 	}
 	return canonical.Map{
-		0: uint64(1), 1: labelCheckpoint, 2: []canonical.Value{}, 3: captureEntries,
+		0: uint64(1), 1: labelCheckpoint, 2: credentialLabelEntries, 3: captureEntries,
 		4: collectionEntries, 5: folderEntries, 6: tagEntries, 7: assignmentEntries,
 		8: noteEntries, 9: activeConflictEntries,
 	}, nil
+}
+
+func buildVacuumCredentialLabelEntries(replica *Replica, oldContent canonical.Value) ([]canonical.Value, error) {
+	entries, ok := replicaMapArray(oldContent, 2)
+	if !ok {
+		return nil, errors.New("Baseline Credential label checkpoint is invalid")
+	}
+	factsByCredential := make(map[canonical.Identifier][]credentialLabelFact)
+	for index, entry := range entries {
+		if !replicaMapHasKeys(entry, 3) {
+			return nil, fmt.Errorf("Baseline Credential label entry %d is invalid", index)
+		}
+		credentialID, ok := replicaIdentifier(entry, 0)
+		if !ok {
+			return nil, fmt.Errorf("Baseline Credential label entry %d Client Credential ID is invalid", index)
+		}
+		value, ok := replicaMapNullableText(entry, 1)
+		if !ok {
+			return nil, fmt.Errorf("Baseline Credential label entry %d value is invalid", index)
+		}
+		causes, err := parseCanonicalIdentifierSet(replicaMapEntryMust(entry, 2), "Baseline Credential label causes", true)
+		if err != nil {
+			return nil, err
+		}
+		for _, causeID := range causes {
+			factsByCredential[credentialID] = append(factsByCredential[credentialID], credentialLabelFact{
+				credentialID: credentialID, causeID: causeID, value: cloneStringPointer(value),
+			})
+		}
+	}
+	orderedEvents, err := orderedContentEvents(replica)
+	if err != nil {
+		return nil, err
+	}
+	for _, event := range orderedEvents {
+		if event.Type != 2 {
+			continue
+		}
+		if !replicaMapHasKeys(event.Body, 2) {
+			return nil, errors.New("Client Credential Label body is invalid")
+		}
+		credentialID, ok := replicaIdentifier(event.Body, 0)
+		if !ok {
+			return nil, errors.New("Client Credential Label Client Credential ID is invalid")
+		}
+		value, ok := replicaMapNullableText(event.Body, 1)
+		if !ok {
+			return nil, errors.New("Client Credential Label value is invalid")
+		}
+		factsByCredential[credentialID] = append(factsByCredential[credentialID], credentialLabelFact{
+			credentialID: credentialID, causeID: event.RecordID, value: cloneStringPointer(value),
+		})
+	}
+	result := make([]canonical.Value, 0, len(factsByCredential))
+	credentialIDs := make([]canonical.Identifier, 0, len(factsByCredential))
+	for credentialID := range factsByCredential {
+		credentialIDs = append(credentialIDs, credentialID)
+	}
+	sort.Slice(credentialIDs, func(left, right int) bool {
+		return bytes.Compare(credentialIDs[left][:], credentialIDs[right][:]) < 0
+	})
+	for _, credentialID := range credentialIDs {
+		facts := factsByCredential[credentialID]
+		maxima := make([]credentialLabelFact, 0, len(facts))
+		for index, candidate := range facts {
+			superseded := false
+			for otherIndex, other := range facts {
+				if index != otherIndex && replica.IsAncestor(candidate.causeID, other.causeID) {
+					superseded = true
+					break
+				}
+			}
+			if !superseded {
+				maxima = append(maxima, candidate)
+			}
+		}
+		if len(maxima) == 0 {
+			return nil, errors.New("Credential label checkpoint has no causal maximum")
+		}
+		sort.Slice(maxima, func(left, right int) bool {
+			return bytes.Compare(maxima[left].causeID[:], maxima[right].causeID[:]) > 0
+		})
+		causeID, err := freshBaselineCauseID()
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, canonical.Map{0: credentialID[:], 1: cloneStringValue(maxima[0].value), 2: canonicalSetValues([]canonical.Value{causeID[:]})})
+	}
+	return result, nil
+}
+
+func cloneStringPointer(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	copyValue := *value
+	return &copyValue
+}
+
+func cloneStringValue(value *string) canonical.Value {
+	if value == nil {
+		return nil
+	}
+	return *value
 }
 
 func freshBaselineCauseSet() ([]canonical.Value, error) {
