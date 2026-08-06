@@ -521,6 +521,7 @@ function LibraryList({
   readonly onStatus: (message: string) => void;
 }): React.ReactElement {
   const [hydrating, setHydrating] = React.useState<string>();
+  const [relieving, setRelieving] = React.useState<string>();
   const activeItems = items.filter(({ lifecycle }) => lifecycle === "Active");
   if (activeItems.length === 0)
     return (
@@ -543,30 +544,70 @@ function LibraryList({
           <span className="text-sm font-semibold text-awsm-ink">
             {item.availableLocally ? "Available locally" : "Needs hydration"}
           </span>
-          {!item.availableLocally ? (
-            <Button
-              variant="secondary"
-              busy={hydrating === item.artifactId}
-              onClick={() => {
-                setHydrating(item.artifactId);
-                void Promise.resolve(
-                  binding.VaultCommand?.({
-                    type: "HydrateArtifact",
-                    expectedVaultId: vaultId,
-                    artifactId: item.artifactId,
-                  }),
-                )
-                  .then(() => {
-                    onRefresh();
-                    onStatus("Artifact hydrated.");
-                  })
-                  .catch(onError)
-                  .finally(() => setHydrating(undefined));
-              }}
-            >
-              Hydrate Artifact
-            </Button>
-          ) : null}
+          <ActionRow>
+            {item.availableLocally ? (
+              <Button
+                variant="secondary"
+                busy={relieving === item.artifactId}
+                disabled={relieving !== undefined || hydrating !== undefined}
+                onClick={() => {
+                  if (
+                    !window.confirm(
+                      "Release this Artifact's local bytes? Without another retained Replica or export, the data may be unrecoverable.",
+                    )
+                  )
+                    return;
+                  setRelieving(item.artifactId);
+                  void Promise.resolve(
+                    binding.VaultCommand?.({
+                      type: "StorageRelief",
+                      expectedVaultId: vaultId,
+                      objectIds: [item.artifactId],
+                    }),
+                  )
+                    .then((result) => {
+                      const summary = result as
+                        | { releasedObjectIds?: readonly string[]; warning?: string }
+                        | undefined;
+                      const count = summary?.releasedObjectIds?.length ?? 0;
+                      onRefresh();
+                      onStatus(
+                        `Storage Relief completed. ${count} local Object${count === 1 ? "" : "s"} released.${summary?.warning === undefined ? "" : ` ${summary.warning}`}`,
+                      );
+                    })
+                    .catch(onError)
+                    .finally(() => setRelieving(undefined));
+                }}
+              >
+                Release local bytes
+              </Button>
+            ) : null}
+            {!item.availableLocally ? (
+              <Button
+                variant="secondary"
+                busy={hydrating === item.artifactId}
+                disabled={relieving !== undefined || hydrating !== undefined}
+                onClick={() => {
+                  setHydrating(item.artifactId);
+                  void Promise.resolve(
+                    binding.VaultCommand?.({
+                      type: "HydrateArtifact",
+                      expectedVaultId: vaultId,
+                      artifactId: item.artifactId,
+                    }),
+                  )
+                    .then(() => {
+                      onRefresh();
+                      onStatus("Artifact hydrated.");
+                    })
+                    .catch(onError)
+                    .finally(() => setHydrating(undefined));
+                }}
+              >
+                Hydrate Artifact
+              </Button>
+            ) : null}
+          </ActionRow>
         </li>
       ))}
     </ul>

@@ -103,7 +103,7 @@ release:
   closures are supported);
 - remaining organization and other dependency-bearing Content Fork re-authoring and broader Authority/Key-Epoch events;
 - conflict/rebase and sparse-Replica projections; and
-- complete Wails workflow coverage.
+- remaining Wails workflow coverage beyond the current Vault-management and Library controls.
 
 The desktop Runtime is therefore a Vault-management surface, not a second web host or a replacement
 for the browser extension's page-capture surface.

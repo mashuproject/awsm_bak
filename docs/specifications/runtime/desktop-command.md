@@ -59,9 +59,12 @@ including authenticated Feature Manifest and Streamable Artifact wrappers, and f
 unsupported multi-Epoch or adopted-Vacuum semantic closures until those mappings are implemented. Commands never log passphrases, package
 bytes, keys, or bearer tokens.
 
-The Wails Vault view exposes these same Commands through its Complete Export and Import panel. The
-panel keeps the package encrypted, requires an explicit passphrase for each operation, and refreshes
-the live Vault projection after a successful Import.
+The Wails Vault view exposes these same Commands through its Complete Export and Import panel and
+its Library list. The panel keeps the package encrypted, requires an explicit passphrase for each
+operation, and refreshes the live Vault projection after a successful Import. A locally available
+Artifact row offers an explicit confirmation before issuing `StorageRelief`; after the Runtime
+commits the eviction, the view refetches Library state and shows the returned loss warning and
+`Needs hydration` state. The Wails view does not claim that another Replica exists.
 
 Successful responses use:
 

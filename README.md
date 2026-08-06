@@ -92,7 +92,8 @@ global freshness claims, automatic redundancy tracking, and user-facing AI featu
 in this release. Desktop page capture and the extension-to-desktop Capture Bundle bridge are not
 available. Multi-Key-Epoch and adopted-Vacuum Complete Export semantics,
 remaining organization and other dependency-bearing Content Fork re-authoring, broader Authority/Key-Epoch event families,
-conflict/rebase projections, and the remaining Wails workflow controls and cross-surface journeys remain explicit parity work; see
+conflict/rebase projections, and the remaining Wails workflow coverage beyond the current
+Vault-management controls and cross-surface journeys remain explicit parity work; see
 the living specifications and roadmap. The supported single-Key-Epoch Complete Export now
 authenticates and carries Feature Manifest and Streamable Artifact closures.
 
@@ -284,8 +285,9 @@ corepack pnpm ui:storybook:build
 
 The Desktop Runtime browser proofs pair the extension with the real loopback Go process in Chrome,
 Firefox Stable, and Firefox ESR, then prove encrypted grant persistence, revocation, the canonical
-Vault Command envelope, and one-use transfer staging. The Wails bridge proof exercises the same
-Vault-management presentation without exposing bearer tokens. Native Wails startup is an
+Vault Command envelope, one-use transfer staging, and local Artifact Storage Relief followed by
+Library refresh. The Wails bridge proof exercises the same Vault-management presentation without
+exposing bearer tokens. Native Wails startup is an
 additional local lane; run `corepack pnpm test:runtime:wails` on a host with GTK 3, WebKitGTK 4,
 and `xvfb-run`. The CI equivalent is `AWSM_RUNTIME_WAILS=1 corepack pnpm test:runtime:smoke`.
 

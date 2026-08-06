@@ -116,7 +116,8 @@ Replica.
 Remaining work is deliberately narrower: complete multi-Key-Epoch and adopted-Vacuum Complete Export
 reachability/import; complete the remaining organization and other dependency-bearing
 Content Fork re-authoring; implement the broader Authority and Key-Epoch event families; expose
-conflict/rebase and sparse-Replica state; and finish Wails workflow controls and cross-surface journeys.
+conflict/rebase and sparse-Replica state; and finish Wails workflow coverage beyond the current
+Vault-management controls, plus cross-surface journeys.
 The Go Runtime now re-authors Note Content Objects and Note Created/Revised/Deleted/Restored/Conflict
 Resolution Events with their exact object and cause mappings. Capture remains extension-only and the
 extension-to-desktop Capture Bundle bridge is out of scope for this release.

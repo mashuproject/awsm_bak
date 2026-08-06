@@ -82,7 +82,7 @@ container for the supported single-Key-Epoch closure, including authenticated Fe
 Streamable Artifact wrappers. Imported Replicas are readable but have no selected authoring Credential or private key.
 Multi-Key-Epoch and adopted-Vacuum Complete Export semantics remain explicit limits, along with
 remaining organization and other dependency-bearing Content Fork re-authoring, broader Authority/Key-Epoch event families, conflict/rebase projections, and
-the remaining Wails workflow controls and cross-surface journeys.
+the remaining Wails workflow coverage beyond the current Vault-management controls and cross-surface journeys.
 
 The move boundary is deliberately separate from Vault synchronization. A source Client seals the
 canonical opaque closure and trusted local secrets with a one-use secret, stages it in the desktop
@@ -127,8 +127,8 @@ macOS are explicitly build-only for the current release. The AppImage helper and
 test are `script/package-linux-appimage.sh` and `script/packaged-desktop-smoke.mjs`.
 
 These proofs cover the process boundary, Runtime API grant lifecycle, canonical Vault Command
-envelope, authenticated replay, Hosted Replica sync boundaries, Artifact hydration, and encrypted
-transfer staging. They do not claim desktop page Capture, the extension-to-desktop Capture Bundle
-bridge, advanced Complete Export closures beyond the supported single-Key-Epoch vectors,
-remaining organization and other dependency-bearing Content Fork re-authoring,
-or user-facing search/AI semantics.
+envelope, authenticated replay, Hosted Replica sync boundaries, Library Storage Relief and
+hydration, and encrypted transfer staging. They do not claim desktop page Capture, the
+extension-to-desktop Capture Bundle bridge, advanced Complete Export closures beyond the supported
+single-Key-Epoch vectors, remaining organization and other dependency-bearing Content Fork
+re-authoring, or user-facing search/AI semantics.

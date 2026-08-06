@@ -116,6 +116,120 @@ test("Wails Vault surface renders the selected Vault management slice", async ({
   });
 });
 
+test("Wails Library surface releases local Artifact bytes and refreshes its projection", async ({
+  page,
+}, testInfo) => {
+  const vaultId = "c".repeat(64);
+  const artifactId = "d".repeat(64);
+  await page.addInitScript(
+    ({ selectedVaultId, selectedArtifactId }) => {
+      let availableLocally = true;
+      const state = {
+        selectedVaultId,
+        vaults: [
+          {
+            vaultId: selectedVaultId,
+            label: "Relief archive",
+            lifecycle: "Open",
+            access: "Authoring",
+            selected: true,
+          },
+        ],
+      };
+      const calls: Array<{ type: string; objectIds?: readonly string[] }> = [];
+      const library = () => [
+        {
+          bundleId: "e".repeat(64),
+          collectionId: "f".repeat(64),
+          artifactId: selectedArtifactId,
+          capturedAt: 1,
+          originalUrl: "https://example.test/article",
+          finalUrl: "https://example.test/article",
+          title: "Article to release",
+          availableLocally,
+          lifecycle: "Active",
+        },
+      ];
+      (globalThis as unknown as { go: unknown }).go = {
+        main: {
+          desktopBinding: {
+            PendingPairings: async () => [],
+            ListGrants: async () => [],
+            RuntimeAddress: () => "127.0.0.1:37373",
+            VaultCommand: async (request: { type: string; objectIds?: readonly string[] }) => {
+              calls.push(
+                request.objectIds === undefined
+                  ? { type: request.type }
+                  : { type: request.type, objectIds: request.objectIds },
+              );
+              if (request.type === "GetState") return state;
+              if (request.type === "ListLibrary") return library();
+              if (request.type === "ListRemotes") return [];
+              if (request.type === "StorageRelief") {
+                if (
+                  request.objectIds?.length !== 1 ||
+                  request.objectIds[0] !== selectedArtifactId
+                ) {
+                  throw new Error("Storage Relief received the wrong Artifact ID");
+                }
+                availableLocally = false;
+                return {
+                  releasedObjectIds: [selectedArtifactId],
+                  warning:
+                    "Storage Relief removed local Object bytes. Without another retained Replica or export, this data may be unrecoverable.",
+                };
+              }
+              throw new Error(`unexpected command: ${request.type}`);
+            },
+            PendingTransfers: async () => [],
+          },
+        },
+      };
+      (globalThis as unknown as { __awsmCalls?: unknown }).__awsmCalls = calls;
+    },
+    { selectedVaultId: vaultId, selectedArtifactId: artifactId },
+  );
+
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Library", exact: true }).last()).toBeVisible();
+  await expect(page.getByText("Article to release", { exact: true })).toBeVisible();
+  await expect(page.getByText("Available locally", { exact: true })).toBeVisible();
+  const releaseButton = page.getByRole("button", { name: "Release local bytes" });
+  await expect(releaseButton).toBeVisible();
+  const releaseButtonBox = await releaseButton.boundingBox();
+  expect(releaseButtonBox?.width).toBeGreaterThanOrEqual(44);
+  expect(releaseButtonBox?.height).toBeGreaterThanOrEqual(44);
+  await releaseButton.focus();
+  await expect(releaseButton).toBeFocused();
+  await page.screenshot({
+    path: testInfo.outputPath("desktop-storage-relief-before-wide.png"),
+    fullPage: true,
+  });
+  page.once("dialog", (dialog) => dialog.accept());
+  await releaseButton.click();
+  await expect(page.getByText("Needs hydration", { exact: true })).toBeVisible();
+  await expect(page.getByText("Storage Relief completed.", { exact: false })).toBeVisible();
+  await page.screenshot({
+    path: testInfo.outputPath("desktop-storage-relief-wide.png"),
+    fullPage: true,
+  });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("heading", { name: "Library", exact: true }).last().scrollIntoViewIfNeeded();
+  await expect(page.locator("body")).not.toHaveCSS("overflow-x", "scroll");
+  await page.screenshot({ path: testInfo.outputPath("desktop-storage-relief-narrow.png") });
+  const observed = await page.evaluate(
+    () =>
+      (
+        globalThis as unknown as {
+          __awsmCalls: Array<{ type: string; objectIds?: readonly string[] }>;
+        }
+      ).__awsmCalls,
+  );
+  expect(observed).toContainEqual({ type: "StorageRelief", objectIds: [artifactId] });
+});
+
 test("Wails Vault creation can recover a pending setup without exposing its phrase", async ({
   page,
 }) => {
