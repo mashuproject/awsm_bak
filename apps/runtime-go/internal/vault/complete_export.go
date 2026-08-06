@@ -332,15 +332,24 @@ func prepareCompleteImport(manifest completeexport.Manifest, inventory completee
 		}
 	}
 	var baseline *canonical.Baseline
+	var predecessorBaseline *canonical.Baseline
 	var genesis *canonical.Event
+	baselineRootID := findTypedRoot(manifest.TypedLogicalRoots, 2)
 	for index := range recordValues {
 		record := recordValues[index]
 		if record.Kind == canonical.BaselineKind {
-			if baseline != nil {
-				return preparedCompleteImport{}, errors.New("Complete Export contains multiple Baselines")
-			}
 			copyValue := *record.Baseline
-			baseline = &copyValue
+			if copyValue.RecordID == baselineRootID {
+				if baseline != nil {
+					return preparedCompleteImport{}, errors.New("Complete Export repeats its active Baseline")
+				}
+				baseline = &copyValue
+			} else {
+				if predecessorBaseline != nil {
+					return preparedCompleteImport{}, errors.New("Complete Export contains more than one predecessor Baseline")
+				}
+				predecessorBaseline = &copyValue
+			}
 		} else if record.Event != nil && record.Event.Family == canonical.AuthorityFamily && record.Event.Type == canonical.GenesisEvent {
 			if genesis != nil {
 				return preparedCompleteImport{}, errors.New("Complete Export contains multiple Genesis Events")
@@ -349,46 +358,107 @@ func prepareCompleteImport(manifest completeexport.Manifest, inventory completee
 			genesis = &copyValue
 		}
 	}
-	if baseline == nil || genesis == nil || baseline.RecordID != findTypedRoot(manifest.TypedLogicalRoots, 2) {
+	if baseline == nil || genesis == nil || baseline.RecordID != baselineRootID {
 		return preparedCompleteImport{}, errors.New("Complete Export Baseline or Genesis is missing")
 	}
-	if baseline.VaultID != manifest.VaultID || baseline.GenerationID != manifest.GenerationID || genesis.VaultID != manifest.VaultID || genesis.GenerationID != manifest.GenerationID {
+	if baseline.VaultID != manifest.VaultID || baseline.GenerationID != manifest.GenerationID || genesis.VaultID != manifest.VaultID {
 		return preparedCompleteImport{}, errors.New("Complete Export Record context is invalid")
+	}
+	genesisPredecessorBaselineID := canonical.Identifier{}
+	for _, dependency := range genesis.Dependencies {
+		if dependency.Type == 2 {
+			genesisPredecessorBaselineID = dependency.ID
+			break
+		}
+	}
+	if genesisPredecessorBaselineID == (canonical.Identifier{}) {
+		return preparedCompleteImport{}, errors.New("Complete Export Genesis Baseline dependency is missing")
+	}
+	adoptedGeneration := baseline.RecordID != genesisPredecessorBaselineID
+	if !adoptedGeneration && predecessorBaseline != nil {
+		return preparedCompleteImport{}, errors.New("Complete Export Initial Baseline is ambiguous")
+	}
+	if adoptedGeneration {
+		if predecessorBaseline == nil || predecessorBaseline.RecordID != genesisPredecessorBaselineID || predecessorBaseline.VaultID != manifest.VaultID || predecessorBaseline.GenerationID != genesis.GenerationID {
+			return preparedCompleteImport{}, errors.New("Complete Export Vacuum predecessor Baseline is invalid")
+		}
+	} else if genesis.GenerationID != baseline.GenerationID {
+		return preparedCompleteImport{}, errors.New("Complete Export Genesis Generation is invalid")
 	}
 	genesisCredentialID, genesisSigningKey, err := genesisCredential(*genesis)
 	if err != nil {
 		return preparedCompleteImport{}, err
 	}
-	replica, err := NewReplica(*baseline)
-	if err != nil {
-		return preparedCompleteImport{}, err
-	}
-	if err := replica.AdmitEvent(*genesis, genesisSigningKey); err != nil {
-		return preparedCompleteImport{}, fmt.Errorf("admit Complete Export Genesis: %w", err)
-	}
 	allRecordValues := append([]canonical.Record(nil), recordValues...)
-	for len(recordValues) > 0 {
-		progress := false
-		for index := 0; index < len(recordValues); index++ {
-			record := recordValues[index]
-			if record.Event == nil || record.Event.RecordID == genesis.RecordID {
-				recordValues = append(recordValues[:index], recordValues[index+1:]...)
-				index--
-				progress = true
-				continue
-			}
-			if !replicaParentsAdmitted(replica, *record.Event) {
-				continue
-			}
-			if err := replica.AdmitKnownEvent(*record.Event); err != nil {
-				return preparedCompleteImport{}, fmt.Errorf("admit Complete Export Record: %w", err)
-			}
-			recordValues = append(recordValues[:index], recordValues[index+1:]...)
-			index--
-			progress = true
+	var replica *Replica
+	var adoptionEvent *canonical.Event
+	var predecessorGenerationID canonical.Identifier
+	if !adoptedGeneration {
+		replica, err = NewReplica(*baseline)
+		if err != nil {
+			return preparedCompleteImport{}, err
 		}
-		if !progress {
-			return preparedCompleteImport{}, errors.New("Complete Export Record DAG cannot reach its parents")
+		if err := replica.AdmitEvent(*genesis, genesisSigningKey); err != nil {
+			return preparedCompleteImport{}, fmt.Errorf("admit Complete Export Genesis: %w", err)
+		}
+		pending := make([]canonical.Event, 0, len(allRecordValues))
+		for _, record := range allRecordValues {
+			if record.Event != nil && record.Event.RecordID != genesis.RecordID {
+				if record.Event.GenerationID != baseline.GenerationID {
+					return preparedCompleteImport{}, errors.New("Complete Export Record belongs to an unknown Generation")
+				}
+				pending = append(pending, *record.Event)
+			}
+		}
+		if err := admitCompleteImportEvents(replica, pending, "Complete Export Record"); err != nil {
+			return preparedCompleteImport{}, err
+		}
+	} else {
+		oldReplica, replicaErr := NewReplica(*predecessorBaseline)
+		if replicaErr != nil {
+			return preparedCompleteImport{}, replicaErr
+		}
+		if err := oldReplica.AdmitEvent(*genesis, genesisSigningKey); err != nil {
+			return preparedCompleteImport{}, fmt.Errorf("admit Complete Export Genesis: %w", err)
+		}
+		oldEvents := make([]canonical.Event, 0)
+		successorEvents := make([]canonical.Event, 0)
+		var adoption *canonical.Event
+		for _, record := range allRecordValues {
+			if record.Event == nil || record.Event.RecordID == genesis.RecordID {
+				continue
+			}
+			event := *record.Event
+			if event.Family == canonical.LifecycleFamily && event.Type == 1 {
+				if adoption != nil {
+					return preparedCompleteImport{}, errors.New("Complete Export contains multiple Vacuum Events")
+				}
+				adoption = &event
+				continue
+			}
+			switch event.GenerationID {
+			case predecessorBaseline.GenerationID:
+				oldEvents = append(oldEvents, event)
+			case baseline.GenerationID:
+				successorEvents = append(successorEvents, event)
+			default:
+				return preparedCompleteImport{}, errors.New("Complete Export Record belongs to an unknown Vacuum Generation")
+			}
+		}
+		if adoption == nil || !hasDependency(adoption.Dependencies, 2, baseline.RecordID) {
+			return preparedCompleteImport{}, errors.New("Complete Export Vacuum Adoption Event is missing")
+		}
+		adoptionEvent = adoption
+		predecessorGenerationID = predecessorBaseline.GenerationID
+		if err := admitCompleteImportEvents(oldReplica, oldEvents, "Complete Export predecessor Record"); err != nil {
+			return preparedCompleteImport{}, err
+		}
+		replica, err = oldReplica.AdoptVacuum(*baseline, *adoption)
+		if err != nil {
+			return preparedCompleteImport{}, fmt.Errorf("adopt Complete Export Vacuum: %w", err)
+		}
+		if err := admitCompleteImportEvents(replica, successorEvents, "Complete Export successor Record"); err != nil {
+			return preparedCompleteImport{}, err
 		}
 	}
 	epochKeys := make(map[canonical.Identifier][]byte, len(keyBytesByID))
@@ -516,6 +586,12 @@ func prepareCompleteImport(manifest completeexport.Manifest, inventory completee
 			artifactMappings[hexIdentifier(item.LogicalID)] = storageID
 		}
 	}
+	adoptionIDText := ""
+	predecessorGenerationIDText := ""
+	if adoptionEvent != nil {
+		adoptionIDText = hexIdentifier(adoptionEvent.RecordID)
+		predecessorGenerationIDText = hexIdentifier(predecessorGenerationID)
+	}
 	canonicalState := &canonicalReplicaState{
 		VaultID:                       hexIdentifier(manifest.VaultID),
 		GenerationID:                  hexIdentifier(manifest.GenerationID),
@@ -528,6 +604,8 @@ func prepareCompleteImport(manifest completeexport.Manifest, inventory completee
 		ClientCredentialID:            hexIdentifier(clientCredentialID),
 		BaselineStorageItemID:         recordMappings[hexIdentifier(baseline.RecordID)],
 		GenesisStorageItemID:          recordMappings[hexIdentifier(genesis.RecordID)],
+		PredecessorGenerationID:       predecessorGenerationIDText,
+		AdoptionEventID:               adoptionIDText,
 		RecoveryEnvelopeID:            hexIdentifier(envelopeIDs[1]),
 		RecoveryEnvelopeStorageID:     recoveryEnvelopeStorageID,
 		ClientEnvelopeID:              hexIdentifier(envelopeIDs[2]),
@@ -565,6 +643,32 @@ func findTypedRoot(roots []canonical.Dependency, kind uint64) canonical.Identifi
 		}
 	}
 	return canonical.Identifier{}
+}
+
+func admitCompleteImportEvents(replica *Replica, events []canonical.Event, label string) error {
+	pending := append([]canonical.Event(nil), events...)
+	for len(pending) > 0 {
+		sort.Slice(pending, func(left, right int) bool {
+			return bytes.Compare(pending[left].RecordID[:], pending[right].RecordID[:]) < 0
+		})
+		progress := false
+		for index := 0; index < len(pending); index++ {
+			event := pending[index]
+			if !replicaParentsAdmitted(replica, event) {
+				continue
+			}
+			if err := replica.AdmitKnownEvent(event); err != nil {
+				return fmt.Errorf("admit %s: %w", label, err)
+			}
+			pending = append(pending[:index], pending[index+1:]...)
+			index--
+			progress = true
+		}
+		if !progress {
+			return fmt.Errorf("%s DAG cannot reach its parents", label)
+		}
+	}
+	return nil
 }
 
 func validateImportedFeatureManifestDependencies(baseline canonical.Baseline, records []canonical.Record, featureIDs map[canonical.Identifier]struct{}) error {

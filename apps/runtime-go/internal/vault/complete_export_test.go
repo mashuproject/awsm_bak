@@ -62,6 +62,51 @@ func TestRuntimeExportsCanonicalCompleteExportClosure(t *testing.T) {
 	}
 }
 
+func TestRuntimeCompleteExportImportsCollectionVacuumSuccessor(t *testing.T) {
+	ctx := context.Background()
+	sourceDependencies := memoryDependencies(t)
+	source, err := New(ctx, store.NewMemoryState(), sourceDependencies)
+	if err != nil {
+		t.Fatalf("create source Runtime: %v", err)
+	}
+	vaultID, phrase := createVaultWithPhraseForTest(t, source, "Collection Vacuum export")
+	collectionID := filledCreationID(223)
+	admitForkCollectionTitleEvent(t, source, sourceDependencies, vaultID, collectionID, "Saved pages")
+	if _, err := source.Handle(ctx, mustJSON(map[string]any{"type": "VacuumVault", "expectedVaultId": vaultID})); err != nil {
+		t.Fatalf("Vacuum source Vault: %v", err)
+	}
+	complete, err := source.ExportComplete(vaultID, phrase)
+	if err != nil {
+		t.Fatalf("export Vacuum successor: %v", err)
+	}
+	destinationDependencies := memoryDependencies(t)
+	destination, err := New(ctx, store.NewMemoryState(), destinationDependencies)
+	if err != nil {
+		t.Fatalf("create destination Runtime: %v", err)
+	}
+	if _, err := destination.ImportComplete(ctx, phrase, complete); err != nil {
+		t.Fatalf("import Vacuum successor: %v", err)
+	}
+	projection, err := ProjectLibraryProjection(destination.replicas[vaultID])
+	if err != nil {
+		t.Fatalf("project imported Vacuum successor: %v", err)
+	}
+	if len(projection.Collections) != 1 || projection.Collections[0].CollectionID != hexIdentifier(collectionID) || projection.Collections[0].Title != "Saved pages" {
+		t.Fatalf("imported Collection projection = %#v", projection.Collections)
+	}
+	restarted, err := New(ctx, destination.store, destinationDependencies)
+	if err != nil {
+		t.Fatalf("restart imported Vacuum successor: %v", err)
+	}
+	projection, err = ProjectLibraryProjection(restarted.replicas[vaultID])
+	if err != nil {
+		t.Fatalf("project restarted Vacuum successor: %v", err)
+	}
+	if len(projection.Collections) != 1 || projection.Collections[0].CollectionID != hexIdentifier(collectionID) || projection.Collections[0].Title != "Saved pages" {
+		t.Fatalf("restarted imported Collection projection = %#v", projection.Collections)
+	}
+}
+
 func TestRuntimeCompleteExportPreservesPerItemKeyEpochsAcrossImportAndRestart(t *testing.T) {
 	ctx := context.Background()
 	dependencies := memoryDependencies(t)
