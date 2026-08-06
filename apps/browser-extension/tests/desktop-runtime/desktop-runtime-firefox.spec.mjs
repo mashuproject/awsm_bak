@@ -118,18 +118,16 @@ async function createVault(driver) {
     until.elementLocated(By.xpath("//h1[normalize-space()='Create your local Vault']")),
     20_000,
   );
-  await driver.findElement(By.css('input[name="vault-name"]')).sendKeys("Firefox Desktop Runtime");
+  await driver.findElement(By.id("awsm-vault-name")).sendKeys("Firefox Desktop Runtime");
   await driver.findElement(By.xpath("//button[normalize-space()='Create Vault']")).click();
   await driver.wait(
     until.elementLocated(By.xpath("//h1[normalize-space()='Protect your Vault']")),
     20_000,
   );
-  const phraseField = await driver.findElement(By.css('textarea[aria-label="Recovery Phrase"]'));
+  const phraseField = await driver.findElement(By.id("awsm-recovery-phrase"));
   const recoveryPhrase = await driver.executeScript("return arguments[0].value;", phraseField);
   await driver
-    .findElement(
-      By.xpath("//label[normalize-space()='Type the Recovery Phrase to continue']/input"),
-    )
+    .findElement(By.id("awsm-type-the-recovery-phrase-to-continue"))
     .sendKeys(recoveryPhrase);
   await driver
     .findElement(By.xpath("//button[normalize-space()='Confirm Recovery Phrase']"))
