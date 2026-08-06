@@ -792,39 +792,6 @@ func TestVaultCommandsValidateUnavailableCommandFields(t *testing.T) {
 	}
 }
 
-func TestVaultCommandsFailClosedForUnimplementedHostedOperations(t *testing.T) {
-	runtime, err := New(context.Background(), store.NewMemoryState(), memoryDependencies(t))
-	if err != nil {
-		t.Fatalf("create Runtime: %v", err)
-	}
-	commands := []struct {
-		name string
-		raw  string
-	}{
-		{
-			name: "HOSTED_REPLICA_ATTACHMENT_UNAVAILABLE",
-			raw:  `{"type":"BeginHostedReplicaAttachment","expectedVaultId":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","endpoint":"https://host.example","name":"Host","username":"alice","password":"secret"}`,
-		},
-		{
-			name: "HOSTED_REPLICA_MATERIALIZATION_UNAVAILABLE",
-			raw:  `{"type":"MaterializeHostedReplica","expectedVaultId":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","remoteId":"00000000-0000-4000-8000-000000000000"}`,
-		},
-		{
-			name: "HOSTED_REPLICA_PULL_UNAVAILABLE",
-			raw:  `{"type":"PullHostedReplicas","expectedVaultId":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`,
-		},
-	}
-	for _, commandInput := range commands {
-		t.Run(commandInput.name, func(t *testing.T) {
-			_, commandErr := runtime.Handle(context.Background(), json.RawMessage(commandInput.raw))
-			failure, ok := commandErr.(*CommandError)
-			if !ok || failure.ID != commandInput.name {
-				t.Fatalf("command error = %#v, want %s", commandErr, commandInput.name)
-			}
-		})
-	}
-}
-
 func TestTransferPackageRoundTripsWithoutCreatingAnEvent(t *testing.T) {
 	ctx := context.Background()
 	runtime, err := New(ctx, store.NewMemoryState(), memoryDependencies(t))
@@ -870,7 +837,10 @@ func TestTransferPackageRoundTripsWithoutCreatingAnEvent(t *testing.T) {
 
 func TestHostedReplicaMetadataAcceptsCanonicalHTTPSPaths(t *testing.T) {
 	ctx := context.Background()
-	runtime, err := New(ctx, store.NewMemoryState(), memoryDependencies(t))
+	endpoint, client := newHostedRuntimeFixture(t)
+	dependencies := memoryDependencies(t)
+	dependencies.HTTPClient = client
+	runtime, err := New(ctx, store.NewMemoryState(), dependencies)
 	if err != nil {
 		t.Fatalf("create Runtime: %v", err)
 	}
@@ -888,13 +858,13 @@ func TestHostedReplicaMetadataAcceptsCanonicalHTTPSPaths(t *testing.T) {
 	vaultID := confirmed.(map[string]string)["vaultId"]
 	remoteValue, err := runtime.Handle(ctx, mustJSON(map[string]any{
 		"type": "CreateHostedReplica", "expectedVaultId": vaultID,
-		"endpoint": "https://host.example/aws", "name": "Archive Host", "username": "alice", "password": "secret",
+		"endpoint": endpoint, "name": "Archive Host", "username": "alice", "password": "secret",
 	}))
 	if err != nil {
-		t.Fatalf("create Hosted Replica metadata: %v", err)
+		t.Fatalf("create Hosted Replica: %v", err)
 	}
 	remote := remoteValue.(RemoteSummary)
-	if remote.Endpoint != "https://host.example/aws" || remote.Name != "Archive Host" {
+	if remote.Endpoint != endpoint || remote.Name != "Archive Host" || remote.ReplicaHandle == "" {
 		t.Fatalf("remote metadata = %#v", remote)
 	}
 	_, err = runtime.Handle(ctx, mustJSON(map[string]any{
@@ -904,6 +874,160 @@ func TestHostedReplicaMetadataAcceptsCanonicalHTTPSPaths(t *testing.T) {
 	failure, ok := err.(*CommandError)
 	if !ok || failure.ID != "REMOTE_ENDPOINT_INVALID" {
 		t.Fatalf("invalid endpoint error = %#v, want REMOTE_ENDPOINT_INVALID", err)
+	}
+}
+
+func TestHostedReplicaAttachmentMaterializationAndPull(t *testing.T) {
+	ctx := context.Background()
+	fixture := newHostedSyncFixture(t)
+	dependencies := memoryDependencies(t)
+	dependencies.HTTPClient = fixture.Client
+	runtime, err := New(ctx, store.NewMemoryState(), dependencies)
+	if err != nil {
+		t.Fatalf("create Runtime: %v", err)
+	}
+	vaultID := createVaultForTest(t, runtime, "Hosted")
+	created, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "CreateHostedReplica", "expectedVaultId": vaultID,
+		"endpoint": fixture.Endpoint, "name": "Primary", "username": "alice", "password": "secret",
+	}))
+	if err != nil {
+		t.Fatalf("create Hosted Replica: %v", err)
+	}
+	primary := created.(RemoteSummary)
+	materializedValue, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "MaterializeHostedReplica", "expectedVaultId": vaultID, "remoteId": primary.RemoteID,
+	}))
+	if err != nil {
+		t.Fatalf("materialize Hosted Replica: %v", err)
+	}
+	materialized := materializedValue.(map[string]any)
+	if materialized["materializedCompactItemCount"].(int) == 0 || len(fixture.Items) == 0 {
+		t.Fatalf("materialization summary = %#v, fixture items = %d", materialized, len(fixture.Items))
+	}
+	rewrapped := false
+	for logicalID, localStorageItemID := range runtime.vaults[vaultID].Canonical.RecordStorageItemIDs {
+		logicalIdentifier, decodeErr := decodeHexIdentifier(logicalID)
+		if decodeErr != nil {
+			t.Fatal(decodeErr)
+		}
+		locator, locatorErr := deriveHostedReplicaLocator(fixture.Salt, hostedNamespaceRecord, logicalIdentifier)
+		if locatorErr != nil {
+			t.Fatal(locatorErr)
+		}
+		for storageItemID, item := range fixture.Items {
+			if item.Locator == locator && hexIdentifier(storageItemID) != localStorageItemID {
+				rewrapped = true
+				break
+			}
+		}
+		if rewrapped {
+			break
+		}
+	}
+	if !rewrapped {
+		t.Fatal("Hosted Replica materialization reused every local Record Storage Item ID")
+	}
+	attachmentValue, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "BeginHostedReplicaAttachment", "expectedVaultId": vaultID,
+		"endpoint": fixture.Endpoint, "name": "Existing", "username": "alice", "password": "secret",
+	}))
+	if err != nil {
+		t.Fatalf("begin Hosted Replica attachment: %v", err)
+	}
+	attachment := attachmentValue.(map[string]any)
+	if attachment["setupId"].(string) == "" || len(attachment["replicas"].([]map[string]any)) == 0 {
+		t.Fatalf("attachment result = %#v", attachment)
+	}
+	if _, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "ConfirmHostedReplicaAttachment", "expectedVaultId": vaultID,
+		"setupId": attachment["setupId"], "replicaHandle": fixture.Handle,
+	})); err != nil {
+		t.Fatalf("confirm Hosted Replica attachment: %v", err)
+	}
+	pulledValue, err := runtime.Handle(ctx, mustJSON(map[string]any{"type": "PullHostedReplicas", "expectedVaultId": vaultID}))
+	if err != nil {
+		t.Fatalf("pull Hosted Replicas: %v", err)
+	}
+	pulled := pulledValue.([]map[string]string)
+	if len(pulled) != 2 || pulled[0]["status"] != "Completed" || pulled[1]["status"] != "Completed" {
+		t.Fatalf("pull summary = %#v", pulled)
+	}
+}
+
+func TestHostedReplicaHydratesKnownArtifactStream(t *testing.T) {
+	ctx := context.Background()
+	fixture := newHostedSyncFixture(t)
+	dependencies := memoryDependencies(t)
+	dependencies.HTTPClient = fixture.Client
+	runtime, err := New(ctx, store.NewMemoryState(), dependencies)
+	if err != nil {
+		t.Fatalf("create Runtime: %v", err)
+	}
+	vaultID := createVaultForTest(t, runtime, "Hydration")
+	created, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "CreateHostedReplica", "expectedVaultId": vaultID,
+		"endpoint": fixture.Endpoint, "name": "Archive", "username": "alice", "password": "secret",
+	}))
+	if err != nil {
+		t.Fatalf("create Hosted Replica: %v", err)
+	}
+	remote := created.(RemoteSummary)
+	vaultIdentifier, err := decodeHexIdentifier(vaultID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value := runtime.vaults[vaultID]
+	featureSetID, err := decodeHexIdentifier(value.Canonical.RequiredFeatureSetID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	objectBytes, err := canonical.EncodeValue(canonical.Map{
+		0: uint64(1), 1: vaultIdentifier[:], 2: uint64(2), 3: featureSetID[:],
+		4: canonical.Map{0: "Artifact"}, 5: canonical.Map{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	objectID, err := objectIDFromBytes(vaultIdentifier, objectBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secretBytes, err := dependencies.Secrets.Get(trustedSecretService, epochSecretAccount(vaultID, value.Canonical.KeyEpochID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	epochID, _ := decodeHexIdentifier(value.Canonical.KeyEpochID)
+	epoch, err := decodeEpochSecret(secretBytes, vaultIdentifier, epochID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compact, err := awsmcrypto.SealCompactItem(awsmcrypto.CompactItemInput{VaultID: vaultIdentifier, KeyEpochID: epochID, KeyEpochKey: epoch.key, PayloadType: 2, PayloadBytes: objectBytes})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.AdmitOpaqueObject(ctx, vaultID, compact); err != nil {
+		t.Fatalf("admit Artifact Object: %v", err)
+	}
+	locator, err := deriveHostedReplicaLocator(fixture.Salt, hostedNamespaceArtifact, objectID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	streamPayload := append([]byte{0, 0, 0, 0, 1, 0, 0, 0, 16}, make([]byte, 16)...)
+	stream, err := storage.EncodeOpaqueEnvelope(storage.OpaqueEnvelopeInput{StorageClass: storage.StreamableStorageClass, ProtectionParameters: make([]byte, 64), Payload: streamPayload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.addItem(t, locator, stream)
+	hydratedValue, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "HydrateArtifact", "expectedVaultId": vaultID, "artifactId": hexIdentifier(objectID),
+	}))
+	if err != nil {
+		t.Fatalf("hydrate Artifact: %v", err)
+	}
+	hydrated := hydratedValue.(map[string]string)
+	if hydrated["remoteId"] != remote.RemoteID || hydrated["artifactId"] != hexIdentifier(objectID) {
+		t.Fatalf("hydration result = %#v", hydrated)
 	}
 }
 

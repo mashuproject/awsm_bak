@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"strings"
 	"sync"
@@ -43,8 +44,9 @@ type StateStore interface {
 }
 
 type Dependencies struct {
-	Artifacts *artifactstore.Store
-	Secrets   securestore.Store
+	Artifacts  *artifactstore.Store
+	Secrets    securestore.Store
+	HTTPClient *http.Client
 }
 
 // CommandError is serialized by the HTTP adapter and mirrors the extension's
@@ -80,17 +82,21 @@ type ClientState struct {
 }
 
 type RemoteSummary struct {
-	RemoteID string `json:"remoteId"`
-	Name     string `json:"name"`
-	Endpoint string `json:"endpoint"`
-	Enabled  bool   `json:"enabled"`
+	RemoteID      string `json:"remoteId"`
+	Name          string `json:"name"`
+	Endpoint      string `json:"endpoint"`
+	Enabled       bool   `json:"enabled"`
+	ReplicaHandle string `json:"replicaHandle"`
 }
 
 type remoteState struct {
-	RemoteID string `json:"remoteId"`
-	Name     string `json:"name"`
-	Endpoint string `json:"endpoint"`
-	Enabled  bool   `json:"enabled"`
+	RemoteID          string `json:"remoteId"`
+	Name              string `json:"name"`
+	Endpoint          string `json:"endpoint"`
+	Enabled           bool   `json:"enabled"`
+	ReplicaHandle     string `json:"replicaHandle"`
+	LocatorSalt       string `json:"locatorSalt"`
+	InventoryPageSize int    `json:"inventoryPageSize"`
 }
 
 type canonicalReplicaState struct {
@@ -116,6 +122,7 @@ type canonicalReplicaState struct {
 	ContinuityRecordIDs       []string          `json:"continuityRecordIds"`
 	RecordStorageItemIDs      map[string]string `json:"recordStorageItemIds"`
 	ObjectStorageItemIDs      map[string]string `json:"objectStorageItemIds"`
+	ArtifactStorageItemIDs    map[string]string `json:"artifactStorageItemIds"`
 }
 
 type persistedVault struct {
@@ -146,21 +153,32 @@ type persistedState struct {
 }
 
 type Runtime struct {
-	mu       sync.RWMutex
-	store    StateStore
-	deps     Dependencies
-	selected string
-	vaults   map[string]*persistedVault
-	replicas map[string]*Replica
-	pending  *pendingState
-	notify   func()
+	mu               sync.RWMutex
+	store            StateStore
+	deps             Dependencies
+	selected         string
+	vaults           map[string]*persistedVault
+	replicas         map[string]*Replica
+	pending          *pendingState
+	hostedAttachment *pendingHostedAttachment
+	notify           func()
+}
+
+type pendingHostedAttachment struct {
+	SetupID         string
+	ExpectedVaultID string
+	Endpoint        string
+	Name            string
+	Session         hostedSession
+	Replicas        []hostedReplicaSummary
 }
 
 type runtimeSnapshot struct {
-	selected string
-	vaults   map[string]*persistedVault
-	replicas map[string]*Replica
-	pending  *pendingState
+	selected         string
+	vaults           map[string]*persistedVault
+	replicas         map[string]*Replica
+	pending          *pendingState
+	hostedAttachment *pendingHostedAttachment
 }
 
 // TransferPackage is the destination-side handoff representation. It is
@@ -546,6 +564,9 @@ func (r *Runtime) GarbageCollect(ctx context.Context, vaultID string) (GarbageCo
 		for _, storageItemID := range value.Canonical.ObjectStorageItemIDs {
 			retained[storageItemID] = struct{}{}
 		}
+		for _, storageItemID := range value.Canonical.ArtifactStorageItemIDs {
+			retained[storageItemID] = struct{}{}
+		}
 	}
 	ids, err := r.deps.Artifacts.ListIDs()
 	if err != nil {
@@ -848,7 +869,7 @@ func (r *Runtime) Handle(ctx context.Context, raw json.RawMessage) (any, error) 
 		if err := decode(raw, &input); err != nil {
 			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "BeginHostedReplicaAttachment contains invalid fields")
 		}
-		return nil, commandError("HOSTED_REPLICA_ATTACHMENT_UNAVAILABLE", "Hosted Replica attachment is not available in this Runtime slice yet.")
+		return r.beginHostedReplicaAttachment(ctx, input.ExpectedVaultID, input.Endpoint, input.Name, input.Username, input.Password)
 	case "ConfirmHostedReplicaAttachment":
 		var input struct {
 			Type            string `json:"type"`
@@ -859,7 +880,7 @@ func (r *Runtime) Handle(ctx context.Context, raw json.RawMessage) (any, error) 
 		if err := decode(raw, &input); err != nil {
 			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "ConfirmHostedReplicaAttachment contains invalid fields")
 		}
-		return nil, commandError("HOSTED_REPLICA_ATTACHMENT_UNAVAILABLE", "Hosted Replica attachment is not available in this Runtime slice yet.")
+		return r.confirmHostedReplicaAttachment(ctx, input.ExpectedVaultID, input.SetupID, input.ReplicaHandle)
 	case "CancelHostedReplicaAttachment":
 		var input struct {
 			Type    string `json:"type"`
@@ -868,7 +889,7 @@ func (r *Runtime) Handle(ctx context.Context, raw json.RawMessage) (any, error) 
 		if err := decode(raw, &input); err != nil {
 			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "CancelHostedReplicaAttachment contains invalid fields")
 		}
-		return nil, r.cancelSetup(ctx, input.SetupID, "attachment")
+		return nil, r.cancelHostedReplicaAttachment(input.SetupID)
 	case "MaterializeHostedReplica":
 		var input struct {
 			Type            string `json:"type"`
@@ -878,7 +899,7 @@ func (r *Runtime) Handle(ctx context.Context, raw json.RawMessage) (any, error) 
 		if err := decode(raw, &input); err != nil {
 			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "MaterializeHostedReplica contains invalid fields")
 		}
-		return nil, commandError("HOSTED_REPLICA_MATERIALIZATION_UNAVAILABLE", "Hosted Replica materialization is not available in this Runtime slice yet.")
+		return r.materializeHostedReplica(ctx, input.ExpectedVaultID, input.RemoteID)
 	case "PullHostedReplicas":
 		var input struct {
 			Type            string `json:"type"`
@@ -887,7 +908,7 @@ func (r *Runtime) Handle(ctx context.Context, raw json.RawMessage) (any, error) 
 		if err := decode(raw, &input); err != nil {
 			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "PullHostedReplicas contains invalid fields")
 		}
-		return nil, commandError("HOSTED_REPLICA_PULL_UNAVAILABLE", "Hosted Replica synchronization is not available in this Runtime slice yet.")
+		return r.pullHostedReplicas(ctx, input.ExpectedVaultID)
 	case "HydrateArtifact":
 		var input struct {
 			Type            string `json:"type"`
@@ -897,7 +918,7 @@ func (r *Runtime) Handle(ctx context.Context, raw json.RawMessage) (any, error) 
 		if err := decode(raw, &input); err != nil {
 			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "HydrateArtifact contains invalid fields")
 		}
-		return nil, commandError("ARTIFACT_UNAVAILABLE", "This desktop Vault has no verified copy of that Artifact.")
+		return r.hydrateArtifact(ctx, input.ExpectedVaultID, input.ArtifactID)
 	case "CaptureActivePage":
 		var input struct {
 			Type            string `json:"type"`
@@ -1841,7 +1862,7 @@ func (r *Runtime) listRemotes(id string) (any, error) {
 	}
 	result := make([]RemoteSummary, 0, len(value.Remotes))
 	for _, remote := range value.Remotes {
-		result = append(result, RemoteSummary{RemoteID: remote.RemoteID, Name: remote.Name, Endpoint: remote.Endpoint, Enabled: remote.Enabled})
+		result = append(result, RemoteSummary{RemoteID: remote.RemoteID, Name: remote.Name, Endpoint: remote.Endpoint, Enabled: remote.Enabled, ReplicaHandle: remote.ReplicaHandle})
 	}
 	return result, nil
 }
@@ -1888,7 +1909,7 @@ func (r *Runtime) renameRemote(ctx context.Context, id, remoteID, name string) (
 				return nil, err
 			}
 			r.signal()
-			return RemoteSummary{RemoteID: remoteID, Name: name, Endpoint: value.Remotes[index].Endpoint, Enabled: value.Remotes[index].Enabled}, nil
+			return RemoteSummary{RemoteID: remoteID, Name: name, Endpoint: value.Remotes[index].Endpoint, Enabled: value.Remotes[index].Enabled, ReplicaHandle: value.Remotes[index].ReplicaHandle}, nil
 		}
 	}
 	return nil, commandError("REMOTE_NOT_FOUND", "The Hosted Replica was not found.")
@@ -1914,7 +1935,7 @@ func (r *Runtime) setRemoteEnabled(ctx context.Context, id, remoteID string, ena
 			}
 			r.signal()
 			remote := value.Remotes[index]
-			return RemoteSummary{RemoteID: remote.RemoteID, Name: remote.Name, Endpoint: remote.Endpoint, Enabled: remote.Enabled}, nil
+			return RemoteSummary{RemoteID: remote.RemoteID, Name: remote.Name, Endpoint: remote.Endpoint, Enabled: remote.Enabled, ReplicaHandle: remote.ReplicaHandle}, nil
 		}
 	}
 	return nil, commandError("REMOTE_NOT_FOUND", "The Hosted Replica was not found.")
@@ -1933,6 +1954,9 @@ func (r *Runtime) retireRemote(ctx context.Context, id, remoteID string) (any, e
 	}
 	for index := range value.Remotes {
 		if value.Remotes[index].RemoteID == remoteID {
+			if r.deps.Secrets != nil {
+				_ = r.deps.Secrets.Delete(trustedSecretService, remoteSessionAccount(remoteID))
+			}
 			value.Remotes = append(value.Remotes[:index], value.Remotes[index+1:]...)
 			if err := r.persistLocked(ctx); err != nil {
 				r.restoreLocked(before)
@@ -1958,18 +1982,41 @@ func (r *Runtime) createRemote(ctx context.Context, id, endpoint, name, username
 	if len(name) < 1 || len(name) > 256 || len(username) < 1 || len(username) > 256 || len(password) < 1 || len(password) > 1_024 {
 		return nil, commandError("REMOTE_CREDENTIAL_INVALID", "Hosted Replica credentials are invalid.")
 	}
+	if r.deps.Secrets == nil {
+		return nil, commandError("TRUSTED_SECRET_UNAVAILABLE", "This Client cannot retain a Hosted Replica session.")
+	}
 	value, err := r.vaultLocked(id)
 	if err != nil {
 		return nil, err
 	}
+	session, err := signInHostedReplica(ctx, endpoint, username, password, r.deps.HTTPClient)
+	if err != nil {
+		return nil, commandError("REMOTE_AUTHENTICATION_FAILED", "Hosted Replica sign-in failed.")
+	}
+	host, err := newHostedReplicaHTTP(endpoint, session.AccessToken, r.deps.HTTPClient)
+	if err != nil {
+		return nil, commandError("REMOTE_ENDPOINT_INVALID", "Hosted Replica endpoint is invalid.")
+	}
+	created, err := host.createReplica(ctx)
+	if err != nil {
+		return nil, commandError("REMOTE_CREATE_FAILED", "The Hosted Replica could not be created.")
+	}
+	if !hasHostedReplicaSyncCapabilities(created.Capabilities) {
+		return nil, commandError("REMOTE_CAPABILITY_INVALID", "The Hosted Replica does not provide full synchronization access.")
+	}
 	remoteID := uuid.NewString()
-	value.Remotes = append(value.Remotes, remoteState{RemoteID: remoteID, Name: name, Endpoint: endpoint, Enabled: true})
+	remote := remoteState{RemoteID: remoteID, Name: name, Endpoint: endpoint, Enabled: true, ReplicaHandle: created.ReplicaHandle, LocatorSalt: hex.EncodeToString(created.LocatorSalt[:]), InventoryPageSize: 100}
+	if err := r.deps.Secrets.Put(trustedSecretService, remoteSessionAccount(remoteID), mustEncodeHostedSession(session)); err != nil {
+		return nil, commandError("TRUSTED_SECRET_UNAVAILABLE", "The Hosted Replica session could not be stored.")
+	}
+	value.Remotes = append(value.Remotes, remote)
 	if err := r.persistLocked(ctx); err != nil {
 		r.restoreLocked(before)
+		_ = r.deps.Secrets.Delete(trustedSecretService, remoteSessionAccount(remoteID))
 		return nil, err
 	}
 	r.signal()
-	return RemoteSummary{RemoteID: remoteID, Name: name, Endpoint: endpoint, Enabled: true}, nil
+	return RemoteSummary{RemoteID: remoteID, Name: name, Endpoint: endpoint, Enabled: true, ReplicaHandle: created.ReplicaHandle}, nil
 }
 
 func (r *Runtime) requireVault(id string) error {
@@ -2030,7 +2077,7 @@ func (r *Runtime) persistLocked(ctx context.Context) error {
 }
 
 func (r *Runtime) snapshotLocked() runtimeSnapshot {
-	snapshot := runtimeSnapshot{selected: r.selected, pending: clonePending(r.pending), vaults: make(map[string]*persistedVault, len(r.vaults)), replicas: make(map[string]*Replica, len(r.replicas))}
+	snapshot := runtimeSnapshot{selected: r.selected, pending: clonePending(r.pending), hostedAttachment: cloneHostedAttachment(r.hostedAttachment), vaults: make(map[string]*persistedVault, len(r.vaults)), replicas: make(map[string]*Replica, len(r.replicas))}
 	for id, value := range r.vaults {
 		copyValue := *value
 		copyValue.Label = cloneString(value.Label)
@@ -2047,6 +2094,7 @@ func (r *Runtime) snapshotLocked() runtimeSnapshot {
 func (r *Runtime) restoreLocked(snapshot runtimeSnapshot) {
 	r.selected = snapshot.selected
 	r.pending = clonePending(snapshot.pending)
+	r.hostedAttachment = cloneHostedAttachment(snapshot.hostedAttachment)
 	r.vaults = make(map[string]*persistedVault, len(snapshot.vaults))
 	r.replicas = make(map[string]*Replica, len(snapshot.replicas))
 	for id, value := range snapshot.vaults {
@@ -2097,6 +2145,9 @@ func validatePersistedVault(value persistedVault) error {
 		if err := validateEndpoint(remote.Endpoint); err != nil {
 			return errors.New("Vault state contains an invalid Hosted Replica endpoint")
 		}
+		if uuid.Validate(remote.ReplicaHandle) != nil || !validDigest(remote.LocatorSalt) || remote.InventoryPageSize < 1 || remote.InventoryPageSize > 500 {
+			return errors.New("Vault state contains an invalid Hosted Replica binding")
+		}
 	}
 	if value.Canonical != nil {
 		for _, identifier := range []string{
@@ -2139,6 +2190,11 @@ func validatePersistedVault(value persistedVault) error {
 		for objectID, storageItemID := range value.Canonical.ObjectStorageItemIDs {
 			if !validDigest(objectID) || !validDigest(storageItemID) {
 				return errors.New("Vault state contains an invalid canonical Object storage mapping")
+			}
+		}
+		for artifactID, storageItemID := range value.Canonical.ArtifactStorageItemIDs {
+			if !validDigest(artifactID) || !validDigest(storageItemID) {
+				return errors.New("Vault state contains an invalid canonical Artifact storage mapping")
 			}
 		}
 	}
@@ -2198,6 +2254,19 @@ func clonePending(value *pendingState) *pendingState {
 	return &copyValue
 }
 
+func cloneHostedAttachment(value *pendingHostedAttachment) *pendingHostedAttachment {
+	if value == nil {
+		return nil
+	}
+	copyValue := *value
+	copyValue.Replicas = make([]hostedReplicaSummary, len(value.Replicas))
+	copy(copyValue.Replicas, value.Replicas)
+	for index := range copyValue.Replicas {
+		copyValue.Replicas[index].Capabilities = append([]string(nil), value.Replicas[index].Capabilities...)
+	}
+	return &copyValue
+}
+
 func cloneCanonicalState(value *canonicalReplicaState) *canonicalReplicaState {
 	if value == nil {
 		return nil
@@ -2213,6 +2282,10 @@ func cloneCanonicalState(value *canonicalReplicaState) *canonicalReplicaState {
 	copyValue.ObjectStorageItemIDs = make(map[string]string, len(value.ObjectStorageItemIDs))
 	for objectID, storageItemID := range value.ObjectStorageItemIDs {
 		copyValue.ObjectStorageItemIDs[objectID] = storageItemID
+	}
+	copyValue.ArtifactStorageItemIDs = make(map[string]string, len(value.ArtifactStorageItemIDs))
+	for artifactID, storageItemID := range value.ArtifactStorageItemIDs {
+		copyValue.ArtifactStorageItemIDs[artifactID] = storageItemID
 	}
 	return &copyValue
 }
@@ -2241,7 +2314,8 @@ func canonicalReplicaFromCreation(prepared PreparedCanonicalVaultCreation) *cano
 			hexIdentifier(prepared.Baseline.RecordID): hexIdentifier(prepared.BaselineEnvelope.StorageItemID),
 			hexIdentifier(prepared.Genesis.RecordID):  hexIdentifier(prepared.GenesisEnvelope.StorageItemID),
 		},
-		ObjectStorageItemIDs: map[string]string{},
+		ObjectStorageItemIDs:   map[string]string{},
+		ArtifactStorageItemIDs: map[string]string{},
 	}
 }
 
@@ -2826,6 +2900,50 @@ func clientSecretAccount(vaultID, credentialID string) string {
 
 func epochSecretAccount(vaultID, epochID string) string {
 	return "epoch-secret:" + vaultID + ":" + epochID
+}
+
+func remoteSessionAccount(remoteID string) string {
+	return "remote-session:" + remoteID
+}
+
+type persistedHostedSession struct {
+	Username         string `json:"username"`
+	SessionID        string `json:"sessionId"`
+	AccessToken      string `json:"accessToken"`
+	AccessExpiresAt  int64  `json:"accessExpiresAt"`
+	RefreshToken     string `json:"refreshToken"`
+	RefreshExpiresAt int64  `json:"refreshExpiresAt"`
+}
+
+func mustEncodeHostedSession(session hostedSession) []byte {
+	encoded, err := json.Marshal(persistedHostedSession{Username: session.Username, SessionID: session.SessionID, AccessToken: session.AccessToken, AccessExpiresAt: session.AccessExpiresAt, RefreshToken: session.RefreshToken, RefreshExpiresAt: session.RefreshExpiresAt})
+	if err != nil {
+		panic(err)
+	}
+	return encoded
+}
+
+func decodeHostedSession(encoded []byte) (hostedSession, error) {
+	var value persistedHostedSession
+	if err := decode(encoded, &value); err != nil || value.Username == "" || value.SessionID == "" || value.AccessToken == "" || value.RefreshToken == "" {
+		return hostedSession{}, errors.New("Hosted Replica session state is invalid")
+	}
+	return hostedSession{Username: value.Username, SessionID: value.SessionID, AccessToken: value.AccessToken, AccessExpiresAt: value.AccessExpiresAt, RefreshToken: value.RefreshToken, RefreshExpiresAt: value.RefreshExpiresAt}, nil
+}
+
+func hasHostedReplicaSyncCapabilities(capabilities []string) bool {
+	needed := map[string]bool{"awsm.replica.inventory.read": false, "awsm.replica.item.read": false, "awsm.replica.item.write": false}
+	for _, capability := range capabilities {
+		if _, ok := needed[capability]; ok {
+			needed[capability] = true
+		}
+	}
+	for _, present := range needed {
+		if !present {
+			return false
+		}
+	}
+	return true
 }
 
 func encodeClientSecret(prepared PreparedCanonicalVaultCreation) ([]byte, error) {
