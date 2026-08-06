@@ -78,6 +78,9 @@ test("builds and publishes desktop artifacts with the browser release", () => {
     /version=\$\(node --print "require\('\.\/apps\/browser-extension\/package\.json'\)\.version"\)/u,
   );
   assert.match(desktop, /echo "version=\$version" >> "\$GITHUB_OUTPUT"/u);
+  assert.match(desktop, /Install Windows NSIS/u);
+  assert.match(desktop, /choco install nsis/u);
+  assert.match(desktop, /GITHUB_PATH/u);
   assert.match(desktop, /wails@v2\.13\.0/u);
   assert.match(desktop, /Set Wails product version/u);
   assert.match(desktop, /productVersion: process\.env\.VERSION/u);

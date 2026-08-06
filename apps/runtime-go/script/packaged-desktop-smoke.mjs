@@ -22,6 +22,20 @@ async function waitForReady(path, child) {
   throw new Error("Packaged desktop Runtime did not become ready within 20 seconds.");
 }
 
+async function waitForRemoval(path, timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      await access(path);
+    } catch (error) {
+      if (error?.code === "ENOENT") return;
+      throw error;
+    }
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 100));
+  }
+  throw new Error("Packaged desktop Runtime left its ready file after shutdown.");
+}
+
 const temporaryRoot = await mkdtemp(resolve(repositoryRoot, ".tmp-runtime-package-smoke-"));
 const readyFile = resolve(temporaryRoot, "desktop.ready");
 const dataDirectory = resolve(temporaryRoot, "data");
@@ -44,12 +58,7 @@ try {
     new Promise((resolveExit) => child.once("close", resolveExit)),
     new Promise((_, rejectTimeout) => setTimeout(() => rejectTimeout(new Error("Packaged desktop Runtime did not stop.")), 15_000)),
   ]);
-  try {
-    await access(readyFile);
-    throw new Error("Packaged desktop Runtime left its ready file after shutdown.");
-  } catch (error) {
-    if (error?.code !== "ENOENT") throw error;
-  }
+  await waitForRemoval(readyFile);
   console.log("Packaged desktop Runtime smoke passed.");
 } finally {
   if (child.exitCode === null) {
