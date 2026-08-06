@@ -48,6 +48,18 @@ type ReplicaState struct {
 	ContinuityRecordIDs []canonical.Identifier
 }
 
+// AuthorityState is the deterministic portable authority projection derived
+// from the admitted Authority/Lifecycle subgraph. It is a read-only view; it
+// is never a second persisted source of Vault authority.
+type AuthorityState struct {
+	ActiveMemberIDs                []canonical.Identifier
+	AdministratorIDs               []canonical.Identifier
+	ActiveClientCredentialIDs      []canonical.Identifier
+	EffectiveRecoveryCredentialIDs []canonical.Identifier
+	CurrentKeyEpochIDs             []canonical.Identifier
+	Lifecycle                      string
+}
+
 func NewReplica(baseline canonical.Baseline) (*Replica, error) {
 	if baseline.RecordID == (canonical.Identifier{}) || len(baseline.Bytes) == 0 {
 		return nil, errors.New("Replica Baseline is incomplete")
@@ -417,6 +429,42 @@ func (r *Replica) State() ReplicaState {
 		AuthorityFrontier:   cloneIdentifiers(r.authorityFrontier),
 		ContinuityRecordIDs: cloneIdentifiers(r.continuityRecordIDs),
 	}
+}
+
+// AuthorityState replays the authenticated Authority and Lifecycle Events and
+// returns the current derived membership, administrator, credential, recovery,
+// epoch, and lifecycle state.
+func (r *Replica) AuthorityState() (AuthorityState, error) {
+	if r == nil {
+		return AuthorityState{}, errors.New("Replica is required")
+	}
+	genesisRecord, ok := r.records[r.genesisID]
+	if !ok || genesisRecord.Event == nil {
+		return AuthorityState{}, errors.New("authenticated Genesis is unavailable")
+	}
+	replayed, err := replayAuthenticatedKeyEpochs(r.Events(), *genesisRecord.Event, nil)
+	if err != nil {
+		return AuthorityState{}, fmt.Errorf("replay Authority State: %w", err)
+	}
+	state := AuthorityState{
+		ActiveMemberIDs:                sortedIdentifierKeys(replayed.activeMembers),
+		AdministratorIDs:               sortedIdentifierKeys(replayed.administrators),
+		EffectiveRecoveryCredentialIDs: sortedIdentifierKeys(replayed.recoveryTargets),
+		CurrentKeyEpochIDs:             sortedIdentifierKeys(replayed.heads),
+		Lifecycle:                      "Open",
+	}
+	for credentialID := range replayed.clientTargets {
+		if _, active := replayed.activeClientMember(credentialID); active {
+			state.ActiveClientCredentialIDs = append(state.ActiveClientCredentialIDs, credentialID)
+		}
+	}
+	sort.Slice(state.ActiveClientCredentialIDs, func(left, right int) bool {
+		return bytes.Compare(state.ActiveClientCredentialIDs[left][:], state.ActiveClientCredentialIDs[right][:]) < 0
+	})
+	if replayed.closed || len(state.AdministratorIDs) == 0 {
+		state.Lifecycle = "Closed"
+	}
+	return state, nil
 }
 
 // Clone copies the authenticated Replica indexes without sharing mutable
@@ -808,6 +856,17 @@ func sortUniqueIdentifiers(values []canonical.Identifier) []canonical.Identifier
 		}
 	}
 	return unique
+}
+
+func sortedIdentifierKeys[T any](values map[canonical.Identifier]T) []canonical.Identifier {
+	result := make([]canonical.Identifier, 0, len(values))
+	for value := range values {
+		result = append(result, value)
+	}
+	sort.Slice(result, func(left, right int) bool {
+		return bytes.Compare(result[left][:], result[right][:]) < 0
+	})
+	return result
 }
 
 func containsIdentifier(values []canonical.Identifier, target canonical.Identifier) bool {

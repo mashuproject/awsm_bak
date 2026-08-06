@@ -133,6 +133,28 @@ func TestReplicaAdministratorEndDerivesClosure(t *testing.T) {
 	}
 }
 
+func TestReplicaExposesDerivedAuthorityState(t *testing.T) {
+	prepared := deterministicCreation(t)
+	replica, err := NewReplica(prepared.Baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := replica.AdmitEvent(prepared.Genesis, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit Genesis: %v", err)
+	}
+	state, err := replica.AuthorityState()
+	if err != nil {
+		t.Fatalf("AuthorityState: %v", err)
+	}
+	if state.Lifecycle != "Open" || len(state.ActiveMemberIDs) != 1 || state.ActiveMemberIDs[0] != prepared.IDs.FirstMemberID ||
+		len(state.AdministratorIDs) != 1 || state.AdministratorIDs[0] != prepared.IDs.FirstMemberID ||
+		len(state.ActiveClientCredentialIDs) != 1 || state.ActiveClientCredentialIDs[0] != prepared.IDs.ClientCredentialID ||
+		len(state.EffectiveRecoveryCredentialIDs) != 1 || state.EffectiveRecoveryCredentialIDs[0] != prepared.IDs.RecoveryCredentialID ||
+		len(state.CurrentKeyEpochIDs) != 1 || state.CurrentKeyEpochIDs[0] != prepared.KeyEpochID {
+		t.Fatalf("derived Authority State = %#v", state)
+	}
+}
+
 func TestReplicaAdmitsContentAddressedObject(t *testing.T) {
 	prepared := deterministicCreation(t)
 	replica, err := NewReplica(prepared.Baseline)
