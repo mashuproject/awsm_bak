@@ -236,7 +236,9 @@ jobs:
       - name: Derive release version
         id: metadata
         shell: bash
-        run: echo "version=$(node -p \"require('./apps/browser-extension/package.json').version\")" >> "$GITHUB_OUTPUT"
+        run: |
+          version=$(node --print "require('./apps/browser-extension/package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Set Wails product version
         shell: bash
