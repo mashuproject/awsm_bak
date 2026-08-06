@@ -209,6 +209,29 @@ func TestReplicaRejectsInvitationWithMismatchedCapabilityIssuer(t *testing.T) {
 	}
 }
 
+func TestReplicaRejectsMalformedInvitationAcceptance(t *testing.T) {
+	prepared := deterministicCreation(t)
+	replica, err := NewReplica(prepared.Baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := replica.AdmitEvent(prepared.Genesis, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit Genesis: %v", err)
+	}
+	event, err := canonical.SignEvent(canonical.EventInput{
+		VaultID: prepared.IDs.VaultID, GenerationID: prepared.IDs.GenerationID,
+		ParentRecordIDs: []canonical.Identifier{prepared.Genesis.RecordID}, AuthorityParentIDs: []canonical.Identifier{prepared.Genesis.RecordID},
+		RequiredFeatureSetID: prepared.RequiredFeatureSetID, Extensions: map[string][]byte{}, Family: canonical.AuthorityFamily, Type: 6,
+		SignerCredentialID: prepared.IDs.ClientCredentialID, AssertedAt: 205, Body: canonical.Map{},
+	}, ed25519.PrivateKey(prepared.ClientKeys.SigningSecretKey))
+	if err != nil {
+		t.Fatalf("sign malformed Invitation Acceptance: %v", err)
+	}
+	if err := replica.AdmitEvent(event, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err == nil {
+		t.Fatal("Replica accepted a malformed Invitation Acceptance")
+	}
+}
+
 func TestReplicaAdmitsContentAddressedObject(t *testing.T) {
 	prepared := deterministicCreation(t)
 	replica, err := NewReplica(prepared.Baseline)

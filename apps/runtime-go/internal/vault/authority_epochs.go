@@ -49,6 +49,25 @@ type keyDelivery struct {
 	slots []keyEpochEnvelopeSlot
 }
 
+type invitationAcceptance struct {
+	invitationID            canonical.Identifier
+	joinRequestID           canonical.Identifier
+	memberID                canonical.Identifier
+	clientCredentialID      canonical.Identifier
+	recoveryCredentialID    canonical.Identifier
+	clientSigningKey        ed25519.PublicKey
+	recoverySigningKey      ed25519.PublicKey
+	clientPossessionProof   []byte
+	recoveryPossessionProof []byte
+	redemptionProof         []byte
+	receiptID               canonical.Identifier
+	receiptSignature        []byte
+	envelopeSlots           []keyEpochEnvelopeSlot
+	joinRequestPrefixBytes  []byte
+	receiptPrefixBytes      []byte
+	capabilitiesBytes       []byte
+}
+
 type keyEpochTransition struct {
 	parentEpochIDs []canonical.Identifier
 	newEpochID     canonical.Identifier
@@ -202,6 +221,12 @@ func replayAuthenticatedKeyEpochs(events []canonical.Event, genesis canonical.Ev
 			if err := validateInvitationCreation(event, signerMember); err != nil {
 				delete(visiting, recordID)
 				return keyEpochReplayState{}, err
+			}
+		}
+		if event.Family == canonical.AuthorityFamily && event.Type == 6 {
+			if _, parseErr := parseInvitationAcceptance(event); parseErr != nil {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, parseErr
 			}
 		}
 		if event.Family == canonical.AuthorityFamily && (event.Type == 3 || event.Type == 4) {
@@ -742,6 +767,113 @@ func validateInvitationCreation(event canonical.Event, signerMember canonical.Id
 		}
 	}
 	return nil
+}
+
+func parseInvitationAcceptance(event canonical.Event) (invitationAcceptance, error) {
+	body, ok := replicaMapValue(event.Body)
+	if !ok || !replicaMapHasKeys(body, 3) {
+		return invitationAcceptance{}, errors.New("Invitation Acceptance body is invalid")
+	}
+	joinValue := replicaMapEntryMust(body, 0)
+	join, ok := replicaMapValue(joinValue)
+	if !ok || !replicaMapHasKeys(join, 8) {
+		return invitationAcceptance{}, errors.New("Invitation Join Request is invalid")
+	}
+	proposalValue := replicaMapEntryMust(body, 1)
+	proposal, ok := replicaMapValue(proposalValue)
+	if !ok || !replicaMapHasKeys(proposal, 8) {
+		return invitationAcceptance{}, errors.New("Invitation Acceptance Proposal is invalid")
+	}
+	receiptValue := replicaMapEntryMust(body, 2)
+	receipt, ok := replicaMapValue(receiptValue)
+	if !ok || !replicaMapHasKeys(receipt, 6) {
+		return invitationAcceptance{}, errors.New("Consumed Invitation receipt is invalid")
+	}
+	invitationBytes, invitationOK := replicaMapBytes(join, 0, 32)
+	joinRequestBytes, joinRequestOK := replicaMapBytes(proposal, 1, 32)
+	memberBytes, memberOK := replicaMapBytes(join, 2, 32)
+	if !invitationOK || !joinRequestOK || !memberOK || bytes.Equal(invitationBytes, make([]byte, 32)) || bytes.Equal(joinRequestBytes, make([]byte, 32)) || bytes.Equal(memberBytes, make([]byte, 32)) {
+		return invitationAcceptance{}, errors.New("Invitation Acceptance identity fields are invalid")
+	}
+	certificate, ok := replicaMapValue(replicaMapEntryMust(join, 3))
+	if !ok || !replicaMapHasKeys(certificate, 4) {
+		return invitationAcceptance{}, errors.New("Invitation Acceptance Client Certificate is invalid")
+	}
+	clientBytes, clientOK := replicaMapBytes(certificate, 0, 32)
+	clientMemberBytes, clientMemberOK := replicaMapBytes(certificate, 1, 32)
+	clientSigningKey, clientSigningOK := replicaMapBytes(certificate, 2, ed25519.PublicKeySize)
+	if !clientOK || !clientMemberOK || !clientSigningOK || !bytes.Equal(memberBytes, clientMemberBytes) || bytes.Equal(clientBytes, make([]byte, 32)) {
+		return invitationAcceptance{}, errors.New("Invitation Acceptance Client Certificate fields are invalid")
+	}
+	recovery, ok := replicaMapValue(replicaMapEntryMust(join, 4))
+	if !ok || !replicaMapHasKeys(recovery, 5) {
+		return invitationAcceptance{}, errors.New("Invitation Acceptance Recovery Credential is invalid")
+	}
+	recoveryBytes, recoveryOK := replicaMapBytes(recovery, 0, 32)
+	recoveryMemberBytes, recoveryMemberOK := replicaMapBytes(recovery, 1, 32)
+	_, recoveryRevisionOK := replicaMapNumber(recovery, 2)
+	recoverySigningKey, recoverySigningOK := replicaMapBytes(recovery, 3, ed25519.PublicKeySize)
+	if !recoveryOK || !recoveryMemberOK || !recoveryRevisionOK || !recoverySigningOK || !bytes.Equal(memberBytes, recoveryMemberBytes) || bytes.Equal(recoveryBytes, make([]byte, 32)) {
+		return invitationAcceptance{}, errors.New("Invitation Acceptance Recovery Credential fields are invalid")
+	}
+	slots, err := parseKeyEpochEnvelopeSlots(replicaMapEntryMust(proposal, 7), "Invitation Acceptance Envelope slots")
+	if err != nil {
+		return invitationAcceptance{}, err
+	}
+	clientProof, clientProofOK := replicaMapBytes(join, 5, ed25519.SignatureSize)
+	recoveryProof, recoveryProofOK := replicaMapBytes(join, 6, ed25519.SignatureSize)
+	redemptionProof, redemptionProofOK := replicaMapBytes(join, 7, ed25519.SignatureSize)
+	receiptIDBytes, receiptIDOK := replicaMapBytes(receipt, 4, 32)
+	receiptSignature, receiptSignatureOK := replicaMapBytes(receipt, 5, ed25519.SignatureSize)
+	if !clientProofOK || !recoveryProofOK || !redemptionProofOK || !receiptIDOK || !receiptSignatureOK || bytes.Equal(receiptIDBytes, make([]byte, 32)) {
+		return invitationAcceptance{}, errors.New("Invitation Acceptance signatures are invalid")
+	}
+	joinPrefix := canonical.Map{}
+	for key := uint64(0); key < 5; key++ {
+		value, exists := replicaMapEntry(join, key)
+		if !exists {
+			return invitationAcceptance{}, errors.New("Invitation Join Request prefix is incomplete")
+		}
+		joinPrefix[key] = value
+	}
+	joinPrefixBytes, err := canonical.EncodeValue(joinPrefix)
+	if err != nil {
+		return invitationAcceptance{}, errors.New("Invitation Join Request prefix is not canonical")
+	}
+	receiptPrefix := canonical.Map{}
+	for key := uint64(0); key < 5; key++ {
+		value, exists := replicaMapEntry(receipt, key)
+		if !exists {
+			return invitationAcceptance{}, errors.New("Invitation receipt prefix is incomplete")
+		}
+		receiptPrefix[key] = value
+	}
+	receiptPrefixBytes, err := canonical.EncodeValue(receiptPrefix)
+	if err != nil {
+		return invitationAcceptance{}, errors.New("Invitation receipt prefix is not canonical")
+	}
+	capabilitiesBytes, err := canonical.EncodeValue(replicaMapEntryMust(join, 1))
+	if err != nil {
+		return invitationAcceptance{}, errors.New("Invitation capabilities are not canonical")
+	}
+	return invitationAcceptance{
+		invitationID:            bytesIdentifier(invitationBytes),
+		joinRequestID:           bytesIdentifier(joinRequestBytes),
+		memberID:                bytesIdentifier(memberBytes),
+		clientCredentialID:      bytesIdentifier(clientBytes),
+		recoveryCredentialID:    bytesIdentifier(recoveryBytes),
+		clientSigningKey:        append(ed25519.PublicKey(nil), clientSigningKey...),
+		recoverySigningKey:      append(ed25519.PublicKey(nil), recoverySigningKey...),
+		clientPossessionProof:   append([]byte(nil), clientProof...),
+		recoveryPossessionProof: append([]byte(nil), recoveryProof...),
+		redemptionProof:         append([]byte(nil), redemptionProof...),
+		receiptID:               bytesIdentifier(receiptIDBytes),
+		receiptSignature:        append([]byte(nil), receiptSignature...),
+		envelopeSlots:           slots,
+		joinRequestPrefixBytes:  joinPrefixBytes,
+		receiptPrefixBytes:      receiptPrefixBytes,
+		capabilitiesBytes:       capabilitiesBytes,
+	}, nil
 }
 
 func parseRecoveryReplacement(event canonical.Event) (recoveryReplacement, error) {
