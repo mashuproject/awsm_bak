@@ -152,6 +152,28 @@ func TestVaultCreationSelectionAndClosurePersistAcrossRestart(t *testing.T) {
 	}
 }
 
+func TestRuntimeListLibraryProjectionCommandReturnsSemanticProjection(t *testing.T) {
+	ctx := context.Background()
+	runtime, err := New(ctx, store.NewMemoryState(), memoryDependencies(t))
+	if err != nil {
+		t.Fatalf("create Runtime: %v", err)
+	}
+	vaultID, _ := createVaultWithPhraseForTest(t, runtime, "Projection command")
+	result, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "ListLibraryProjection", "expectedVaultId": vaultID,
+	}))
+	if err != nil {
+		t.Fatalf("ListLibraryProjection: %v", err)
+	}
+	projection, ok := result.(LibraryProjection)
+	if !ok {
+		t.Fatalf("ListLibraryProjection result = %#v, want LibraryProjection", result)
+	}
+	if len(projection.Captures) != 0 || len(projection.Collections) != 0 || len(projection.Folders) != 0 || len(projection.Tags) != 0 || len(projection.Notes) != 0 || len(projection.Conflicts) != 0 {
+		t.Fatalf("empty LibraryProjection = %#v", projection)
+	}
+}
+
 func TestConfirmVaultCreationCommitsCanonicalReplicaAndTrustedSecrets(t *testing.T) {
 	ctx := context.Background()
 	state := store.NewMemoryState()

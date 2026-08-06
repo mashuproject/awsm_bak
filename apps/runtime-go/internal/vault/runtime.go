@@ -1067,6 +1067,15 @@ func (r *Runtime) Handle(ctx context.Context, raw json.RawMessage) (any, error) 
 			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "ListLibrary contains invalid fields")
 		}
 		return r.listLibrary(input.ExpectedVaultID)
+	case "ListLibraryProjection":
+		var input struct {
+			Type            string `json:"type"`
+			ExpectedVaultID string `json:"expectedVaultId"`
+		}
+		if err := decode(raw, &input); err != nil {
+			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "ListLibraryProjection contains invalid fields")
+		}
+		return r.listLibraryProjection(input.ExpectedVaultID)
 	case "ListRemotes":
 		var input struct {
 			Type            string `json:"type"`
@@ -2230,6 +2239,26 @@ func (r *Runtime) listLibrary(id string) (any, error) {
 		return nil, commandError("LIBRARY_UNAVAILABLE", "The Vault Library could not be rebuilt from authenticated state.")
 	}
 	return items, nil
+}
+
+func (r *Runtime) listLibraryProjection(id string) (any, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if err := r.requireExpectedLocked(&id); err != nil {
+		return nil, err
+	}
+	if _, err := r.vaultLockedRead(id); err != nil {
+		return nil, err
+	}
+	replica := r.replicas[id]
+	if replica == nil {
+		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The authenticated Vault Replica is unavailable.")
+	}
+	projection, err := ProjectLibraryProjection(replica)
+	if err != nil {
+		return nil, commandError("LIBRARY_UNAVAILABLE", "The Vault Library could not be rebuilt from authenticated state.")
+	}
+	return projection, nil
 }
 
 func (r *Runtime) renameRemote(ctx context.Context, id, remoteID, name string) (any, error) {

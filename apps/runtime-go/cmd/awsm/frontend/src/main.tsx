@@ -51,11 +51,81 @@ type RuntimeState = {
 
 type LibraryItem = {
   readonly bundleId: string;
+  readonly collectionId: string;
   readonly artifactId: string;
+  readonly capturedAt: number | bigint;
+  readonly originalUrl: string;
   readonly title: string | null;
   readonly finalUrl: string;
   readonly availableLocally: boolean;
   readonly lifecycle: string;
+};
+
+type LibraryCollection = {
+  readonly collectionId: string;
+  readonly explicitTitle: string | null;
+  readonly title: string;
+  readonly tailBundleId: string | null;
+  readonly activeCaptureCount: number;
+  readonly redirectedTo: string | null;
+  readonly folderId: string | null;
+};
+
+type LibraryFolder = {
+  readonly folderId: string;
+  readonly name: string;
+  readonly parentFolderId: string | null;
+  readonly effectiveParentFolderId: string | null;
+  readonly lifecycle: string;
+};
+
+type LibraryTag = {
+  readonly tagId: string;
+  readonly name: string;
+  readonly lifecycle: string;
+  readonly redirectedTo: string | null;
+};
+
+type LibraryTagAssignment = {
+  readonly assignmentId: string;
+  readonly tagId: string;
+  readonly targetKind: number;
+  readonly targetId: string;
+  readonly active: boolean;
+};
+
+type LibraryNoteVersion = {
+  readonly headCauseId: string;
+  readonly contentObjectId: string | null;
+  readonly title: string | null;
+  readonly body: string | null;
+  readonly bodyDialect: string | null;
+  readonly assertedAt: number | bigint;
+};
+
+type LibraryNote = {
+  readonly noteId: string;
+  readonly targetKind: number;
+  readonly targetId: string;
+  readonly state: string;
+  readonly versions: readonly LibraryNoteVersion[];
+};
+
+type LibraryConflict = {
+  readonly kind: string;
+  readonly reason: string;
+  readonly subjectIds: readonly string[];
+  readonly candidateRecordIds: readonly string[];
+};
+
+type LibraryProjection = {
+  readonly captures: readonly LibraryItem[];
+  readonly collections: readonly LibraryCollection[];
+  readonly folders: readonly LibraryFolder[];
+  readonly tags: readonly LibraryTag[];
+  readonly tagAssignments: readonly LibraryTagAssignment[];
+  readonly notes: readonly LibraryNote[];
+  readonly conflicts: readonly LibraryConflict[];
 };
 
 type Remote = {
@@ -614,6 +684,74 @@ function LibraryList({
   );
 }
 
+function LibrarySemanticSummary({
+  projection,
+}: {
+  readonly projection: LibraryProjection;
+}): React.ReactElement {
+  return (
+    <section className="grid gap-4" aria-label="Vault organization">
+      {projection.conflicts.length > 0 ? (
+        <Notice tone="warning" title="Library conflicts need attention">
+          {projection.conflicts.length} organization conflict
+          {projection.conflicts.length === 1 ? "" : "s"} remain visible in this Vault.
+        </Notice>
+      ) : null}
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>Collections</CardTitle>
+            <CardDescription>Stable groups and their current organization.</CardDescription>
+          </CardHeader>
+          {projection.collections.length === 0 ? (
+            <p className="text-sm text-awsm-text-muted">No Collections yet.</p>
+          ) : (
+            <ul className="grid gap-2 text-sm">
+              {projection.collections.map((collection) => (
+                <li
+                  key={collection.collectionId}
+                  className="grid gap-1 border-t border-awsm-border-subtle pt-2"
+                >
+                  <strong className="text-awsm-ink">{collection.title}</strong>
+                  <span className="text-awsm-text-muted">
+                    {collection.activeCaptureCount} active capture
+                    {collection.activeCaptureCount === 1 ? "" : "s"}
+                    {collection.redirectedTo === null ? "" : " · merged view"}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle>Organization</CardTitle>
+            <CardDescription>Folders, Tags, and Notes derived from Vault Events.</CardDescription>
+          </CardHeader>
+          <dl className="grid gap-2 text-sm sm:grid-cols-2">
+            <div>
+              <dt className="font-semibold text-awsm-ink">Folders</dt>
+              <dd className="text-awsm-text-muted">{projection.folders.length}</dd>
+            </div>
+            <div>
+              <dt className="font-semibold text-awsm-ink">Tags</dt>
+              <dd className="text-awsm-text-muted">{projection.tags.length}</dd>
+            </div>
+            <div>
+              <dt className="font-semibold text-awsm-ink">Assignments</dt>
+              <dd className="text-awsm-text-muted">{projection.tagAssignments.length}</dd>
+            </div>
+            <div>
+              <dt className="font-semibold text-awsm-ink">Notes</dt>
+              <dd className="text-awsm-text-muted">{projection.notes.length}</dd>
+            </div>
+          </dl>
+        </Card>
+      </div>
+    </section>
+  );
+}
+
 function HostedReplicas({
   binding,
   vaultId,
@@ -944,7 +1082,7 @@ function CompleteExportPanel({
 function VaultsView({
   binding,
   state,
-  library,
+  libraryProjection,
   remotes,
   refresh,
   onError,
@@ -952,7 +1090,7 @@ function VaultsView({
 }: {
   readonly binding: DesktopBinding;
   readonly state: RuntimeState | undefined;
-  readonly library: readonly LibraryItem[];
+  readonly libraryProjection: LibraryProjection;
   readonly remotes: readonly Remote[];
   readonly refresh: () => void;
   readonly onError: (error: unknown) => void;
@@ -1157,13 +1295,14 @@ function VaultsView({
               Library
             </h3>
             <LibraryList
-              items={library}
+              items={libraryProjection.captures}
               binding={binding}
               vaultId={selected.vaultId}
               onRefresh={refresh}
               onError={onError}
               onStatus={onStatus}
             />
+            <LibrarySemanticSummary projection={libraryProjection} />
           </section>
           <HostedReplicas
             binding={binding}
@@ -1197,14 +1336,14 @@ function BadgeLike({ children }: { readonly children: React.ReactNode }): React.
 function LibraryView({
   binding,
   state,
-  library,
+  libraryProjection,
   refresh,
   onError,
   onStatus,
 }: {
   readonly binding: DesktopBinding;
   readonly state: RuntimeState | undefined;
-  readonly library: readonly LibraryItem[];
+  readonly libraryProjection: LibraryProjection;
   readonly refresh: () => void;
   readonly onError: (error: unknown) => void;
   readonly onStatus: (message: string) => void;
@@ -1229,13 +1368,14 @@ function LibraryView({
         </p>
       </div>
       <LibraryList
-        items={library}
+        items={libraryProjection.captures}
         binding={binding}
         vaultId={vault.vaultId}
         onRefresh={refresh}
         onError={onError}
         onStatus={onStatus}
       />
+      <LibrarySemanticSummary projection={libraryProjection} />
     </section>
   );
 }
@@ -1467,7 +1607,20 @@ function DesktopApp(): React.ReactElement {
   );
   const [binding, setBinding] = React.useState<DesktopBinding | undefined>(initialBinding);
   const [state, setState] = React.useState<RuntimeState>();
-  const [library, setLibrary] = React.useState<readonly LibraryItem[]>([]);
+  const emptyLibraryProjection: LibraryProjection = React.useMemo(
+    () => ({
+      captures: [],
+      collections: [],
+      folders: [],
+      tags: [],
+      tagAssignments: [],
+      notes: [],
+      conflicts: [],
+    }),
+    [],
+  );
+  const [libraryProjection, setLibraryProjection] =
+    React.useState<LibraryProjection>(emptyLibraryProjection);
   const [remotes, setRemotes] = React.useState<readonly Remote[]>([]);
   const [pairings, setPairings] = React.useState<readonly Pairing[]>([]);
   const [grants, setGrants] = React.useState<readonly Grant[]>([]);
@@ -1499,20 +1652,20 @@ function DesktopApp(): React.ReactElement {
         const nextState = (await nextBinding.VaultCommand({ type: "GetState" })) as RuntimeState;
         setState(nextState);
         if (nextState.selectedVaultId !== undefined) {
-          const [nextLibrary, nextRemotes] = await Promise.all([
+          const [nextLibraryProjection, nextRemotes] = await Promise.all([
             nextBinding.VaultCommand({
-              type: "ListLibrary",
+              type: "ListLibraryProjection",
               expectedVaultId: nextState.selectedVaultId,
-            }) as Promise<readonly LibraryItem[]>,
+            }) as Promise<LibraryProjection>,
             nextBinding.VaultCommand({
               type: "ListRemotes",
               expectedVaultId: nextState.selectedVaultId,
             }) as Promise<readonly Remote[]>,
           ]);
-          setLibrary(nextLibrary);
+          setLibraryProjection(nextLibraryProjection);
           setRemotes(nextRemotes);
         } else {
-          setLibrary([]);
+          setLibraryProjection(emptyLibraryProjection);
           setRemotes([]);
         }
       }
@@ -1611,7 +1764,7 @@ function DesktopApp(): React.ReactElement {
             <VaultsView
               binding={binding}
               state={state}
-              library={library}
+              libraryProjection={libraryProjection}
               remotes={remotes}
               refresh={() => void refresh()}
               onError={setErrorFromUnknown}
@@ -1621,7 +1774,7 @@ function DesktopApp(): React.ReactElement {
             <LibraryView
               binding={binding}
               state={state}
-              library={library}
+              libraryProjection={libraryProjection}
               refresh={() => void refresh()}
               onError={setErrorFromUnknown}
               onStatus={setStatusMessage}

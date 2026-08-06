@@ -73,7 +73,16 @@ test("Wails Vault surface renders the selected Vault management slice", async ({
           RuntimeAddress: () => "127.0.0.1:37373",
           VaultCommand: async (request: { type: string }) => {
             if (request.type === "GetState") return state;
-            if (request.type === "ListLibrary") return [];
+            if (request.type === "ListLibraryProjection")
+              return {
+                captures: [],
+                collections: [],
+                folders: [],
+                tags: [],
+                tagAssignments: [],
+                notes: [],
+                conflicts: [],
+              };
             if (request.type === "ListRemotes") return [];
             if (request.type === "GarbageCollect") return { deletedStorageItemIds: [] };
             throw new Error(`unexpected command: ${request.type}`);
@@ -163,7 +172,16 @@ test("Wails Library surface releases local Artifact bytes and refreshes its proj
                   : { type: request.type, objectIds: request.objectIds },
               );
               if (request.type === "GetState") return state;
-              if (request.type === "ListLibrary") return library();
+              if (request.type === "ListLibraryProjection")
+                return {
+                  captures: library(),
+                  collections: [],
+                  folders: [],
+                  tags: [],
+                  tagAssignments: [],
+                  notes: [],
+                  conflicts: [],
+                };
               if (request.type === "ListRemotes") return [];
               if (request.type === "StorageRelief") {
                 if (
@@ -256,7 +274,18 @@ test("Wails Vault creation can recover a pending setup without exposing its phra
               state.pendingVaultCreation = undefined;
               return null;
             }
-            if (request.type === "ListLibrary" || request.type === "ListRemotes") return [];
+            if (request.type === "ListLibraryProjection" || request.type === "ListRemotes")
+              return request.type === "ListRemotes"
+                ? []
+                : {
+                    captures: [],
+                    collections: [],
+                    folders: [],
+                    tags: [],
+                    tagAssignments: [],
+                    notes: [],
+                    conflicts: [],
+                  };
             throw new Error(`unexpected command: ${request.type}`);
           },
           PendingTransfers: async () => [],
@@ -299,7 +328,18 @@ test("Wails Vault surface exports and imports a Complete Export package", async 
           VaultCommand: async (request: { type: string }) => {
             calls.push(request.type);
             if (request.type === "GetState") return state;
-            if (request.type === "ListLibrary" || request.type === "ListRemotes") return [];
+            if (request.type === "ListLibraryProjection" || request.type === "ListRemotes")
+              return request.type === "ListRemotes"
+                ? []
+                : {
+                    captures: [],
+                    collections: [],
+                    folders: [],
+                    tags: [],
+                    tagAssignments: [],
+                    notes: [],
+                    conflicts: [],
+                  };
             if (request.type === "ExportComplete") return { package: "encrypted-complete-export" };
             if (request.type === "ImportComplete") return state;
             throw new Error(`unexpected command: ${request.type}`);
@@ -341,12 +381,12 @@ test("Wails Vault surface exports and imports a Complete Export package", async 
   );
   expect(observed).toEqual([
     "GetState",
-    "ListLibrary",
+    "ListLibraryProjection",
     "ListRemotes",
     "ExportComplete",
     "ImportComplete",
     "GetState",
-    "ListLibrary",
+    "ListLibraryProjection",
     "ListRemotes",
   ]);
 });
@@ -398,7 +438,16 @@ test("Wails Vault surface runs hosted pull, materialization, and Artifact hydrat
             RuntimeAddress: () => "127.0.0.1:37373",
             VaultCommand: async (request: { type: string }) => {
               if (request.type === "GetState") return state;
-              if (request.type === "ListLibrary") return library;
+              if (request.type === "ListLibraryProjection")
+                return {
+                  captures: library,
+                  collections: [],
+                  folders: [],
+                  tags: [],
+                  tagAssignments: [],
+                  notes: [],
+                  conflicts: [],
+                };
               if (request.type === "ListRemotes") return remotes;
               if (request.type === "MaterializeHostedReplica") {
                 (globalThis as unknown as { __awsmCalls?: string[] }).__awsmCalls?.push(
