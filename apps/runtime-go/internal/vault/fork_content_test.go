@@ -172,6 +172,78 @@ func TestForkReauthorsBundleDescriptorAndRegisteredEvent(t *testing.T) {
 	}
 }
 
+func TestForkReauthorsCaptureLifecycleEvents(t *testing.T) {
+	ctx := context.Background()
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, store.NewMemoryState(), dependencies)
+	if err != nil {
+		t.Fatalf("create Runtime: %v", err)
+	}
+	sourceID, _ := createVaultWithPhraseForTest(t, runtime, "Capture lifecycle Fork source")
+	artifactID := admitCompleteExportArtifact(t, runtime, dependencies, sourceID)
+	bundleID, sourceCollectionID := admitForkBundleRegisteredEvent(t, runtime, dependencies, sourceID, artifactID)
+	signAndAdmitForkNoteEvent(t, runtime, dependencies, sourceID, 4, canonical.Map{0: canonicalSetValues([]canonical.Value{bundleID[:]})}, nil)
+
+	started, err := runtime.Handle(ctx, mustJSON(map[string]any{"type": "BeginVaultFork", "expectedVaultId": sourceID}))
+	if err != nil {
+		t.Fatalf("begin Fork: %v", err)
+	}
+	setup := started.(map[string]string)
+	confirmed, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "ConfirmVaultFork", "setupId": setup["setupId"], "recoveryPhrase": setup["recoveryPhrase"],
+	}))
+	if err != nil {
+		t.Fatalf("confirm capture lifecycle Fork: %v", err)
+	}
+	forkID := confirmed.(map[string]string)["vaultId"]
+	forkReplica := runtime.replicas[forkID]
+	var registered, deleted *canonical.Event
+	for index := range forkReplica.Events() {
+		event := forkReplica.Events()[index]
+		if event.Family != canonical.ContentFamily {
+			continue
+		}
+		if event.Type == 3 {
+			candidate := event
+			registered = &candidate
+		}
+		if event.Type == 4 {
+			candidate := event
+			deleted = &candidate
+		}
+	}
+	if registered == nil || deleted == nil {
+		t.Fatalf("Fork capture lifecycle Events = %#v, want re-authored registration and deletion", forkReplica.Events())
+	}
+	registeredBody, ok := replicaMapValue(registered.Body)
+	if !ok {
+		t.Fatalf("Fork Bundle Registered body = %#v", registered.Body)
+	}
+	forkBundleID, ok := replicaIdentifier(registeredBody, 0)
+	if !ok || forkBundleID == bundleID {
+		t.Fatalf("Fork Bundle ID = %x, want fresh mapping from %x", forkBundleID, bundleID)
+	}
+	forkCollectionID, ok := replicaIdentifier(registeredBody, 2)
+	if !ok || forkCollectionID == sourceCollectionID {
+		t.Fatalf("Fork Collection ID = %x, want fresh mapping from %x", forkCollectionID, sourceCollectionID)
+	}
+	deletedBody, ok := replicaMapValue(deleted.Body)
+	if !ok {
+		t.Fatalf("Fork Captures Deleted body = %#v", deleted.Body)
+	}
+	deletedBundles, err := parseCanonicalIdentifierSet(replicaMapEntryMust(deletedBody, 0), "Fork capture lifecycle Bundle IDs", true)
+	if err != nil || len(deletedBundles) != 1 || deletedBundles[0] != forkBundleID {
+		t.Fatalf("Fork Captures Deleted Bundle IDs = %#v, err=%v", deletedBundles, err)
+	}
+	projection, err := ProjectLibrary(forkReplica)
+	if err != nil {
+		t.Fatalf("project Fork Library: %v", err)
+	}
+	if len(projection) != 1 || projection[0].BundleID != hexIdentifier(forkBundleID) || projection[0].Lifecycle != "Deleted" {
+		t.Fatalf("Fork capture lifecycle projection = %#v", projection)
+	}
+}
+
 func TestForkReauthorsCollectionTitleEvent(t *testing.T) {
 	ctx := context.Background()
 	dependencies := memoryDependencies(t)

@@ -980,7 +980,7 @@ func ProjectLibraryProjection(replica *Replica) (LibraryProjection, error) {
 	sort.Slice(noteState, func(left, right int) bool {
 		return bytes.Compare(noteState[left].noteID[:], noteState[right].noteID[:]) < 0
 	})
-	conflictState, err := projectConflictCheckpointState(conflicts, collectionRedirects, tagRedirects)
+	conflictState, err := projectConflictCheckpointState(replica, conflicts, collectionRedirects, tagRedirects)
 	if err != nil {
 		return LibraryProjection{}, err
 	}
@@ -2513,7 +2513,7 @@ func seedBaselineFolderConflicts(replica *Replica, folders map[canonical.Identif
 	return result, nil
 }
 
-func projectConflictCheckpointState(conflicts []LibraryConflict, collectionRedirects, tagRedirects map[canonical.Identifier]collectionRedirectFact) ([]libraryConflictCheckpoint, error) {
+func projectConflictCheckpointState(replica *Replica, conflicts []LibraryConflict, collectionRedirects, tagRedirects map[canonical.Identifier]collectionRedirectFact) ([]libraryConflictCheckpoint, error) {
 	result := make([]libraryConflictCheckpoint, 0, len(conflicts))
 	for _, conflict := range conflicts {
 		kind := uint64(0)
@@ -2524,6 +2524,8 @@ func projectConflictCheckpointState(conflicts []LibraryConflict, collectionRedir
 		case "TagMerge":
 			kind = 3
 			redirects = tagRedirects
+		case "Folder":
+			kind = 2
 		default:
 			continue
 		}
@@ -2536,6 +2538,19 @@ func projectConflictCheckpointState(conflicts []LibraryConflict, collectionRedir
 			subjects = append(subjects, id)
 		}
 		candidates := make([]libraryConflictCandidate, 0, len(conflict.CandidateRecordIDs))
+		if kind == 2 {
+			candidateState, candidateErr := projectDynamicFolderConflictCandidates(replica, subjects, conflict.CandidateRecordIDs)
+			if candidateErr != nil {
+				return nil, candidateErr
+			}
+			if len(candidateState) == 0 {
+				// Baseline Folder conflicts are appended from their authenticated
+				// checkpoint below; their Baseline Cause IDs are not Records.
+				continue
+			}
+			result = append(result, libraryConflictCheckpoint{kind: kind, subjects: subjects, candidates: candidateState})
+			continue
+		}
 		for _, text := range conflict.CandidateRecordIDs {
 			causeID, err := decodeHexIdentifier(text)
 			if err != nil {
@@ -2562,6 +2577,172 @@ func projectConflictCheckpointState(conflicts []LibraryConflict, collectionRedir
 		return bytes.Compare(result[left].subjects[0][:], result[right].subjects[0][:]) < 0
 	})
 	return result, nil
+}
+
+func projectDynamicFolderConflictCandidates(replica *Replica, subjects []canonical.Identifier, causeTexts []string) ([]libraryConflictCandidate, error) {
+	if replica == nil {
+		return nil, errors.New("Folder conflict Replica is required")
+	}
+	folders := make(map[canonical.Identifier]*libraryFolderState)
+	if err := seedBaselineFolders(replica, folders); err != nil {
+		return nil, err
+	}
+	events, err := orderedContentEvents(replica)
+	if err != nil {
+		return nil, err
+	}
+	for _, event := range events {
+		switch event.Type {
+		case 12:
+			folderID, ok := replicaIdentifier(event.Body, 0)
+			if !ok {
+				return nil, errors.New("Folder conflict checkpoint Folder Created ID is invalid")
+			}
+			parent, parentErr := nullableIdentifier(replicaMapEntryMust(event.Body, 2), "Folder conflict checkpoint parent Folder ID")
+			if parentErr != nil {
+				return nil, parentErr
+			}
+			folder := folders[folderID]
+			if folder == nil {
+				folders[folderID] = &libraryFolderState{id: folderID, parent: parent, parentCause: event.RecordID}
+				continue
+			}
+			if newerEvent(replica, folder.parentCause, event.RecordID) {
+				folder.parent, folder.parentCause = parent, event.RecordID
+			}
+		case 14:
+			folderID, ok := replicaIdentifier(event.Body, 0)
+			if !ok {
+				return nil, errors.New("Folder conflict checkpoint Parent Placement ID is invalid")
+			}
+			parent, parentErr := nullableIdentifier(replicaMapEntryMust(event.Body, 1), "Folder conflict checkpoint parent Folder ID")
+			if parentErr != nil {
+				return nil, parentErr
+			}
+			folder := folders[folderID]
+			if folder == nil {
+				folders[folderID] = &libraryFolderState{id: folderID, parent: parent, parentCause: event.RecordID}
+				continue
+			}
+			if newerEvent(replica, folder.parentCause, event.RecordID) {
+				folder.parent, folder.parentCause = parent, event.RecordID
+			}
+		case 17:
+			placements, ok := replicaMapArrayValue(replicaMapEntryMust(event.Body, 1))
+			if !ok {
+				return nil, errors.New("Folder conflict checkpoint Resolution placements are invalid")
+			}
+			for _, placement := range placements {
+				folderBody, ok := replicaMapValue(placement)
+				if !ok {
+					return nil, errors.New("Folder conflict checkpoint Resolution placement is invalid")
+				}
+				folderID, ok := replicaIdentifier(folderBody, 0)
+				if !ok {
+					return nil, errors.New("Folder conflict checkpoint Resolution Folder ID is invalid")
+				}
+				parent, parentErr := nullableIdentifier(replicaMapEntryMust(folderBody, 1), "Folder conflict checkpoint Resolution parent Folder ID")
+				if parentErr != nil {
+					return nil, parentErr
+				}
+				folder := folders[folderID]
+				if folder == nil {
+					folders[folderID] = &libraryFolderState{id: folderID, parent: parent, parentCause: event.RecordID}
+					continue
+				}
+				folder.parent, folder.parentCause = parent, event.RecordID
+			}
+		}
+	}
+	current := make(map[canonical.Identifier]*canonical.Identifier, len(folders))
+	for folderID, folder := range folders {
+		current[folderID] = cloneIdentifierPointer(folder.parent)
+	}
+	result := make([]libraryConflictCandidate, 0, len(causeTexts))
+	for _, text := range causeTexts {
+		causeID, decodeErr := decodeHexIdentifier(text)
+		if decodeErr != nil {
+			return nil, fmt.Errorf("active Folder conflict cause is invalid")
+		}
+		candidateParents := make(map[canonical.Identifier]*canonical.Identifier, len(current))
+		for folderID, parent := range current {
+			candidateParents[folderID] = cloneIdentifierPointer(parent)
+		}
+		if record, exists := replica.Record(causeID); exists && record.Event != nil {
+			if err := applyFolderConflictCandidateEvent(record.Event, candidateParents); err != nil {
+				return nil, err
+			}
+		} else {
+			// No current-generation Record means this is a Baseline Cause.
+			// Leave its checkpoint-derived placement in the candidate state.
+			continue
+		}
+		placements := make([]libraryFolderPlacement, 0, len(subjects))
+		for _, folderID := range subjects {
+			parent, exists := candidateParents[folderID]
+			if !exists {
+				return nil, fmt.Errorf("active Folder conflict subject %s is unavailable", hexIdentifier(folderID))
+			}
+			placements = append(placements, libraryFolderPlacement{folderID: folderID, parentID: cloneIdentifierPointer(parent)})
+		}
+		sort.Slice(placements, func(left, right int) bool {
+			return bytes.Compare(placements[left].folderID[:], placements[right].folderID[:]) < 0
+		})
+		result = append(result, libraryConflictCandidate{headCauseID: causeID, placements: placements})
+	}
+	sort.Slice(result, func(left, right int) bool {
+		return bytes.Compare(result[left].headCauseID[:], result[right].headCauseID[:]) < 0
+	})
+	return result, nil
+}
+
+func applyFolderConflictCandidateEvent(event *canonical.Event, parents map[canonical.Identifier]*canonical.Identifier) error {
+	if event == nil {
+		return errors.New("Folder conflict candidate Event is unavailable")
+	}
+	switch event.Type {
+	case 12:
+		folderID, ok := replicaIdentifier(event.Body, 0)
+		if !ok {
+			return errors.New("Folder conflict candidate Created ID is invalid")
+		}
+		parent, err := nullableIdentifier(replicaMapEntryMust(event.Body, 2), "Folder conflict candidate parent Folder ID")
+		if err != nil {
+			return err
+		}
+		parents[folderID] = parent
+	case 14:
+		folderID, ok := replicaIdentifier(event.Body, 0)
+		if !ok {
+			return errors.New("Folder conflict candidate Placement ID is invalid")
+		}
+		parent, err := nullableIdentifier(replicaMapEntryMust(event.Body, 1), "Folder conflict candidate parent Folder ID")
+		if err != nil {
+			return err
+		}
+		parents[folderID] = parent
+	case 17:
+		placements, ok := replicaMapArrayValue(replicaMapEntryMust(event.Body, 1))
+		if !ok {
+			return errors.New("Folder conflict candidate Resolution placements are invalid")
+		}
+		for _, placement := range placements {
+			body, ok := replicaMapValue(placement)
+			if !ok {
+				return errors.New("Folder conflict candidate Resolution placement is invalid")
+			}
+			folderID, ok := replicaIdentifier(body, 0)
+			if !ok {
+				return errors.New("Folder conflict candidate Resolution Folder ID is invalid")
+			}
+			parent, err := nullableIdentifier(replicaMapEntryMust(body, 1), "Folder conflict candidate Resolution parent Folder ID")
+			if err != nil {
+				return err
+			}
+			parents[folderID] = parent
+		}
+	}
+	return nil
 }
 
 func cloneRedirectEdges(edges []collectionRedirectEdge) []collectionRedirectEdge {

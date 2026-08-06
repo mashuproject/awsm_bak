@@ -1075,6 +1075,21 @@ func TestProjectLibraryProjectionSurfacesAndResolvesFolderCycle(t *testing.T) {
 	if len(projection.Conflicts) != 1 || projection.Conflicts[0].Kind != "Folder" {
 		t.Fatalf("Folder conflicts = %#v, want one cycle conflict", projection.Conflicts)
 	}
+	checkpoint, err := buildVacuumContentCheckpoint(replica, projection)
+	if err != nil {
+		t.Fatalf("build Vacuum checkpoint with dynamic Folder conflict: %v", err)
+	}
+	activeConflicts, ok := replicaMapArray(checkpoint, 9)
+	if !ok || len(activeConflicts) != 1 {
+		t.Fatalf("dynamic Folder conflict checkpoint = %#v", activeConflicts)
+	}
+	activeConflict, ok := replicaMapValue(activeConflicts[0])
+	if !ok {
+		t.Fatalf("dynamic Folder conflict checkpoint entry = %#v", activeConflicts[0])
+	}
+	if kind, ok := replicaUnsignedNumber(replicaMapEntryMust(activeConflict, 0)); !ok || kind != 2 {
+		t.Fatalf("dynamic Folder conflict checkpoint kind = %#v, want 2", replicaMapEntryMust(activeConflict, 0))
+	}
 	resolutionParents := sortUniqueIdentifiers([]canonical.Identifier{moveA.RecordID, moveB.RecordID})
 	resolution := sign(resolutionParents, 17, canonical.Map{
 		0: canonicalSetValues([]canonical.Value{moveA.RecordID[:], moveB.RecordID[:]}),

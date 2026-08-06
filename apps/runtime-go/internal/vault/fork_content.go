@@ -67,7 +67,12 @@ func reauthorForkContentEventsWithMappings(
 	content := make([]canonical.Event, 0)
 	for _, event := range source.Events() {
 		if event.Family == canonical.ContentFamily {
-			if event.Type != 1 && event.Type != 3 && (event.Type < 7 || event.Type > 31) {
+			// Credential labels are shared presentation state, but the Fork
+			// specification deliberately does not copy source credential labels.
+			if event.Type == 2 {
+				continue
+			}
+			if event.Type != 1 && event.Type != 3 && (event.Type < 4 || event.Type > 31) {
 				return fmt.Errorf("Fork Content Event type %d re-authoring is not implemented by this Runtime", event.Type)
 			}
 			if event.Type == 1 && len(event.Dependencies) != 0 {
@@ -113,6 +118,14 @@ func reauthorForkContentEventsWithMappings(
 					parents = append(parents, creation.Genesis.RecordID)
 					continue
 				}
+				// Source credential labels are intentionally not retained in a
+				// state-only Fork. Their ancestry is therefore replaced by the
+				// fresh Genesis just like omitted Authority/Lifecycle history.
+				if record, ok := source.Record(parent); ok && record.Event != nil &&
+					record.Event.Family == canonical.ContentFamily && record.Event.Type == 2 {
+					parents = append(parents, creation.Genesis.RecordID)
+					continue
+				}
 				// Authority and lifecycle ancestry is intentionally not copied
 				// into a state-only Fork; the fresh Genesis is the authority root.
 				if record, ok := source.Record(parent); ok && record.Event != nil &&
@@ -136,6 +149,15 @@ func reauthorForkContentEventsWithMappings(
 					return errors.New("Fork Bundle Registered dependencies are unavailable")
 				}
 				mappedBody, mappedDependencies, err := reauthorForkBundleRegistered(sourceEvent.Body, sourceEvent.Dependencies, objectMappings, bundleMappings, collectionMappings)
+				if err != nil {
+					cleanup()
+					return err
+				}
+				body = mappedBody
+				dependencies = mappedDependencies
+			}
+			if sourceEvent.Type == 4 || sourceEvent.Type == 5 || sourceEvent.Type == 6 {
+				mappedBody, mappedDependencies, err := reauthorForkCaptureEvent(sourceEvent, translated, bundleMappings, collectionMappings)
 				if err != nil {
 					cleanup()
 					return err
@@ -216,6 +238,137 @@ func reauthorForkContentEventsWithMappings(
 	state.AuthorityFrontier = identifiersToHex(next.AuthorityFrontier)
 	state.ContinuityRecordIDs = identifiersToHex(next.ContinuityRecordIDs)
 	return nil
+}
+
+func reauthorForkCaptureEvent(
+	event canonical.Event,
+	translated map[canonical.Identifier]canonical.Identifier,
+	bundleMappings map[canonical.Identifier]canonical.Identifier,
+	collectionMappings map[canonical.Identifier]canonical.Identifier,
+) (canonical.Value, []canonical.Dependency, error) {
+	body, ok := replicaMapValue(event.Body)
+	if !ok {
+		return nil, nil, fmt.Errorf("Fork capture Content Event type %d body is invalid", event.Type)
+	}
+	mapBundle := func(source canonical.Identifier) (canonical.Identifier, error) {
+		mapped, exists := bundleMappings[source]
+		if !exists {
+			return canonical.Identifier{}, fmt.Errorf("Fork capture Event type %d Bundle %s is unavailable", event.Type, hexIdentifier(source))
+		}
+		return mapped, nil
+	}
+	freshCollection := func(source canonical.Identifier) (canonical.Identifier, error) {
+		if mapped, exists := collectionMappings[source]; exists {
+			return mapped, nil
+		}
+		textID, err := randomID()
+		if err != nil {
+			return canonical.Identifier{}, err
+		}
+		mapped, err := decodeHexIdentifier(textID)
+		if err != nil {
+			return canonical.Identifier{}, err
+		}
+		if mapped == source {
+			return canonical.Identifier{}, errors.New("Fork Collection identity was not fresh")
+		}
+		collectionMappings[source] = mapped
+		return mapped, nil
+	}
+	mapBundleSet := func(value canonical.Value) ([]canonical.Value, error) {
+		values, err := parseCanonicalIdentifierSet(value, "Fork capture Bundle IDs", true)
+		if err != nil {
+			return nil, err
+		}
+		mapped := make([]canonical.Identifier, 0, len(values))
+		for _, source := range values {
+			destination, mapErr := mapBundle(source)
+			if mapErr != nil {
+				return nil, mapErr
+			}
+			mapped = append(mapped, destination)
+		}
+		return identifiersToValues(sortUniqueIdentifiers(mapped)), nil
+	}
+	noDependencies := func() ([]canonical.Dependency, error) {
+		if len(event.Dependencies) != 0 {
+			return nil, fmt.Errorf("Fork capture Content Event type %d has unexpected dependencies", event.Type)
+		}
+		return nil, nil
+	}
+	switch event.Type {
+	case 4, 5:
+		if !replicaMapHasKeys(body, 1) {
+			return nil, nil, fmt.Errorf("Fork capture Content Event type %d body is invalid", event.Type)
+		}
+		bundles, err := mapBundleSet(replicaMapEntryMust(body, 0))
+		if err != nil {
+			return nil, nil, err
+		}
+		dependencies, depErr := noDependencies()
+		return canonical.Map{0: bundles}, dependencies, depErr
+	case 6:
+		if !replicaMapHasKeys(body, 2) {
+			return nil, nil, errors.New("Fork Captures Moved body is invalid")
+		}
+		entries, ok := replicaMapArrayValue(replicaMapEntryMust(body, 0))
+		if !ok || len(entries) == 0 {
+			return nil, nil, errors.New("Fork Captures Moved entries are invalid")
+		}
+		mappedEntries := make([]canonical.Value, 0, len(entries))
+		for index, entry := range entries {
+			if !replicaMapHasKeys(entry, 3) {
+				return nil, nil, fmt.Errorf("Fork Captures Moved entry %d is invalid", index)
+			}
+			bundle, ok := replicaIdentifier(entry, 0)
+			if !ok {
+				return nil, nil, fmt.Errorf("Fork Captures Moved entry %d Bundle ID is invalid", index)
+			}
+			from, ok := replicaIdentifier(entry, 1)
+			if !ok {
+				return nil, nil, fmt.Errorf("Fork Captures Moved entry %d source Collection ID is invalid", index)
+			}
+			to, ok := replicaIdentifier(entry, 2)
+			if !ok {
+				return nil, nil, fmt.Errorf("Fork Captures Moved entry %d destination Collection ID is invalid", index)
+			}
+			mappedBundle, err := mapBundle(bundle)
+			if err != nil {
+				return nil, nil, err
+			}
+			mappedFrom, err := freshCollection(from)
+			if err != nil {
+				return nil, nil, err
+			}
+			mappedTo, err := freshCollection(to)
+			if err != nil {
+				return nil, nil, err
+			}
+			mappedEntries = append(mappedEntries, canonical.Map{0: mappedBundle[:], 1: mappedFrom[:], 2: mappedTo[:]})
+		}
+		sort.Slice(mappedEntries, func(left, right int) bool {
+			leftID, _ := replicaIdentifier(mappedEntries[left], 0)
+			rightID, _ := replicaIdentifier(mappedEntries[right], 0)
+			return bytes.Compare(leftID[:], rightID[:]) < 0
+		})
+		var mappedCause canonical.Value
+		cause := replicaMapEntryMust(body, 1)
+		if cause != nil {
+			sourceCause, ok := replicaIdentifierValue(cause)
+			if !ok {
+				return nil, nil, errors.New("Fork Captures Moved revert Cause ID is invalid")
+			}
+			mapped, exists := translated[sourceCause]
+			if !exists {
+				return nil, nil, fmt.Errorf("Fork Captures Moved revert Cause %s is unavailable", hexIdentifier(sourceCause))
+			}
+			mappedCause = mapped[:]
+		}
+		dependencies, depErr := noDependencies()
+		return canonical.Map{0: mappedEntries, 1: mappedCause}, dependencies, depErr
+	default:
+		return nil, nil, fmt.Errorf("Fork capture Content Event type %d is not supported", event.Type)
+	}
 }
 
 func reauthorForkOrganizationEvent(
