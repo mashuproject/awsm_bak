@@ -89,6 +89,8 @@ test("builds and publishes desktop artifacts with the browser release", () => {
   assert.match(desktop, /AppImage/u);
   assert.match(desktop, /appimagetool\/releases\/download\/1\.9\.1/u);
   assert.match(desktop, /shasum -a 256/u);
+  assert.match(desktop, /cd "\$OUTPUT_DIR"/u);
+  assert.doesNotMatch(desktop, /sha256sum "\$OUTPUT_DIR\/\$artifact"/u);
   assert.match(desktop, /actions\/upload-artifact/u);
   for (const publisher of ["publish-chrome", "publish-joint"]) {
     assert.match(job(publisher), /needs: \[build, desktop-build\]/u);
