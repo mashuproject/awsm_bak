@@ -182,6 +182,33 @@ func TestReplicaRejectsKeyDeliveryForUnknownKeyEpoch(t *testing.T) {
 	}
 }
 
+func TestReplicaRejectsInvitationWithMismatchedCapabilityIssuer(t *testing.T) {
+	prepared := deterministicCreation(t)
+	replica, err := NewReplica(prepared.Baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := replica.AdmitEvent(prepared.Genesis, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit Genesis: %v", err)
+	}
+	invitationID := filledCreationID(230)
+	otherMemberID := filledCreationID(231)
+	capability := canonical.Map{0: "awsm.vault", 1: otherMemberID[:], 2: prepared.IDs.VaultID[:], 3: "awsm.vault.join", 4: []byte{}}
+	event, err := canonical.SignEvent(canonical.EventInput{
+		VaultID: prepared.IDs.VaultID, GenerationID: prepared.IDs.GenerationID,
+		ParentRecordIDs: []canonical.Identifier{prepared.Genesis.RecordID}, AuthorityParentIDs: []canonical.Identifier{prepared.Genesis.RecordID},
+		RequiredFeatureSetID: prepared.RequiredFeatureSetID, Extensions: map[string][]byte{}, Family: canonical.AuthorityFamily, Type: 5,
+		SignerCredentialID: prepared.IDs.ClientCredentialID, AssertedAt: 204,
+		Body: canonical.Map{0: invitationID[:], 1: []canonical.Value{capability}, 2: bytes.Repeat([]byte{0x31}, 32), 3: bytes.Repeat([]byte{0x32}, 32), 4: bytes.Repeat([]byte{0x33}, 32), 5: bytes.Repeat([]byte{0x34}, 32)},
+	}, ed25519.PrivateKey(prepared.ClientKeys.SigningSecretKey))
+	if err != nil {
+		t.Fatalf("sign Invitation Creation: %v", err)
+	}
+	if err := replica.AdmitEvent(event, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err == nil {
+		t.Fatal("Replica accepted an Invitation whose capability issuer differs from the signer")
+	}
+}
+
 func TestReplicaAdmitsContentAddressedObject(t *testing.T) {
 	prepared := deterministicCreation(t)
 	replica, err := NewReplica(prepared.Baseline)

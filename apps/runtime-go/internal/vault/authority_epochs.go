@@ -189,6 +189,21 @@ func replayAuthenticatedKeyEpochs(events []canonical.Event, genesis canonical.Ev
 				current.closed = true
 			}
 		}
+		if event.Family == canonical.AuthorityFamily && event.Type == 5 {
+			signerMember, signerOK := current.activeClientMember(event.SignerCredentialID)
+			if !signerOK {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, errors.New("Invitation Creation signer is not an active Client Credential")
+			}
+			if _, admin := current.administrators[signerMember]; !admin {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, errors.New("Invitation Creation signer is not an Administrator")
+			}
+			if err := validateInvitationCreation(event, signerMember); err != nil {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, err
+			}
+		}
 		if event.Family == canonical.AuthorityFamily && (event.Type == 3 || event.Type == 4) {
 			targetMember, resolved, parseErr := parseAdministratorRole(event)
 			if parseErr != nil {
@@ -666,6 +681,67 @@ func parseAdministratorRole(event canonical.Event) (canonical.Identifier, []cano
 		return canonical.Identifier{}, nil, err
 	}
 	return bytesIdentifier(memberBytes), resolved, nil
+}
+
+func validateInvitationCreation(event canonical.Event, signerMember canonical.Identifier) error {
+	body, ok := replicaMapValue(event.Body)
+	if !ok || !replicaMapHasKeys(body, 6) {
+		return errors.New("Invitation Creation body is invalid")
+	}
+	invitationID, invitationOK := replicaMapBytes(body, 0, 32)
+	redemptionVerifier, redemptionOK := replicaMapBytes(body, 2, 32)
+	cancellationVerifier, cancellationOK := replicaMapBytes(body, 3, 32)
+	redemptionAuthority, authorityOK := replicaMapBytes(body, 4, 32)
+	receiptKey, receiptOK := replicaMapBytes(body, 5, 32)
+	if !invitationOK || !redemptionOK || !cancellationOK || !authorityOK || !receiptOK ||
+		bytes.Equal(invitationID, make([]byte, 32)) || bytes.Equal(redemptionVerifier, make([]byte, 32)) ||
+		bytes.Equal(cancellationVerifier, make([]byte, 32)) || bytes.Equal(redemptionAuthority, make([]byte, 32)) ||
+		bytes.Equal(receiptKey, make([]byte, 32)) {
+		return errors.New("Invitation Creation identity fields are invalid")
+	}
+	capabilityValue, ok := replicaMapEntry(body, 1)
+	if !ok {
+		return errors.New("Invitation Creation capabilities are missing")
+	}
+	capabilities, ok := replicaMapArrayValue(capabilityValue)
+	if !ok || len(capabilities) == 0 {
+		return errors.New("Invitation Creation capabilities are invalid")
+	}
+	var previous []byte
+	seen := make(map[string]struct{}, len(capabilities))
+	for _, capabilityValue := range capabilities {
+		encoded, err := canonical.EncodeValue(capabilityValue)
+		if err != nil {
+			return errors.New("Invitation Creation capability is not canonical")
+		}
+		if previous != nil && bytes.Compare(previous, encoded) >= 0 {
+			return errors.New("Invitation Creation capabilities are not a canonical set")
+		}
+		previous = encoded
+		key := string(encoded)
+		if _, duplicate := seen[key]; duplicate {
+			return errors.New("Invitation Creation capabilities contain a duplicate")
+		}
+		seen[key] = struct{}{}
+		capability, ok := replicaMapValue(capabilityValue)
+		if !ok || !replicaMapHasKeys(capability, 5) {
+			return errors.New("Invitation Creation capability descriptor is invalid")
+		}
+		domain, domainOK := replicaMapEntry(capability, 0)
+		issuer, issuerOK := replicaMapBytes(capability, 1, 32)
+		targetVault, targetOK := replicaMapBytes(capability, 2, 32)
+		action, actionOK := replicaMapEntry(capability, 3)
+		parameters, parametersOK := replicaMapEntry(capability, 4)
+		domainText, domainTextOK := domain.(string)
+		actionText, actionTextOK := action.(string)
+		_, parameterBytesOK := parameters.([]byte)
+		if !domainOK || !issuerOK || !targetOK || !actionOK || !parametersOK || !domainTextOK || !actionTextOK || !parameterBytesOK ||
+			!bytes.Equal(issuer, signerMember[:]) || !bytes.Equal(targetVault, event.VaultID[:]) || domainText != "awsm.vault" ||
+			(actionText != "awsm.vault.join" && actionText != "awsm.vault.administrator") {
+			return errors.New("Invitation Creation capability is not authorized by the signing Administrator")
+		}
+	}
+	return nil
 }
 
 func parseRecoveryReplacement(event canonical.Event) (recoveryReplacement, error) {
