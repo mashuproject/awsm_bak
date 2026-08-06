@@ -38,11 +38,37 @@ type LibraryCollection struct {
 	FolderID           *string `json:"folderId"`
 }
 
+type LibraryFolder struct {
+	FolderID                string  `json:"folderId"`
+	Name                    string  `json:"name"`
+	ParentFolderID          *string `json:"parentFolderId"`
+	EffectiveParentFolderID *string `json:"effectiveParentFolderId"`
+	Lifecycle               string  `json:"lifecycle"`
+}
+
+type LibraryTag struct {
+	TagID        string  `json:"tagId"`
+	Name         string  `json:"name"`
+	Lifecycle    string  `json:"lifecycle"`
+	RedirectedTo *string `json:"redirectedTo"`
+}
+
+type LibraryTagAssignment struct {
+	AssignmentID string `json:"assignmentId"`
+	TagID        string `json:"tagId"`
+	TargetKind   uint64 `json:"targetKind"`
+	TargetID     string `json:"targetId"`
+	Active       bool   `json:"active"`
+}
+
 // LibraryProjection is a rebuildable user-facing view. It is derived solely
 // from the authenticated Replica and is never an authority source.
 type LibraryProjection struct {
-	Captures    []LibraryItem       `json:"captures"`
-	Collections []LibraryCollection `json:"collections"`
+	Captures       []LibraryItem          `json:"captures"`
+	Collections    []LibraryCollection    `json:"collections"`
+	Folders        []LibraryFolder        `json:"folders"`
+	Tags           []LibraryTag           `json:"tags"`
+	TagAssignments []LibraryTagAssignment `json:"tagAssignments"`
 }
 
 type libraryCapture struct {
@@ -76,10 +102,16 @@ func ProjectLibraryProjection(replica *Replica) (LibraryProjection, error) {
 	collectionTitles := make(map[canonical.Identifier]collectionTitleFact)
 	collectionRedirects := make(map[canonical.Identifier]collectionRedirectFact)
 	inactiveRedirects := make(map[canonical.Identifier]struct{})
-	for _, event := range replica.Events() {
-		if event.Family != canonical.ContentFamily {
-			continue
-		}
+	folders := make(map[canonical.Identifier]*libraryFolderState)
+	collectionFolders := make(map[canonical.Identifier]libraryCollectionFolderFact)
+	tags := make(map[canonical.Identifier]*libraryTagState)
+	assignments := make(map[canonical.Identifier]libraryTagAssignmentState)
+	removedAssignmentCauses := make(map[canonical.Identifier]struct{})
+	orderedEvents, err := orderedContentEvents(replica)
+	if err != nil {
+		return LibraryProjection{}, err
+	}
+	for _, event := range orderedEvents {
 		switch event.Type {
 		case 3:
 			capture, err := registeredCapture(replica, event)
@@ -164,6 +196,192 @@ func ProjectLibraryProjection(replica *Replica) (LibraryProjection, error) {
 				return LibraryProjection{}, errors.New("Collection Merge Reverted cause is not an observed redirect")
 			}
 			inactiveRedirects[cause] = struct{}{}
+		case 11:
+			collectionID, ok := replicaIdentifier(event.Body, 0)
+			if !ok {
+				return LibraryProjection{}, errors.New("Collection Folder Placement Collection ID is invalid")
+			}
+			folderID, err := nullableIdentifier(replicaMapEntryMust(event.Body, 1), "Collection Folder Placement Folder ID")
+			if err != nil {
+				return LibraryProjection{}, err
+			}
+			if previous, exists := collectionFolders[collectionID]; !exists || newerEvent(replica, previous.causeID, event.RecordID) {
+				collectionFolders[collectionID] = libraryCollectionFolderFact{causeID: event.RecordID, folderID: folderID}
+			}
+		case 12:
+			body, ok := replicaMapValue(event.Body)
+			if !ok || !replicaMapHasKeys(body, 3) {
+				return LibraryProjection{}, errors.New("Folder Created body is invalid")
+			}
+			folderID, ok := replicaIdentifier(body, 0)
+			if !ok {
+				return LibraryProjection{}, errors.New("Folder Created Folder ID is invalid")
+			}
+			name, ok := replicaMapText(body, 1)
+			if !ok {
+				return LibraryProjection{}, errors.New("Folder Created name is invalid")
+			}
+			parent, err := nullableIdentifier(replicaMapEntryMust(body, 2), "Folder Created parent Folder ID")
+			if err != nil {
+				return LibraryProjection{}, err
+			}
+			if parent != nil && *parent == folderID {
+				return LibraryProjection{}, errors.New("Folder cannot be its own parent")
+			}
+			if existing, exists := folders[folderID]; exists {
+				if existing.name != name || !sameNullableIdentifier(existing.parent, parent) {
+					return LibraryProjection{}, fmt.Errorf("Folder identity conflict for %s", hexIdentifier(folderID))
+				}
+				continue
+			}
+			folders[folderID] = &libraryFolderState{id: folderID, name: name, nameCause: event.RecordID, parent: parent, parentCause: event.RecordID, lifecycle: "Active", lifecycleCause: event.RecordID}
+		case 13:
+			folderID, ok := replicaIdentifier(event.Body, 0)
+			if !ok {
+				return LibraryProjection{}, errors.New("Folder Renamed Folder ID is invalid")
+			}
+			folder, exists := folders[folderID]
+			if !exists {
+				return LibraryProjection{}, errors.New("Folder Renamed target is unknown")
+			}
+			name, ok := replicaMapText(event.Body, 1)
+			if !ok {
+				return LibraryProjection{}, errors.New("Folder Renamed name is invalid")
+			}
+			if newerEvent(replica, folder.nameCause, event.RecordID) {
+				folder.name, folder.nameCause = name, event.RecordID
+			}
+		case 14:
+			folderID, ok := replicaIdentifier(event.Body, 0)
+			if !ok {
+				return LibraryProjection{}, errors.New("Folder Parent Placement Folder ID is invalid")
+			}
+			folder, exists := folders[folderID]
+			if !exists {
+				return LibraryProjection{}, errors.New("Folder Parent Placement target is unknown")
+			}
+			parent, err := nullableIdentifier(replicaMapEntryMust(event.Body, 1), "Folder Parent Placement parent Folder ID")
+			if err != nil {
+				return LibraryProjection{}, err
+			}
+			if parent != nil && *parent == folderID {
+				return LibraryProjection{}, errors.New("Folder cannot be its own parent")
+			}
+			if newerEvent(replica, folder.parentCause, event.RecordID) {
+				folder.parent, folder.parentCause = parent, event.RecordID
+			}
+		case 15, 16:
+			folderID, ok := replicaIdentifier(event.Body, 0)
+			if !ok {
+				return LibraryProjection{}, fmt.Errorf("Folder lifecycle type %d Folder ID is invalid", event.Type)
+			}
+			folder, exists := folders[folderID]
+			if !exists {
+				return LibraryProjection{}, errors.New("Folder lifecycle target is unknown")
+			}
+			if newerEvent(replica, folder.lifecycleCause, event.RecordID) {
+				folder.lifecycleCause = event.RecordID
+				if event.Type == 15 {
+					folder.lifecycle = "Deleted"
+				} else {
+					folder.lifecycle = "Active"
+				}
+			}
+		case 18:
+			body, ok := replicaMapValue(event.Body)
+			if !ok || !replicaMapHasKeys(body, 2) {
+				return LibraryProjection{}, errors.New("Tag Created body is invalid")
+			}
+			tagID, ok := replicaIdentifier(body, 0)
+			if !ok {
+				return LibraryProjection{}, errors.New("Tag Created Tag ID is invalid")
+			}
+			name, ok := replicaMapText(body, 1)
+			if !ok {
+				return LibraryProjection{}, errors.New("Tag Created name is invalid")
+			}
+			if existing, exists := tags[tagID]; exists {
+				if existing.name != name {
+					return LibraryProjection{}, fmt.Errorf("Tag identity conflict for %s", hexIdentifier(tagID))
+				}
+				continue
+			}
+			tags[tagID] = &libraryTagState{id: tagID, name: name, nameCause: event.RecordID, lifecycle: "Active", lifecycleCause: event.RecordID}
+		case 19:
+			tagID, ok := replicaIdentifier(event.Body, 0)
+			if !ok {
+				return LibraryProjection{}, errors.New("Tag Renamed Tag ID is invalid")
+			}
+			tag, exists := tags[tagID]
+			if !exists {
+				return LibraryProjection{}, errors.New("Tag Renamed target is unknown")
+			}
+			name, ok := replicaMapText(event.Body, 1)
+			if !ok {
+				return LibraryProjection{}, errors.New("Tag Renamed name is invalid")
+			}
+			if newerEvent(replica, tag.nameCause, event.RecordID) {
+				tag.name, tag.nameCause = name, event.RecordID
+			}
+		case 20:
+			body, ok := replicaMapValue(event.Body)
+			if !ok || !replicaMapHasKeys(body, 3) {
+				return LibraryProjection{}, errors.New("Tag Assigned body is invalid")
+			}
+			assignmentID, ok := replicaIdentifier(body, 0)
+			if !ok {
+				return LibraryProjection{}, errors.New("Tag Assigned Assignment ID is invalid")
+			}
+			tagID, ok := replicaIdentifier(body, 1)
+			if !ok || tags[tagID] == nil {
+				return LibraryProjection{}, errors.New("Tag Assigned Tag is unknown")
+			}
+			targetKind, targetID, err := decodeLibraryTagTarget(replicaMapEntryMust(body, 2))
+			if err != nil {
+				return LibraryProjection{}, err
+			}
+			if existing, exists := assignments[assignmentID]; exists {
+				if existing.tagID != tagID || existing.targetKind != targetKind || existing.targetID != targetID {
+					return LibraryProjection{}, fmt.Errorf("Tag Assignment identity conflict for %s", hexIdentifier(assignmentID))
+				}
+				continue
+			}
+			assignments[assignmentID] = libraryTagAssignmentState{assignmentID: assignmentID, causeID: event.RecordID, tagID: tagID, targetKind: targetKind, targetID: targetID}
+		case 21:
+			causes, err := parseCanonicalIdentifierSet(replicaMapEntryMust(event.Body, 0), "Tag Assignment Cause IDs", true)
+			if err != nil {
+				return LibraryProjection{}, err
+			}
+			for _, cause := range causes {
+				found := false
+				for _, assignment := range assignments {
+					if assignment.causeID == cause {
+						found = true
+						removedAssignmentCauses[cause] = struct{}{}
+						break
+					}
+				}
+				if !found {
+					return LibraryProjection{}, errors.New("Tag removal names an unknown assignment")
+				}
+			}
+		case 22, 23:
+			tagID, ok := replicaIdentifier(event.Body, 0)
+			if !ok {
+				return LibraryProjection{}, fmt.Errorf("Tag lifecycle type %d Tag ID is invalid", event.Type)
+			}
+			tag, exists := tags[tagID]
+			if !exists {
+				return LibraryProjection{}, errors.New("Tag lifecycle target is unknown")
+			}
+			if newerEvent(replica, tag.lifecycleCause, event.RecordID) {
+				tag.lifecycleCause = event.RecordID
+				if event.Type == 22 {
+					tag.lifecycle = "Deleted"
+				} else {
+					tag.lifecycle = "Active"
+				}
+			}
 		}
 	}
 	activeRedirects := make([]collectionRedirectEdge, 0)
@@ -216,6 +434,41 @@ func ProjectLibraryProjection(replica *Replica) (LibraryProjection, error) {
 	for collectionID := range redirectIDs {
 		collectionIDs[collectionID] = struct{}{}
 	}
+	for collectionID := range collectionFolders {
+		collectionIDs[collectionID] = struct{}{}
+	}
+	folderProjection := make([]LibraryFolder, 0, len(folders))
+	for folderID, folder := range folders {
+		projected := LibraryFolder{FolderID: hexIdentifier(folderID), Name: folder.name, Lifecycle: folder.lifecycle}
+		if folder.parent != nil {
+			projected.ParentFolderID = pointerString(hexIdentifier(*folder.parent))
+		}
+		if effective := nearestActiveFolder(folderID, folders); effective != nil {
+			projected.EffectiveParentFolderID = pointerString(hexIdentifier(*effective))
+		}
+		folderProjection = append(folderProjection, projected)
+	}
+	sort.Slice(folderProjection, func(left, right int) bool { return folderProjection[left].FolderID < folderProjection[right].FolderID })
+	tagProjection := make([]LibraryTag, 0, len(tags))
+	for tagID, tag := range tags {
+		projected := LibraryTag{TagID: hexIdentifier(tagID), Name: tag.name, Lifecycle: tag.lifecycle}
+		tagProjection = append(tagProjection, projected)
+	}
+	sort.Slice(tagProjection, func(left, right int) bool { return tagProjection[left].TagID < tagProjection[right].TagID })
+	assignmentProjection := make([]LibraryTagAssignment, 0, len(assignments))
+	for assignmentID, assignment := range assignments {
+		if _, removed := removedAssignmentCauses[assignment.causeID]; removed {
+			continue
+		}
+		tag := tags[assignment.tagID]
+		assignmentProjection = append(assignmentProjection, LibraryTagAssignment{
+			AssignmentID: hexIdentifier(assignmentID), TagID: hexIdentifier(assignment.tagID), TargetKind: assignment.targetKind,
+			TargetID: hexIdentifier(assignment.targetID), Active: tag != nil && tag.lifecycle == "Active",
+		})
+	}
+	sort.Slice(assignmentProjection, func(left, right int) bool {
+		return assignmentProjection[left].AssignmentID < assignmentProjection[right].AssignmentID
+	})
 	collections := make([]LibraryCollection, 0, len(collectionIDs))
 	for collectionID := range collectionIDs {
 		active := make([]*libraryCapture, 0)
@@ -237,6 +490,11 @@ func ProjectLibraryProjection(replica *Replica) (LibraryProjection, error) {
 		if effective, ok := redirected[collectionID]; ok {
 			collection.RedirectedTo = pointerString(hexIdentifier(effective))
 		}
+		if fact, ok := collectionFolders[collectionID]; ok && fact.folderID != nil {
+			if effectiveFolder := nearestActiveFolder(*fact.folderID, folders); effectiveFolder != nil {
+				collection.FolderID = pointerString(hexIdentifier(*effectiveFolder))
+			}
+		}
 		if tail != nil {
 			collection.TailBundleID = pointerString(tail.item.BundleID)
 			if tail.item.Title != nil && *tail.item.Title != "" {
@@ -251,7 +509,59 @@ func ProjectLibraryProjection(replica *Replica) (LibraryProjection, error) {
 		collections = append(collections, collection)
 	}
 	sort.Slice(collections, func(left, right int) bool { return collections[left].CollectionID < collections[right].CollectionID })
-	return LibraryProjection{Captures: items, Collections: collections}, nil
+	return LibraryProjection{Captures: items, Collections: collections, Folders: folderProjection, Tags: tagProjection, TagAssignments: assignmentProjection}, nil
+}
+
+func orderedContentEvents(replica *Replica) ([]canonical.Event, error) {
+	if replica == nil {
+		return nil, errors.New("Replica is required")
+	}
+	content := make(map[canonical.Identifier]canonical.Event)
+	for _, event := range replica.Events() {
+		if event.Family == canonical.ContentFamily {
+			content[event.RecordID] = event
+		}
+	}
+	remaining := make([]canonical.Event, 0, len(content))
+	for _, event := range content {
+		remaining = append(remaining, event)
+	}
+	ordered := make([]canonical.Event, 0, len(remaining))
+	processed := make(map[canonical.Identifier]struct{}, len(remaining))
+	for len(remaining) > 0 {
+		sort.Slice(remaining, func(left, right int) bool {
+			return bytes.Compare(remaining[left].RecordID[:], remaining[right].RecordID[:]) < 0
+		})
+		progress := false
+		for index := 0; index < len(remaining); index++ {
+			event := remaining[index]
+			ready := true
+			for _, parentID := range event.ParentRecordIDs {
+				parent, exists := replica.Record(parentID)
+				if !exists {
+					return nil, fmt.Errorf("Content Event %s names an unknown parent", hexIdentifier(event.RecordID))
+				}
+				if parent.Event != nil && parent.Event.Family == canonical.ContentFamily {
+					if _, done := processed[parentID]; !done {
+						ready = false
+						break
+					}
+				}
+			}
+			if !ready {
+				continue
+			}
+			ordered = append(ordered, event)
+			processed[event.RecordID] = struct{}{}
+			remaining = append(remaining[:index], remaining[index+1:]...)
+			index--
+			progress = true
+		}
+		if !progress {
+			return nil, errors.New("Content Event graph cannot be ordered")
+		}
+	}
+	return ordered, nil
 }
 
 type collectionTitleFact struct {
@@ -268,6 +578,95 @@ type collectionRedirectEdge struct {
 	sourceID      canonical.Identifier
 	destinationID canonical.Identifier
 	causeID       canonical.Identifier
+}
+
+type libraryFolderState struct {
+	id             canonical.Identifier
+	name           string
+	nameCause      canonical.Identifier
+	parent         *canonical.Identifier
+	parentCause    canonical.Identifier
+	lifecycle      string
+	lifecycleCause canonical.Identifier
+}
+
+type libraryCollectionFolderFact struct {
+	causeID  canonical.Identifier
+	folderID *canonical.Identifier
+}
+
+type libraryTagState struct {
+	id             canonical.Identifier
+	name           string
+	nameCause      canonical.Identifier
+	lifecycle      string
+	lifecycleCause canonical.Identifier
+}
+
+type libraryTagAssignmentState struct {
+	assignmentID canonical.Identifier
+	causeID      canonical.Identifier
+	tagID        canonical.Identifier
+	targetKind   uint64
+	targetID     canonical.Identifier
+}
+
+func decodeLibraryTagTarget(value canonical.Value) (uint64, canonical.Identifier, error) {
+	body, ok := replicaMapValue(value)
+	if !ok || !replicaMapHasKeys(body, 2) {
+		return 0, canonical.Identifier{}, errors.New("Tag target is invalid")
+	}
+	kind, ok := replicaUnsignedNumber(replicaMapEntryMust(body, 0))
+	if !ok || (kind != 1 && kind != 2) {
+		return 0, canonical.Identifier{}, errors.New("Tag target kind is invalid")
+	}
+	target, ok := replicaIdentifier(body, 1)
+	if !ok {
+		return 0, canonical.Identifier{}, errors.New("Tag target ID is invalid")
+	}
+	return kind, target, nil
+}
+
+func nullableIdentifier(value canonical.Value, field string) (*canonical.Identifier, error) {
+	if value == nil {
+		return nil, nil
+	}
+	identifier, ok := replicaIdentifierValue(value)
+	if !ok {
+		return nil, fmt.Errorf("%s is invalid", field)
+	}
+	return &identifier, nil
+}
+
+func sameNullableIdentifier(left, right *canonical.Identifier) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
+}
+
+func nearestActiveFolder(folderID canonical.Identifier, folders map[canonical.Identifier]*libraryFolderState) *canonical.Identifier {
+	current := folderID
+	visited := make(map[canonical.Identifier]struct{})
+	for {
+		folder, ok := folders[current]
+		if !ok || folder.parent == nil {
+			return nil
+		}
+		if _, seen := visited[current]; seen {
+			return nil
+		}
+		visited[current] = struct{}{}
+		parentID := *folder.parent
+		parent, ok := folders[parentID]
+		if !ok {
+			return nil
+		}
+		if parent.lifecycle == "Active" {
+			return &parentID
+		}
+		current = parentID
+	}
 }
 
 func resolveCollectionRedirect(collectionID canonical.Identifier, edges []collectionRedirectEdge) (canonical.Identifier, error) {
