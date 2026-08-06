@@ -30,6 +30,7 @@ type keyEpochReplayState struct {
 	recoverySigningKeys   map[canonical.Identifier]ed25519.PublicKey
 	recoveryTargets       map[canonical.Identifier]uint64
 	clientTargets         map[canonical.Identifier]struct{}
+	deliveredSlots        map[string]struct{}
 	members               map[canonical.Identifier]struct{}
 	invitations           map[canonical.Identifier]invitationCreation
 	invitationTerminals   map[canonical.Identifier]struct{}
@@ -163,6 +164,7 @@ func replayAuthenticatedKeyEpochs(events []canonical.Event, genesis canonical.Ev
 		recoverySigningKeys:   map[canonical.Identifier]ed25519.PublicKey{firstRecovery: genesisRecoverySigningKey(genesis)},
 		recoveryTargets:       map[canonical.Identifier]uint64{firstRecovery: 0},
 		clientTargets:         map[canonical.Identifier]struct{}{firstClient: {}},
+		deliveredSlots:        map[string]struct{}{},
 		invitations:           map[canonical.Identifier]invitationCreation{},
 		invitationTerminals:   map[canonical.Identifier]struct{}{},
 		invitationCandidates:  map[canonical.Identifier]map[canonical.Identifier]invitationTerminalCandidate{},
@@ -594,6 +596,9 @@ func replayAuthenticatedKeyEpochs(events []canonical.Event, genesis canonical.Ev
 				delete(visiting, recordID)
 				return keyEpochReplayState{}, err
 			}
+			for _, slot := range delivery.slots {
+				current.deliveredSlots[keyDeliverySlotKey(slot)] = struct{}{}
+			}
 		}
 		if event.Family == canonical.LifecycleFamily && event.Type == 2 {
 			body, ok := replicaMapValue(event.Body)
@@ -683,6 +688,7 @@ func cloneKeyEpochReplayState(value keyEpochReplayState) keyEpochReplayState {
 		recoverySigningKeys:   make(map[canonical.Identifier]ed25519.PublicKey, len(value.recoverySigningKeys)),
 		recoveryTargets:       make(map[canonical.Identifier]uint64, len(value.recoveryTargets)),
 		clientTargets:         make(map[canonical.Identifier]struct{}, len(value.clientTargets)),
+		deliveredSlots:        make(map[string]struct{}, len(value.deliveredSlots)),
 		invitations:           make(map[canonical.Identifier]invitationCreation, len(value.invitations)),
 		invitationTerminals:   make(map[canonical.Identifier]struct{}, len(value.invitationTerminals)),
 		invitationCandidates:  make(map[canonical.Identifier]map[canonical.Identifier]invitationTerminalCandidate, len(value.invitationCandidates)),
@@ -726,6 +732,9 @@ func cloneKeyEpochReplayState(value keyEpochReplayState) keyEpochReplayState {
 	for id := range value.clientTargets {
 		clone.clientTargets[id] = struct{}{}
 	}
+	for key := range value.deliveredSlots {
+		clone.deliveredSlots[key] = struct{}{}
+	}
 	for id, invitation := range value.invitations {
 		clone.invitations[id] = cloneInvitationCreation(invitation)
 	}
@@ -762,6 +771,7 @@ func mergeKeyEpochReplayStates(values []keyEpochReplayState) keyEpochReplayState
 			recoverySigningKeys:   make(map[canonical.Identifier]ed25519.PublicKey),
 			recoveryTargets:       make(map[canonical.Identifier]uint64),
 			clientTargets:         make(map[canonical.Identifier]struct{}),
+			deliveredSlots:        make(map[string]struct{}),
 			invitations:           make(map[canonical.Identifier]invitationCreation),
 			invitationTerminals:   make(map[canonical.Identifier]struct{}),
 			invitationCandidates:  make(map[canonical.Identifier]map[canonical.Identifier]invitationTerminalCandidate),
@@ -817,6 +827,9 @@ func mergeKeyEpochReplayStates(values []keyEpochReplayState) keyEpochReplayState
 		}
 		for id := range value.clientTargets {
 			merged.clientTargets[id] = struct{}{}
+		}
+		for key := range value.deliveredSlots {
+			merged.deliveredSlots[key] = struct{}{}
 		}
 		for id, invitation := range value.invitations {
 			if existing, exists := merged.invitations[id]; !exists {
@@ -1773,9 +1786,22 @@ func validateKeyDelivery(state keyEpochReplayState, event canonical.Event, deliv
 		if _, duplicate := seenTargets[key]; duplicate {
 			return errors.New("Key Delivery repeats a target and Key Epoch")
 		}
+		if _, delivered := state.deliveredSlots[key]; delivered {
+			return errors.New("Key Delivery repeats an already delivered target and Key Epoch")
+		}
 		seenTargets[key] = struct{}{}
 	}
 	return nil
+}
+
+func keyDeliverySlotKey(slot keyEpochEnvelopeSlot) string {
+	var target string
+	if slot.targetKind == awsmcrypto.RecoveryCredentialTarget && slot.targetRevision != nil {
+		target = fmt.Sprintf("%d:%x:%d", slot.targetKind, slot.targetID, *slot.targetRevision)
+	} else {
+		target = fmt.Sprintf("%d:%x:null", slot.targetKind, slot.targetID)
+	}
+	return fmt.Sprintf("%s:%x", target, slot.epochID)
 }
 
 func validateClientEnrollment(state keyEpochReplayState, event canonical.Event, enrollment enrollmentCredential) error {

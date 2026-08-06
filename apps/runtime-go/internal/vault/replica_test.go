@@ -184,6 +184,45 @@ func TestReplicaRejectsKeyDeliveryForUnknownKeyEpoch(t *testing.T) {
 	}
 }
 
+func TestReplicaRejectsDuplicateKeyDeliveryForExistingTargetEpoch(t *testing.T) {
+	prepared := deterministicCreation(t)
+	replica, err := NewReplica(prepared.Baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := replica.AdmitEvent(prepared.Genesis, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit Genesis: %v", err)
+	}
+	envelopeID := filledCreationID(222)
+	slot := canonical.Map{0: prepared.KeyEpochID[:], 1: uint64(1), 2: prepared.IDs.RecoveryCredentialID[:], 3: uint64(0), 4: envelopeID[:]}
+	first, err := canonical.SignEvent(canonical.EventInput{
+		VaultID: prepared.IDs.VaultID, GenerationID: prepared.IDs.GenerationID,
+		ParentRecordIDs: []canonical.Identifier{prepared.Genesis.RecordID}, AuthorityParentIDs: []canonical.Identifier{prepared.Genesis.RecordID},
+		Dependencies: []canonical.Dependency{{Type: 7, ID: envelopeID}}, RequiredFeatureSetID: prepared.RequiredFeatureSetID,
+		Extensions: map[string][]byte{}, Family: canonical.AuthorityFamily, Type: 13, SignerCredentialID: prepared.IDs.ClientCredentialID,
+		AssertedAt: 212, Body: canonical.Map{0: []canonical.Value{slot}},
+	}, ed25519.PrivateKey(prepared.ClientKeys.SigningSecretKey))
+	if err != nil {
+		t.Fatalf("sign first Key Delivery: %v", err)
+	}
+	if err := replica.AdmitEvent(first, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit first Key Delivery: %v", err)
+	}
+	second, err := canonical.SignEvent(canonical.EventInput{
+		VaultID: prepared.IDs.VaultID, GenerationID: prepared.IDs.GenerationID,
+		ParentRecordIDs: []canonical.Identifier{first.RecordID}, AuthorityParentIDs: []canonical.Identifier{first.RecordID},
+		Dependencies: []canonical.Dependency{{Type: 7, ID: envelopeID}}, RequiredFeatureSetID: prepared.RequiredFeatureSetID,
+		Extensions: map[string][]byte{}, Family: canonical.AuthorityFamily, Type: 13, SignerCredentialID: prepared.IDs.ClientCredentialID,
+		AssertedAt: 213, Body: canonical.Map{0: []canonical.Value{slot}},
+	}, ed25519.PrivateKey(prepared.ClientKeys.SigningSecretKey))
+	if err != nil {
+		t.Fatalf("sign duplicate Key Delivery: %v", err)
+	}
+	if err := replica.AdmitEvent(second, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err == nil {
+		t.Fatal("Replica accepted duplicate Key Delivery for an existing target and Key Epoch")
+	}
+}
+
 func TestReplicaRejectsInvitationWithMismatchedCapabilityIssuer(t *testing.T) {
 	prepared := deterministicCreation(t)
 	replica, err := NewReplica(prepared.Baseline)
