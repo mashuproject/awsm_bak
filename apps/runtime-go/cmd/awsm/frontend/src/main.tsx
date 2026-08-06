@@ -133,6 +133,8 @@ type AuthorityState = {
   readonly activeMemberIds: readonly string[];
   readonly administratorIds: readonly string[];
   readonly administratorConflicts: readonly unknown[];
+  readonly activeInvitationIds: readonly string[];
+  readonly invitationConflictIds: readonly string[];
   readonly activeClientCredentialIds: readonly string[];
   readonly effectiveRecoveryCredentialIds: readonly string[];
   readonly recoveryConflicts: readonly unknown[];
@@ -777,6 +779,7 @@ function AuthoritySummary({
 }): React.ReactElement {
   const conflictCount =
     authority.administratorConflicts.length +
+    authority.invitationConflictIds.length +
     authority.recoveryConflicts.length +
     authority.keyEpochConflicts.length +
     (authority.featureSetConflict === undefined ? 0 : 1);
@@ -813,6 +816,10 @@ function AuthoritySummary({
           <div>
             <dt className="font-semibold text-awsm-ink">Administrators</dt>
             <dd className="text-awsm-text-muted">{authority.administratorIds.length}</dd>
+          </div>
+          <div>
+            <dt className="font-semibold text-awsm-ink">Active invitations</dt>
+            <dd className="text-awsm-text-muted">{authority.activeInvitationIds.length}</dd>
           </div>
           <div>
             <dt className="font-semibold text-awsm-ink">Client credentials</dt>

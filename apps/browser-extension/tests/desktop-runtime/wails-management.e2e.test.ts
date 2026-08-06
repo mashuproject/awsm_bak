@@ -70,6 +70,8 @@ test("Wails Vault surface renders the selected Vault management slice", async ({
       activeMemberIds: ["1".repeat(64)],
       administratorIds: ["1".repeat(64)],
       administratorConflicts: [],
+      activeInvitationIds: [],
+      invitationConflictIds: [],
       activeClientCredentialIds: ["2".repeat(64)],
       effectiveRecoveryCredentialIds: ["3".repeat(64)],
       recoveryConflicts: [],
@@ -116,6 +118,7 @@ test("Wails Vault surface renders the selected Vault management slice", async ({
   await expect(page.getByRole("button", { name: "Fork this Vault" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Vault authority" })).toBeVisible();
   await expect(page.getByText("Active members", { exact: true })).toBeVisible();
+  await expect(page.getByText("Active invitations", { exact: true })).toBeVisible();
   await expect(page.getByText("Current Key Epochs", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Vacuum this Vault" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Run Garbage Collection" })).toBeVisible();
@@ -183,6 +186,8 @@ test("Wails Library surface releases local Artifact bytes and refreshes its proj
         activeMemberIds: ["1".repeat(64)],
         administratorIds: ["1".repeat(64)],
         administratorConflicts: [],
+        activeInvitationIds: [],
+        invitationConflictIds: [],
         activeClientCredentialIds: ["2".repeat(64)],
         effectiveRecoveryCredentialIds: ["3".repeat(64)],
         recoveryConflicts: [],
@@ -312,6 +317,8 @@ test("Wails Vault creation can recover a pending setup without exposing its phra
                 activeMemberIds: [],
                 administratorIds: [],
                 administratorConflicts: [],
+                activeInvitationIds: [],
+                invitationConflictIds: [],
                 activeClientCredentialIds: [],
                 effectiveRecoveryCredentialIds: [],
                 recoveryConflicts: [],
@@ -370,6 +377,8 @@ test("Wails Vault surface exports and imports a Complete Export package", async 
       activeMemberIds: ["1".repeat(64)],
       administratorIds: ["1".repeat(64)],
       administratorConflicts: [],
+      activeInvitationIds: [],
+      invitationConflictIds: [],
       activeClientCredentialIds: ["2".repeat(64)],
       effectiveRecoveryCredentialIds: ["3".repeat(64)],
       recoveryConflicts: [],
@@ -495,6 +504,8 @@ test("Wails Vault surface runs hosted pull, materialization, and Artifact hydrat
         activeMemberIds: ["1".repeat(64)],
         administratorIds: ["1".repeat(64)],
         administratorConflicts: [],
+        activeInvitationIds: [],
+        invitationConflictIds: [],
         activeClientCredentialIds: ["2".repeat(64)],
         effectiveRecoveryCredentialIds: ["3".repeat(64)],
         recoveryConflicts: [],

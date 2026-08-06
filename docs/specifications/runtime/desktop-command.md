@@ -60,7 +60,8 @@ never log passphrases, package bytes, keys, or bearer tokens.
 
 The Wails Vault view exposes these same Commands through its Authority, Complete Export and Import
 panels and its Library list. `GetAuthorityState` is derived from authenticated Authority and
-Lifecycle Events on every request; it is not a second persisted authority source. The panel keeps
+Lifecycle Events on every request, including active Invitation and Invitation conflict state; it
+is not a second persisted authority source. The panel keeps
 the package encrypted, requires an explicit passphrase for each operation, and refreshes the live
 Vault projection after a successful Import. A locally available
 Artifact row offers an explicit confirmation before issuing `StorageRelief`; after the Runtime

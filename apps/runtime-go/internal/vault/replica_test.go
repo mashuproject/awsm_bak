@@ -729,10 +729,21 @@ func TestReplicaAdmitsAuthenticatedInvitationAcceptanceAndActivatesClient(t *tes
 	if err := replica.AdmitEvent(creation, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
 		t.Fatalf("Admit Invitation Creation: %v", err)
 	}
+	state, err := replica.AuthorityState()
+	if err != nil {
+		t.Fatalf("AuthorityState after Invitation Creation: %v", err)
+	}
+	invitationID, err := parseInvitationCreationID(creation)
+	if err != nil {
+		t.Fatalf("parse Invitation ID: %v", err)
+	}
+	if len(state.ActiveInvitationIDs) != 1 || state.ActiveInvitationIDs[0] != invitationID {
+		t.Fatalf("AuthorityState active Invitations = %#v, want the created Invitation", state.ActiveInvitationIDs)
+	}
 	if err := replica.AdmitEvent(acceptance, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
 		t.Fatalf("Admit Invitation Acceptance: %v", err)
 	}
-	state, err := replica.AuthorityState()
+	state, err = replica.AuthorityState()
 	if err != nil {
 		t.Fatalf("AuthorityState: %v", err)
 	}

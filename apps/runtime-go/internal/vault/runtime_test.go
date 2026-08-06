@@ -194,6 +194,8 @@ func TestRuntimeGetAuthorityStateCommandReturnsPortableProjection(t *testing.T) 
 	var projection struct {
 		ActiveMemberIDs                []string `json:"activeMemberIds"`
 		AdministratorIDs               []string `json:"administratorIds"`
+		ActiveInvitationIDs            []string `json:"activeInvitationIds"`
+		InvitationConflictIDs          []string `json:"invitationConflictIds"`
 		ActiveClientCredentialIDs      []string `json:"activeClientCredentialIds"`
 		EffectiveRecoveryCredentialIDs []string `json:"effectiveRecoveryCredentialIds"`
 		CurrentKeyEpochIDs             []string `json:"currentKeyEpochIds"`
@@ -203,6 +205,7 @@ func TestRuntimeGetAuthorityStateCommandReturnsPortableProjection(t *testing.T) 
 		t.Fatalf("decode GetAuthorityState result: %v", err)
 	}
 	if len(projection.ActiveMemberIDs) != 1 || len(projection.AdministratorIDs) != 1 ||
+		len(projection.ActiveInvitationIDs) != 0 || len(projection.InvitationConflictIDs) != 0 ||
 		len(projection.ActiveClientCredentialIDs) != 1 || len(projection.EffectiveRecoveryCredentialIDs) != 1 ||
 		len(projection.CurrentKeyEpochIDs) != 1 || projection.Lifecycle != "Open" {
 		t.Fatalf("GetAuthorityState projection = %#v", projection)

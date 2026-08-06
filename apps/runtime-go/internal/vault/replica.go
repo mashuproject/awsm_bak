@@ -55,6 +55,8 @@ type AuthorityState struct {
 	ActiveMemberIDs                []canonical.Identifier
 	AdministratorIDs               []canonical.Identifier
 	AdministratorConflicts         []AuthorityAdministratorConflict
+	ActiveInvitationIDs            []canonical.Identifier
+	InvitationConflictIDs          []canonical.Identifier
 	ActiveClientCredentialIDs      []canonical.Identifier
 	EffectiveRecoveryCredentialIDs []canonical.Identifier
 	RecoveryConflicts              []AuthorityRecoveryConflict
@@ -523,6 +525,8 @@ func (r *Replica) AuthorityState() (AuthorityState, error) {
 		ActiveMemberIDs:                sortedIdentifierKeys(replayed.activeMembers),
 		AdministratorIDs:               sortedIdentifierKeys(replayed.administrators),
 		EffectiveRecoveryCredentialIDs: sortedIdentifierKeys(replayed.recoveryTargets),
+		ActiveInvitationIDs:            sortedIdentifierKeys(replayed.invitations),
+		InvitationConflictIDs:          sortedIdentifierKeys(replayed.invitationConflicts),
 		CurrentKeyEpochIDs:             sortedIdentifierKeys(replayed.heads),
 		Lifecycle:                      "Open",
 	}

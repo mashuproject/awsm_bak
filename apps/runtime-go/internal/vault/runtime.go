@@ -91,6 +91,8 @@ type AuthorityStateSummary struct {
 	ActiveMemberIDs                []string                                `json:"activeMemberIds"`
 	AdministratorIDs               []string                                `json:"administratorIds"`
 	AdministratorConflicts         []AuthorityAdministratorConflictSummary `json:"administratorConflicts"`
+	ActiveInvitationIDs            []string                                `json:"activeInvitationIds"`
+	InvitationConflictIDs          []string                                `json:"invitationConflictIds"`
 	ActiveClientCredentialIDs      []string                                `json:"activeClientCredentialIds"`
 	EffectiveRecoveryCredentialIDs []string                                `json:"effectiveRecoveryCredentialIds"`
 	RecoveryConflicts              []AuthorityRecoveryConflictSummary      `json:"recoveryConflicts"`
@@ -2674,6 +2676,8 @@ func authorityStateSummary(vaultID string, state AuthorityState) AuthorityStateS
 		ActiveMemberIDs:                identifiersToHex(state.ActiveMemberIDs),
 		AdministratorIDs:               identifiersToHex(state.AdministratorIDs),
 		AdministratorConflicts:         make([]AuthorityAdministratorConflictSummary, 0, len(state.AdministratorConflicts)),
+		ActiveInvitationIDs:            identifiersToHex(state.ActiveInvitationIDs),
+		InvitationConflictIDs:          identifiersToHex(state.InvitationConflictIDs),
 		ActiveClientCredentialIDs:      identifiersToHex(state.ActiveClientCredentialIDs),
 		EffectiveRecoveryCredentialIDs: identifiersToHex(state.EffectiveRecoveryCredentialIDs),
 		RecoveryConflicts:              make([]AuthorityRecoveryConflictSummary, 0, len(state.RecoveryConflicts)),
