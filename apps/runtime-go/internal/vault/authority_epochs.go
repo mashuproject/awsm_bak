@@ -17,11 +17,16 @@ import (
 // are still being ported.
 type keyEpochReplayState struct {
 	firstClientCredential canonical.Identifier
+	activeMembers         map[canonical.Identifier]struct{}
+	administrators        map[canonical.Identifier]struct{}
+	clientMembers         map[canonical.Identifier]canonical.Identifier
 	epochs                map[canonical.Identifier]uint64
 	heads                 map[canonical.Identifier]struct{}
 	headSlots             map[canonical.Identifier][]keyEpochEnvelopeSlot
+	recoveryMembers       map[canonical.Identifier]canonical.Identifier
 	recoveryTargets       map[canonical.Identifier]uint64
 	clientTargets         map[canonical.Identifier]struct{}
+	closed                bool
 }
 
 type keyEpochTransition struct {
@@ -45,15 +50,19 @@ type keyEpochEnvelopeSlot struct {
 // for every authenticated Epoch. A nil map performs only structural replay.
 func replayAuthenticatedKeyEpochs(events []canonical.Event, genesis canonical.Event, epochKeys map[canonical.Identifier][]byte) (keyEpochReplayState, error) {
 	genesisID := genesis.RecordID
-	initialEpoch, firstClient, firstRecovery, err := parseGenesisEpochIdentity(genesis)
+	initialEpoch, firstMember, firstClient, firstRecovery, err := parseGenesisEpochIdentity(genesis)
 	if err != nil {
 		return keyEpochReplayState{}, err
 	}
 	state := keyEpochReplayState{
 		firstClientCredential: firstClient,
+		activeMembers:         map[canonical.Identifier]struct{}{firstMember: {}},
+		administrators:        map[canonical.Identifier]struct{}{firstMember: {}},
+		clientMembers:         map[canonical.Identifier]canonical.Identifier{firstClient: firstMember},
 		epochs:                map[canonical.Identifier]uint64{initialEpoch: 0},
 		heads:                 map[canonical.Identifier]struct{}{initialEpoch: {}},
 		headSlots:             map[canonical.Identifier][]keyEpochEnvelopeSlot{},
+		recoveryMembers:       map[canonical.Identifier]canonical.Identifier{firstRecovery: firstMember},
 		recoveryTargets:       map[canonical.Identifier]uint64{firstRecovery: 0},
 		clientTargets:         map[canonical.Identifier]struct{}{firstClient: {}},
 	}
@@ -103,22 +112,157 @@ func replayAuthenticatedKeyEpochs(events []canonical.Event, genesis canonical.Ev
 			parentStates = append(parentStates, parent)
 		}
 		current := mergeKeyEpochReplayStates(parentStates)
+		if current.closed {
+			delete(visiting, recordID)
+			return keyEpochReplayState{}, errors.New("Event descends from Closed Authority State")
+		}
+		if event.Family == canonical.AuthorityFamily && event.Type != canonical.GenesisEvent {
+			if event.Type != 9 || enrollmentAuthorizationKind(event) != 2 {
+				if _, ok := current.activeClientMember(event.SignerCredentialID); !ok {
+					delete(visiting, recordID)
+					return keyEpochReplayState{}, errors.New("Authority Event signer is not an active Client Credential")
+				}
+			}
+		}
+		if event.Family == canonical.LifecycleFamily && event.Type != 1 {
+			if _, ok := current.activeClientMember(event.SignerCredentialID); !ok {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, errors.New("Lifecycle Event signer is not an active Client Credential")
+			}
+		}
+		if event.Family == canonical.AuthorityFamily && event.Type == 2 {
+			targetMember, parseErr := parseAuthorityTargetMember(event)
+			if parseErr != nil {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, parseErr
+			}
+			if _, ok := current.activeMembers[targetMember]; !ok {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, errors.New("Membership End target is not an active Member")
+			}
+			signerMember, signerOK := current.activeClientMember(event.SignerCredentialID)
+			if !signerOK {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, errors.New("Membership End signer is not an active Client Credential")
+			}
+			if signerMember != targetMember {
+				if _, admin := current.administrators[signerMember]; !admin {
+					delete(visiting, recordID)
+					return keyEpochReplayState{}, errors.New("Membership End signer is not authorized for the target Member")
+				}
+			}
+			delete(current.activeMembers, targetMember)
+			delete(current.administrators, targetMember)
+			for credentialID, memberID := range current.clientMembers {
+				if memberID == targetMember {
+					delete(current.clientTargets, credentialID)
+				}
+			}
+			for credentialID, memberID := range current.recoveryMembers {
+				if memberID == targetMember {
+					delete(current.recoveryTargets, credentialID)
+				}
+			}
+			if len(current.administrators) == 0 {
+				current.closed = true
+			}
+		}
+		if event.Family == canonical.AuthorityFamily && (event.Type == 3 || event.Type == 4) {
+			targetMember, resolved, parseErr := parseAdministratorRole(event)
+			if parseErr != nil {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, parseErr
+			}
+			signerMember, signerOK := current.activeClientMember(event.SignerCredentialID)
+			if !signerOK {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, errors.New("Administrator role signer is not an active Client Credential")
+			}
+			if _, admin := current.administrators[signerMember]; !admin {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, errors.New("Administrator role signer is not an Administrator")
+			}
+			if len(resolved) != 0 {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, errors.New("Administrator role resolution is not supported before conflict replay")
+			}
+			if _, active := current.activeMembers[targetMember]; !active {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, errors.New("Administrator role target is not an active Member")
+			}
+			_, alreadyAdmin := current.administrators[targetMember]
+			if event.Type == 3 {
+				if alreadyAdmin {
+					delete(visiting, recordID)
+					return keyEpochReplayState{}, errors.New("Administrator Grant target is already an Administrator")
+				}
+				current.administrators[targetMember] = struct{}{}
+			} else {
+				if !alreadyAdmin {
+					delete(visiting, recordID)
+					return keyEpochReplayState{}, errors.New("Administrator End target is not an Administrator")
+				}
+				delete(current.administrators, targetMember)
+				if len(current.administrators) == 0 {
+					current.closed = true
+				}
+			}
+		}
 		if event.Family == canonical.AuthorityFamily && event.Type == 9 {
 			enrollment, enrollmentErr := parseEnrollmentCredential(event)
 			if enrollmentErr != nil {
 				delete(visiting, recordID)
 				return keyEpochReplayState{}, enrollmentErr
 			}
-			if _, exists := current.clientTargets[enrollment.credentialID]; exists {
+			if _, active := current.activeMembers[enrollment.memberID]; !active {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, errors.New("Client Enrollment target is not an active Member")
+			}
+			signerMember, signerOK := current.activeClientMember(event.SignerCredentialID)
+			if enrollment.authorizationKind == 1 && (!signerOK || signerMember != enrollment.memberID) {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, errors.New("Client Enrollment signer does not belong to the target Member")
+			}
+			if _, exists := current.clientMembers[enrollment.credentialID]; exists {
 				delete(visiting, recordID)
 				return keyEpochReplayState{}, errors.New("Client Enrollment reuses a Client Credential identity")
 			}
+			current.clientMembers[enrollment.credentialID] = enrollment.memberID
 			current.clientTargets[enrollment.credentialID] = struct{}{}
 		}
-		if event.Family == canonical.AuthorityFamily && event.Type == 12 {
-			if event.SignerCredentialID != current.firstClientCredential {
+		if event.Family == canonical.AuthorityFamily && event.Type == 10 {
+			targetCredential, parseErr := parseAuthorityTargetCredential(event)
+			if parseErr != nil {
 				delete(visiting, recordID)
-				return keyEpochReplayState{}, errors.New("Key Epoch Transition signer is not the established Administrator Credential")
+				return keyEpochReplayState{}, parseErr
+			}
+			targetMember, targetActive := current.activeClientMember(targetCredential)
+			if !targetActive {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, errors.New("Client Credential End target is not active")
+			}
+			signerMember, signerActive := current.activeClientMember(event.SignerCredentialID)
+			if !signerActive {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, errors.New("Client Credential End signer is not active")
+			}
+			if event.SignerCredentialID != targetCredential && signerMember != targetMember {
+				if _, admin := current.administrators[signerMember]; !admin {
+					delete(visiting, recordID)
+					return keyEpochReplayState{}, errors.New("Client Credential End signer is not authorized for the target")
+				}
+			}
+			delete(current.clientTargets, targetCredential)
+		}
+		if event.Family == canonical.AuthorityFamily && event.Type == 12 {
+			signerMember, signerOK := current.activeClientMember(event.SignerCredentialID)
+			if !signerOK {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, errors.New("Key Epoch Transition signer is not an active Client Credential")
+			}
+			if _, isAdmin := current.administrators[signerMember]; !isAdmin {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, errors.New("Key Epoch Transition signer is not an Administrator")
 			}
 			transition, transitionErr := parseKeyEpochTransition(event)
 			if transitionErr != nil {
@@ -136,12 +280,30 @@ func replayAuthenticatedKeyEpochs(events []canonical.Event, genesis canonical.Ev
 			current.epochs[transition.newEpochID] = transition.displayNumber
 			current.headSlots[transition.newEpochID] = cloneKeyEpochEnvelopeSlots(transition.slots)
 		}
+		if event.Family == canonical.LifecycleFamily && event.Type == 2 {
+			body, ok := replicaMapValue(event.Body)
+			if !ok || lenReplicaMapEntries(body) != 0 {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, errors.New("Closure Event body is not the canonical empty map")
+			}
+			signerMember, signerOK := current.activeClientMember(event.SignerCredentialID)
+			if !signerOK {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, errors.New("Closure signer is not an active Client Credential")
+			}
+			if _, isAdmin := current.administrators[signerMember]; !isAdmin {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, errors.New("Closure signer is not an Administrator")
+			}
+			current.closed = true
+		}
 		delete(visiting, recordID)
 		cache[recordID] = cloneKeyEpochReplayState(current)
 		return current, nil
 	}
 
-	final := cloneKeyEpochReplayState(state)
+	statesByID := make(map[canonical.Identifier]keyEpochReplayState, len(events))
+	frontierIDs := make(map[canonical.Identifier]struct{}, len(events))
 	for _, event := range events {
 		if event.RecordID == genesisID {
 			continue
@@ -150,7 +312,19 @@ func replayAuthenticatedKeyEpochs(events []canonical.Event, genesis canonical.Ev
 		if visitErr != nil {
 			return keyEpochReplayState{}, visitErr
 		}
-		final = mergeKeyEpochReplayStates([]keyEpochReplayState{final, candidate})
+		statesByID[event.RecordID] = candidate
+		frontierIDs[event.RecordID] = struct{}{}
+		for _, parentID := range event.AuthorityParentIDs {
+			delete(frontierIDs, parentID)
+		}
+	}
+	final := cloneKeyEpochReplayState(state)
+	if len(frontierIDs) > 0 {
+		frontierStates := make([]keyEpochReplayState, 0, len(frontierIDs))
+		for recordID := range frontierIDs {
+			frontierStates = append(frontierStates, statesByID[recordID])
+		}
+		final = mergeKeyEpochReplayStates(frontierStates)
 	}
 	if epochKeys != nil {
 		for epochID, key := range epochKeys {
@@ -177,11 +351,25 @@ func replayAuthenticatedKeyEpochs(events []canonical.Event, genesis canonical.Ev
 func cloneKeyEpochReplayState(value keyEpochReplayState) keyEpochReplayState {
 	clone := keyEpochReplayState{
 		firstClientCredential: value.firstClientCredential,
+		activeMembers:         make(map[canonical.Identifier]struct{}, len(value.activeMembers)),
+		administrators:        make(map[canonical.Identifier]struct{}, len(value.administrators)),
+		clientMembers:         make(map[canonical.Identifier]canonical.Identifier, len(value.clientMembers)),
 		epochs:                make(map[canonical.Identifier]uint64, len(value.epochs)),
 		heads:                 make(map[canonical.Identifier]struct{}, len(value.heads)),
 		headSlots:             make(map[canonical.Identifier][]keyEpochEnvelopeSlot, len(value.headSlots)),
+		recoveryMembers:       make(map[canonical.Identifier]canonical.Identifier, len(value.recoveryMembers)),
 		recoveryTargets:       make(map[canonical.Identifier]uint64, len(value.recoveryTargets)),
 		clientTargets:         make(map[canonical.Identifier]struct{}, len(value.clientTargets)),
+		closed:                value.closed,
+	}
+	for id := range value.activeMembers {
+		clone.activeMembers[id] = struct{}{}
+	}
+	for id := range value.administrators {
+		clone.administrators[id] = struct{}{}
+	}
+	for credentialID, memberID := range value.clientMembers {
+		clone.clientMembers[credentialID] = memberID
 	}
 	for id, display := range value.epochs {
 		clone.epochs[id] = display
@@ -195,6 +383,9 @@ func cloneKeyEpochReplayState(value keyEpochReplayState) keyEpochReplayState {
 	for id, revision := range value.recoveryTargets {
 		clone.recoveryTargets[id] = revision
 	}
+	for credentialID, memberID := range value.recoveryMembers {
+		clone.recoveryMembers[credentialID] = memberID
+	}
 	for id := range value.clientTargets {
 		clone.clientTargets[id] = struct{}{}
 	}
@@ -204,15 +395,28 @@ func cloneKeyEpochReplayState(value keyEpochReplayState) keyEpochReplayState {
 func mergeKeyEpochReplayStates(values []keyEpochReplayState) keyEpochReplayState {
 	if len(values) == 0 {
 		return keyEpochReplayState{
+			activeMembers:   make(map[canonical.Identifier]struct{}),
+			administrators:  make(map[canonical.Identifier]struct{}),
+			clientMembers:   make(map[canonical.Identifier]canonical.Identifier),
 			epochs:          make(map[canonical.Identifier]uint64),
 			heads:           make(map[canonical.Identifier]struct{}),
 			headSlots:       make(map[canonical.Identifier][]keyEpochEnvelopeSlot),
+			recoveryMembers: make(map[canonical.Identifier]canonical.Identifier),
 			recoveryTargets: make(map[canonical.Identifier]uint64),
 			clientTargets:   make(map[canonical.Identifier]struct{}),
 		}
 	}
 	merged := cloneKeyEpochReplayState(values[0])
 	for _, value := range values[1:] {
+		for id := range value.activeMembers {
+			merged.activeMembers[id] = struct{}{}
+		}
+		for id := range value.administrators {
+			merged.administrators[id] = struct{}{}
+		}
+		for credentialID, memberID := range value.clientMembers {
+			merged.clientMembers[credentialID] = memberID
+		}
 		for id, display := range value.epochs {
 			if existing, ok := merged.epochs[id]; ok && existing != display {
 				continue
@@ -232,11 +436,29 @@ func mergeKeyEpochReplayStates(values []keyEpochReplayState) keyEpochReplayState
 				merged.recoveryTargets[id] = revision
 			}
 		}
+		for credentialID, memberID := range value.recoveryMembers {
+			merged.recoveryMembers[credentialID] = memberID
+		}
 		for id := range value.clientTargets {
 			merged.clientTargets[id] = struct{}{}
 		}
+		merged.closed = merged.closed || value.closed
 	}
 	return merged
+}
+
+func (value keyEpochReplayState) activeClientMember(credentialID canonical.Identifier) (canonical.Identifier, bool) {
+	memberID, ok := value.clientMembers[credentialID]
+	if !ok {
+		return canonical.Identifier{}, false
+	}
+	if _, active := value.clientTargets[credentialID]; !active {
+		return canonical.Identifier{}, false
+	}
+	if _, active := value.activeMembers[memberID]; !active {
+		return canonical.Identifier{}, false
+	}
+	return memberID, true
 }
 
 func cloneKeyEpochEnvelopeSlots(values []keyEpochEnvelopeSlot) []keyEpochEnvelopeSlot {
@@ -251,31 +473,101 @@ func cloneKeyEpochEnvelopeSlots(values []keyEpochEnvelopeSlot) []keyEpochEnvelop
 	return result
 }
 
-func parseGenesisEpochIdentity(event canonical.Event) (canonical.Identifier, canonical.Identifier, canonical.Identifier, error) {
+func parseGenesisEpochIdentity(event canonical.Event) (canonical.Identifier, canonical.Identifier, canonical.Identifier, canonical.Identifier, error) {
 	body, ok := replicaMapValue(event.Body)
 	if !ok || !replicaMapHasKeys(body, 7) {
-		return canonical.Identifier{}, canonical.Identifier{}, canonical.Identifier{}, errors.New("Genesis authority body is invalid")
+		return canonical.Identifier{}, canonical.Identifier{}, canonical.Identifier{}, canonical.Identifier{}, errors.New("Genesis authority body is invalid")
 	}
 	epochBytes, epochOK := replicaMapBytes(body, 4, 32)
-	_, memberOK := replicaMapBytes(body, 1, 32)
+	memberBytes, memberOK := replicaMapBytes(body, 1, 32)
 	if !epochOK || !memberOK {
-		return canonical.Identifier{}, canonical.Identifier{}, canonical.Identifier{}, errors.New("Genesis Key Epoch or Member identity is invalid")
+		return canonical.Identifier{}, canonical.Identifier{}, canonical.Identifier{}, canonical.Identifier{}, errors.New("Genesis Key Epoch or Member identity is invalid")
 	}
 	clientCredential, ok := replicaMapValue(replicaMapEntryMust(body, 2))
 	if !ok || !replicaMapHasKeys(clientCredential, 4) {
-		return canonical.Identifier{}, canonical.Identifier{}, canonical.Identifier{}, errors.New("Genesis Client Credential certificate is invalid")
+		return canonical.Identifier{}, canonical.Identifier{}, canonical.Identifier{}, canonical.Identifier{}, errors.New("Genesis Client Credential certificate is invalid")
 	}
 	clientBytes, clientOK := replicaMapBytes(clientCredential, 0, 32)
+	clientMemberBytes, clientMemberOK := replicaMapBytes(clientCredential, 1, 32)
 	recoveryCredential, ok := replicaMapValue(replicaMapEntryMust(body, 3))
 	if !ok || !replicaMapHasKeys(recoveryCredential, 5) {
-		return canonical.Identifier{}, canonical.Identifier{}, canonical.Identifier{}, errors.New("Genesis Recovery Credential descriptor is invalid")
+		return canonical.Identifier{}, canonical.Identifier{}, canonical.Identifier{}, canonical.Identifier{}, errors.New("Genesis Recovery Credential descriptor is invalid")
 	}
 	recoveryBytes, recoveryOK := replicaMapBytes(recoveryCredential, 0, 32)
+	recoveryMemberBytes, recoveryMemberOK := replicaMapBytes(recoveryCredential, 1, 32)
 	recoveryRevision, revisionOK := replicaMapNumber(recoveryCredential, 2)
-	if !clientOK || !recoveryOK || !revisionOK || recoveryRevision != 0 {
-		return canonical.Identifier{}, canonical.Identifier{}, canonical.Identifier{}, errors.New("Genesis Credential identities are invalid")
+	if !clientOK || !clientMemberOK || !recoveryOK || !recoveryMemberOK || !revisionOK || recoveryRevision != 0 ||
+		!bytes.Equal(memberBytes, clientMemberBytes) || !bytes.Equal(memberBytes, recoveryMemberBytes) {
+		return canonical.Identifier{}, canonical.Identifier{}, canonical.Identifier{}, canonical.Identifier{}, errors.New("Genesis Credential identities are invalid")
 	}
-	return bytesIdentifier(epochBytes), bytesIdentifier(clientBytes), bytesIdentifier(recoveryBytes), nil
+	return bytesIdentifier(epochBytes), bytesIdentifier(memberBytes), bytesIdentifier(clientBytes), bytesIdentifier(recoveryBytes), nil
+}
+
+func parseAuthorityTargetMember(event canonical.Event) (canonical.Identifier, error) {
+	body, ok := replicaMapValue(event.Body)
+	if !ok || !replicaMapHasKeys(body, 1) {
+		return canonical.Identifier{}, errors.New("Membership End body is invalid")
+	}
+	memberBytes, ok := replicaMapBytes(body, 0, 32)
+	if !ok || bytes.Equal(memberBytes, make([]byte, 32)) {
+		return canonical.Identifier{}, errors.New("Membership End target Member ID is invalid")
+	}
+	return bytesIdentifier(memberBytes), nil
+}
+
+func parseAuthorityTargetCredential(event canonical.Event) (canonical.Identifier, error) {
+	body, ok := replicaMapValue(event.Body)
+	if !ok || !replicaMapHasKeys(body, 1) {
+		return canonical.Identifier{}, errors.New("Client Credential End body is invalid")
+	}
+	credentialBytes, ok := replicaMapBytes(body, 0, 32)
+	if !ok || bytes.Equal(credentialBytes, make([]byte, 32)) {
+		return canonical.Identifier{}, errors.New("Client Credential End target identity is invalid")
+	}
+	return bytesIdentifier(credentialBytes), nil
+}
+
+func parseAdministratorRole(event canonical.Event) (canonical.Identifier, []canonical.Identifier, error) {
+	body, ok := replicaMapValue(event.Body)
+	if !ok || !replicaMapHasKeys(body, 2) {
+		return canonical.Identifier{}, nil, errors.New("Administrator role Event body is invalid")
+	}
+	memberBytes, ok := replicaMapBytes(body, 0, 32)
+	if !ok || bytes.Equal(memberBytes, make([]byte, 32)) {
+		return canonical.Identifier{}, nil, errors.New("Administrator role target Member ID is invalid")
+	}
+	resolved, err := parseCanonicalIdentifierSet(replicaMapEntryMust(body, 1), "resolved Administrator Record IDs", false)
+	if err != nil {
+		return canonical.Identifier{}, nil, err
+	}
+	return bytesIdentifier(memberBytes), resolved, nil
+}
+
+func enrollmentAuthorizationKind(event canonical.Event) uint64 {
+	body, ok := replicaMapValue(event.Body)
+	if !ok {
+		return 0
+	}
+	value, ok := replicaMapEntry(body, 1)
+	if !ok {
+		return 0
+	}
+	kind, ok := value.(uint64)
+	if !ok {
+		return 0
+	}
+	return kind
+}
+
+func lenReplicaMapEntries(value canonical.Value) int {
+	switch typed := value.(type) {
+	case canonical.Map:
+		return len(typed)
+	case map[any]any:
+		return len(typed)
+	default:
+		return -1
+	}
 }
 
 func parseKeyEpochTransition(event canonical.Event) (keyEpochTransition, error) {

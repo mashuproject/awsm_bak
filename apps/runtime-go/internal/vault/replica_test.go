@@ -75,6 +75,64 @@ func TestReplicaRejectsEventWithUnknownSignerCredential(t *testing.T) {
 	}
 }
 
+func TestReplicaRejectsEventsDescendedFromExplicitClosure(t *testing.T) {
+	prepared := deterministicCreation(t)
+	replica, err := NewReplica(prepared.Baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := replica.AdmitEvent(prepared.Genesis, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit Genesis: %v", err)
+	}
+	closure, err := canonical.SignEvent(canonical.EventInput{
+		VaultID: prepared.IDs.VaultID, GenerationID: prepared.IDs.GenerationID,
+		ParentRecordIDs: []canonical.Identifier{prepared.Genesis.RecordID}, AuthorityParentIDs: []canonical.Identifier{prepared.Genesis.RecordID},
+		RequiredFeatureSetID: prepared.RequiredFeatureSetID, Extensions: map[string][]byte{}, Family: canonical.LifecycleFamily, Type: 2,
+		SignerCredentialID: prepared.IDs.ClientCredentialID, AssertedAt: 200, Body: canonical.Map{},
+	}, ed25519.PrivateKey(prepared.ClientKeys.SigningSecretKey))
+	if err != nil {
+		t.Fatalf("sign Closure: %v", err)
+	}
+	if err := replica.AdmitEvent(closure, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit Closure: %v", err)
+	}
+	descendant := signReplicaChild(t, prepared, closure.RecordID, 7)
+	if err := replica.AdmitEvent(descendant, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err == nil {
+		t.Fatal("Replica accepted an Event descended from explicit Closure")
+	}
+}
+
+func TestReplicaAdministratorEndDerivesClosure(t *testing.T) {
+	prepared := deterministicCreation(t)
+	replica, err := NewReplica(prepared.Baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := replica.AdmitEvent(prepared.Genesis, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit Genesis: %v", err)
+	}
+	adminEnd, err := canonical.SignEvent(canonical.EventInput{
+		VaultID: prepared.IDs.VaultID, GenerationID: prepared.IDs.GenerationID,
+		ParentRecordIDs: []canonical.Identifier{prepared.Genesis.RecordID}, AuthorityParentIDs: []canonical.Identifier{prepared.Genesis.RecordID},
+		RequiredFeatureSetID: prepared.RequiredFeatureSetID, Extensions: map[string][]byte{}, Family: canonical.AuthorityFamily, Type: 4,
+		SignerCredentialID: prepared.IDs.ClientCredentialID, AssertedAt: 201,
+		Body: canonical.Map{0: prepared.IDs.FirstMemberID[:], 1: []canonical.Value{}},
+	}, ed25519.PrivateKey(prepared.ClientKeys.SigningSecretKey))
+	if err != nil {
+		t.Fatalf("sign Administrator End: %v", err)
+	}
+	if err := replica.AdmitEvent(adminEnd, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit Administrator End: %v", err)
+	}
+	state, err := replayAuthenticatedKeyEpochs(replica.Events(), prepared.Genesis, nil)
+	if err != nil {
+		t.Fatalf("replay Administrator End: %v", err)
+	}
+	if !state.closed || len(state.administrators) != 0 {
+		t.Fatalf("Authority state after final Administrator End = closed %t, administrators %#v", state.closed, state.administrators)
+	}
+}
+
 func TestReplicaAdmitsContentAddressedObject(t *testing.T) {
 	prepared := deterministicCreation(t)
 	replica, err := NewReplica(prepared.Baseline)
