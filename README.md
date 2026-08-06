@@ -91,7 +91,7 @@ Current limits are intentional: direct peer transports, complete Authority-branc
 global freshness claims, automatic redundancy tracking, and user-facing AI features are not shipped
 in this release. Desktop page capture and the extension-to-desktop Capture Bundle bridge are not
 available. Multi-Key-Epoch, Feature Manifest, and adopted-Vacuum Complete Export semantics,
-object/dependency-bearing Content Fork re-authoring, broader Authority/Key-Epoch event families,
+Bundle Descriptor, Note, and other dependency-bearing Content Fork re-authoring, broader Authority/Key-Epoch event families,
 conflict/rebase projections, and complete Wails workflow coverage remain explicit parity work; see
 the living specifications and roadmap. The supported single-Key-Epoch Complete Export now
 authenticates and carries Streamable Artifact wrappers.

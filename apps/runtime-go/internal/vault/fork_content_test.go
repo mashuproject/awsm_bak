@@ -64,6 +64,55 @@ func TestForkReauthorsContentLabelEventOnFreshGenesis(t *testing.T) {
 	}
 }
 
+func TestForkReauthorsArtifactObjectAndWrapper(t *testing.T) {
+	ctx := context.Background()
+	state := store.NewMemoryState()
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatalf("create Runtime: %v", err)
+	}
+	sourceID, _ := createVaultWithPhraseForTest(t, runtime, "Artifact Fork source")
+	sourceArtifactID := admitCompleteExportArtifact(t, runtime, dependencies, sourceID)
+	sourceStorageID := runtime.vaults[sourceID].Canonical.ArtifactStorageItemIDs[hexIdentifier(sourceArtifactID)]
+	started, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "BeginVaultFork", "expectedVaultId": sourceID,
+	}))
+	if err != nil {
+		t.Fatalf("begin Fork: %v", err)
+	}
+	setup := started.(map[string]string)
+	confirmed, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "ConfirmVaultFork", "setupId": setup["setupId"], "recoveryPhrase": setup["recoveryPhrase"],
+	}))
+	if err != nil {
+		t.Fatalf("confirm Artifact Fork: %v", err)
+	}
+	forkID := confirmed.(map[string]string)["vaultId"]
+	forkValue := runtime.vaults[forkID]
+	if len(forkValue.Canonical.ObjectStorageItemIDs) != 1 || len(forkValue.Canonical.ArtifactStorageItemIDs) != 1 {
+		t.Fatalf("Fork Object/Artifact mappings = %#v/%#v", forkValue.Canonical.ObjectStorageItemIDs, forkValue.Canonical.ArtifactStorageItemIDs)
+	}
+	forkObjectIDText := ""
+	for objectID := range forkValue.Canonical.ObjectStorageItemIDs {
+		forkObjectIDText = objectID
+	}
+	if forkObjectIDText == hexIdentifier(sourceArtifactID) {
+		t.Fatal("Fork reused the source Artifact Object identity")
+	}
+	forkObjectID := mustIdentifier(t, forkObjectIDText)
+	if _, ok := runtime.replicas[forkID].Object(forkObjectID); !ok {
+		t.Fatalf("Fork Replica omitted Artifact Object %s", forkObjectIDText)
+	}
+	forkStorageID := forkValue.Canonical.ArtifactStorageItemIDs[forkObjectIDText]
+	if forkStorageID == "" || forkStorageID == sourceStorageID {
+		t.Fatalf("Fork Artifact Storage mapping = %q, source = %q", forkStorageID, sourceStorageID)
+	}
+	if _, err := dependencies.Artifacts.Open(forkStorageID); err != nil {
+		t.Fatalf("Fork Artifact wrapper unavailable: %v", err)
+	}
+}
+
 func admitForkLabelEvent(t *testing.T, runtime *Runtime, dependencies Dependencies, vaultID, label string) {
 	t.Helper()
 	value := runtime.vaults[vaultID]

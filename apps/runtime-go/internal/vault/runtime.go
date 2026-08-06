@@ -1322,6 +1322,28 @@ func (r *Runtime) confirmFork(ctx context.Context, setupID, phrase string) (any,
 	if r.deps.Artifacts == nil || r.deps.Secrets == nil {
 		return nil, commandError("TRUSTED_SECRET_UNAVAILABLE", "This Client cannot Fork a Vault without its secure storage facility.")
 	}
+	sourceVaultIdentifier, err := decodeHexIdentifier(source.VaultID)
+	if err != nil {
+		return nil, commandError("VAULT_FORK_INVALID", "The source Vault identity is invalid.")
+	}
+	sourceEpochIdentifier, err := decodeHexIdentifier(source.Canonical.KeyEpochID)
+	if err != nil {
+		return nil, commandError("VAULT_FORK_INVALID", "The source Key Epoch identity is invalid.")
+	}
+	var sourceEpochKey []byte
+	if len(source.Canonical.ObjectStorageItemIDs) > 0 || len(source.Canonical.ArtifactStorageItemIDs) > 0 {
+		encodedEpoch, secretErr := r.deps.Secrets.Get(trustedSecretService, epochSecretAccount(source.VaultID, source.Canonical.KeyEpochID))
+		if secretErr != nil {
+			return nil, commandError("TRUSTED_SECRET_UNAVAILABLE", "The source Key Epoch could not be opened.")
+		}
+		epochSecret, decodeErr := decodeEpochSecret(encodedEpoch, sourceVaultIdentifier, sourceEpochIdentifier)
+		if decodeErr != nil {
+			return nil, commandError("VAULT_FORK_INVALID", "The source Key Epoch is invalid.")
+		}
+		sourceEpochKey = append([]byte(nil), epochSecret.key...)
+		zeroBytes(epochSecret.key)
+		defer zeroBytes(sourceEpochKey)
+	}
 	label := cloneString(pending.Label)
 	if label != nil {
 		forkLabel := *label + " (Fork)"
@@ -1338,6 +1360,16 @@ func (r *Runtime) confirmFork(ctx context.Context, setupID, phrase string) (any,
 			deleteOpaqueCreationItem(r.deps.Artifacts, itemID)
 		}
 		for _, itemID := range canonicalState.RecordStorageItemIDs {
+			if decoded, decodeErr := decodeHexIdentifier(itemID); decodeErr == nil {
+				deleteOpaqueCreationItem(r.deps.Artifacts, decoded)
+			}
+		}
+		for _, itemID := range canonicalState.ObjectStorageItemIDs {
+			if decoded, decodeErr := decodeHexIdentifier(itemID); decodeErr == nil {
+				deleteOpaqueCreationItem(r.deps.Artifacts, decoded)
+			}
+		}
+		for _, itemID := range canonicalState.ArtifactStorageItemIDs {
 			if decoded, decodeErr := decodeHexIdentifier(itemID); decodeErr == nil {
 				deleteOpaqueCreationItem(r.deps.Artifacts, decoded)
 			}
@@ -1385,7 +1417,7 @@ func (r *Runtime) confirmFork(ctx context.Context, setupID, phrase string) (any,
 		cleanup()
 		return nil, commandError("VAULT_FORK_INVALID", "The authenticated Fork Replica could not be opened.")
 	}
-	if err := reauthorForkContentEvents(r.replicas[pending.SourceVaultID], replica, prepared, canonicalState, r.deps); err != nil {
+	if err := reauthorForkContentEvents(r.replicas[pending.SourceVaultID], replica, prepared, canonicalState, source.Canonical, sourceVaultIdentifier, sourceEpochIdentifier, sourceEpochKey, r.deps); err != nil {
 		cleanup()
 		return nil, commandError("VAULT_FORK_INVALID", err.Error())
 	}

@@ -80,8 +80,8 @@ its encrypted transfer envelope, so an accepted package reopens the Replica on t
 The Runtime command boundary also produces and accepts the browser-compatible Complete Export
 container for the supported single-Key-Epoch closure, including authenticated Streamable Artifact
 wrappers. Imported Replicas are readable but have no selected authoring Credential or private key.
-Multi-Key-Epoch, Feature Manifest, and adopted-Vacuum Complete Export semantics remain explicit limits, along with object/dependency-bearing
-Content Fork re-authoring, broader Authority/Key-Epoch event families, conflict/rebase projections, and
+Multi-Key-Epoch, Feature Manifest, and adopted-Vacuum Complete Export semantics remain explicit limits, along with
+Bundle Descriptor, Note, and other dependency-bearing Content Fork re-authoring, broader Authority/Key-Epoch event families, conflict/rebase projections, and
 full Wails workflow coverage.
 
 The move boundary is deliberately separate from Vault synchronization. A source Client seals the
@@ -130,5 +130,5 @@ These proofs cover the process boundary, Runtime API grant lifecycle, canonical 
 envelope, authenticated replay, Hosted Replica sync boundaries, Artifact hydration, and encrypted
 transfer staging. They do not claim desktop page Capture, the extension-to-desktop Capture Bundle
 bridge, advanced Complete Export closures beyond the supported single-Key-Epoch vectors,
-object/dependency-bearing Content Fork re-authoring,
+Bundle Descriptor, Note, and other dependency-bearing Content Fork re-authoring,
 or user-facing search/AI semantics.

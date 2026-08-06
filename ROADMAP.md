@@ -114,8 +114,8 @@ container for the supported single-Key-Epoch closure and installs it as an autho
 Replica.
 
 Remaining work is deliberately narrower: complete multi-Key-Epoch, Feature Manifest, and adopted-Vacuum
-Complete Export reachability/import; re-author object/dependency-bearing
-Content Forks with correct object and event dependencies; implement the broader Authority and Key-Epoch event
+Complete Export reachability/import; complete Bundle Descriptor, Note, and other dependency-bearing
+Content Fork re-authoring with correct object and event dependencies; implement the broader Authority and Key-Epoch event
 families; expose conflict/rebase and sparse-Replica state; and finish Wails workflow controls and
 cross-surface journeys. Capture remains extension-only and the extension-to-desktop Capture Bundle
 bridge is out of scope for this release.
