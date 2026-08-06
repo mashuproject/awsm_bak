@@ -174,6 +174,52 @@ func TestRuntimeListLibraryProjectionCommandReturnsSemanticProjection(t *testing
 	}
 }
 
+func TestRuntimeGetAuthorityStateCommandReturnsPortableProjection(t *testing.T) {
+	ctx := context.Background()
+	runtime, err := New(ctx, store.NewMemoryState(), memoryDependencies(t))
+	if err != nil {
+		t.Fatalf("create Runtime: %v", err)
+	}
+	vaultID, _ := createVaultWithPhraseForTest(t, runtime, "Authority projection command")
+	result, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "GetAuthorityState", "expectedVaultId": vaultID,
+	}))
+	if err != nil {
+		t.Fatalf("GetAuthorityState: %v", err)
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("encode GetAuthorityState result: %v", err)
+	}
+	var projection struct {
+		ActiveMemberIDs                []string `json:"activeMemberIds"`
+		AdministratorIDs               []string `json:"administratorIds"`
+		ActiveClientCredentialIDs      []string `json:"activeClientCredentialIds"`
+		EffectiveRecoveryCredentialIDs []string `json:"effectiveRecoveryCredentialIds"`
+		CurrentKeyEpochIDs             []string `json:"currentKeyEpochIds"`
+		Lifecycle                      string   `json:"lifecycle"`
+	}
+	if err := json.Unmarshal(encoded, &projection); err != nil {
+		t.Fatalf("decode GetAuthorityState result: %v", err)
+	}
+	if len(projection.ActiveMemberIDs) != 1 || len(projection.AdministratorIDs) != 1 ||
+		len(projection.ActiveClientCredentialIDs) != 1 || len(projection.EffectiveRecoveryCredentialIDs) != 1 ||
+		len(projection.CurrentKeyEpochIDs) != 1 || projection.Lifecycle != "Open" {
+		t.Fatalf("GetAuthorityState projection = %#v", projection)
+	}
+	for field, value := range map[string]string{
+		"member":        projection.ActiveMemberIDs[0],
+		"administrator": projection.AdministratorIDs[0],
+		"credential":    projection.ActiveClientCredentialIDs[0],
+		"recovery":      projection.EffectiveRecoveryCredentialIDs[0],
+		"epoch":         projection.CurrentKeyEpochIDs[0],
+	} {
+		if len(value) != 64 {
+			t.Fatalf("GetAuthorityState %s id length = %d, want 64", field, len(value))
+		}
+	}
+}
+
 func TestConfirmVaultCreationCommitsCanonicalReplicaAndTrustedSecrets(t *testing.T) {
 	ctx := context.Background()
 	state := store.NewMemoryState()

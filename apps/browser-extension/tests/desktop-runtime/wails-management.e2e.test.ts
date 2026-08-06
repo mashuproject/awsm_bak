@@ -65,6 +65,18 @@ test("Wails Vault surface renders the selected Vault management slice", async ({
         },
       ],
     };
+    const authority = {
+      vaultId: selectedVaultId,
+      activeMemberIds: ["1".repeat(64)],
+      administratorIds: ["1".repeat(64)],
+      administratorConflicts: [],
+      activeClientCredentialIds: ["2".repeat(64)],
+      effectiveRecoveryCredentialIds: ["3".repeat(64)],
+      recoveryConflicts: [],
+      keyEpochConflicts: [],
+      currentKeyEpochIds: ["4".repeat(64)],
+      lifecycle: "Open",
+    };
     (globalThis as unknown as { go: unknown }).go = {
       main: {
         desktopBinding: {
@@ -84,6 +96,7 @@ test("Wails Vault surface renders the selected Vault management slice", async ({
                 conflicts: [],
               };
             if (request.type === "ListRemotes") return [];
+            if (request.type === "GetAuthorityState") return authority;
             if (request.type === "GarbageCollect") return { deletedStorageItemIds: [] };
             throw new Error(`unexpected command: ${request.type}`);
           },
@@ -96,8 +109,14 @@ test("Wails Vault surface renders the selected Vault management slice", async ({
   await page.setViewportSize({ width: 1200, height: 800 });
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Vaults", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("navigation", { name: "Primary" }).getByRole("button", { name: "Vaults" }),
+  ).toHaveCount(1);
   await expect(page.getByText("Personal archive · Open · Authoring")).toBeVisible();
   await expect(page.getByRole("button", { name: "Fork this Vault" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Vault authority" })).toBeVisible();
+  await expect(page.getByText("Active members", { exact: true })).toBeVisible();
+  await expect(page.getByText("Current Key Epochs", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Vacuum this Vault" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Run Garbage Collection" })).toBeVisible();
   page.once("dialog", (dialog) => dialog.accept());
@@ -159,6 +178,18 @@ test("Wails Library surface releases local Artifact bytes and refreshes its proj
           lifecycle: "Active",
         },
       ];
+      const authority = {
+        vaultId: selectedVaultId,
+        activeMemberIds: ["1".repeat(64)],
+        administratorIds: ["1".repeat(64)],
+        administratorConflicts: [],
+        activeClientCredentialIds: ["2".repeat(64)],
+        effectiveRecoveryCredentialIds: ["3".repeat(64)],
+        recoveryConflicts: [],
+        keyEpochConflicts: [],
+        currentKeyEpochIds: ["4".repeat(64)],
+        lifecycle: "Open",
+      };
       (globalThis as unknown as { go: unknown }).go = {
         main: {
           desktopBinding: {
@@ -183,6 +214,7 @@ test("Wails Library surface releases local Artifact bytes and refreshes its proj
                   conflicts: [],
                 };
               if (request.type === "ListRemotes") return [];
+              if (request.type === "GetAuthorityState") return authority;
               if (request.type === "StorageRelief") {
                 if (
                   request.objectIds?.length !== 1 ||
@@ -274,6 +306,20 @@ test("Wails Vault creation can recover a pending setup without exposing its phra
               state.pendingVaultCreation = undefined;
               return null;
             }
+            if (request.type === "GetAuthorityState") {
+              return {
+                vaultId: selectedVaultId,
+                activeMemberIds: [],
+                administratorIds: [],
+                administratorConflicts: [],
+                activeClientCredentialIds: [],
+                effectiveRecoveryCredentialIds: [],
+                recoveryConflicts: [],
+                keyEpochConflicts: [],
+                currentKeyEpochIds: [],
+                lifecycle: "Open",
+              };
+            }
             if (request.type === "ListLibraryProjection" || request.type === "ListRemotes")
               return request.type === "ListRemotes"
                 ? []
@@ -319,6 +365,18 @@ test("Wails Vault surface exports and imports a Complete Export package", async 
       ],
     };
     const calls: string[] = [];
+    const authority = {
+      vaultId: selectedVaultId,
+      activeMemberIds: ["1".repeat(64)],
+      administratorIds: ["1".repeat(64)],
+      administratorConflicts: [],
+      activeClientCredentialIds: ["2".repeat(64)],
+      effectiveRecoveryCredentialIds: ["3".repeat(64)],
+      recoveryConflicts: [],
+      keyEpochConflicts: [],
+      currentKeyEpochIds: ["4".repeat(64)],
+      lifecycle: "Open",
+    };
     (globalThis as unknown as { go: unknown }).go = {
       main: {
         desktopBinding: {
@@ -340,6 +398,7 @@ test("Wails Vault surface exports and imports a Complete Export package", async 
                     notes: [],
                     conflicts: [],
                   };
+            if (request.type === "GetAuthorityState") return authority;
             if (request.type === "ExportComplete") return { package: "encrypted-complete-export" };
             if (request.type === "ImportComplete") return state;
             throw new Error(`unexpected command: ${request.type}`);
@@ -383,11 +442,13 @@ test("Wails Vault surface exports and imports a Complete Export package", async 
     "GetState",
     "ListLibraryProjection",
     "ListRemotes",
+    "GetAuthorityState",
     "ExportComplete",
     "ImportComplete",
     "GetState",
     "ListLibraryProjection",
     "ListRemotes",
+    "GetAuthorityState",
   ]);
 });
 
@@ -429,6 +490,18 @@ test("Wails Vault surface runs hosted pull, materialization, and Artifact hydrat
           replicaHandle: "11111111-1111-4111-8111-111111111111",
         },
       ];
+      const authority = {
+        vaultId: selectedVaultId,
+        activeMemberIds: ["1".repeat(64)],
+        administratorIds: ["1".repeat(64)],
+        administratorConflicts: [],
+        activeClientCredentialIds: ["2".repeat(64)],
+        effectiveRecoveryCredentialIds: ["3".repeat(64)],
+        recoveryConflicts: [],
+        keyEpochConflicts: [],
+        currentKeyEpochIds: ["4".repeat(64)],
+        lifecycle: "Open",
+      };
       const target = globalThis as unknown as { go: unknown };
       target.go = {
         main: {
@@ -449,6 +522,7 @@ test("Wails Vault surface runs hosted pull, materialization, and Artifact hydrat
                   conflicts: [],
                 };
               if (request.type === "ListRemotes") return remotes;
+              if (request.type === "GetAuthorityState") return authority;
               if (request.type === "MaterializeHostedReplica") {
                 (globalThis as unknown as { __awsmCalls?: string[] }).__awsmCalls?.push(
                   request.type,

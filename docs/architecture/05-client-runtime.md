@@ -64,7 +64,8 @@ until explicit revocation.
 The current process implements the canonical tagged Command contract for persistent Vault management,
 authenticated Event/Object replay, Library projection, Storage Relief, Garbage Collection, Hosted
 Replica creation/attachment/materialization, receiver pull, Artifact hydration, and encrypted
-Go-to-Go transfer import/export. It also exposes browser-compatible Complete Export/Import for the
+Go-to-Go transfer import/export. It also exposes the read-only `GetAuthorityState` projection from
+the authenticated Authority/Lifecycle subgraph and browser-compatible Complete Export/Import for the
 authenticated multi-Key-Epoch and adopted-Vacuum closures, including authenticated Feature Manifest
 and Streamable Artifact wrappers; Complete Import creates a readable Replica without a local
 authoring Credential. The

@@ -83,6 +83,57 @@ type ClientState struct {
 	Vaults               []VaultSummary        `json:"vaults"`
 }
 
+// AuthorityStateSummary is the client-facing, hexadecimal projection of the
+// authenticated portable Authority State. It is derived on every request and
+// is never a second persisted authority source.
+type AuthorityStateSummary struct {
+	VaultID                        string                                  `json:"vaultId"`
+	ActiveMemberIDs                []string                                `json:"activeMemberIds"`
+	AdministratorIDs               []string                                `json:"administratorIds"`
+	AdministratorConflicts         []AuthorityAdministratorConflictSummary `json:"administratorConflicts"`
+	ActiveClientCredentialIDs      []string                                `json:"activeClientCredentialIds"`
+	EffectiveRecoveryCredentialIDs []string                                `json:"effectiveRecoveryCredentialIds"`
+	RecoveryConflicts              []AuthorityRecoveryConflictSummary      `json:"recoveryConflicts"`
+	KeyEpochConflicts              []AuthorityKeyEpochConflictSummary      `json:"keyEpochConflicts"`
+	FeatureSetConflict             *AuthorityFeatureSetConflictSummary     `json:"featureSetConflict,omitempty"`
+	CurrentKeyEpochIDs             []string                                `json:"currentKeyEpochIds"`
+	Lifecycle                      string                                  `json:"lifecycle"`
+}
+
+type AuthorityAdministratorConflictSummary struct {
+	MemberID   string                                           `json:"memberId"`
+	Candidates []AuthorityAdministratorConflictCandidateSummary `json:"candidates"`
+}
+
+type AuthorityAdministratorConflictCandidateSummary struct {
+	HeadRecordID  string `json:"headRecordId"`
+	Administrator bool   `json:"administrator"`
+}
+
+type AuthorityRecoveryConflictSummary struct {
+	MemberID   string                                      `json:"memberId"`
+	Candidates []AuthorityRecoveryConflictCandidateSummary `json:"candidates"`
+}
+
+type AuthorityRecoveryConflictCandidateSummary struct {
+	HeadRecordID         string `json:"headRecordId"`
+	RecoveryCredentialID string `json:"recoveryCredentialId"`
+}
+
+type AuthorityKeyEpochConflictSummary struct {
+	Candidates []AuthorityKeyEpochConflictCandidateSummary `json:"candidates"`
+}
+
+type AuthorityKeyEpochConflictCandidateSummary struct {
+	HeadRecordID string `json:"headRecordId"`
+	KeyEpochID   string `json:"keyEpochId"`
+}
+
+type AuthorityFeatureSetConflictSummary struct {
+	CandidateRecordIDs []string `json:"candidateRecordIds"`
+	ManifestIDs        []string `json:"manifestIds"`
+}
+
 type RemoteSummary struct {
 	RemoteID      string `json:"remoteId"`
 	Name          string `json:"name"`
@@ -1169,6 +1220,15 @@ func (r *Runtime) Handle(ctx context.Context, raw json.RawMessage) (any, error) 
 			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "ListLibraryProjection contains invalid fields")
 		}
 		return r.listLibraryProjection(input.ExpectedVaultID)
+	case "GetAuthorityState":
+		var input struct {
+			Type            string `json:"type"`
+			ExpectedVaultID string `json:"expectedVaultId"`
+		}
+		if err := decode(raw, &input); err != nil {
+			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "GetAuthorityState contains invalid fields")
+		}
+		return r.listAuthorityState(input.ExpectedVaultID)
 	case "ListRemotes":
 		var input struct {
 			Type            string `json:"type"`
@@ -2606,6 +2666,84 @@ func (r *Runtime) listLibraryProjection(id string) (any, error) {
 		return nil, commandError("LIBRARY_UNAVAILABLE", "The Vault Library could not be rebuilt from authenticated state.")
 	}
 	return projection, nil
+}
+
+func authorityStateSummary(vaultID string, state AuthorityState) AuthorityStateSummary {
+	result := AuthorityStateSummary{
+		VaultID:                        vaultID,
+		ActiveMemberIDs:                identifiersToHex(state.ActiveMemberIDs),
+		AdministratorIDs:               identifiersToHex(state.AdministratorIDs),
+		AdministratorConflicts:         make([]AuthorityAdministratorConflictSummary, 0, len(state.AdministratorConflicts)),
+		ActiveClientCredentialIDs:      identifiersToHex(state.ActiveClientCredentialIDs),
+		EffectiveRecoveryCredentialIDs: identifiersToHex(state.EffectiveRecoveryCredentialIDs),
+		RecoveryConflicts:              make([]AuthorityRecoveryConflictSummary, 0, len(state.RecoveryConflicts)),
+		KeyEpochConflicts:              make([]AuthorityKeyEpochConflictSummary, 0, len(state.KeyEpochConflicts)),
+		CurrentKeyEpochIDs:             identifiersToHex(state.CurrentKeyEpochIDs),
+		Lifecycle:                      state.Lifecycle,
+	}
+	for _, conflict := range state.AdministratorConflicts {
+		candidateSummary := make([]AuthorityAdministratorConflictCandidateSummary, 0, len(conflict.Candidates))
+		for _, candidate := range conflict.Candidates {
+			candidateSummary = append(candidateSummary, AuthorityAdministratorConflictCandidateSummary{
+				HeadRecordID:  hexIdentifier(candidate.HeadRecordID),
+				Administrator: candidate.Administrator,
+			})
+		}
+		result.AdministratorConflicts = append(result.AdministratorConflicts, AuthorityAdministratorConflictSummary{
+			MemberID:   hexIdentifier(conflict.MemberID),
+			Candidates: candidateSummary,
+		})
+	}
+	for _, conflict := range state.RecoveryConflicts {
+		candidateSummary := make([]AuthorityRecoveryConflictCandidateSummary, 0, len(conflict.Candidates))
+		for _, candidate := range conflict.Candidates {
+			candidateSummary = append(candidateSummary, AuthorityRecoveryConflictCandidateSummary{
+				HeadRecordID:         hexIdentifier(candidate.HeadRecordID),
+				RecoveryCredentialID: hexIdentifier(candidate.RecoveryCredentialID),
+			})
+		}
+		result.RecoveryConflicts = append(result.RecoveryConflicts, AuthorityRecoveryConflictSummary{
+			MemberID:   hexIdentifier(conflict.MemberID),
+			Candidates: candidateSummary,
+		})
+	}
+	for _, conflict := range state.KeyEpochConflicts {
+		candidateSummary := make([]AuthorityKeyEpochConflictCandidateSummary, 0, len(conflict.Candidates))
+		for _, candidate := range conflict.Candidates {
+			candidateSummary = append(candidateSummary, AuthorityKeyEpochConflictCandidateSummary{
+				HeadRecordID: hexIdentifier(candidate.HeadRecordID),
+				KeyEpochID:   hexIdentifier(candidate.KeyEpochID),
+			})
+		}
+		result.KeyEpochConflicts = append(result.KeyEpochConflicts, AuthorityKeyEpochConflictSummary{Candidates: candidateSummary})
+	}
+	if state.FeatureSetConflict != nil {
+		result.FeatureSetConflict = &AuthorityFeatureSetConflictSummary{
+			CandidateRecordIDs: identifiersToHex(state.FeatureSetConflict.CandidateRecordIDs),
+			ManifestIDs:        identifiersToHex(state.FeatureSetConflict.ManifestIDs),
+		}
+	}
+	return result
+}
+
+func (r *Runtime) listAuthorityState(id string) (any, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if err := r.requireExpectedLocked(&id); err != nil {
+		return nil, err
+	}
+	if _, err := r.vaultLockedRead(id); err != nil {
+		return nil, err
+	}
+	replica := r.replicas[id]
+	if replica == nil {
+		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The authenticated Vault Replica is unavailable.")
+	}
+	state, err := replica.AuthorityState()
+	if err != nil {
+		return nil, commandError("AUTHORITY_UNAVAILABLE", "The Vault Authority State could not be rebuilt from authenticated state.")
+	}
+	return authorityStateSummary(id, state), nil
 }
 
 func (r *Runtime) renameRemote(ctx context.Context, id, remoteID, name string) (any, error) {

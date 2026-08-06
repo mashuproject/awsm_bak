@@ -128,6 +128,20 @@ type LibraryProjection = {
   readonly conflicts: readonly LibraryConflict[];
 };
 
+type AuthorityState = {
+  readonly vaultId: string;
+  readonly activeMemberIds: readonly string[];
+  readonly administratorIds: readonly string[];
+  readonly administratorConflicts: readonly unknown[];
+  readonly activeClientCredentialIds: readonly string[];
+  readonly effectiveRecoveryCredentialIds: readonly string[];
+  readonly recoveryConflicts: readonly unknown[];
+  readonly keyEpochConflicts: readonly unknown[];
+  readonly featureSetConflict?: unknown;
+  readonly currentKeyEpochIds: readonly string[];
+  readonly lifecycle: string;
+};
+
 type Remote = {
   readonly remoteId: string;
   readonly name: string;
@@ -201,6 +215,10 @@ function displayCaptureTitle(title: string | null, finalUrl: string): string {
   } catch {
     return finalUrl;
   }
+}
+
+function displayIdentifier(identifier: string): string {
+  return identifier.length <= 16 ? identifier : `${identifier.slice(0, 12)}…`;
 }
 
 function errorMessage(error: unknown): string {
@@ -752,6 +770,78 @@ function LibrarySemanticSummary({
   );
 }
 
+function AuthoritySummary({
+  authority,
+}: {
+  readonly authority: AuthorityState;
+}): React.ReactElement {
+  const conflictCount =
+    authority.administratorConflicts.length +
+    authority.recoveryConflicts.length +
+    authority.keyEpochConflicts.length +
+    (authority.featureSetConflict === undefined ? 0 : 1);
+  return (
+    <section className="grid gap-4" aria-labelledby="authority-heading">
+      <div className="grid gap-2">
+        <h3
+          id="authority-heading"
+          className="font-display text-2xl font-bold leading-tight text-awsm-ink"
+        >
+          Vault authority
+        </h3>
+        <p className="max-w-[65ch] text-base leading-relaxed text-awsm-text-muted">
+          Membership, credentials, Administrators, and Key Epochs are derived from authenticated
+          Vault Events. This view is read-only.
+        </p>
+      </div>
+      {conflictCount > 0 ? (
+        <Notice tone="warning" title="Authority conflicts need attention">
+          {conflictCount} authority conflict{conflictCount === 1 ? "" : "s"} remain visible in this
+          Vault.
+        </Notice>
+      ) : null}
+      <Card>
+        <dl className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
+          <div>
+            <dt className="font-semibold text-awsm-ink">Lifecycle</dt>
+            <dd className="text-awsm-text-muted">{authority.lifecycle}</dd>
+          </div>
+          <div>
+            <dt className="font-semibold text-awsm-ink">Active members</dt>
+            <dd className="text-awsm-text-muted">{authority.activeMemberIds.length}</dd>
+          </div>
+          <div>
+            <dt className="font-semibold text-awsm-ink">Administrators</dt>
+            <dd className="text-awsm-text-muted">{authority.administratorIds.length}</dd>
+          </div>
+          <div>
+            <dt className="font-semibold text-awsm-ink">Client credentials</dt>
+            <dd className="text-awsm-text-muted">{authority.activeClientCredentialIds.length}</dd>
+          </div>
+          <div>
+            <dt className="font-semibold text-awsm-ink">Recovery credentials</dt>
+            <dd className="text-awsm-text-muted">
+              {authority.effectiveRecoveryCredentialIds.length}
+            </dd>
+          </div>
+          <div>
+            <dt className="font-semibold text-awsm-ink">Current Key Epochs</dt>
+            <dd className="grid gap-1 font-mono text-xs text-awsm-text-muted">
+              {authority.currentKeyEpochIds.length === 0
+                ? "None"
+                : authority.currentKeyEpochIds.map((id) => (
+                    <span key={id} title={id}>
+                      {displayIdentifier(id)}
+                    </span>
+                  ))}
+            </dd>
+          </div>
+        </dl>
+      </Card>
+    </section>
+  );
+}
+
 function HostedReplicas({
   binding,
   vaultId,
@@ -1082,6 +1172,7 @@ function CompleteExportPanel({
 function VaultsView({
   binding,
   state,
+  authority,
   libraryProjection,
   remotes,
   refresh,
@@ -1090,6 +1181,7 @@ function VaultsView({
 }: {
   readonly binding: DesktopBinding;
   readonly state: RuntimeState | undefined;
+  readonly authority: AuthorityState | undefined;
   readonly libraryProjection: LibraryProjection;
   readonly remotes: readonly Remote[];
   readonly refresh: () => void;
@@ -1287,6 +1379,7 @@ function VaultsView({
               </>
             ) : null}
           </ActionRow>
+          {authority !== undefined ? <AuthoritySummary authority={authority} /> : null}
           <section className="grid gap-4" aria-labelledby="library-heading">
             <h3
               id="library-heading"
@@ -1621,6 +1714,7 @@ function DesktopApp(): React.ReactElement {
   );
   const [libraryProjection, setLibraryProjection] =
     React.useState<LibraryProjection>(emptyLibraryProjection);
+  const [authority, setAuthority] = React.useState<AuthorityState>();
   const [remotes, setRemotes] = React.useState<readonly Remote[]>([]);
   const [pairings, setPairings] = React.useState<readonly Pairing[]>([]);
   const [grants, setGrants] = React.useState<readonly Grant[]>([]);
@@ -1652,7 +1746,7 @@ function DesktopApp(): React.ReactElement {
         const nextState = (await nextBinding.VaultCommand({ type: "GetState" })) as RuntimeState;
         setState(nextState);
         if (nextState.selectedVaultId !== undefined) {
-          const [nextLibraryProjection, nextRemotes] = await Promise.all([
+          const [nextLibraryProjection, nextRemotes, nextAuthority] = await Promise.all([
             nextBinding.VaultCommand({
               type: "ListLibraryProjection",
               expectedVaultId: nextState.selectedVaultId,
@@ -1661,12 +1755,18 @@ function DesktopApp(): React.ReactElement {
               type: "ListRemotes",
               expectedVaultId: nextState.selectedVaultId,
             }) as Promise<readonly Remote[]>,
+            nextBinding.VaultCommand({
+              type: "GetAuthorityState",
+              expectedVaultId: nextState.selectedVaultId,
+            }) as Promise<AuthorityState>,
           ]);
           setLibraryProjection(nextLibraryProjection);
           setRemotes(nextRemotes);
+          setAuthority(nextAuthority);
         } else {
           setLibraryProjection(emptyLibraryProjection);
           setRemotes([]);
+          setAuthority(undefined);
         }
       }
       setError(undefined);
@@ -1764,6 +1864,7 @@ function DesktopApp(): React.ReactElement {
             <VaultsView
               binding={binding}
               state={state}
+              authority={authority}
               libraryProjection={libraryProjection}
               remotes={remotes}
               refresh={() => void refresh()}

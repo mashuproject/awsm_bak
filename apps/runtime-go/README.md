@@ -64,8 +64,10 @@ creation and selection, Recovery Phrase confirmation/replacement and same-member
 Fork for the authenticated Library checkpoint and referenced Artifact/Bundle/Note object closure,
 Closure, Vacuum adoption, Library projection, authenticated Event/Object replay,
 Storage Relief, Garbage Collection, Hosted Replica creation and attachment, Compact materialization,
-receiver-initiated pull, and explicit Artifact hydration. The Wails surface and loopback API use this
-same Runtime; a paired extension reaches it under the single `runtime.vault` grant.
+receiver-initiated pull, and explicit Artifact hydration. The Wails surface and loopback API also
+expose the read-only `GetAuthorityState` projection derived from authenticated Authority and
+Lifecycle Events. They use this same Runtime; a paired extension reaches it under the single
+`runtime.vault` grant.
 
 The `internal/canonical` package provides strict canonical CBOR values, transcript framing,
 authenticated Event and Baseline codecs, Record IDs, Object IDs, and causal DAG validation.
