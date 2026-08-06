@@ -38,7 +38,8 @@ Content-Type: application/json
 
 The body is one tagged `CanonicalApplicationRequest`. The Go Runtime implements `GetState`, Vault
 creation and selection, Recovery Phrase ceremonies, `RecoverMember`, state-only Fork from the
-authenticated Library checkpoint, `CloseVault`, authenticated `EndMembership`, `EndClientCredential`, `DeliverKeyEnvelope`, Administrator `RotateKeyEpoch`, `VacuumVault`, `ListLibrary`, Storage Relief/GC
+authenticated Library checkpoint, `CloseVault`, authenticated `EndMembership`, `GrantAdministrator`,
+`EndAdministrator`, `EndClientCredential`, `DeliverKeyEnvelope`, Administrator `RotateKeyEpoch`, `VacuumVault`, `ListLibrary`, Storage Relief/GC
 through the Runtime API, the read-only `GetAuthorityState` projection, Hosted Replica
 creation/attachment/materialization, receiver pull, and Artifact hydration. Capture remains an
 extension-only surface; the extension-to-desktop Capture Bundle bridge is not implemented.
@@ -67,6 +68,8 @@ stores recipient Key Envelopes, advances the current Key Epoch, and refreshes th
 The Runtime command boundary also supports `EndMembership` for self-resignation or an unambiguous
 Administrator's removal of another Member, deriving closure when no Administrator remains, and
 `DeliverKeyEnvelope` for a missing eligible Client or Recovery slot in an established Key Epoch.
+`GrantAdministrator` and `EndAdministrator` author type-3 and type-4 role Events for an
+unambiguous Administrator; ending the final Administrator derives closure.
 `GetAuthorityState` is derived from authenticated Authority and
 Lifecycle Events on every request, including active Invitation and Invitation conflict state; it
 is not a second persisted authority source. The panel keeps

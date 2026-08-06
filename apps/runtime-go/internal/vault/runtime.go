@@ -545,7 +545,7 @@ func (r *Runtime) AdmitOpaqueEvent(ctx context.Context, vaultID string, encoded 
 			return commandError("VAULT_REPLAY_UNAVAILABLE", "The local Client Credential identity is invalid.")
 		}
 	}
-	if value.Canonical.AuthoringAvailable || (event.Family == canonical.AuthorityFamily && event.Type == 2) {
+	if value.Canonical.AuthoringAvailable || event.Family == canonical.AuthorityFamily {
 		authority, authorityErr := replayReplicaAuthorityState(nextReplica, nil, nil)
 		if authorityErr != nil {
 			return commandError("VAULT_REPLAY_UNAVAILABLE", "The authenticated Authority State could not be replayed.")
@@ -1258,6 +1258,26 @@ func (r *Runtime) Handle(ctx context.Context, raw json.RawMessage) (any, error) 
 			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "DeliverKeyEnvelope contains invalid fields")
 		}
 		return r.deliverKeyEnvelope(ctx, input.ExpectedVaultID, input.KeyEpochID, input.TargetKind, input.TargetCredentialID, input.TargetRevision)
+	case "GrantAdministrator":
+		var input struct {
+			Type            string `json:"type"`
+			ExpectedVaultID string `json:"expectedVaultId"`
+			TargetMemberID  string `json:"targetMemberId"`
+		}
+		if err := decode(raw, &input); err != nil {
+			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "GrantAdministrator contains invalid fields")
+		}
+		return r.changeAdministrator(ctx, input.ExpectedVaultID, input.TargetMemberID, true)
+	case "EndAdministrator":
+		var input struct {
+			Type            string `json:"type"`
+			ExpectedVaultID string `json:"expectedVaultId"`
+			TargetMemberID  string `json:"targetMemberId"`
+		}
+		if err := decode(raw, &input); err != nil {
+			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "EndAdministrator contains invalid fields")
+		}
+		return r.changeAdministrator(ctx, input.ExpectedVaultID, input.TargetMemberID, false)
 	case "ExportComplete":
 		var input struct {
 			Type            string `json:"type"`

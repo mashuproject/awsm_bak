@@ -64,7 +64,7 @@ until explicit revocation.
 The current process implements the canonical tagged Command contract for persistent Vault management,
 authenticated Event/Object replay, Library projection, Storage Relief, Garbage Collection, Hosted
 Replica creation/attachment/materialization, receiver pull, Artifact hydration, authenticated
-Membership and Client Credential ending, Key Envelope delivery, Administrator Key Epoch rotation, and encrypted
+Membership and Administrator role changes, Client Credential ending, Key Envelope delivery, Administrator Key Epoch rotation, and encrypted
 Go-to-Go transfer import/export. It also exposes the read-only `GetAuthorityState` projection from
 the authenticated Authority/Lifecycle subgraph, including Invitation state, and browser-compatible Complete Export/Import for the
 authenticated multi-Key-Epoch and adopted-Vacuum closures, including authenticated Feature Manifest
@@ -77,7 +77,7 @@ local Vaults; the extension-to-desktop Capture Bundle bridge is not implemented.
 copies the authenticated Library checkpoint into a fresh Initial Baseline and rewraps its referenced
 Objects and Feature Manifest closure without source Content Event re-authoring. Event Re-authoring
 for eligible unpublished Capture work,
-remaining Authority and Key-Epoch event families beyond Membership/Client Credential ending, Key Envelope delivery, and authenticated Administrator rotation, conflict/rebase projections, and the remaining Wails
+remaining Authority and Key-Epoch event families beyond Membership/Administrator role changes, Client Credential ending, Key Envelope delivery, and authenticated Administrator rotation, conflict/rebase projections, and the remaining Wails
 workflow coverage beyond the current Vault-management controls and cross-surface journeys remain
 explicit parity boundaries.
 

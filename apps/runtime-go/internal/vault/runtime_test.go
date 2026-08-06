@@ -1075,6 +1075,38 @@ func TestDeliverKeyEnvelopeAuthorsAuthenticatedDeliveryForMissingClientSlot(t *t
 	}
 }
 
+func TestEndAdministratorAuthorsAuthenticatedEventAndClosesLastAdministrator(t *testing.T) {
+	ctx := context.Background()
+	state := store.NewMemoryState()
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vaultID, _ := createVaultWithPhraseForTest(t, runtime, "Administrator end")
+	targetMemberID := runtime.vaults[vaultID].Canonical.MemberID
+	result, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "EndAdministrator", "expectedVaultId": vaultID, "targetMemberId": targetMemberID,
+	}))
+	if err != nil {
+		t.Fatalf("EndAdministrator: %v", err)
+	}
+	ended, ok := result.(map[string]string)
+	if !ok {
+		t.Fatalf("EndAdministrator result = %#v", result)
+	}
+	record, ok := runtime.replicas[vaultID].Record(mustIdentifier(t, ended["eventRecordId"]))
+	if !ok || record.Event == nil || record.Event.Family != canonical.AuthorityFamily || record.Event.Type != 4 {
+		t.Fatalf("EndAdministrator record = %#v", record)
+	}
+	if runtime.vaults[vaultID].Lifecycle != "Closed" || runtime.vaults[vaultID].Canonical.AuthoringAvailable {
+		t.Fatalf("ended last Administrator state = %#v", runtime.vaults[vaultID])
+	}
+	if _, err := New(ctx, state, dependencies); err != nil {
+		t.Fatalf("restart after Administrator End: %v", err)
+	}
+}
+
 func TestEndClientCredentialAuthorsAuthenticatedEventAndReopensReadOnly(t *testing.T) {
 	ctx := context.Background()
 	state := store.NewMemoryState()

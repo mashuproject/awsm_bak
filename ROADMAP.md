@@ -114,8 +114,8 @@ container for the supported single-Key-Epoch closure and installs it as an autho
 Replica.
 
 Remaining work is deliberately narrower: implement Event Re-authoring for eligible unpublished Capture
-work; implement the remaining Authority and Key-Epoch event families beyond Membership/Client Credential
-ending, Key Envelope delivery, and the authenticated Administrator type-12 rotation; expose conflict/rebase and sparse-Replica state; and finish Wails
+work; implement the remaining Authority and Key-Epoch event families beyond Membership/Administrator
+role changes, Client Credential ending, Key Envelope delivery, and the authenticated Administrator type-12 rotation; expose conflict/rebase and sparse-Replica state; and finish Wails
 workflow coverage beyond the current Vault-management controls, plus cross-surface journeys. State-only Fork now copies the authenticated Library checkpoint, remaps content identities,
 and rewraps its object and Feature Manifest closure without source Content Event re-authoring.
 Capture remains extension-only and the extension-to-desktop Capture Bundle bridge is out of scope for
