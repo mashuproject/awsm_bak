@@ -1022,6 +1022,47 @@ func TestVacuumPreservesActiveCaptureInSuccessorCheckpoint(t *testing.T) {
 	}
 }
 
+func TestVacuumPreservesActiveNoteContentInSuccessorCheckpoint(t *testing.T) {
+	ctx := context.Background()
+	state := store.NewMemoryState()
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vaultID := createVaultForTest(t, runtime, "Vacuum note")
+	noteID, contentObjectID, _, _ := admitForkNoteEvents(t, runtime, dependencies, vaultID)
+	resultValue, err := runtime.Handle(ctx, mustJSON(map[string]any{"type": "VacuumVault", "expectedVaultId": vaultID}))
+	if err != nil {
+		t.Fatalf("VacuumVault: %v", err)
+	}
+	result, ok := resultValue.(map[string]string)
+	if !ok || result["successorBaselineId"] == "" {
+		t.Fatalf("Vacuum result = %#v", resultValue)
+	}
+	projection, err := ProjectLibraryProjection(runtime.replicas[vaultID])
+	if err != nil {
+		t.Fatalf("project adopted successor: %v", err)
+	}
+	if len(projection.Notes) != 1 || projection.Notes[0].NoteID != hexIdentifier(noteID) || projection.Notes[0].State != "Active" || projection.Notes[0].Versions[0].ContentObjectID == nil || *projection.Notes[0].Versions[0].ContentObjectID != hexIdentifier(contentObjectID) {
+		t.Fatalf("adopted Note projection = %#v", projection.Notes)
+	}
+	if _, ok := runtime.replicas[vaultID].Object(contentObjectID); !ok {
+		t.Fatalf("adopted successor omitted Note Content Object %s", hexIdentifier(contentObjectID))
+	}
+	restarted, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatalf("restart after Note Vacuum: %v", err)
+	}
+	projection, err = ProjectLibraryProjection(restarted.replicas[vaultID])
+	if err != nil {
+		t.Fatalf("project restarted Note successor: %v", err)
+	}
+	if len(projection.Notes) != 1 || projection.Notes[0].NoteID != hexIdentifier(noteID) || projection.Notes[0].State != "Active" {
+		t.Fatalf("restarted Note projection = %#v", projection.Notes)
+	}
+}
+
 func mustIdentifier(t *testing.T, value string) canonical.Identifier {
 	t.Helper()
 	identifier, err := decodeHexIdentifier(value)

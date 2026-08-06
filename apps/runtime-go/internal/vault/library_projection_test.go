@@ -326,6 +326,67 @@ func TestBuildVacuumContentCheckpointPreservesRedirects(t *testing.T) {
 	}
 }
 
+func TestProjectLibraryProjectionSeedsAndVacuumPreservesCollectionConflict(t *testing.T) {
+	prepared := deterministicCreation(t)
+	sourceID := filledCreationID(140)
+	destinationA := filledCreationID(141)
+	destinationB := filledCreationID(142)
+	causeA := filledCreationID(143)
+	causeB := filledCreationID(144)
+	body, ok := replicaMapValue(prepared.Baseline.Body)
+	if !ok {
+		t.Fatal("creation Baseline body is not a map")
+	}
+	contentValue := replicaMapEntryMust(body, 2)
+	contentCheckpoint, ok := contentValue.(map[any]any)
+	if !ok {
+		t.Fatalf("creation content checkpoint is not a canonical map: %T %#v", contentValue, contentValue)
+	}
+	redirect := func(cause, destination canonical.Identifier) canonical.Value {
+		return canonical.Map{0: cause[:], 1: canonical.Map{0: []canonical.Value{canonical.Map{0: sourceID[:], 1: destination[:]}}}}
+	}
+	contentCheckpoint[uint64(9)] = []canonical.Value{canonical.Map{
+		0: uint64(1), 1: canonicalSetValues([]canonical.Value{sourceID[:]}), 2: []canonical.Value{redirect(causeA, destinationA), redirect(causeB, destinationB)},
+	}}
+	checkpointedBaseline, err := canonical.EncodeBaseline(canonical.BaselineInput{
+		VaultID: prepared.Baseline.VaultID, GenerationID: prepared.Baseline.GenerationID, Dependencies: prepared.Baseline.Dependencies,
+		RequiredFeatureSetID: prepared.Baseline.RequiredFeatureSetID, Extensions: prepared.Baseline.Extensions, Body: body,
+	})
+	if err != nil {
+		t.Fatalf("encode checkpointed Baseline: %v", err)
+	}
+	replica, err := NewReplica(checkpointedBaseline)
+	if err != nil {
+		t.Fatalf("NewReplica: %v", err)
+	}
+	projection, err := ProjectLibraryProjection(replica)
+	if err != nil {
+		t.Fatalf("ProjectLibraryProjection: %v", err)
+	}
+	if len(projection.Conflicts) != 1 || projection.Conflicts[0].Kind != "CollectionMerge" || len(projection.Conflicts[0].CandidateRecordIDs) != 2 {
+		t.Fatalf("checkpointed Collection conflicts = %#v", projection.Conflicts)
+	}
+	checkpoint, err := buildVacuumContentCheckpoint(replica, projection)
+	if err != nil {
+		t.Fatalf("build Vacuum conflict checkpoint: %v", err)
+	}
+	active, ok := replicaMapArray(checkpoint, 9)
+	if !ok || len(active) != 1 {
+		t.Fatalf("Vacuum active conflict checkpoint = %#v", active)
+	}
+	conflict, ok := replicaMapValue(active[0])
+	if !ok {
+		t.Fatalf("Vacuum active conflict entry is not a map: %#v", active[0])
+	}
+	if kind, ok := replicaUnsignedNumber(replicaMapEntryMust(conflict, 0)); !ok || kind != 1 {
+		t.Fatalf("Vacuum active conflict kind = %#v", replicaMapEntryMust(conflict, 0))
+	}
+	candidates, ok := replicaMapArray(conflict, 2)
+	if !ok || len(candidates) != 2 {
+		t.Fatalf("Vacuum active conflict candidates = %#v", candidates)
+	}
+}
+
 func TestProjectLibraryProjectionSeedsNoteFromBaselineCheckpoint(t *testing.T) {
 	prepared := deterministicCreation(t)
 	noteID := filledCreationID(250)
@@ -399,6 +460,24 @@ func TestProjectLibraryProjectionSeedsNoteFromBaselineCheckpoint(t *testing.T) {
 	version := note.Versions[0]
 	if version.HeadCauseID != hexIdentifier(noteCauseID) || version.ContentObjectID == nil || *version.ContentObjectID != hexIdentifier(contentObjectID) || version.Title == nil || *version.Title != "A note" || version.Body == nil || *version.Body != "First body" || version.BodyDialect == nil || *version.BodyDialect != "awsm.note.commonmark" || version.AssertedAt != 250 {
 		t.Fatalf("checkpointed Note version = %#v", version)
+	}
+	checkpoint, err := buildVacuumContentCheckpoint(replica, projection)
+	if err != nil {
+		t.Fatalf("build Vacuum Note checkpoint: %v", err)
+	}
+	notes, ok := replicaMapArray(checkpoint, 8)
+	if !ok || len(notes) != 1 {
+		t.Fatalf("Vacuum Note checkpoint = %#v", notes)
+	}
+	checkpointedNote, ok := replicaMapValue(notes[0])
+	if !ok {
+		t.Fatalf("Vacuum Note entry is not a map: %#v", notes[0])
+	}
+	if note, ok := replicaIdentifier(checkpointedNote, 0); !ok || note != noteID {
+		t.Fatalf("Vacuum Note identity = %#v, want %s", checkpointedNote, hexIdentifier(noteID))
+	}
+	if state, ok := replicaUnsignedNumber(replicaMapEntryMust(checkpointedNote, 2)); !ok || state != 1 {
+		t.Fatalf("Vacuum Note state = %#v, want active", replicaMapEntryMust(checkpointedNote, 2))
 	}
 }
 

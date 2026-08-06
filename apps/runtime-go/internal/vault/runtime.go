@@ -2441,6 +2441,24 @@ func vacuumCaptureObjectClosure(replica *Replica, state *canonicalReplicaState, 
 			}
 		}
 	}
+	for _, note := range projection.noteState {
+		for _, version := range note.versions {
+			for _, objectID := range []*canonical.Identifier{version.contentID, version.restoreID} {
+				if objectID == nil {
+					continue
+				}
+				object, ok := replica.Object(*objectID)
+				if !ok || object.ObjectType != 3 {
+					return nil, nil, nil, fmt.Errorf("Note %s Content Object is unavailable", hexIdentifier(note.noteID))
+				}
+				if err := requireVacuumObjectStorage(state, artifacts, *objectID, true); err != nil {
+					return nil, nil, nil, err
+				}
+				activeDependencies[canonical.Dependency{Type: 6, ID: *objectID}] = struct{}{}
+				retainedObjects[hexIdentifier(*objectID)] = struct{}{}
+			}
+		}
+	}
 	dependencies := make(map[canonical.Dependency]struct{})
 	for _, dependency := range replica.baseline.Dependencies {
 		if dependency.Type == 4 || dependency.Type == 5 {

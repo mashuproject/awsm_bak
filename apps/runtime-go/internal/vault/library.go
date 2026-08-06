@@ -96,6 +96,8 @@ type LibraryProjection struct {
 	Notes          []LibraryNote          `json:"notes"`
 	Conflicts      []LibraryConflict      `json:"conflicts"`
 	captureState   []libraryCaptureCheckpoint
+	noteState      []libraryNoteCheckpoint
+	conflictState  []libraryConflictCheckpoint
 }
 
 type libraryCapture struct {
@@ -119,6 +121,32 @@ type libraryCaptureCheckpoint struct {
 	lifecycleCauses         []canonical.Identifier
 	registrationCause       canonical.Identifier
 	registrationAttribution canonical.Value
+}
+
+type libraryNoteCheckpoint struct {
+	noteID     canonical.Identifier
+	targetKind uint64
+	targetID   canonical.Identifier
+	stateCode  uint64
+	versions   []libraryNoteVersionCheckpoint
+}
+
+type libraryNoteVersionCheckpoint struct {
+	causeID     canonical.Identifier
+	contentID   *canonical.Identifier
+	restoreID   *canonical.Identifier
+	attribution canonical.Value
+}
+
+type libraryConflictCheckpoint struct {
+	kind       uint64
+	subjects   []canonical.Identifier
+	candidates []libraryConflictCandidate
+}
+
+type libraryConflictCandidate struct {
+	headCauseID canonical.Identifier
+	redirects   []collectionRedirectEdge
 }
 
 // ProjectLibrary reduces Bundle Registered, Capture lifecycle, and placement
@@ -169,6 +197,9 @@ func ProjectLibraryProjection(replica *Replica) (LibraryProjection, error) {
 		return LibraryProjection{}, err
 	}
 	if err := seedBaselineNotes(replica, notes); err != nil {
+		return LibraryProjection{}, err
+	}
+	if err := seedBaselineRedirectConflicts(replica, collectionRedirects, tagRedirects); err != nil {
 		return LibraryProjection{}, err
 	}
 	orderedEvents, err := orderedContentEvents(replica)
@@ -638,22 +669,28 @@ func ProjectLibraryProjection(replica *Replica) (LibraryProjection, error) {
 				return LibraryProjection{}, err
 			}
 			var contentID *canonical.Identifier
-			if event.Type == 30 {
-				for _, cause := range causes {
-					if version, exists := note.versions[cause]; exists && version.contentID != nil {
-						candidate := *version.contentID
+			var restoreID *canonical.Identifier
+			for _, cause := range causes {
+				if prior, exists := note.versions[cause]; exists && prior.contentID != nil {
+					candidate := *prior.contentID
+					if event.Type == 30 {
 						contentID = &candidate
+					} else if restoreID == nil {
+						restoreID = &candidate
+					}
+					if contentID != nil {
 						break
 					}
 				}
-				if contentID == nil {
-					return LibraryProjection{}, errors.New("Note Restored has no retained content")
-				}
+			}
+			if event.Type == 30 && contentID == nil {
+				return LibraryProjection{}, errors.New("Note Restored has no retained content")
 			}
 			version, err := projectNoteVersion(replica, event, event.RecordID, contentID)
 			if err != nil {
 				return LibraryProjection{}, err
 			}
+			version.restoreID = restoreID
 			note.versions[event.RecordID] = version
 		case 31:
 			body, ok := replicaMapValue(event.Body)
@@ -746,6 +783,10 @@ func ProjectLibraryProjection(replica *Replica) (LibraryProjection, error) {
 	conflicts = append(conflicts, tagConflicts...)
 	folderConflicted, folderConflicts := detectFolderConflicts(folders)
 	conflicts = append(conflicts, folderConflicts...)
+	conflictState, err := projectConflictCheckpointState(conflicts, collectionRedirects, tagRedirects)
+	if err != nil {
+		return LibraryProjection{}, err
+	}
 	for _, capture := range captures {
 		collectionID, err := decodeHexIdentifier(capture.item.CollectionID)
 		if err != nil {
@@ -817,6 +858,7 @@ func ProjectLibraryProjection(replica *Replica) (LibraryProjection, error) {
 		return assignmentProjection[left].AssignmentID < assignmentProjection[right].AssignmentID
 	})
 	noteProjection := make([]LibraryNote, 0, len(notes))
+	noteState := make([]libraryNoteCheckpoint, 0, len(notes))
 	for noteID, note := range notes {
 		headVersions := make([]libraryNoteVersionState, 0, len(note.versions))
 		for cause, version := range note.versions {
@@ -856,8 +898,30 @@ func ProjectLibraryProjection(replica *Replica) (LibraryProjection, error) {
 			versions = append(versions, projected)
 		}
 		noteProjection = append(noteProjection, LibraryNote{NoteID: hexIdentifier(noteID), TargetKind: note.targetKind, TargetID: hexIdentifier(note.targetID), State: state, Versions: versions})
+		stateCode := uint64(1)
+		if allDeleted {
+			stateCode = 2
+		} else if len(headVersions) > 1 {
+			stateCode = 3
+		}
+		checkpointVersions := make([]libraryNoteVersionCheckpoint, 0, len(headVersions))
+		for _, version := range headVersions {
+			if version.attribution == nil {
+				return LibraryProjection{}, errors.New("Note checkpoint attribution is incomplete")
+			}
+			checkpointVersions = append(checkpointVersions, libraryNoteVersionCheckpoint{
+				causeID: version.causeID, contentID: cloneIdentifierPointer(version.contentID), restoreID: cloneIdentifierPointer(version.restoreID), attribution: version.attribution,
+			})
+		}
+		sort.Slice(checkpointVersions, func(left, right int) bool {
+			return bytes.Compare(checkpointVersions[left].causeID[:], checkpointVersions[right].causeID[:]) < 0
+		})
+		noteState = append(noteState, libraryNoteCheckpoint{noteID: noteID, targetKind: note.targetKind, targetID: note.targetID, stateCode: stateCode, versions: checkpointVersions})
 	}
 	sort.Slice(noteProjection, func(left, right int) bool { return noteProjection[left].NoteID < noteProjection[right].NoteID })
+	sort.Slice(noteState, func(left, right int) bool {
+		return bytes.Compare(noteState[left].noteID[:], noteState[right].noteID[:]) < 0
+	})
 	collections := make([]LibraryCollection, 0, len(collectionIDs))
 	for collectionID := range collectionIDs {
 		active := make([]*libraryCapture, 0)
@@ -924,7 +988,7 @@ func ProjectLibraryProjection(replica *Replica) (LibraryProjection, error) {
 		})
 	}
 	sort.Slice(captureState, func(left, right int) bool { return captureState[left].bundleID < captureState[right].bundleID })
-	return LibraryProjection{Captures: items, Collections: collections, Folders: folderProjection, Tags: tagProjection, TagAssignments: assignmentProjection, Notes: noteProjection, Conflicts: conflicts, captureState: captureState}, nil
+	return LibraryProjection{Captures: items, Collections: collections, Folders: folderProjection, Tags: tagProjection, TagAssignments: assignmentProjection, Notes: noteProjection, Conflicts: conflicts, captureState: captureState, noteState: noteState, conflictState: conflictState}, nil
 }
 
 func orderedContentEvents(replica *Replica) ([]canonical.Event, error) {
@@ -1500,11 +1564,14 @@ func buildVacuumContentCheckpoint(replica *Replica, projection LibraryProjection
 	if replica == nil {
 		return nil, errors.New("Replica is required")
 	}
-	if len(projection.Notes) != 0 || len(projection.Conflicts) != 0 {
-		return nil, errors.New("Vacuum content checkpoint cannot yet represent Notes or active conflicts")
+	if len(projection.Conflicts) != len(projection.conflictState) {
+		return nil, errors.New("Vacuum content checkpoint cannot yet represent active conflict kind")
 	}
 	if len(projection.Captures) != len(projection.captureState) {
 		return nil, errors.New("Vacuum Capture checkpoint state is incomplete")
+	}
+	if len(projection.Notes) != len(projection.noteState) {
+		return nil, errors.New("Vacuum Note checkpoint state is incomplete")
 	}
 	for _, collection := range projection.Collections {
 		if collection.RedirectedTo != nil {
@@ -1526,7 +1593,7 @@ func buildVacuumContentCheckpoint(replica *Replica, projection LibraryProjection
 	if !ok {
 		return nil, errors.New("Baseline Vault label checkpoint is missing")
 	}
-	for _, key := range []uint64{2, 8, 9} {
+	for _, key := range []uint64{2} {
 		entries, entriesOK := replicaMapArray(oldContent, key)
 		if !entriesOK {
 			return nil, fmt.Errorf("Baseline content checkpoint field %d is invalid", key)
@@ -1781,10 +1848,93 @@ func buildVacuumContentCheckpoint(replica *Replica, projection LibraryProjection
 		rightID, _ := replicaIdentifier(assignmentEntries[right], 0)
 		return bytes.Compare(leftID[:], rightID[:]) < 0
 	})
+	noteEntries := make([]canonical.Value, 0, len(projection.noteState))
+	for _, note := range projection.noteState {
+		if note.stateCode < 1 || note.stateCode > 3 || len(note.versions) == 0 {
+			return nil, errors.New("Note checkpoint state is invalid")
+		}
+		if note.stateCode == 1 && len(note.versions) != 1 {
+			return nil, errors.New("Active Note checkpoint must have one version")
+		}
+		noteID := note.noteID
+		if note.targetKind != 1 && note.targetKind != 2 {
+			return nil, errors.New("Note checkpoint target kind is invalid")
+		}
+		versions := make([]canonical.Value, 0, len(note.versions))
+		for _, version := range note.versions {
+			if version.attribution == nil || version.causeID == (canonical.Identifier{}) {
+				return nil, errors.New("Note checkpoint version attribution is incomplete")
+			}
+			causeID, causeErr := remapCause(version.causeID)
+			if causeErr != nil {
+				return nil, causeErr
+			}
+			var contentValue canonical.Value
+			if version.contentID != nil {
+				contentValue = append([]byte(nil), version.contentID[:]...)
+			}
+			var restoreValue canonical.Value
+			if version.restoreID != nil {
+				restoreValue = append([]byte(nil), version.restoreID[:]...)
+			}
+			if contentValue != nil && restoreValue != nil {
+				return nil, errors.New("Note checkpoint version contains both content and restore objects")
+			}
+			if contentValue == nil && restoreValue == nil {
+				return nil, errors.New("Note checkpoint deletion has no retained content")
+			}
+			versions = append(versions, canonical.Map{0: causeID[:], 1: contentValue, 2: restoreValue, 3: version.attribution})
+		}
+		sort.Slice(versions, func(left, right int) bool {
+			leftID, _ := replicaIdentifier(versions[left], 0)
+			rightID, _ := replicaIdentifier(versions[right], 0)
+			return bytes.Compare(leftID[:], rightID[:]) < 0
+		})
+		target := canonical.Map{0: note.targetKind, 1: note.targetID[:]}
+		noteEntries = append(noteEntries, canonical.Map{0: noteID[:], 1: target, 2: note.stateCode, 3: versions})
+	}
+	sort.Slice(noteEntries, func(left, right int) bool {
+		leftID, _ := replicaIdentifier(noteEntries[left], 0)
+		rightID, _ := replicaIdentifier(noteEntries[right], 0)
+		return bytes.Compare(leftID[:], rightID[:]) < 0
+	})
+	activeConflictEntries := make([]canonical.Value, 0, len(projection.conflictState))
+	for _, conflict := range projection.conflictState {
+		if conflict.kind != 1 && conflict.kind != 3 {
+			return nil, errors.New("Vacuum active conflict kind is unsupported")
+		}
+		subjects := make([]canonical.Value, 0, len(conflict.subjects))
+		for _, subjectID := range conflict.subjects {
+			subjects = append(subjects, subjectID[:])
+		}
+		candidates := make([]canonical.Value, 0, len(conflict.candidates))
+		for _, candidate := range conflict.candidates {
+			mappedCause, causeErr := remapCause(candidate.headCauseID)
+			if causeErr != nil {
+				return nil, causeErr
+			}
+			redirects := make([]canonical.Value, 0, len(candidate.redirects))
+			for _, edge := range candidate.redirects {
+				redirects = append(redirects, canonical.Map{0: edge.sourceID[:], 1: edge.destinationID[:]})
+			}
+			sort.Slice(redirects, func(left, right int) bool {
+				leftSource, _ := replicaIdentifier(redirects[left], 0)
+				rightSource, _ := replicaIdentifier(redirects[right], 0)
+				return bytes.Compare(leftSource[:], rightSource[:]) < 0
+			})
+			candidates = append(candidates, canonical.Map{0: mappedCause[:], 1: canonical.Map{0: redirects}})
+		}
+		sort.Slice(candidates, func(left, right int) bool {
+			leftCause, _ := replicaIdentifier(candidates[left], 0)
+			rightCause, _ := replicaIdentifier(candidates[right], 0)
+			return bytes.Compare(leftCause[:], rightCause[:]) < 0
+		})
+		activeConflictEntries = append(activeConflictEntries, canonical.Map{0: conflict.kind, 1: canonicalSetValues(subjects), 2: candidates})
+	}
 	return canonical.Map{
 		0: uint64(1), 1: labelCheckpoint, 2: []canonical.Value{}, 3: captureEntries,
 		4: collectionEntries, 5: folderEntries, 6: tagEntries, 7: assignmentEntries,
-		8: []canonical.Value{}, 9: []canonical.Value{},
+		8: noteEntries, 9: activeConflictEntries,
 	}, nil
 }
 
@@ -1862,12 +2012,14 @@ type libraryNoteState struct {
 }
 
 type libraryNoteVersionState struct {
-	causeID    canonical.Identifier
-	contentID  *canonical.Identifier
-	title      *string
-	body       *string
-	dialect    *string
-	assertedAt int64
+	causeID     canonical.Identifier
+	contentID   *canonical.Identifier
+	restoreID   *canonical.Identifier
+	title       *string
+	body        *string
+	dialect     *string
+	assertedAt  int64
+	attribution canonical.Value
 }
 
 func currentNoteHeadCauses(replica *Replica, note *libraryNoteState) []canonical.Identifier {
@@ -1936,7 +2088,18 @@ func decodeLibraryNoteTarget(value canonical.Value) (uint64, canonical.Identifie
 }
 
 func projectNoteVersion(replica *Replica, event canonical.Event, causeID canonical.Identifier, contentID *canonical.Identifier) (libraryNoteVersionState, error) {
-	return projectNoteContentVersion(replica, causeID, contentID, event.AssertedAt)
+	version, err := projectNoteContentVersion(replica, causeID, contentID, event.AssertedAt)
+	if err != nil {
+		return libraryNoteVersionState{}, err
+	}
+	if event.SignerCredentialID != (canonical.Identifier{}) {
+		attribution, attributionErr := captureEventAttribution(replica, event)
+		if attributionErr != nil {
+			return libraryNoteVersionState{}, fmt.Errorf("Note attribution: %w", attributionErr)
+		}
+		version.attribution = attribution
+	}
+	return version, nil
 }
 
 func projectNoteContentVersion(replica *Replica, causeID canonical.Identifier, contentID *canonical.Identifier, assertedAt int64) (libraryNoteVersionState, error) {
@@ -2059,6 +2222,8 @@ func seedBaselineNotes(replica *Replica, notes map[canonical.Identifier]*library
 			if versionErr != nil {
 				return versionErr
 			}
+			version.attribution = attribution
+			version.restoreID = restoreID
 			if restoreID != nil {
 				if _, restoreErr := projectNoteContentVersion(replica, causeID, restoreID, assertedAt); restoreErr != nil {
 					return fmt.Errorf("Baseline Note restore content: %w", restoreErr)
@@ -2077,6 +2242,115 @@ func seedBaselineNotes(replica *Replica, notes map[canonical.Identifier]*library
 		notes[noteID] = &libraryNoteState{noteID: noteID, targetKind: targetKind, targetID: targetID, versions: versionState}
 	}
 	return nil
+}
+
+func seedBaselineRedirectConflicts(replica *Replica, collectionRedirects, tagRedirects map[canonical.Identifier]collectionRedirectFact) error {
+	content, err := baselineContentCheckpoint(replica.baseline)
+	if err != nil {
+		return err
+	}
+	entries, ok := replicaMapArray(content, 9)
+	if !ok {
+		return errors.New("Baseline active conflict checkpoint is invalid")
+	}
+	for index, entry := range entries {
+		if !replicaMapHasKeys(entry, 3) {
+			return fmt.Errorf("Baseline active conflict entry %d is invalid", index)
+		}
+		kind, ok := replicaUnsignedNumber(replicaMapEntryMust(entry, 0))
+		if !ok || (kind != 1 && kind != 3) {
+			continue
+		}
+		candidates, ok := replicaMapArray(entry, 2)
+		if !ok || len(candidates) < 2 {
+			return fmt.Errorf("Baseline active conflict entry %d candidates are invalid", index)
+		}
+		for candidateIndex, candidate := range candidates {
+			if !replicaMapHasKeys(candidate, 2) {
+				return fmt.Errorf("Baseline active conflict entry %d candidate %d is invalid", index, candidateIndex)
+			}
+			causeID, ok := replicaIdentifier(candidate, 0)
+			if !ok {
+				return fmt.Errorf("Baseline active conflict entry %d candidate %d cause is invalid", index, candidateIndex)
+			}
+			state, ok := replicaMapValue(replicaMapEntryMust(candidate, 1))
+			if !ok || !replicaMapHasKeys(state, 1) {
+				return fmt.Errorf("Baseline active conflict entry %d candidate %d state is invalid", index, candidateIndex)
+			}
+			kindName := "Collection"
+			redirects := collectionRedirects
+			if kind == 3 {
+				kindName = "Tag"
+				redirects = tagRedirects
+			}
+			edges, edgeErr := parseLibraryRedirectEdges(replicaMapEntryMust(state, 0), causeID, kindName)
+			if edgeErr != nil {
+				return edgeErr
+			}
+			if _, exists := redirects[causeID]; exists {
+				return fmt.Errorf("Baseline active conflict candidate %s is repeated", hexIdentifier(causeID))
+			}
+			redirects[causeID] = collectionRedirectFact{causeID: causeID, edges: edges}
+		}
+	}
+	return nil
+}
+
+func projectConflictCheckpointState(conflicts []LibraryConflict, collectionRedirects, tagRedirects map[canonical.Identifier]collectionRedirectFact) ([]libraryConflictCheckpoint, error) {
+	result := make([]libraryConflictCheckpoint, 0, len(conflicts))
+	for _, conflict := range conflicts {
+		kind := uint64(0)
+		redirects := collectionRedirects
+		switch conflict.Kind {
+		case "CollectionMerge":
+			kind = 1
+		case "TagMerge":
+			kind = 3
+			redirects = tagRedirects
+		default:
+			continue
+		}
+		subjects := make([]canonical.Identifier, 0, len(conflict.SubjectIDs))
+		for _, text := range conflict.SubjectIDs {
+			id, err := decodeHexIdentifier(text)
+			if err != nil {
+				return nil, fmt.Errorf("active %s conflict subject is invalid", conflict.Kind)
+			}
+			subjects = append(subjects, id)
+		}
+		candidates := make([]libraryConflictCandidate, 0, len(conflict.CandidateRecordIDs))
+		for _, text := range conflict.CandidateRecordIDs {
+			causeID, err := decodeHexIdentifier(text)
+			if err != nil {
+				return nil, fmt.Errorf("active %s conflict cause is invalid", conflict.Kind)
+			}
+			fact, ok := redirects[causeID]
+			if !ok {
+				return nil, fmt.Errorf("active %s conflict candidate %s is unavailable", conflict.Kind, text)
+			}
+			candidates = append(candidates, libraryConflictCandidate{headCauseID: causeID, redirects: cloneRedirectEdges(fact.edges)})
+		}
+		sort.Slice(candidates, func(left, right int) bool {
+			return bytes.Compare(candidates[left].headCauseID[:], candidates[right].headCauseID[:]) < 0
+		})
+		result = append(result, libraryConflictCheckpoint{kind: kind, subjects: subjects, candidates: candidates})
+	}
+	sort.Slice(result, func(left, right int) bool {
+		if result[left].kind != result[right].kind {
+			return result[left].kind < result[right].kind
+		}
+		if len(result[left].subjects) == 0 || len(result[right].subjects) == 0 {
+			return len(result[left].subjects) < len(result[right].subjects)
+		}
+		return bytes.Compare(result[left].subjects[0][:], result[right].subjects[0][:]) < 0
+	})
+	return result, nil
+}
+
+func cloneRedirectEdges(edges []collectionRedirectEdge) []collectionRedirectEdge {
+	result := make([]collectionRedirectEdge, len(edges))
+	copy(result, edges)
+	return result
 }
 
 func nullableIdentifier(value canonical.Value, field string) (*canonical.Identifier, error) {
@@ -2358,6 +2632,14 @@ func firstString(values []string) string {
 }
 
 func pointerString(value string) *string { return &value }
+
+func cloneIdentifierPointer(value *canonical.Identifier) *canonical.Identifier {
+	if value == nil {
+		return nil
+	}
+	copyValue := *value
+	return &copyValue
+}
 
 func registeredCapture(replica *Replica, event canonical.Event) (*libraryCapture, error) {
 	body, ok := replicaMapValue(event.Body)
