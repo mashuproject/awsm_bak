@@ -947,7 +947,7 @@ func (r *Runtime) Handle(ctx context.Context, raw json.RawMessage) (any, error) 
 		if err := decode(raw, &input); err != nil {
 			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "ExportComplete contains invalid fields")
 		}
-		encoded, err := r.ExportComplete(input.ExpectedVaultID, input.Passphrase)
+		encoded, err := r.exportCompleteExpected(input.ExpectedVaultID, input.Passphrase)
 		if err != nil {
 			return nil, err
 		}

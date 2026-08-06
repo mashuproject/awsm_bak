@@ -39,6 +39,23 @@ func (r *Runtime) ExportComplete(vaultID, passphrase string) ([]byte, error) {
 	return r.exportCompleteLocked(vaultID, passphrase, salt, nonce)
 }
 
+func (r *Runtime) exportCompleteExpected(vaultID, passphrase string) ([]byte, error) {
+	var salt [16]byte
+	var nonce [24]byte
+	if _, err := io.ReadFull(cryptorand.Reader, salt[:]); err != nil {
+		return nil, commandError("COMPLETE_EXPORT_UNAVAILABLE", "A secure Complete Export salt could not be generated.")
+	}
+	if _, err := io.ReadFull(cryptorand.Reader, nonce[:]); err != nil {
+		return nil, commandError("COMPLETE_EXPORT_UNAVAILABLE", "A secure Complete Export nonce could not be generated.")
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if err := r.requireExpectedLocked(&vaultID); err != nil {
+		return nil, err
+	}
+	return r.exportCompleteLocked(vaultID, passphrase, salt, nonce)
+}
+
 // ImportComplete validates and installs a Complete Export as a readable local
 // Replica. It deliberately does not import Account sessions, Recovery Phrase
 // material, or a Client Credential private key; authoring is established later

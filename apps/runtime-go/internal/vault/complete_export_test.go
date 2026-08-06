@@ -174,6 +174,23 @@ func TestRuntimeCompleteExportRejectsUnverifiedStreamableArtifact(t *testing.T) 
 	}
 }
 
+func TestRuntimeCompleteExportHonorsExpectedVaultContext(t *testing.T) {
+	ctx := context.Background()
+	runtime, err := New(ctx, store.NewMemoryState(), memoryDependencies(t))
+	if err != nil {
+		t.Fatalf("create Runtime: %v", err)
+	}
+	first := createVaultForTest(t, runtime, "First export")
+	_ = createVaultForTest(t, runtime, "Selected export")
+	_, err = runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "ExportComplete", "expectedVaultId": first, "passphrase": "correct horse battery staple",
+	}))
+	var commandErr *CommandError
+	if !errors.As(err, &commandErr) || commandErr.ID != "VAULT_CONTEXT_CHANGED" {
+		t.Fatalf("stale ExportComplete error = %v, want VAULT_CONTEXT_CHANGED", err)
+	}
+}
+
 func decodeCompleteExportEntries(plaintext []byte) ([]completeexport.Entry, error) {
 	entries := make([]completeexport.Entry, 0)
 	for offset := 0; offset < len(plaintext); {
