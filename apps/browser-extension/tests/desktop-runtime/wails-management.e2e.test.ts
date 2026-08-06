@@ -75,6 +75,7 @@ test("Wails Vault surface renders the selected Vault management slice", async ({
             if (request.type === "GetState") return state;
             if (request.type === "ListLibrary") return [];
             if (request.type === "ListRemotes") return [];
+            if (request.type === "GarbageCollect") return { deletedStorageItemIds: [] };
             throw new Error(`unexpected command: ${request.type}`);
           },
           PendingTransfers: async () => [],
@@ -89,6 +90,10 @@ test("Wails Vault surface renders the selected Vault management slice", async ({
   await expect(page.getByText("Personal archive · Open · Authoring")).toBeVisible();
   await expect(page.getByRole("button", { name: "Fork this Vault" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Vacuum this Vault" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Run Garbage Collection" })).toBeVisible();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Run Garbage Collection" }).click();
+  await expect(page.getByText("Garbage Collection completed.")).toBeVisible();
   await expect(page.getByText("No captures are stored in this Vault yet.")).toBeVisible();
   await expect(page.getByText("No Hosted Replicas are configured on this Client.")).toBeVisible();
   await expect(page.locator("body")).not.toHaveCSS("overflow-x", "scroll");

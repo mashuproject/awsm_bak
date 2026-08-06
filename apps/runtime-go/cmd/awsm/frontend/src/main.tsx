@@ -810,6 +810,23 @@ function VaultsView({
       setBusy(false);
     }
   };
+  const garbageCollect = async () => {
+    if (selected === undefined || !window.confirm("Remove unreferenced local opaque items?")) return;
+    setBusy(true);
+    try {
+      const result = (await binding.VaultCommand?.({
+        type: "GarbageCollect",
+        expectedVaultId: selected.vaultId,
+      })) as { deletedStorageItemIds?: readonly string[] } | undefined;
+      const count = result?.deletedStorageItemIds?.length ?? 0;
+      refresh();
+      onStatus(`Garbage Collection completed. ${count} unreferenced item${count === 1 ? "" : "s"} removed.`);
+    } catch (error) {
+      onError(error);
+    } finally {
+      setBusy(false);
+    }
+  };
   if (state?.pendingVaultCreation !== undefined)
     return (
       <PendingCreationPanel
@@ -931,6 +948,13 @@ function VaultsView({
                   }
                 >
                   Vacuum this Vault
+                </Button>
+                <Button
+                  variant="secondary"
+                  busy={busy}
+                  onClick={() => void garbageCollect()}
+                >
+                  Run Garbage Collection
                 </Button>
                 <Button
                   variant="danger"
