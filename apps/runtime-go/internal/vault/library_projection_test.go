@@ -312,3 +312,43 @@ func TestProjectLibraryProjectionIncludesNoteRevision(t *testing.T) {
 		t.Fatalf("Note projection after resolution = %#v", projection.Notes)
 	}
 }
+
+func TestProjectLibraryProjectionSurfacesCollectionMergeConflict(t *testing.T) {
+	prepared := deterministicCreation(t)
+	replica, err := NewReplica(prepared.Baseline)
+	if err != nil {
+		t.Fatalf("NewReplica: %v", err)
+	}
+	if err := replica.AdmitEvent(prepared.Genesis, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit Genesis: %v", err)
+	}
+	sourceID := filledCreationID(199)
+	destinationA := filledCreationID(200)
+	destinationB := filledCreationID(201)
+	signMerge := func(destination canonical.Identifier, assertedAt int64) canonical.Event {
+		event, signErr := canonical.SignEvent(canonical.EventInput{
+			VaultID: prepared.IDs.VaultID, GenerationID: prepared.IDs.GenerationID,
+			ParentRecordIDs: []canonical.Identifier{prepared.Genesis.RecordID}, AuthorityParentIDs: []canonical.Identifier{prepared.Genesis.RecordID},
+			RequiredFeatureSetID: prepared.RequiredFeatureSetID, Extensions: map[string][]byte{}, Family: canonical.ContentFamily, Type: 8,
+			SignerCredentialID: prepared.IDs.ClientCredentialID, AssertedAt: assertedAt, Body: canonical.Map{0: canonicalSetValues([]canonical.Value{sourceID[:]}), 1: destination[:]},
+		}, ed25519.PrivateKey(prepared.ClientKeys.SigningSecretKey))
+		if signErr != nil {
+			t.Fatalf("Sign Collections Merged: %v", signErr)
+		}
+		return event
+	}
+	mergeA := signMerge(destinationA, 211)
+	mergeB := signMerge(destinationB, 212)
+	for _, event := range []canonical.Event{mergeA, mergeB} {
+		if err := replica.AdmitEvent(event, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+			t.Fatalf("Admit Collections Merged: %v", err)
+		}
+	}
+	projection, err := ProjectLibraryProjection(replica)
+	if err != nil {
+		t.Fatalf("ProjectLibraryProjection: %v", err)
+	}
+	if len(projection.Conflicts) != 1 || projection.Conflicts[0].Kind != "CollectionMerge" {
+		t.Fatalf("Collection conflicts = %#v", projection.Conflicts)
+	}
+}

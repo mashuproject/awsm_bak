@@ -78,6 +78,13 @@ type LibraryNote struct {
 	Versions   []LibraryNoteVersion `json:"versions"`
 }
 
+type LibraryConflict struct {
+	Kind               string   `json:"kind"`
+	Reason             string   `json:"reason"`
+	SubjectIDs         []string `json:"subjectIds"`
+	CandidateRecordIDs []string `json:"candidateRecordIds"`
+}
+
 // LibraryProjection is a rebuildable user-facing view. It is derived solely
 // from the authenticated Replica and is never an authority source.
 type LibraryProjection struct {
@@ -87,6 +94,7 @@ type LibraryProjection struct {
 	Tags           []LibraryTag           `json:"tags"`
 	TagAssignments []LibraryTagAssignment `json:"tagAssignments"`
 	Notes          []LibraryNote          `json:"notes"`
+	Conflicts      []LibraryConflict      `json:"conflicts"`
 }
 
 type libraryCapture struct {
@@ -561,21 +569,12 @@ func ProjectLibraryProjection(replica *Replica) (LibraryProjection, error) {
 		}
 		activeRedirects = append(activeRedirects, fact.edges...)
 	}
-	redirected := make(map[canonical.Identifier]canonical.Identifier)
 	redirectIDs := make(map[canonical.Identifier]struct{})
 	for _, edge := range activeRedirects {
 		redirectIDs[edge.sourceID] = struct{}{}
 		redirectIDs[edge.destinationID] = struct{}{}
 	}
-	for collectionID := range redirectIDs {
-		resolved, err := resolveCollectionRedirect(collectionID, activeRedirects)
-		if err != nil {
-			return LibraryProjection{}, err
-		}
-		if resolved != collectionID {
-			redirected[collectionID] = resolved
-		}
-	}
+	redirected, conflicts := reduceCollectionRedirects(activeRedirects, redirectIDs)
 	for _, capture := range captures {
 		collectionID, err := decodeHexIdentifier(capture.item.CollectionID)
 		if err != nil {
@@ -714,7 +713,7 @@ func ProjectLibraryProjection(replica *Replica) (LibraryProjection, error) {
 		collections = append(collections, collection)
 	}
 	sort.Slice(collections, func(left, right int) bool { return collections[left].CollectionID < collections[right].CollectionID })
-	return LibraryProjection{Captures: items, Collections: collections, Folders: folderProjection, Tags: tagProjection, TagAssignments: assignmentProjection, Notes: noteProjection}, nil
+	return LibraryProjection{Captures: items, Collections: collections, Folders: folderProjection, Tags: tagProjection, TagAssignments: assignmentProjection, Notes: noteProjection, Conflicts: conflicts}, nil
 }
 
 func orderedContentEvents(replica *Replica) ([]canonical.Event, error) {
@@ -973,27 +972,133 @@ func nearestActiveFolder(folderID canonical.Identifier, folders map[canonical.Id
 	}
 }
 
-func resolveCollectionRedirect(collectionID canonical.Identifier, edges []collectionRedirectEdge) (canonical.Identifier, error) {
-	bySource := make(map[canonical.Identifier]canonical.Identifier)
+func reduceCollectionRedirects(edges []collectionRedirectEdge, redirectIDs map[canonical.Identifier]struct{}) (map[canonical.Identifier]canonical.Identifier, []LibraryConflict) {
+	bySource := make(map[canonical.Identifier][]collectionRedirectEdge)
 	for _, edge := range edges {
-		if previous, exists := bySource[edge.sourceID]; exists && previous != edge.destinationID {
-			return canonical.Identifier{}, fmt.Errorf("Collection Merge Conflict has multiple destinations for %s", hexIdentifier(edge.sourceID))
-		}
-		bySource[edge.sourceID] = edge.destinationID
+		bySource[edge.sourceID] = append(bySource[edge.sourceID], edge)
 	}
-	current := collectionID
-	visited := make(map[canonical.Identifier]struct{})
-	for {
-		destination, exists := bySource[current]
-		if !exists {
-			return current, nil
+	conflicted := make(map[canonical.Identifier]struct{})
+	conflicts := make([]LibraryConflict, 0)
+	for source, candidates := range bySource {
+		destinations := make(map[canonical.Identifier]struct{})
+		causes := make([]canonical.Identifier, 0, len(candidates))
+		for _, candidate := range candidates {
+			destinations[candidate.destinationID] = struct{}{}
+			causes = append(causes, candidate.causeID)
 		}
-		if _, seen := visited[current]; seen {
-			return canonical.Identifier{}, fmt.Errorf("Collection Merge Conflict contains a redirect cycle at %s", hexIdentifier(current))
+		if len(destinations) <= 1 {
+			continue
 		}
-		visited[current] = struct{}{}
-		current = destination
+		conflicted[source] = struct{}{}
+		conflicts = append(conflicts, libraryConflict("CollectionMerge", "MultipleDestinations", []canonical.Identifier{source}, causes))
 	}
+	for source := range redirectIDs {
+		path := make([]canonical.Identifier, 0)
+		positions := make(map[canonical.Identifier]int)
+		current := source
+		for {
+			if _, already := conflicted[current]; already {
+				break
+			}
+			if start, seen := positions[current]; seen {
+				cycle := path[start:]
+				causes := make([]canonical.Identifier, 0, len(cycle))
+				for _, cycleSource := range cycle {
+					for _, edge := range bySource[cycleSource] {
+						causes = append(causes, edge.causeID)
+					}
+				}
+				for _, cycleSource := range cycle {
+					conflicted[cycleSource] = struct{}{}
+				}
+				conflicts = append(conflicts, libraryConflict("CollectionMerge", "Cycle", cycle, causes))
+				break
+			}
+			positions[current] = len(path)
+			path = append(path, current)
+			candidates := bySource[current]
+			if len(candidates) == 0 || len(uniqueRedirectDestinations(candidates)) != 1 {
+				break
+			}
+			current = candidates[0].destinationID
+		}
+	}
+	redirected := make(map[canonical.Identifier]canonical.Identifier)
+	for source := range redirectIDs {
+		if _, blocked := conflicted[source]; blocked {
+			continue
+		}
+		current := source
+		visited := make(map[canonical.Identifier]struct{})
+		for {
+			if _, blocked := conflicted[current]; blocked {
+				current = source
+				break
+			}
+			candidates := bySource[current]
+			if len(candidates) == 0 || len(uniqueRedirectDestinations(candidates)) != 1 {
+				break
+			}
+			if _, seen := visited[current]; seen {
+				current = source
+				break
+			}
+			visited[current] = struct{}{}
+			current = candidates[0].destinationID
+		}
+		if current != source {
+			redirected[source] = current
+		}
+	}
+	sort.Slice(conflicts, func(left, right int) bool {
+		if conflicts[left].Kind != conflicts[right].Kind {
+			return conflicts[left].Kind < conflicts[right].Kind
+		}
+		if conflicts[left].Reason != conflicts[right].Reason {
+			return conflicts[left].Reason < conflicts[right].Reason
+		}
+		return firstString(conflicts[left].SubjectIDs) < firstString(conflicts[right].SubjectIDs)
+	})
+	return redirected, conflicts
+}
+
+func uniqueRedirectDestinations(candidates []collectionRedirectEdge) []canonical.Identifier {
+	values := make(map[canonical.Identifier]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		values[candidate.destinationID] = struct{}{}
+	}
+	result := make([]canonical.Identifier, 0, len(values))
+	for value := range values {
+		result = append(result, value)
+	}
+	return result
+}
+
+func libraryConflict(kind, reason string, subjects, causes []canonical.Identifier) LibraryConflict {
+	subjectIDs := make([]string, 0, len(subjects))
+	for _, subject := range subjects {
+		subjectIDs = append(subjectIDs, hexIdentifier(subject))
+	}
+	sort.Strings(subjectIDs)
+	candidateRecordIDs := make([]string, 0, len(causes))
+	seen := make(map[string]struct{}, len(causes))
+	for _, cause := range causes {
+		value := hexIdentifier(cause)
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		candidateRecordIDs = append(candidateRecordIDs, value)
+	}
+	sort.Strings(candidateRecordIDs)
+	return LibraryConflict{Kind: kind, Reason: reason, SubjectIDs: subjectIDs, CandidateRecordIDs: candidateRecordIDs}
+}
+
+func firstString(values []string) string {
+	if len(values) == 0 {
+		return ""
+	}
+	return values[0]
 }
 
 func pointerString(value string) *string { return &value }
