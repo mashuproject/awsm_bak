@@ -7,7 +7,9 @@
       "!**/.wxt",
       "!**/.output",
       "!**/playwright-report",
-      "!**/test-results"
+      "!**/test-results",
+      "!**/storybook-static",
+      "!**/frontend/dist"
     ]
   },
   "formatter": {

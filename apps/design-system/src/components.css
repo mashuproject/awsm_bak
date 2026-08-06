@@ -1,3 +1,4 @@
+@import url("tokens.css");
 @import url("base.css");
 
 .awsm-button {
@@ -10,7 +11,7 @@
   border: var(--awsm-border);
   border-radius: var(--awsm-radius-control);
   padding: var(--awsm-space-2) var(--awsm-space-4);
-  color: var(--awsm-ink);
+  color: var(--awsm-accent-foreground);
   background: var(--awsm-coral);
   box-shadow: var(--awsm-shadow-hard);
   cursor: pointer;
@@ -53,10 +54,12 @@
 }
 
 .awsm-button--secondary {
+  color: var(--awsm-ink);
   background: var(--awsm-paper);
 }
 
 .awsm-button--quiet {
+  color: var(--awsm-link);
   border-color: transparent;
   background: transparent;
   box-shadow: none;
@@ -153,6 +156,7 @@
   border: var(--awsm-border);
   border-radius: var(--awsm-radius-full);
   padding: 2px var(--awsm-space-3);
+  color: var(--awsm-accent-foreground);
   background: var(--awsm-yellow);
   font-size: 0.8125rem;
   font-weight: 800;

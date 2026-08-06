@@ -1,5 +1,3 @@
-@import url("tokens.css");
-
 .awsm-reveal {
   animation: awsm-reveal var(--awsm-duration-reveal) var(--awsm-ease-expressive)
     both;

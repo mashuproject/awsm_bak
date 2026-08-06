@@ -1,0 +1,27 @@
+@import "@awsm/design-system/tailwind.css";
+
+@layer components {
+  .awsm-app-root {
+    min-height: 100vh;
+    color: var(--awsm-ink);
+    background: var(--awsm-cream);
+  }
+
+  .awsm-prose {
+    max-width: 75ch;
+    color: var(--awsm-ink);
+    font-size: 1rem;
+    line-height: 1.55;
+  }
+
+  .awsm-prose :where(p, ul, ol) {
+    margin-block: var(--awsm-space-4);
+  }
+
+  .awsm-prose :where(h1, h2, h3) {
+    margin-block: var(--awsm-space-8) var(--awsm-space-3);
+    color: var(--awsm-ink);
+    font-family: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
+    line-height: 1.1;
+  }
+}

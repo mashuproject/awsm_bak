@@ -1,0 +1,65 @@
+@import "tailwindcss";
+@import "./tokens.css";
+@import "./base.css";
+@import "./motion.css";
+
+@source "../../../packages/ui/src";
+@source "../../../apps/browser-extension/entrypoints";
+@source "../../../apps/runtime-go/cmd/awsm/frontend";
+@source "../../coordination-server/app/views";
+@source "../../coordination-server/app/javascript";
+
+@custom-variant dark (&:where([data-awsm-theme="dark"], [data-awsm-theme="dark"] *));
+
+@theme inline {
+  --color-awsm-primary: var(--awsm-primary);
+  --color-awsm-ink: var(--awsm-ink);
+  --color-awsm-cream: var(--awsm-cream);
+  --color-awsm-paper: var(--awsm-paper);
+  --color-awsm-coral: var(--awsm-coral);
+  --color-awsm-yellow: var(--awsm-yellow);
+  --color-awsm-cobalt: var(--awsm-cobalt);
+  --color-awsm-sync-panel: var(--awsm-sync-panel);
+  --color-awsm-sky-panel: var(--awsm-sky-panel);
+  --color-awsm-green: var(--awsm-green);
+  --color-awsm-green-panel: var(--awsm-green-panel);
+  --color-awsm-text-muted: var(--awsm-text-muted);
+  --color-awsm-link: var(--awsm-link);
+  --color-awsm-border-subtle: var(--awsm-border-subtle);
+  --color-awsm-surface-subtle: var(--awsm-surface-subtle);
+  --color-awsm-info-pale: var(--awsm-info-pale);
+  --color-awsm-success-pale: var(--awsm-success-pale);
+  --color-awsm-warning-pale: var(--awsm-warning-pale);
+  --color-awsm-danger: var(--awsm-danger);
+  --color-awsm-danger-pale: var(--awsm-danger-pale);
+  --color-awsm-disabled: var(--awsm-disabled);
+  --color-awsm-selected: var(--awsm-selected);
+  --color-awsm-focus: var(--awsm-focus);
+  --color-awsm-accent-foreground: var(--awsm-accent-foreground);
+  --font-display: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  --radius-compact: var(--awsm-radius-compact);
+  --radius-control: var(--awsm-radius-control);
+  --radius-expressive: var(--awsm-radius-expressive);
+  --radius-full: var(--awsm-radius-full);
+  --spacing-1: var(--awsm-space-1);
+  --spacing-2: var(--awsm-space-2);
+  --spacing-3: var(--awsm-space-3);
+  --spacing-4: var(--awsm-space-4);
+  --spacing-6: var(--awsm-space-6);
+  --spacing-8: var(--awsm-space-8);
+  --spacing-12: var(--awsm-space-12);
+  --spacing-16: var(--awsm-space-16);
+  --spacing-24: var(--awsm-space-24);
+}
+
+@utility awsm-reading-measure {
+  max-width: 75ch;
+}
+
+@utility awsm-focus-ring {
+  outline: 3px solid var(--awsm-focus);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 6px var(--awsm-yellow);
+}

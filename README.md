@@ -273,6 +273,8 @@ corepack pnpm test:e2e:desktop-runtime
 corepack pnpm test:e2e:desktop-runtime:firefox
 corepack pnpm test:runtime:smoke
 corepack pnpm test:runtime:wails
+corepack pnpm test:ui
+corepack pnpm ui:storybook:build
 ```
 
 The Desktop Runtime browser proofs pair the extension with the real loopback Go process in Chrome,
@@ -281,6 +283,17 @@ Vault Command envelope, and one-use transfer staging. The Wails bridge proof exe
 Vault-management presentation without exposing bearer tokens. Native Wails startup is an
 additional local lane; run `corepack pnpm test:runtime:wails` on a host with GTK 3, WebKitGTK 4,
 and `xvfb-run`. The CI equivalent is `AWSM_RUNTIME_WAILS=1 corepack pnpm test:runtime:smoke`.
+
+The shared application components live in `packages/ui`. Start the interactive Storybook when
+checking one component or state in isolation:
+
+```bash
+corepack pnpm ui:storybook
+```
+
+Build the static Storybook bundle with `corepack pnpm ui:storybook:build`. Stories include the
+light, dark, system, and narrow-width variants used by the visual review lane; the extension and
+Desktop Runtime keep their domain state and platform bindings outside this package.
 
 Create a distributable Chrome ZIP with:
 
@@ -294,6 +307,7 @@ The repository is organized as follows:
 apps/browser-extension/     Chrome Host, Runtime, local storage, and user interface
 apps/runtime-go/            Reference Go Runtime, desktop shell, and headless process
 apps/coordination-server/   Rails coordination service for opaque encrypted data
+packages/ui/                Shared React presentation components and Storybook stories
 docs/architecture/          architectural intent and system boundaries
 docs/specifications/        formal formats, protocols, and Runtime contracts
 docs/plans/                 living PRD plus historical implementation plans and TDD evidence

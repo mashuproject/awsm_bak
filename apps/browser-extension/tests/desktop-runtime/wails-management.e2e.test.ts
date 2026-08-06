@@ -48,7 +48,9 @@ test("Wails management panel approves and revokes grants without displaying toke
   await expect(page.locator("body")).not.toContainText("opaque-token");
 });
 
-test("Wails Vault surface renders the selected Vault management slice", async ({ page }) => {
+test("Wails Vault surface renders the selected Vault management slice", async ({
+  page,
+}, testInfo) => {
   const vaultId = "a".repeat(64);
   await page.addInitScript((selectedVaultId) => {
     const state = {
@@ -81,7 +83,7 @@ test("Wails Vault surface renders the selected Vault management slice", async ({
     };
   }, vaultId);
 
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 1200, height: 800 });
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Vaults", exact: true })).toBeVisible();
   await expect(page.getByText("Personal archive · Open · Authoring")).toBeVisible();
@@ -90,6 +92,23 @@ test("Wails Vault surface renders the selected Vault management slice", async ({
   await expect(page.getByText("No captures are stored in this Vault yet.")).toBeVisible();
   await expect(page.getByText("No Hosted Replicas are configured on this Client.")).toBeVisible();
   await expect(page.locator("body")).not.toHaveCSS("overflow-x", "scroll");
+  await page.screenshot({ path: testInfo.outputPath("desktop-vaults-wide.png"), fullPage: true });
+
+  await page.evaluate(() => window.localStorage.setItem("awsm.appearance", "dark"));
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Vaults", exact: true })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("desktop-vaults-dark.png"), fullPage: true });
+
+  await page.evaluate(() => window.localStorage.setItem("awsm.appearance", "light"));
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Vaults", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Open navigation" }).click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({
+    path: testInfo.outputPath("desktop-vaults-narrow-drawer.png"),
+  });
 });
 
 test("Wails Vault creation can recover a pending setup without exposing its phrase", async ({

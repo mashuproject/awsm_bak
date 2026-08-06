@@ -1,1 +1,1 @@
-import "./canonical-main";
+import "./react-main";

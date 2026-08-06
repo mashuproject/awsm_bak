@@ -111,6 +111,13 @@ test("renders the canonical local-Vault and Library surfaces", async ({
     await assertInteractiveTargets(popup);
     await expectReadableContrast(popup);
     await expect(popup).toHaveScreenshot("popup-first-use.png", { fullPage: true });
+    await popup.evaluate(() => window.localStorage.setItem("awsm.appearance", "dark"));
+    await popup.reload();
+    await expect(popup.getByRole("heading", { name: "Create your local Vault" })).toBeVisible();
+    await expectReadableContrast(popup);
+    await expect(popup).toHaveScreenshot("popup-first-use-dark.png", { fullPage: true });
+    await popup.evaluate(() => window.localStorage.setItem("awsm.appearance", "light"));
+    await popup.reload();
 
     await popup.getByRole("button", { name: "Recover a Hosted Vault" }).click();
     await expect(popup.getByRole("heading", { name: "Recover a Hosted Vault" })).toBeVisible();
@@ -281,6 +288,14 @@ test("renders the canonical local-Vault and Library surfaces", async ({
     await expect(library.getByText("Capture a page from the popup to add it here.")).toBeVisible();
     await expectReadableContrast(library);
     await expect(library).toHaveScreenshot("library-empty-wide.png", { fullPage: true });
+
+    await library.evaluate(() => window.localStorage.setItem("awsm.appearance", "dark"));
+    await library.reload();
+    await expect(library.getByRole("heading", { name: "Library" })).toBeVisible();
+    await expectReadableContrast(library);
+    await expect(library).toHaveScreenshot("library-empty-wide-dark.png", { fullPage: true });
+    await library.evaluate(() => window.localStorage.setItem("awsm.appearance", "light"));
+    await library.reload();
 
     await library.setViewportSize({ width: 390, height: 844 });
     await expectReadableContrast(library);

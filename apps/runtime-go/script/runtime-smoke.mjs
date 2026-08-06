@@ -8,6 +8,10 @@ const runtimeRoot = resolve(import.meta.dirname, "..");
 const repositoryRoot = resolve(runtimeRoot, "../..");
 const wantsWails = process.env.AWSM_RUNTIME_WAILS === "1";
 
+async function buildFrontend() {
+  await execFileAsync("corepack", ["pnpm", "build:runtime:frontend"], { cwd: repositoryRoot });
+}
+
 async function build(outputPath, tags = []) {
   await execFileAsync("go", ["build", ...(tags.length === 0 ? [] : ["-tags", tags.join(",")]), "-o", outputPath, "./cmd/awsm"], {
     cwd: runtimeRoot,
@@ -122,6 +126,7 @@ try {
   await build(serveBinary);
   await runServe(serveBinary, resolve(temporaryRoot, "serve-data"));
   if (wantsWails) {
+    await buildFrontend();
     const desktopBinary = resolve(temporaryRoot, "awsm-desktop");
     const desktopTags = ["desktop", "production"];
     if (await supportsPkgConfigPackage("webkit2gtk-4.1")) desktopTags.push("webkit2_41");

@@ -17,6 +17,7 @@ const design = parse(match[1]);
 
 for (const group of [
   "colors",
+  "themes",
   "typography",
   "rounded",
   "spacing",
@@ -36,6 +37,19 @@ function colorTokenReference(value, context) {
   return match[1];
 }
 
+const darkColors = design.themes.dark;
+for (const name of Object.keys(design.colors)) {
+  if (typeof darkColors[name] !== "string") {
+    throw new Error(`themes.dark.${name} must define a six-digit hexadecimal color.`);
+  }
+}
+
+function colorValue(name, theme = "light") {
+  const value = theme === "dark" ? darkColors[name] : design.colors[name];
+  if (typeof value !== "string") throw new Error(`Unknown ${theme} color token: ${name}`);
+  return value;
+}
+
 function relativeLuminance(value, context) {
   if (!/^#[0-9A-F]{6}$/i.test(value)) {
     throw new Error(`${context} must be a six-digit hexadecimal color.`);
@@ -53,11 +67,11 @@ function relativeLuminance(value, context) {
 
 function contrastRatio(foregroundName, backgroundName, context) {
   const foreground = relativeLuminance(
-    design.colors[foregroundName],
+    colorValue(foregroundName, context.includes("dark theme") ? "dark" : "light"),
     `${context} foreground`,
   );
   const background = relativeLuminance(
-    design.colors[backgroundName],
+    colorValue(backgroundName, context.includes("dark theme") ? "dark" : "light"),
     `${context} background`,
   );
   return (
@@ -90,25 +104,27 @@ if (
 const extendedTextComponents = new Set(
   design.contrast.extendedTextComponents,
 );
-for (const [name, component] of Object.entries(design.components)) {
-  if (component.backgroundColor === undefined || component.textColor === undefined)
-    continue;
-  const foreground = colorTokenReference(
-    component.textColor,
-    `components.${name}.textColor`,
-  );
-  const background = colorTokenReference(
-    component.backgroundColor,
-    `components.${name}.backgroundColor`,
-  );
-  requireContrast(
-    foreground,
-    background,
-    extendedTextComponents.has(name)
-      ? extendedTextMinimum
-      : normalTextMinimum,
-    `Component ${name}`,
-  );
+for (const theme of ["light", "dark"]) {
+  for (const [name, component] of Object.entries(design.components)) {
+    if (component.backgroundColor === undefined || component.textColor === undefined)
+      continue;
+    const foreground = colorTokenReference(
+      component.textColor,
+      `components.${name}.textColor`,
+    );
+    const background = colorTokenReference(
+      component.backgroundColor,
+      `components.${name}.backgroundColor`,
+    );
+    requireContrast(
+      foreground,
+      background,
+      extendedTextComponents.has(name)
+        ? extendedTextMinimum
+        : normalTextMinimum,
+      `Component ${name}${theme === "dark" ? " (dark theme)" : ""}`,
+    );
+  }
 }
 for (const [index, pair] of design.contrast.auditedPairs.entries()) {
   if (
@@ -125,6 +141,12 @@ for (const [index, pair] of design.contrast.auditedPairs.entries()) {
     pair.background,
     Number(pair.minimum),
     `Audited pair ${pair.use ?? index}`,
+  );
+  requireContrast(
+    pair.foreground,
+    pair.background,
+    Number(pair.minimum),
+    `Audited pair ${pair.use ?? index} (dark theme)`,
   );
 }
 
@@ -170,6 +192,18 @@ const lines = [
   "  --awsm-duration-hero: 900ms;",
   "  --awsm-ease-out: cubic-bezier(0.16, 1, 0.3, 1);",
   "  --awsm-ease-expressive: cubic-bezier(0.34, 1.56, 0.64, 1);",
+  "}",
+  ":root[data-awsm-theme=\"dark\"] {",
+  ...Object.entries(darkColors).map(
+    ([name, value]) => `  --awsm-${tokenName(name)}: ${cssValue(value)};`,
+  ),
+  "}",
+  "@media (prefers-color-scheme: dark) {",
+  "  :root:not([data-awsm-theme=\"light\"]) {",
+  ...Object.entries(darkColors).map(
+    ([name, value]) => `    --awsm-${tokenName(name)}: ${cssValue(value)};`,
+  ),
+  "  }",
   "}",
   ...Object.entries(design.typography).flatMap(([name, value]) => [
     `.awsm-type-${tokenName(name)} {`,

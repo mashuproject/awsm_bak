@@ -9,6 +9,7 @@
     "./base.css": "./src/base.css",
     "./components.css": "./src/components.css",
     "./motion.css": "./src/motion.css",
+    "./tailwind.css": "./src/tailwind.css",
     "./assets/*": "./assets/*"
   },
   "files": [

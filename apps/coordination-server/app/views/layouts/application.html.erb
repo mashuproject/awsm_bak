@@ -5,7 +5,7 @@
     <%= csrf_meta_tags %>
   </head>
 
-  <body class="<%= content_for(:body_class) %>">
+  <body class="<%= content_for(:body_class) %>" data-controller="appearance">
     <% if notice.present? %><p class="flash flash--success" role="status"><%= notice %></p><% end %>
     <% if alert.present? %><p class="flash flash--error" role="alert"><%= alert %></p><% end %>
     <%= yield %>

@@ -17,14 +17,19 @@ The development command starts the loopback Runtime API:
 go run ./cmd/awsm --mode serve --data-dir ./pb_data
 ```
 
-The desktop development build uses the same executable and starts the Wails v2 shell. Run it from
-the Wails project directory:
+The desktop development build uses the same executable and starts the Wails v2 shell. Build the
+frontend from the repository root, then run the Wails command from its project directory:
 
 ```bash
+corepack pnpm build:runtime:frontend
 cd cmd/awsm
 go run github.com/wailsapp/wails/v2/cmd/wails@v2.13.0 build -tags desktop,production,webkit2_41 -s -m -nosyncgomod -skipbindings -skipembedcreate
 ./build/bin/awsm-desktop --data-dir ../../pb_data
 ```
+
+The Wails window embeds the React frontend from `cmd/awsm/frontend/dist`. The frontend uses the
+shared `@awsm/ui` package and supports system, light, and dark appearance per Client Installation.
+Inspect the shared primitives and states independently with `corepack pnpm ui:storybook`.
 
 Packaged desktop builds default to the desktop window. A source build without the `desktop` build
 tag defaults to the loopback API. `--mode serve` remains available for a headless process.

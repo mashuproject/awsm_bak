@@ -22,6 +22,7 @@ body {
   padding: var(--awsm-space-2) var(--awsm-space-4);
   border-bottom: var(--awsm-border);
   background: var(--awsm-yellow);
+  color: var(--awsm-accent-foreground);
   font-size: 0.875rem;
   font-weight: 650;
   text-align: center;
@@ -32,7 +33,7 @@ body {
   z-index: 20;
   top: 0;
   border-bottom: var(--awsm-border);
-  background: rgb(255 247 230 / 95%);
+  background: color-mix(in srgb, var(--awsm-cream) 95%, transparent);
 }
 
 .site-header__inner {
@@ -264,7 +265,7 @@ body {
   border: var(--awsm-border);
   border-radius: var(--awsm-radius-full);
   place-items: center;
-  color: var(--awsm-ink);
+  color: var(--awsm-accent-foreground);
   background: var(--awsm-yellow);
   box-shadow: 3px 3px 0 var(--awsm-ink);
   font-size: 1.7rem;
@@ -371,7 +372,7 @@ body {
   translate: -50% -50%;
   border: var(--awsm-border);
   border-radius: var(--awsm-radius-full);
-  color: var(--awsm-ink);
+  color: var(--awsm-accent-foreground);
   background: var(--awsm-yellow);
   box-shadow: 3px 3px 0 var(--awsm-ink);
   content: "→";
@@ -509,6 +510,7 @@ body {
 }
 
 .install-tabs__nav button[aria-selected="true"] {
+  color: var(--awsm-accent-foreground);
   background: var(--awsm-yellow);
 }
 
@@ -558,6 +560,7 @@ body {
   border-radius: var(--awsm-radius-expressive);
   padding: clamp(32px, 6vw, 72px);
   background: var(--awsm-yellow);
+  color: var(--awsm-accent-foreground);
   box-shadow: var(--awsm-shadow-hard);
 }
 
@@ -571,6 +574,25 @@ body {
   display: flex;
   flex-wrap: wrap;
   gap: var(--awsm-space-4);
+}
+
+.site-footer__appearance {
+  display: flex;
+  align-items: center;
+  gap: var(--awsm-space-3);
+  margin-top: var(--awsm-space-6);
+  font-size: 0.875rem;
+  font-weight: 750;
+}
+
+.site-footer__appearance select {
+  min-height: 44px;
+  border: var(--awsm-border);
+  border-radius: var(--awsm-radius-compact);
+  padding: var(--awsm-space-2) var(--awsm-space-3);
+  color: var(--awsm-ink);
+  background: var(--awsm-paper);
+  font: inherit;
 }
 
 .trust-page {
@@ -882,6 +904,7 @@ body {
   border: var(--awsm-border);
   border-radius: var(--awsm-radius-full);
   padding: 2px var(--awsm-space-3);
+  color: var(--awsm-accent-foreground);
   background: var(--awsm-yellow);
   font-size: 0.8125rem;
   font-weight: 800;

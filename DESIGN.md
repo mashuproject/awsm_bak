@@ -27,6 +27,32 @@ colors:
   selected: "#DCEFFD"
   focus: "#18181B"
   accent-foreground: "#000000"
+themes:
+  dark:
+    primary: "#FF806D"
+    ink: "#F7F0E5"
+    cream: "#10161D"
+    paper: "#18212A"
+    coral: "#FF806D"
+    yellow: "#FFD84D"
+    cobalt: "#7D95FF"
+    sync-panel: "#2B536B"
+    sky-panel: "#2D4E63"
+    green: "#69C49F"
+    green-panel: "#275844"
+    text-muted: "#D6CCBC"
+    link: "#B9C9FF"
+    border-subtle: "#93A4B5"
+    surface-subtle: "#202B36"
+    info-pale: "#244255"
+    success-pale: "#214B3A"
+    warning-pale: "#594A18"
+    danger: "#E06A5B"
+    danger-pale: "#5E2726"
+    disabled: "#3D4650"
+    selected: "#27455B"
+    focus: "#10161D"
+    accent-foreground: "#10161D"
 typography:
   display:
     fontFamily: '"Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif'
@@ -82,7 +108,7 @@ spacing:
 components:
   primary-button:
     backgroundColor: "{colors.primary}"
-    textColor: "{colors.ink}"
+    textColor: "{colors.accent-foreground}"
     typography: "{typography.label}"
     rounded: "{rounded.control}"
     padding: "{spacing.3}"
@@ -140,7 +166,7 @@ components:
     rounded: "{rounded.control}"
   busy:
     backgroundColor: "{colors.yellow}"
-    textColor: "{colors.ink}"
+    textColor: "{colors.accent-foreground}"
     rounded: "{rounded.control}"
   error:
     backgroundColor: "{colors.danger-pale}"
@@ -154,7 +180,7 @@ components:
     padding: "{spacing.4}"
   information:
     backgroundColor: "{colors.sync-panel}"
-    textColor: "{colors.accent-foreground}"
+    textColor: "{colors.ink}"
     rounded: "{rounded.control}"
   selection:
     backgroundColor: "{colors.selected}"
@@ -167,7 +193,7 @@ components:
     padding: "{spacing.8}"
   expressive-action:
     backgroundColor: "{colors.coral}"
-    textColor: "{colors.ink}"
+    textColor: "{colors.accent-foreground}"
     rounded: "{rounded.control}"
   local-ownership:
     backgroundColor: "{colors.green-panel}"
@@ -185,7 +211,7 @@ components:
     padding: "{spacing.4}"
   divider:
     backgroundColor: "{colors.border-subtle}"
-    textColor: "{colors.ink}"
+    textColor: "{colors.accent-foreground}"
     height: 2px
   cobalt-graphic-accent:
     backgroundColor: "{colors.cobalt}"
@@ -236,7 +262,7 @@ contrast:
       background: paper
       minimum: 7
       use: Muted working-surface text
-    - foreground: ink
+    - foreground: accent-foreground
       background: coral
       minimum: 4.5
       use: Short action labels
@@ -253,6 +279,11 @@ contrast:
 AWSM helps web knowledge collectors preserve useful pages in a private archive they control. The
 interface should feel warm, capable, optimistic, and direct: a bright utility kit built for real
 work, not a generic software dashboard and not a nostalgic scrapbook.
+
+AWSM supports light and ink-dark appearance modes. System preference is the default, and each client
+installation may store a local light or dark override. Appearance is presentation state, never Vault
+data or synchronization state. The public site, browser extension, and Desktop Runtime use the same
+semantic roles in both themes.
 
 Use a typography-led brand mode for public storytelling and a calmer, denser workspace mode for
 the extension. The unnamed archive-box keeper is a supporting mark, never a character that competes
@@ -282,6 +313,11 @@ WCAG 2.2 contrast is the measurable floor. Normal-sized text and control labels 
 extended-reading surfaces require at least `7:1`. Large display text may legally use `3:1`, but
 AWSM does not use that exception to justify a text-bearing component below `4.5:1`. Raw cobalt and
 green are graphic accents only; use their audited panel variants behind text.
+
+Readable defaults are part of the contract: body text is at least 16px with approximately 1.5 line
+height, prose normally stays between 45 and 75 characters per line, and workspace rows remain large
+enough to scan and operate without forcing a dense card wall. Content must reflow at 320 CSS pixels
+and remain usable at 200% zoom.
 
 ## Typography
 
@@ -352,8 +388,9 @@ photorealism, faces, arms, or legs to the keeper.
 ## Components
 
 Buttons, links, fields, notices, cards, dialogs, navigation, badges, progress, and empty states come
-from `@awsm/design-system`. Application styles may compose these primitives but may not redefine
-their palette, spacing rhythm, radii, shadows, or motion curves.
+from `@awsm/ui`, using the generated tokens from `@awsm/design-system`. Application styles may
+compose these primitives but may not redefine their palette, spacing rhythm, radii, shadows, or
+motion curves. Inspect shared states in Storybook with `corepack pnpm ui:storybook`.
 
 All controls define resting, hover, active, focus-visible, disabled, busy, error, and success
 states where applicable. Focus uses a visible 3px ink outline with a yellow offset. Disabled

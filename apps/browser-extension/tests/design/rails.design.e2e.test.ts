@@ -54,6 +54,21 @@ test("renders the complete landing at desktop, narrow, and reduced motion", asyn
     fullPage: true,
   });
 
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.reload();
+  await expect(
+    page.getByRole("heading", { name: "Archive what should matter.", exact: true }),
+  ).toBeVisible();
+  await page.getByLabel("Appearance").selectOption("light");
+  await expect(page.locator("html")).toHaveAttribute("data-awsm-theme", "light");
+  await page.getByLabel("Appearance").selectOption("dark");
+  await expect(page.locator("html")).toHaveAttribute("data-awsm-theme", "dark");
+  await expectReadableContrast(page);
+  await expect(page).toHaveScreenshot("landing-dark.png", { fullPage: true });
+  await page.getByLabel("Appearance").selectOption("system");
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.reload();
+
   await page.setViewportSize({ width: 390, height: 844 });
   await page.reload();
   await expect(page.getByRole("button", { name: "Menu" })).toBeVisible();
@@ -156,6 +171,14 @@ test("renders trust, Account, validation, and design-reference surfaces", async 
     await expect(page.getByRole("heading", { name: heading, exact: true })).toBeVisible();
     await expectReadableContrast(page);
     await expect(page).toHaveScreenshot(screenshot, { fullPage: true });
+    if (path === "/privacy") {
+      await page.emulateMedia({ colorScheme: "dark" });
+      await page.reload();
+      await expect(page.getByRole("heading", { name: heading, exact: true })).toBeVisible();
+      await expectReadableContrast(page);
+      await expect(page).toHaveScreenshot("privacy-dark.png", { fullPage: true });
+      await page.emulateMedia({ colorScheme: "light" });
+    }
   }
 
   await page.goto("/glossary");

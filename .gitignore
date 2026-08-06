@@ -4,6 +4,7 @@ node_modules/
 coverage/
 playwright-report/
 test-results/
+storybook-static/
 blob-report/
 *.log
 .env
@@ -23,6 +24,8 @@ apps/runtime-go/cmd/awsm/bin/
 apps/runtime-go/cmd/awsm/build/bin/
 apps/runtime-go/cmd/awsm/build/windows/
 apps/runtime-go/cmd/awsm/frontend/wailsjs/
+apps/runtime-go/cmd/awsm/frontend/dist/*
+!apps/runtime-go/cmd/awsm/frontend/dist/.gitkeep
 apps/runtime-go/cmd/awsm/build/darwin/
 /.tmp-debug-*
 /.tmp-runtime-*

@@ -1,5 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import tailwindcss from "@tailwindcss/vite";
+import react from "@vitejs/plugin-react";
 import { defineConfig, type UserManifest } from "wxt";
 import { FIREFOX_SYNCHRONIZATION_DATA_CATEGORIES } from "./src/hosts/firefox/synchronization-permission";
 
@@ -70,6 +72,8 @@ export default defineConfig({
       assetsInlineLimit: 0,
     },
     plugins: [
+      react(),
+      tailwindcss(),
       {
         name: "awsm-search-onnx-runtime-assets",
         generateBundle() {

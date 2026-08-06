@@ -235,6 +235,15 @@ without either popup reloading. The loopback TLS terminator is test-only. These 
 evidence, not evidence of a named deployment, Firefox behavior, full Authority-branch
 synchronization, or global freshness.
 
+The shared presentation package has a separate component-level review surface. Run
+`corepack pnpm test:ui` for the deterministic theme-contract unit tests,
+`corepack pnpm ui:storybook` for interactive inspection or `corepack pnpm ui:storybook:build` for
+the reproducible static bundle. Stories cover every shared primitive and composed state in light,
+dark, system, and narrow-width variants; the Storybook accessibility addon fails a story when its
+rendered semantics violate the configured checks. Storybook proves component composition and
+accessibility in isolation, while the browser and Desktop Runtime lanes remain authoritative for
+their real bindings, state transitions, and responsive shells.
+
 # Invariants
 
 - Tests never seed authoritative rows behind public boundaries for an end-to-end proof.

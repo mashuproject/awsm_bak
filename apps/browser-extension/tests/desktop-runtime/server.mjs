@@ -4,7 +4,7 @@ import { join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(
-  fileURLToPath(new URL("../../../runtime-go/cmd/awsm/frontend/", import.meta.url)),
+  fileURLToPath(new URL("../../../runtime-go/cmd/awsm/frontend/dist/", import.meta.url)),
 );
 
 createServer((request, response) => {
@@ -28,10 +28,13 @@ createServer((request, response) => {
     response.end("not found");
     return;
   }
-  response.writeHead(200, {
-    "content-type": path.endsWith(".js")
-      ? "text/javascript; charset=utf-8"
-      : "text/html; charset=utf-8",
-  });
+  const contentType = path.endsWith(".js")
+    ? "text/javascript; charset=utf-8"
+    : path.endsWith(".css")
+      ? "text/css; charset=utf-8"
+      : path.endsWith(".svg")
+        ? "image/svg+xml"
+        : "text/html; charset=utf-8";
+  response.writeHead(200, { "content-type": contentType });
   createReadStream(path).pipe(response);
 }).listen(4174, "127.0.0.1");

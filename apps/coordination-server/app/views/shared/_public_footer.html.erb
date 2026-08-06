@@ -14,6 +14,14 @@
       <%= link_to "AGPL license", public_product_links[:license] %>
       <%= link_to "Sign in", new_session_path, data: { public_session_target: "footerAccountLink" } %>
     </nav>
+    <div class="site-footer__appearance">
+      <label for="appearance-mode">Appearance</label>
+      <select id="appearance-mode" data-appearance-target="select" data-action="appearance#change">
+        <option value="system">System default</option>
+        <option value="light">Light</option>
+        <option value="dark">Dark</option>
+      </select>
+    </div>
     <p><strong>AWSM</strong> lets you Archive What Should Matter. Keep it yours.</p>
   </div>
 </footer>
