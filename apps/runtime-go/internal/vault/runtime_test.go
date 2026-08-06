@@ -577,6 +577,53 @@ func TestRecoverMemberEnrollsFreshClientCredentialAndReopens(t *testing.T) {
 	}
 }
 
+func TestRecoveryPhraseReplacementAuthorsAuthenticatedAuthorityEvent(t *testing.T) {
+	ctx := context.Background()
+	state := store.NewMemoryState()
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vaultID, _ := createVaultWithPhraseForTest(t, runtime, "Replacement")
+	oldRecoveryID := runtime.vaults[vaultID].Canonical.RecoveryCredentialID
+	startedValue, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "BeginRecoveryPhraseReplacement", "expectedVaultId": vaultID,
+	}))
+	if err != nil {
+		t.Fatalf("begin replacement: %v", err)
+	}
+	started := startedValue.(map[string]string)
+	if _, err := awsmcrypto.DecodeRecoveryPhrase(started["recoveryPhrase"]); err != nil {
+		t.Fatalf("replacement phrase is invalid: %v", err)
+	}
+	confirmedValue, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "ConfirmRecoveryPhraseReplacement", "setupId": started["setupId"], "recoveryPhrase": started["recoveryPhrase"],
+	}))
+	if err != nil {
+		t.Fatalf("confirm replacement: %v", err)
+	}
+	confirmed := confirmedValue.(map[string]any)
+	newRecoveryID, ok := confirmed["recoveryCredentialId"].(string)
+	if !ok || newRecoveryID == oldRecoveryID || confirmed["revision"] != 1 {
+		t.Fatalf("replacement result = %#v", confirmedValue)
+	}
+	value := runtime.vaults[vaultID]
+	if value.Canonical.RecoveryCredentialID != newRecoveryID || value.RecoveryRevision != 1 {
+		t.Fatalf("replacement state = %#v", value)
+	}
+	if _, ok := runtime.replicas[vaultID].Record(mustIdentifier(t, confirmed["eventRecordId"].(string))); !ok {
+		t.Fatal("replacement Event was not admitted")
+	}
+	restarted, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatalf("restart after replacement: %v", err)
+	}
+	if restarted.vaults[vaultID].Canonical.RecoveryCredentialID != newRecoveryID {
+		t.Fatalf("restarted recovery Credential = %s, want %s", restarted.vaults[vaultID].Canonical.RecoveryCredentialID, newRecoveryID)
+	}
+}
+
 func mustIdentifier(t *testing.T, value string) canonical.Identifier {
 	t.Helper()
 	identifier, err := decodeHexIdentifier(value)

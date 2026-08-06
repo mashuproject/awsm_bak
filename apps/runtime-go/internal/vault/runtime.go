@@ -261,7 +261,7 @@ func (r *Runtime) ImportTransfer(ctx context.Context, payload []byte) (ClientSta
 	value := &persistedVault{
 		VaultID: packageValue.VaultID, Label: cloneString(packageValue.Label), Lifecycle: packageValue.Lifecycle,
 		RecoveryHash: packageValue.RecoveryHash, GenerationID: packageValue.GenerationID,
-		Remotes: append([]remoteState(nil), packageValue.Remotes...), RecoveryRevision: 1,
+		Remotes: append([]remoteState(nil), packageValue.Remotes...), RecoveryRevision: 0,
 	}
 	r.vaults[value.VaultID] = value
 	r.selected = value.VaultID
@@ -1022,7 +1022,7 @@ func (r *Runtime) confirmCreation(ctx context.Context, setupID, phrase string) (
 	}
 	id := canonicalState.VaultID
 	generation := hexIdentifier(prepared.IDs.GenerationID)
-	value := &persistedVault{VaultID: id, Label: cloneString(pending.Label), Lifecycle: "Open", RecoveryHash: pending.PhraseHash, GenerationID: generation, Remotes: []remoteState{}, RecoveryRevision: 1, Canonical: canonicalState}
+	value := &persistedVault{VaultID: id, Label: cloneString(pending.Label), Lifecycle: "Open", RecoveryHash: pending.PhraseHash, GenerationID: generation, Remotes: []remoteState{}, RecoveryRevision: 0, Canonical: canonicalState}
 	replica, err := newReplicaFromPreparedCreation(prepared)
 	if err != nil {
 		cleanup()
@@ -1182,7 +1182,7 @@ func (r *Runtime) confirmFork(ctx context.Context, setupID, phrase string) (any,
 		return nil, commandError("TRUSTED_SECRET_UNAVAILABLE", "The Fork Key Epoch could not be stored.")
 	}
 	id := canonicalState.VaultID
-	value := &persistedVault{VaultID: id, Label: label, Lifecycle: "Open", RecoveryHash: pending.PhraseHash, GenerationID: canonicalState.GenerationID, Remotes: append([]remoteState(nil), source.Remotes...), RecoveryRevision: 1, Canonical: canonicalState}
+	value := &persistedVault{VaultID: id, Label: label, Lifecycle: "Open", RecoveryHash: pending.PhraseHash, GenerationID: canonicalState.GenerationID, Remotes: append([]remoteState(nil), source.Remotes...), RecoveryRevision: 0, Canonical: canonicalState}
 	replica, err := newReplicaFromPreparedCreation(prepared)
 	if err != nil {
 		cleanup()
@@ -1430,23 +1430,151 @@ func (r *Runtime) confirmReplacement(ctx context.Context, setupID, phrase string
 	if err != nil {
 		return nil, err
 	}
-	event, err := randomID()
+	if value.Lifecycle != "Open" || value.Canonical == nil || r.replicas[value.VaultID] == nil || r.deps.Artifacts == nil || r.deps.Secrets == nil {
+		return nil, commandError("VAULT_READ_ONLY", "A closed or unavailable Vault cannot replace its Recovery Credential.")
+	}
+	vaultID, err := decodeHexIdentifier(value.VaultID)
+	if err != nil {
+		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The Vault identity is invalid.")
+	}
+	memberID, err := decodeHexIdentifier(value.Canonical.MemberID)
+	if err != nil {
+		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The Member identity is invalid.")
+	}
+	oldRecoveryID, err := decodeHexIdentifier(value.Canonical.RecoveryCredentialID)
+	if err != nil {
+		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The Recovery Credential identity is invalid.")
+	}
+	epochID, err := decodeHexIdentifier(value.Canonical.KeyEpochID)
+	if err != nil {
+		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The Key Epoch identity is invalid.")
+	}
+	secretBytes, err := r.deps.Secrets.Get(trustedSecretService, clientSecretAccount(value.VaultID, value.Canonical.ClientCredentialID))
+	if err != nil {
+		return nil, commandError("TRUSTED_SECRET_UNAVAILABLE", "The Client Credential could not be opened.")
+	}
+	clientCredentialID, err := decodeHexIdentifier(value.Canonical.ClientCredentialID)
+	if err != nil {
+		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The Client Credential identity is invalid.")
+	}
+	clientSecret, err := decodeClientSecret(secretBytes, vaultID, memberID, clientCredentialID)
+	if err != nil {
+		return nil, commandError("TRUSTED_SECRET_UNAVAILABLE", "The Client Credential is invalid.")
+	}
+	entropy, err := awsmcrypto.DecodeRecoveryPhrase(phrase)
+	if err != nil {
+		return nil, commandError("RECOVERY_PHRASE_INVALID", "The Recovery Phrase is invalid.")
+	}
+	recoveryKeys, err := awsmcrypto.DeriveRecoveryCredential(entropy)
+	zeroBytes(entropy)
+	if err != nil {
+		return nil, commandError("RECOVERY_PHRASE_INVALID", "The Recovery Phrase could not derive its credential.")
+	}
+	defer wipeCredentialKeys(&recoveryKeys)
+	newRecoveryIDText, err := randomID()
 	if err != nil {
 		return nil, err
 	}
-	credential, err := randomID()
+	newRecoveryID, err := decodeHexIdentifier(newRecoveryIDText)
 	if err != nil {
 		return nil, err
+	}
+	revision := uint64(pending.RecoveryRevision)
+	keyEpochBytes, err := r.deps.Secrets.Get(trustedSecretService, epochSecretAccount(value.VaultID, value.Canonical.KeyEpochID))
+	if err != nil {
+		return nil, commandError("TRUSTED_SECRET_UNAVAILABLE", "The Key Epoch could not be opened.")
+	}
+	epochSecret, err := decodeEpochSecret(keyEpochBytes, vaultID, epochID)
+	if err != nil {
+		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The Key Epoch is invalid.")
+	}
+	defer zeroBytes(epochSecret.key)
+	recoveryEnvelope, err := awsmcrypto.SealKeyEnvelope(awsmcrypto.KeyEnvelopeInput{
+		VaultID: vaultID, KeyEpochID: epochID, KeyEpochKey: epochSecret.key,
+		TargetKind: awsmcrypto.RecoveryCredentialTarget, TargetCredentialID: newRecoveryID,
+		TargetRevision: &revision, RecipientWrappingPublicKey: recoveryKeys.WrappingPublicKey,
+	})
+	if err != nil {
+		return nil, commandError("RECOVERY_KEY_INVALID", "The replacement Recovery Key Envelope could not be created.")
+	}
+	challenge, err := awsmcrypto.OpenKeyEnvelope(awsmcrypto.RecoveryCredentialTarget, recoveryKeys.WrappingPrivateKey, recoveryEnvelope.Envelope.Bytes)
+	if err != nil || challenge.ID != recoveryEnvelope.ID || challenge.VaultID != vaultID || challenge.KeyEpochID != epochID || challenge.TargetCredentialID != newRecoveryID || challenge.TargetRevision == nil || *challenge.TargetRevision != revision {
+		return nil, commandError("RECOVERY_KEY_INVALID", "The replacement Recovery wrapping-key challenge failed.")
+	}
+	zeroBytes(challenge.KeyEpochKey)
+	descriptor := canonical.Map{0: newRecoveryID[:], 1: memberID[:], 2: revision, 3: recoveryKeys.SigningPublicKey, 4: recoveryKeys.WrappingPublicKey}
+	slot := canonical.Map{0: epochID[:], 1: uint64(1), 2: newRecoveryID[:], 3: revision, 4: recoveryEnvelope.ID[:]}
+	descriptorBytes, err := canonical.EncodeValue(descriptor)
+	if err != nil {
+		return nil, commandError("VAULT_EVENT_INVALID", "The replacement Recovery Credential could not be encoded.")
+	}
+	slots := canonicalSetValues([]canonical.Value{slot})
+	slotsBytes, err := canonical.EncodeValue(slots)
+	if err != nil {
+		return nil, commandError("VAULT_EVENT_INVALID", "The replacement Recovery Key Envelope slot could not be encoded.")
+	}
+	authorityParents := canonicalSetValues(identifiersToValues(r.replicas[value.VaultID].State().AuthorityFrontier))
+	possessionTranscript, err := canonical.Transcript("awsm:recovery-replacement-possession:v1", vaultID[:], memberID[:], mustCanonical(authorityParents), descriptorBytes, slotsBytes)
+	if err != nil {
+		return nil, commandError("VAULT_EVENT_INVALID", "The replacement Recovery Credential could not be signed.")
+	}
+	featureSetID, err := decodeHexIdentifier(value.Canonical.RequiredFeatureSetID)
+	if err != nil {
+		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The Required Feature Set identity is invalid.")
+	}
+	generationID, err := decodeHexIdentifier(value.GenerationID)
+	if err != nil {
+		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The Generation identity is invalid.")
+	}
+	replicaState := r.replicas[value.VaultID].State()
+	event, err := canonical.SignEvent(canonical.EventInput{
+		VaultID: vaultID, GenerationID: generationID, ParentRecordIDs: replicaState.CausalFrontier, AuthorityParentIDs: replicaState.AuthorityFrontier,
+		Dependencies: []canonical.Dependency{{Type: 7, ID: recoveryEnvelope.ID}}, RequiredFeatureSetID: featureSetID,
+		Extensions: map[string][]byte{}, Family: canonical.AuthorityFamily, Type: 11, SignerCredentialID: clientCredentialID,
+		AssertedAt: time.Now().UnixMilli(), Body: canonical.Map{0: memberID[:], 1: canonicalSetValues([]canonical.Value{oldRecoveryID[:]}), 2: descriptor, 3: slots, 4: ed25519.Sign(ed25519.PrivateKey(recoveryKeys.SigningSecretKey), possessionTranscript)},
+	}, ed25519.PrivateKey(clientSecret.signingSecretKey))
+	if err != nil {
+		return nil, commandError("VAULT_EVENT_INVALID", "The Recovery Replacement Event could not be authored.")
+	}
+	encoded, err := awsmcrypto.SealCompactItem(awsmcrypto.CompactItemInput{VaultID: vaultID, KeyEpochID: epochID, KeyEpochKey: epochSecret.key, PayloadType: 1, PayloadBytes: event.Bytes})
+	if err != nil {
+		return nil, commandError("VAULT_EVENT_INVALID", "The Recovery Replacement Event could not be protected.")
+	}
+	envelope, err := storage.DecodeOpaqueEnvelope(encoded)
+	if err != nil {
+		return nil, commandError("VAULT_EVENT_INVALID", "The Recovery Replacement envelope is invalid.")
+	}
+	nextReplica := r.replicas[value.VaultID].Clone()
+	if err := nextReplica.AdmitEvent(event, ed25519.PublicKey(clientSecret.signingPublicKey)); err != nil {
+		return nil, commandError("VAULT_EVENT_INVALID", "The Recovery Replacement Event could not be admitted.")
+	}
+	if err := storeOpaqueCreationItem(r.deps.Artifacts, recoveryEnvelope.Envelope.StorageItemID, recoveryEnvelope.Envelope.Bytes); err != nil {
+		return nil, commandError("VAULT_CREATION_STORAGE_FAILED", "The replacement Recovery Key Envelope could not be stored.")
+	}
+	if err := storeOpaqueCreationItem(r.deps.Artifacts, envelope.StorageItemID, encoded); err != nil {
+		deleteOpaqueCreationItem(r.deps.Artifacts, recoveryEnvelope.Envelope.StorageItemID)
+		return nil, commandError("VAULT_CREATION_STORAGE_FAILED", "The Recovery Replacement Event could not be stored.")
 	}
 	value.RecoveryHash = pending.PhraseHash
 	value.RecoveryRevision = pending.RecoveryRevision
+	value.Canonical.RecoveryCredentialID = newRecoveryIDText
+	value.Canonical.RecoveryEnvelopeID = hexIdentifier(recoveryEnvelope.ID)
+	value.Canonical.RecoveryEnvelopeStorageID = hexIdentifier(recoveryEnvelope.Envelope.StorageItemID)
+	nextState := nextReplica.State()
+	value.Canonical.CausalFrontier = identifiersToHex(nextState.CausalFrontier)
+	value.Canonical.AuthorityFrontier = identifiersToHex(nextState.AuthorityFrontier)
+	value.Canonical.ContinuityRecordIDs = identifiersToHex(nextState.ContinuityRecordIDs)
+	value.Canonical.RecordStorageItemIDs[hexIdentifier(event.RecordID)] = hexIdentifier(envelope.StorageItemID)
+	r.replicas[value.VaultID] = nextReplica
 	r.pending = nil
 	if err := r.persistLocked(ctx); err != nil {
 		r.restoreLocked(before)
+		deleteOpaqueCreationItem(r.deps.Artifacts, recoveryEnvelope.Envelope.StorageItemID)
+		deleteOpaqueCreationItem(r.deps.Artifacts, envelope.StorageItemID)
 		return nil, err
 	}
 	r.signal()
-	return map[string]any{"recoveryCredentialId": credential, "revision": value.RecoveryRevision, "eventRecordId": event}, nil
+	return map[string]any{"recoveryCredentialId": newRecoveryIDText, "revision": pending.RecoveryRevision, "eventRecordId": hexIdentifier(event.RecordID)}, nil
 }
 
 func (r *Runtime) closeVault(ctx context.Context, id string) (any, error) {
