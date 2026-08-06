@@ -387,6 +387,80 @@ func TestProjectLibraryProjectionSeedsAndVacuumPreservesCollectionConflict(t *te
 	}
 }
 
+func TestProjectLibraryProjectionSeedsAndVacuumPreservesFolderConflict(t *testing.T) {
+	prepared := deterministicCreation(t)
+	folderA := filledCreationID(145)
+	folderB := filledCreationID(146)
+	nameCauseA := filledCreationID(147)
+	nameCauseB := filledCreationID(148)
+	causeA := filledCreationID(149)
+	causeB := filledCreationID(150)
+	body, ok := replicaMapValue(prepared.Baseline.Body)
+	if !ok {
+		t.Fatal("creation Baseline body is not a map")
+	}
+	contentValue := replicaMapEntryMust(body, 2)
+	contentCheckpoint, ok := contentValue.(map[any]any)
+	if !ok {
+		t.Fatalf("creation content checkpoint is not a canonical map: %T %#v", contentValue, contentValue)
+	}
+	contentCheckpoint[uint64(5)] = []canonical.Value{
+		canonical.Map{0: folderA[:], 1: "A", 2: canonicalSetValues([]canonical.Value{nameCauseA[:]}), 3: nil, 4: []canonical.Value{}, 5: uint64(1), 6: canonicalSetValues([]canonical.Value{nameCauseA[:]})},
+		canonical.Map{0: folderB[:], 1: "B", 2: canonicalSetValues([]canonical.Value{nameCauseB[:]}), 3: nil, 4: []canonical.Value{}, 5: uint64(1), 6: canonicalSetValues([]canonical.Value{nameCauseB[:]})},
+	}
+	placement := func(folderID canonical.Identifier, parentID *canonical.Identifier) canonical.Value {
+		var parent canonical.Value
+		if parentID != nil {
+			parent = append([]byte(nil), parentID[:]...)
+		}
+		return canonical.Map{0: folderID[:], 1: parent}
+	}
+	parentA := folderA
+	parentB := folderB
+	contentCheckpoint[uint64(9)] = []canonical.Value{canonical.Map{
+		0: uint64(2), 1: canonicalSetValues([]canonical.Value{folderA[:], folderB[:]}), 2: []canonical.Value{
+			canonical.Map{0: causeA[:], 1: canonical.Map{0: []canonical.Value{placement(folderA, &parentB), placement(folderB, nil)}}},
+			canonical.Map{0: causeB[:], 1: canonical.Map{0: []canonical.Value{placement(folderA, nil), placement(folderB, &parentA)}}},
+		},
+	}}
+	checkpointedBaseline, err := canonical.EncodeBaseline(canonical.BaselineInput{
+		VaultID: prepared.Baseline.VaultID, GenerationID: prepared.Baseline.GenerationID, Dependencies: prepared.Baseline.Dependencies,
+		RequiredFeatureSetID: prepared.Baseline.RequiredFeatureSetID, Extensions: prepared.Baseline.Extensions, Body: body,
+	})
+	if err != nil {
+		t.Fatalf("encode checkpointed Baseline: %v", err)
+	}
+	replica, err := NewReplica(checkpointedBaseline)
+	if err != nil {
+		t.Fatalf("NewReplica: %v", err)
+	}
+	projection, err := ProjectLibraryProjection(replica)
+	if err != nil {
+		t.Fatalf("ProjectLibraryProjection: %v", err)
+	}
+	if len(projection.Folders) != 2 || projection.Folders[0].ParentFolderID != nil || projection.Folders[1].ParentFolderID != nil {
+		t.Fatalf("conflicted Folder projection = %#v", projection.Folders)
+	}
+	if len(projection.Conflicts) != 1 || projection.Conflicts[0].Kind != "Folder" || len(projection.Conflicts[0].CandidateRecordIDs) != 2 {
+		t.Fatalf("checkpointed Folder conflicts = %#v", projection.Conflicts)
+	}
+	checkpoint, err := buildVacuumContentCheckpoint(replica, projection)
+	if err != nil {
+		t.Fatalf("build Vacuum Folder conflict checkpoint: %v", err)
+	}
+	activeConflicts, ok := replicaMapArray(checkpoint, 9)
+	if !ok || len(activeConflicts) != 1 {
+		t.Fatalf("Vacuum Folder active conflicts = %#v", activeConflicts)
+	}
+	conflictBody, ok := replicaMapValue(activeConflicts[0])
+	if !ok {
+		t.Fatalf("Vacuum Folder conflict is not a map: %#v", activeConflicts[0])
+	}
+	if kind, ok := replicaUnsignedNumber(replicaMapEntryMust(conflictBody, 0)); !ok || kind != 2 {
+		t.Fatalf("Vacuum Folder conflict kind = %#v, want 2", replicaMapEntryMust(conflictBody, 0))
+	}
+}
+
 func TestProjectLibraryProjectionSeedsNoteFromBaselineCheckpoint(t *testing.T) {
 	prepared := deterministicCreation(t)
 	noteID := filledCreationID(250)
