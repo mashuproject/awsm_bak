@@ -26,8 +26,10 @@ type keyEpochReplayState struct {
 	administrators        map[canonical.Identifier]struct{}
 	clientMembers         map[canonical.Identifier]canonical.Identifier
 	epochs                map[canonical.Identifier]uint64
+	epochCauses           map[canonical.Identifier]canonical.Identifier
 	heads                 map[canonical.Identifier]struct{}
 	headSlots             map[canonical.Identifier][]keyEpochEnvelopeSlot
+	keyEpochConflicts     []keyEpochConflictCandidate
 	recoveryMembers       map[canonical.Identifier]canonical.Identifier
 	recoveryRevisions     map[canonical.Identifier]uint64
 	recoverySigningKeys   map[canonical.Identifier]ed25519.PublicKey
@@ -60,6 +62,11 @@ type recoveryReplacement struct {
 type recoveryConflictCandidate struct {
 	headRecordID         canonical.Identifier
 	recoveryCredentialID canonical.Identifier
+}
+
+type keyEpochConflictCandidate struct {
+	headRecordID canonical.Identifier
+	keyEpochID   canonical.Identifier
 }
 
 type keyDelivery struct {
@@ -175,8 +182,10 @@ func replayAuthenticatedKeyEpochs(events []canonical.Event, genesis canonical.Ev
 		administrators:        map[canonical.Identifier]struct{}{firstMember: {}},
 		clientMembers:         map[canonical.Identifier]canonical.Identifier{firstClient: firstMember},
 		epochs:                map[canonical.Identifier]uint64{initialEpoch: 0},
+		epochCauses:           map[canonical.Identifier]canonical.Identifier{initialEpoch: genesisID},
 		heads:                 map[canonical.Identifier]struct{}{initialEpoch: {}},
 		headSlots:             map[canonical.Identifier][]keyEpochEnvelopeSlot{},
+		keyEpochConflicts:     []keyEpochConflictCandidate{},
 		recoveryMembers:       map[canonical.Identifier]canonical.Identifier{firstRecovery: firstMember},
 		recoveryRevisions:     map[canonical.Identifier]uint64{firstRecovery: 0},
 		recoverySigningKeys:   map[canonical.Identifier]ed25519.PublicKey{firstRecovery: genesisRecoverySigningKey(genesis)},
@@ -614,6 +623,7 @@ func replayAuthenticatedKeyEpochs(events []canonical.Event, genesis canonical.Ev
 			}
 			current.heads[transition.newEpochID] = struct{}{}
 			current.epochs[transition.newEpochID] = transition.displayNumber
+			current.epochCauses[transition.newEpochID] = event.RecordID
 			current.headSlots[transition.newEpochID] = cloneKeyEpochEnvelopeSlots(transition.slots)
 		}
 		if event.Family == canonical.AuthorityFamily && event.Type == 13 {
@@ -671,6 +681,7 @@ func replayAuthenticatedKeyEpochs(events []canonical.Event, genesis canonical.Ev
 			}
 			current.closed = true
 		}
+		deriveKeyEpochConflicts(&current)
 		deriveRecoveryConflicts(&current)
 		delete(visiting, recordID)
 		cache[recordID] = cloneKeyEpochReplayState(current)
@@ -739,8 +750,10 @@ func cloneKeyEpochReplayState(value keyEpochReplayState) keyEpochReplayState {
 		administrators:        make(map[canonical.Identifier]struct{}, len(value.administrators)),
 		clientMembers:         make(map[canonical.Identifier]canonical.Identifier, len(value.clientMembers)),
 		epochs:                make(map[canonical.Identifier]uint64, len(value.epochs)),
+		epochCauses:           make(map[canonical.Identifier]canonical.Identifier, len(value.epochCauses)),
 		heads:                 make(map[canonical.Identifier]struct{}, len(value.heads)),
 		headSlots:             make(map[canonical.Identifier][]keyEpochEnvelopeSlot, len(value.headSlots)),
+		keyEpochConflicts:     append([]keyEpochConflictCandidate(nil), value.keyEpochConflicts...),
 		recoveryMembers:       make(map[canonical.Identifier]canonical.Identifier, len(value.recoveryMembers)),
 		recoveryRevisions:     make(map[canonical.Identifier]uint64, len(value.recoveryRevisions)),
 		recoverySigningKeys:   make(map[canonical.Identifier]ed25519.PublicKey, len(value.recoverySigningKeys)),
@@ -773,6 +786,9 @@ func cloneKeyEpochReplayState(value keyEpochReplayState) keyEpochReplayState {
 	}
 	for id, display := range value.epochs {
 		clone.epochs[id] = display
+	}
+	for id, causeID := range value.epochCauses {
+		clone.epochCauses[id] = causeID
 	}
 	for id, slots := range value.headSlots {
 		clone.headSlots[id] = cloneKeyEpochEnvelopeSlots(slots)
@@ -834,8 +850,10 @@ func mergeKeyEpochReplayStates(values []keyEpochReplayState) keyEpochReplayState
 			administrators:        make(map[canonical.Identifier]struct{}),
 			clientMembers:         make(map[canonical.Identifier]canonical.Identifier),
 			epochs:                make(map[canonical.Identifier]uint64),
+			epochCauses:           make(map[canonical.Identifier]canonical.Identifier),
 			heads:                 make(map[canonical.Identifier]struct{}),
 			headSlots:             make(map[canonical.Identifier][]keyEpochEnvelopeSlot),
+			keyEpochConflicts:     []keyEpochConflictCandidate{},
 			recoveryMembers:       make(map[canonical.Identifier]canonical.Identifier),
 			recoveryRevisions:     make(map[canonical.Identifier]uint64),
 			recoverySigningKeys:   make(map[canonical.Identifier]ed25519.PublicKey),
@@ -880,6 +898,11 @@ func mergeKeyEpochReplayStates(values []keyEpochReplayState) keyEpochReplayState
 				continue
 			}
 			merged.epochs[id] = display
+		}
+		for id, causeID := range value.epochCauses {
+			if _, exists := merged.epochCauses[id]; !exists {
+				merged.epochCauses[id] = causeID
+			}
 		}
 		for id := range value.heads {
 			merged.heads[id] = struct{}{}
@@ -948,6 +971,7 @@ func mergeKeyEpochReplayStates(values []keyEpochReplayState) keyEpochReplayState
 		}
 		merged.closed = merged.closed || value.closed
 	}
+	deriveKeyEpochConflicts(&merged)
 	deriveRecoveryConflicts(&merged)
 	reduceInvitationConflicts(&merged)
 	return merged
@@ -981,6 +1005,31 @@ func deriveRecoveryConflicts(state *keyEpochReplayState) {
 		})
 		state.recoveryConflicts[memberID] = candidates
 	}
+}
+
+func deriveKeyEpochConflicts(state *keyEpochReplayState) {
+	if state == nil {
+		return
+	}
+	state.keyEpochConflicts = nil
+	if len(state.heads) < 2 {
+		return
+	}
+	for epochID := range state.heads {
+		causeID, ok := state.epochCauses[epochID]
+		if !ok {
+			continue
+		}
+		state.keyEpochConflicts = append(state.keyEpochConflicts, keyEpochConflictCandidate{
+			headRecordID: causeID, keyEpochID: epochID,
+		})
+	}
+	sort.Slice(state.keyEpochConflicts, func(left, right int) bool {
+		if state.keyEpochConflicts[left].headRecordID != state.keyEpochConflicts[right].headRecordID {
+			return bytes.Compare(state.keyEpochConflicts[left].headRecordID[:], state.keyEpochConflicts[right].headRecordID[:]) < 0
+		}
+		return bytes.Compare(state.keyEpochConflicts[left].keyEpochID[:], state.keyEpochConflicts[right].keyEpochID[:]) < 0
+	})
 }
 
 func reduceInvitationConflicts(state *keyEpochReplayState) {

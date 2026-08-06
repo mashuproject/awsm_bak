@@ -57,6 +57,7 @@ type AuthorityState struct {
 	ActiveClientCredentialIDs      []canonical.Identifier
 	EffectiveRecoveryCredentialIDs []canonical.Identifier
 	RecoveryConflicts              []AuthorityRecoveryConflict
+	KeyEpochConflicts              []AuthorityKeyEpochConflict
 	CurrentKeyEpochIDs             []canonical.Identifier
 	Lifecycle                      string
 }
@@ -69,6 +70,15 @@ type AuthorityRecoveryConflict struct {
 type AuthorityRecoveryConflictCandidate struct {
 	HeadRecordID         canonical.Identifier
 	RecoveryCredentialID canonical.Identifier
+}
+
+type AuthorityKeyEpochConflict struct {
+	Candidates []AuthorityKeyEpochConflictCandidate
+}
+
+type AuthorityKeyEpochConflictCandidate struct {
+	HeadRecordID canonical.Identifier
+	KeyEpochID   canonical.Identifier
 }
 
 func NewReplica(baseline canonical.Baseline) (*Replica, error) {
@@ -487,6 +497,15 @@ func (r *Replica) AuthorityState() (AuthorityState, error) {
 	sort.Slice(state.RecoveryConflicts, func(left, right int) bool {
 		return bytes.Compare(state.RecoveryConflicts[left].MemberID[:], state.RecoveryConflicts[right].MemberID[:]) < 0
 	})
+	if len(replayed.keyEpochConflicts) > 0 {
+		conflict := AuthorityKeyEpochConflict{Candidates: make([]AuthorityKeyEpochConflictCandidate, 0, len(replayed.keyEpochConflicts))}
+		for _, candidate := range replayed.keyEpochConflicts {
+			conflict.Candidates = append(conflict.Candidates, AuthorityKeyEpochConflictCandidate{
+				HeadRecordID: candidate.headRecordID, KeyEpochID: candidate.keyEpochID,
+			})
+		}
+		state.KeyEpochConflicts = []AuthorityKeyEpochConflict{conflict}
+	}
 	for credentialID := range replayed.clientTargets {
 		if _, active := replayed.activeClientMember(credentialID); active {
 			state.ActiveClientCredentialIDs = append(state.ActiveClientCredentialIDs, credentialID)

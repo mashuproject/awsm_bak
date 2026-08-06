@@ -369,6 +369,60 @@ func TestReplicaSurfacesConcurrentRecoveryReplacementConflict(t *testing.T) {
 	}
 }
 
+func TestReplicaSurfacesAndResolvesConcurrentKeyEpochConflict(t *testing.T) {
+	prepared := deterministicCreation(t)
+	replica, err := NewReplica(prepared.Baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := replica.AdmitEvent(prepared.Genesis, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit Genesis: %v", err)
+	}
+	firstKey := bytes.Repeat([]byte{0xa1}, 32)
+	secondKey := bytes.Repeat([]byte{0xa2}, 32)
+	first := signKeyEpochTransitionFixture(t, prepared, []canonical.Identifier{prepared.Genesis.RecordID}, []canonical.Identifier{prepared.KeyEpochID}, firstKey, 1, 221)
+	second := signKeyEpochTransitionFixture(t, prepared, []canonical.Identifier{prepared.Genesis.RecordID}, []canonical.Identifier{prepared.KeyEpochID}, secondKey, 1, 222)
+	if err := replica.AdmitEvent(first, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit first Key Epoch Transition: %v", err)
+	}
+	if err := replica.AdmitEvent(second, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit concurrent Key Epoch Transition: %v", err)
+	}
+	state, err := replica.AuthorityState()
+	if err != nil {
+		t.Fatalf("AuthorityState: %v", err)
+	}
+	if len(state.KeyEpochConflicts) != 1 || len(state.KeyEpochConflicts[0].Candidates) != 2 {
+		t.Fatalf("AuthorityState KeyEpochConflicts = %#v", state.KeyEpochConflicts)
+	}
+	firstTransition, err := parseKeyEpochTransition(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondTransition, err := parseKeyEpochTransition(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolutionKey := bytes.Repeat([]byte{0xa3}, 32)
+	parents := []canonical.Identifier{first.RecordID, second.RecordID}
+	sort.Slice(parents, func(left, right int) bool { return bytes.Compare(parents[left][:], parents[right][:]) < 0 })
+	resolution := signKeyEpochTransitionFixture(t, prepared, parents, []canonical.Identifier{firstTransition.newEpochID, secondTransition.newEpochID}, resolutionKey, 2, 223)
+	if err := replica.AdmitEvent(resolution, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit Key Epoch Conflict resolution: %v", err)
+	}
+	state, err = replica.AuthorityState()
+	if err != nil {
+		t.Fatalf("AuthorityState after Key Epoch Conflict resolution: %v", err)
+	}
+	resolvedTransition, err := parseKeyEpochTransition(resolution)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.KeyEpochConflicts) != 0 || len(state.CurrentKeyEpochIDs) != 1 || state.CurrentKeyEpochIDs[0] != resolvedTransition.newEpochID {
+		t.Fatalf("AuthorityState after Key Epoch Conflict resolution = %#v", state)
+	}
+}
+
 func TestReplicaRejectsInvitationWithMismatchedCapabilityIssuer(t *testing.T) {
 	prepared := deterministicCreation(t)
 	replica, err := NewReplica(prepared.Baseline)
@@ -869,6 +923,53 @@ func signRecoveryReplacementFixtureWithParents(t *testing.T, prepared PreparedCa
 		t.Fatalf("sign Recovery Replacement: %v", err)
 	}
 	return event
+}
+
+func signKeyEpochTransitionFixture(t *testing.T, prepared PreparedCanonicalVaultCreation, parents []canonical.Identifier, parentEpochIDs []canonical.Identifier, key []byte, displayNumber uint64, assertedAt int64) canonical.Event {
+	t.Helper()
+	epochID, err := awsmcrypto.KeyEpochID(prepared.IDs.VaultID, key)
+	if err != nil {
+		t.Fatalf("derive Key Epoch ID: %v", err)
+	}
+	recoveryRevision := uint64(0)
+	recoveryEnvelope, err := awsmcrypto.SealKeyEnvelope(awsmcrypto.KeyEnvelopeInput{
+		VaultID: prepared.IDs.VaultID, KeyEpochID: epochID, KeyEpochKey: key, TargetKind: awsmcrypto.RecoveryCredentialTarget,
+		TargetCredentialID: prepared.IDs.RecoveryCredentialID, TargetRevision: &recoveryRevision, RecipientWrappingPublicKey: prepared.RecoveryKeys.WrappingPublicKey,
+		Padding: bytes.Repeat([]byte{0xa4}, 32), EphemeralSeed: bytes.Repeat([]byte{0xa5}, 32),
+	})
+	if err != nil {
+		t.Fatalf("seal Recovery Key Envelope: %v", err)
+	}
+	clientEnvelope, err := awsmcrypto.SealKeyEnvelope(awsmcrypto.KeyEnvelopeInput{
+		VaultID: prepared.IDs.VaultID, KeyEpochID: epochID, KeyEpochKey: key, TargetKind: awsmcrypto.ClientCredentialTarget,
+		TargetCredentialID: prepared.IDs.ClientCredentialID, RecipientWrappingPublicKey: prepared.ClientKeys.WrappingPublicKey,
+		Padding: bytes.Repeat([]byte{0xa6}, 32), EphemeralSeed: bytes.Repeat([]byte{0xa7}, 32),
+	})
+	if err != nil {
+		t.Fatalf("seal Client Key Envelope: %v", err)
+	}
+	recoverySlot := canonical.Map{0: epochID[:], 1: uint64(1), 2: prepared.IDs.RecoveryCredentialID[:], 3: uint64(0), 4: recoveryEnvelope.ID[:]}
+	clientSlot := canonical.Map{0: epochID[:], 1: uint64(2), 2: prepared.IDs.ClientCredentialID[:], 3: nil, 4: clientEnvelope.ID[:]}
+	slots := canonicalSetValues([]canonical.Value{recoverySlot, clientSlot})
+	parentValues := make([]canonical.Value, 0, len(parentEpochIDs))
+	for _, parentID := range parentEpochIDs {
+		parentValues = append(parentValues, parentID[:])
+	}
+	parentEpochSet := canonicalSetValues(parentValues)
+	dependencies := []canonical.Dependency{{Type: 7, ID: recoveryEnvelope.ID}, {Type: 7, ID: clientEnvelope.ID}}
+	sort.Slice(dependencies, func(left, right int) bool {
+		return bytes.Compare(dependencies[left].ID[:], dependencies[right].ID[:]) < 0
+	})
+	returnEvent, err := canonical.SignEvent(canonical.EventInput{
+		VaultID: prepared.IDs.VaultID, GenerationID: prepared.IDs.GenerationID, ParentRecordIDs: parents, AuthorityParentIDs: parents,
+		Dependencies: dependencies, RequiredFeatureSetID: prepared.RequiredFeatureSetID, Extensions: map[string][]byte{}, Family: canonical.AuthorityFamily, Type: 12,
+		SignerCredentialID: prepared.IDs.ClientCredentialID, AssertedAt: assertedAt,
+		Body: canonical.Map{0: parentEpochSet, 1: epochID[:], 2: displayNumber, 3: slots},
+	}, ed25519.PrivateKey(prepared.ClientKeys.SigningSecretKey))
+	if err != nil {
+		t.Fatalf("sign Key Epoch Transition: %v", err)
+	}
+	return returnEvent
 }
 
 func TestReplicaAdmitsContentAddressedObject(t *testing.T) {
