@@ -575,6 +575,19 @@ type GarbageCollectionSummary struct {
 func (r *Runtime) StorageRelief(ctx context.Context, vaultID string, objectIDs []string) (StorageReliefSummary, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.storageReliefLocked(ctx, vaultID, objectIDs)
+}
+
+func (r *Runtime) storageReliefExpected(ctx context.Context, vaultID string, objectIDs []string) (StorageReliefSummary, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := r.requireExpectedLocked(&vaultID); err != nil {
+		return StorageReliefSummary{}, err
+	}
+	return r.storageReliefLocked(ctx, vaultID, objectIDs)
+}
+
+func (r *Runtime) storageReliefLocked(ctx context.Context, vaultID string, objectIDs []string) (StorageReliefSummary, error) {
 	value, err := r.vaultLocked(vaultID)
 	if err != nil {
 		return StorageReliefSummary{}, err
@@ -650,9 +663,22 @@ func (r *Runtime) StorageRelief(ctx context.Context, vaultID string, objectIDs [
 // artifact-store files that no accepted Vault currently references. It does
 // not infer age, Remote durability, or semantic reachability from filenames.
 func (r *Runtime) GarbageCollect(ctx context.Context, vaultID string) (GarbageCollectionSummary, error) {
-	_ = ctx
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.garbageCollectLocked(ctx, vaultID)
+}
+
+func (r *Runtime) garbageCollectExpected(ctx context.Context, vaultID string) (GarbageCollectionSummary, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err := r.requireExpectedLocked(&vaultID); err != nil {
+		return GarbageCollectionSummary{}, err
+	}
+	return r.garbageCollectLocked(ctx, vaultID)
+}
+
+func (r *Runtime) garbageCollectLocked(ctx context.Context, vaultID string) (GarbageCollectionSummary, error) {
+	_ = ctx
 	if _, err := r.vaultLocked(vaultID); err != nil {
 		return GarbageCollectionSummary{}, err
 	}
@@ -1091,6 +1117,25 @@ func (r *Runtime) Handle(ctx context.Context, raw json.RawMessage) (any, error) 
 			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "HydrateArtifact contains invalid fields")
 		}
 		return r.hydrateArtifact(ctx, input.ExpectedVaultID, input.ArtifactID)
+	case "StorageRelief":
+		var input struct {
+			Type            string   `json:"type"`
+			ExpectedVaultID string   `json:"expectedVaultId"`
+			ObjectIDs       []string `json:"objectIds"`
+		}
+		if err := decode(raw, &input); err != nil {
+			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "StorageRelief contains invalid fields")
+		}
+		return r.storageReliefExpected(ctx, input.ExpectedVaultID, input.ObjectIDs)
+	case "GarbageCollect":
+		var input struct {
+			Type            string `json:"type"`
+			ExpectedVaultID string `json:"expectedVaultId"`
+		}
+		if err := decode(raw, &input); err != nil {
+			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "GarbageCollect contains invalid fields")
+		}
+		return r.garbageCollectExpected(ctx, input.ExpectedVaultID)
 	case "CaptureActivePage":
 		var input struct {
 			Type            string `json:"type"`

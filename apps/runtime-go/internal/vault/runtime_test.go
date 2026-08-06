@@ -514,6 +514,36 @@ func TestGarbageCollectionDeletesOnlyUnreferencedOpaqueItems(t *testing.T) {
 	}
 }
 
+func TestRuntimeCommandsExposeStorageReliefAndGarbageCollection(t *testing.T) {
+	ctx := context.Background()
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, store.NewMemoryState(), dependencies)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vaultID, _ := createVaultWithPhraseForTest(t, runtime, "Command storage")
+	objectID := admitCompleteExportArtifact(t, runtime, dependencies, vaultID)
+	result, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "StorageRelief", "expectedVaultId": vaultID, "objectIds": []string{hexIdentifier(objectID)},
+	}))
+	if err != nil {
+		t.Fatalf("StorageRelief command: %v", err)
+	}
+	relief, ok := result.(StorageReliefSummary)
+	if !ok || len(relief.ReleasedObjectIDs) != 1 || relief.ReleasedObjectIDs[0] != hexIdentifier(objectID) || relief.Warning == "" {
+		t.Fatalf("StorageRelief command result = %#v", result)
+	}
+	result, err = runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "GarbageCollect", "expectedVaultId": vaultID,
+	}))
+	if err != nil {
+		t.Fatalf("GarbageCollect command: %v", err)
+	}
+	if _, ok := result.(GarbageCollectionSummary); !ok {
+		t.Fatalf("GarbageCollect command result = %#v", result)
+	}
+}
+
 func TestForkCreatesFreshCanonicalReplicaForEmptyVault(t *testing.T) {
 	ctx := context.Background()
 	state := store.NewMemoryState()
