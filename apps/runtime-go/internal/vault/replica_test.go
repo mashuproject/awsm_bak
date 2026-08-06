@@ -60,6 +60,21 @@ func TestReplicaRejectsUnauthenticatedOrUnknownEvents(t *testing.T) {
 	}
 }
 
+func TestReplicaRejectsEventWithUnknownSignerCredential(t *testing.T) {
+	prepared := deterministicCreation(t)
+	replica, err := NewReplica(prepared.Baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := replica.AdmitEvent(prepared.Genesis, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatal(err)
+	}
+	event := signReplicaChildWithCredential(t, prepared, prepared.Genesis.RecordID, 7, filledCreationID(201))
+	if err := replica.AdmitEvent(event, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err == nil {
+		t.Fatal("Replica accepted an Event from an unknown Credential")
+	}
+}
+
 func deterministicCreation(t *testing.T) PreparedCanonicalVaultCreation {
 	t.Helper()
 	ids := CreationIDs{
@@ -88,13 +103,17 @@ func deterministicCreation(t *testing.T) PreparedCanonicalVaultCreation {
 }
 
 func signReplicaChild(t *testing.T, prepared PreparedCanonicalVaultCreation, parent canonical.Identifier, eventType uint64) canonical.Event {
+	return signReplicaChildWithCredential(t, prepared, parent, eventType, prepared.IDs.ClientCredentialID)
+}
+
+func signReplicaChildWithCredential(t *testing.T, prepared PreparedCanonicalVaultCreation, parent canonical.Identifier, eventType uint64, credential canonical.Identifier) canonical.Event {
 	t.Helper()
 	event, err := canonical.SignEvent(canonical.EventInput{
 		VaultID: prepared.IDs.VaultID, GenerationID: prepared.IDs.GenerationID,
 		ParentRecordIDs: []canonical.Identifier{parent}, AuthorityParentIDs: []canonical.Identifier{parent},
 		Dependencies: []canonical.Dependency{}, RequiredFeatureSetID: prepared.RequiredFeatureSetID,
 		Extensions: map[string][]byte{}, Family: canonical.AuthorityFamily, Type: eventType,
-		SignerCredentialID: prepared.IDs.ClientCredentialID, AssertedAt: 124 + int64(eventType),
+		SignerCredentialID: credential, AssertedAt: 124 + int64(eventType),
 		Body: canonical.Map{0: uint64(eventType)},
 	}, ed25519.PrivateKey(prepared.ClientKeys.SigningSecretKey))
 	if err != nil {

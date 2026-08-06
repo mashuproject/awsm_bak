@@ -24,6 +24,7 @@ type Replica struct {
 	causalFrontier      []canonical.Identifier
 	authorityFrontier   []canonical.Identifier
 	continuityRecordIDs []canonical.Identifier
+	credentialKeys      map[canonical.Identifier]ed25519.PublicKey
 }
 
 type ReplicaState struct {
@@ -52,12 +53,13 @@ func NewReplica(baseline canonical.Baseline) (*Replica, error) {
 		return nil, fmt.Errorf("add Replica Baseline: %w", err)
 	}
 	return &Replica{
-		vaultID:      baseline.VaultID,
-		generationID: baseline.GenerationID,
-		baseline:     decoded,
-		baselineID:   baseline.RecordID,
-		records:      map[canonical.Identifier]canonical.Record{baseline.RecordID: {Kind: canonical.BaselineKind, Baseline: &decoded, Bytes: append([]byte(nil), decoded.Bytes...), RecordID: decoded.RecordID}},
-		graph:        graph,
+		vaultID:        baseline.VaultID,
+		generationID:   baseline.GenerationID,
+		baseline:       decoded,
+		baselineID:     baseline.RecordID,
+		records:        map[canonical.Identifier]canonical.Record{baseline.RecordID: {Kind: canonical.BaselineKind, Baseline: &decoded, Bytes: append([]byte(nil), decoded.Bytes...), RecordID: decoded.RecordID}},
+		graph:          graph,
+		credentialKeys: make(map[canonical.Identifier]ed25519.PublicKey),
 	}, nil
 }
 
@@ -91,6 +93,14 @@ func (r *Replica) AdmitEvent(event canonical.Event, signerPublicKey ed25519.Publ
 		if !hasDependency(decoded.Dependencies, 2, r.baselineID) {
 			return errors.New("Genesis does not depend on the Replica Baseline")
 		}
+		credentialID, signingKey, err := genesisCredential(decoded)
+		if err != nil {
+			return err
+		}
+		if credentialID != decoded.SignerCredentialID || !bytes.Equal(signingKey, signerPublicKey) {
+			return errors.New("Genesis signer Credential does not match its certificate")
+		}
+		r.credentialKeys[credentialID] = append(ed25519.PublicKey(nil), signerPublicKey...)
 		r.genesisID = decoded.RecordID
 	} else {
 		if len(decoded.ParentRecordIDs) == 0 || len(decoded.AuthorityParentIDs) == 0 {
@@ -101,6 +111,10 @@ func (r *Replica) AdmitEvent(event canonical.Event, signerPublicKey ed25519.Publ
 		}
 		if err := r.requireParents(decoded.AuthorityParentIDs, "Authority"); err != nil {
 			return err
+		}
+		acceptedKey, ok := r.credentialKeys[decoded.SignerCredentialID]
+		if !ok || !bytes.Equal(acceptedKey, signerPublicKey) {
+			return errors.New("Event signer Credential is not accepted")
 		}
 	}
 	if err := r.graph.Add(decoded.RecordID, decoded.ParentRecordIDs); err != nil {
@@ -176,6 +190,10 @@ func (r *Replica) Clone() *Replica {
 		causalFrontier:      cloneIdentifiers(r.causalFrontier),
 		authorityFrontier:   cloneIdentifiers(r.authorityFrontier),
 		continuityRecordIDs: cloneIdentifiers(r.continuityRecordIDs),
+		credentialKeys:      make(map[canonical.Identifier]ed25519.PublicKey, len(r.credentialKeys)),
+	}
+	for id, key := range r.credentialKeys {
+		clone.credentialKeys[id] = append(ed25519.PublicKey(nil), key...)
 	}
 	clone.baseline.Bytes = append([]byte(nil), r.baseline.Bytes...)
 	_ = clone.graph.AddBaseline(clone.baselineID, nil)
@@ -245,6 +263,80 @@ func (r *Replica) requireParents(parents []canonical.Identifier, label string) e
 		}
 	}
 	return nil
+}
+
+func genesisCredential(event canonical.Event) (canonical.Identifier, []byte, error) {
+	body, ok := replicaMapValue(event.Body)
+	if !ok || !replicaMapHasKeys(body, 7) {
+		return canonical.Identifier{}, nil, errors.New("Genesis authority body is invalid")
+	}
+	certificate, ok := replicaMapEntry(body, 2)
+	if !ok || !replicaMapHasKeys(certificate, 4) {
+		return canonical.Identifier{}, nil, errors.New("Genesis Client Certificate is invalid")
+	}
+	credentialBytes, ok := replicaMapBytes(certificate, 0, 32)
+	if !ok {
+		return canonical.Identifier{}, nil, errors.New("Genesis Client Credential ID is invalid")
+	}
+	publicKey, ok := replicaMapBytes(certificate, 2, ed25519.PublicKeySize)
+	if !ok {
+		return canonical.Identifier{}, nil, errors.New("Genesis signing public key is invalid")
+	}
+	var credentialID canonical.Identifier
+	copy(credentialID[:], credentialBytes)
+	return credentialID, publicKey, nil
+}
+
+func replicaMapValue(value canonical.Value) (canonical.Value, bool) {
+	switch typed := value.(type) {
+	case canonical.Map:
+		return typed, true
+	case map[any]any:
+		return typed, true
+	default:
+		return nil, false
+	}
+}
+
+func replicaMapEntry(value canonical.Value, key uint64) (canonical.Value, bool) {
+	switch typed := value.(type) {
+	case canonical.Map:
+		entry, ok := typed[key]
+		return entry, ok
+	case map[any]any:
+		entry, ok := typed[key]
+		return entry, ok
+	default:
+		return nil, false
+	}
+}
+
+func replicaMapHasKeys(value canonical.Value, count int) bool {
+	if _, ok := replicaMapValue(value); !ok {
+		return false
+	}
+	for index := 0; index < count; index++ {
+		if _, ok := replicaMapEntry(value, uint64(index)); !ok {
+			return false
+		}
+	}
+	switch typed := value.(type) {
+	case canonical.Map:
+		return len(typed) == count
+	case map[any]any:
+		return len(typed) == count
+	default:
+		return false
+	}
+}
+
+func replicaMapBytes(value canonical.Value, key uint64, length int) ([]byte, bool) {
+	entry, ok := replicaMapEntry(value, key)
+	if !ok {
+		return nil, false
+	}
+	bytesValue, ok := entry.([]byte)
+	return bytesValue, ok && len(bytesValue) == length
 }
 
 func hasDependency(dependencies []canonical.Dependency, kind uint64, id canonical.Identifier) bool {
