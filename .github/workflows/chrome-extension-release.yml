@@ -5,6 +5,12 @@ on:
     paths:
       - ".github/workflows/chrome-extension-release.yml"
       - "apps/browser-extension/**"
+      - "apps/runtime-go/**"
+      - "apps/coordination-server/app/helpers/**"
+      - "apps/coordination-server/app/views/**"
+      - "docs/guides/install-chrome-extension.md"
+      - "docs/guides/install-desktop-runtime.md"
+      - "docs/guides/install-firefox-extension.md"
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
@@ -76,6 +82,12 @@ jobs:
       archive_name: ${{ steps.metadata.outputs.archive_name }}
       checksum_name: ${{ steps.metadata.outputs.checksum_name }}
       commit: ${{ steps.revision.outputs.commit }}
+      desktop_linux_checksum_name: ${{ steps.metadata.outputs.desktop_linux_checksum_name }}
+      desktop_linux_name: ${{ steps.metadata.outputs.desktop_linux_name }}
+      desktop_macos_checksum_name: ${{ steps.metadata.outputs.desktop_macos_checksum_name }}
+      desktop_macos_name: ${{ steps.metadata.outputs.desktop_macos_name }}
+      desktop_windows_checksum_name: ${{ steps.metadata.outputs.desktop_windows_checksum_name }}
+      desktop_windows_name: ${{ steps.metadata.outputs.desktop_windows_name }}
       firefox_xpi_name: ${{ steps.metadata.outputs.firefox_xpi_name }}
       firefox_checksum_name: ${{ steps.metadata.outputs.firefox_checksum_name }}
       firefox_source_name: ${{ steps.metadata.outputs.firefox_source_name }}
@@ -185,6 +197,187 @@ jobs:
             dist/${{ steps.metadata.outputs.firefox_source_name }}.sha256
             dist/chrome-release-notes.md
             dist/release-notes.md
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+  desktop-build:
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            runner: ubuntu-latest
+            target: linux/amd64
+          - platform: windows
+            runner: windows-latest
+            target: windows/amd64
+          - platform: macos
+            runner: macos-latest
+            target: darwin/universal
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: apps/runtime-go/go.mod
+          cache-dependency-path: apps/runtime-go/go.sum
+
+      - name: Derive release version
+        id: metadata
+        shell: bash
+        run: echo "version=$(node -p \"require('./apps/browser-extension/package.json').version\")" >> "$GITHUB_OUTPUT"
+
+      - name: Set Wails product version
+        shell: bash
+        working-directory: apps/runtime-go/cmd/awsm
+        env:
+          VERSION: ${{ steps.metadata.outputs.version }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFile, writeFile } from "node:fs/promises";
+
+          const configPath = "wails.json";
+          const config = JSON.parse(await readFile(configPath, "utf8"));
+          config.info = { ...(config.info ?? {}), productVersion: process.env.VERSION };
+          await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
+          NODE
+
+      - name: Install Linux desktop dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes file fuse3 libgtk-3-dev libwebkit2gtk-4.1-dev xvfb
+
+      - name: Build Wails desktop target
+        shell: bash
+        working-directory: apps/runtime-go/cmd/awsm
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          TARGET: ${{ matrix.target }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+        run: |
+          tags="desktop,production"
+          if [[ "$PLATFORM" == "linux" ]]; then
+            tags="$tags,webkit2_41"
+          fi
+          flags=(
+            build
+            -clean
+            -platform "$TARGET"
+            -tags "$tags"
+            -s
+            -m
+            -nosyncgomod
+            -skipbindings
+            -skipembedcreate
+            -trimpath
+            -ldflags "-X main.appVersion=$VERSION"
+          )
+          if [[ "$PLATFORM" == "windows" ]]; then
+            flags+=( -nsis -webview2 download )
+          fi
+          go run github.com/wailsapp/wails/v2/cmd/wails@v2.13.0 "${flags[@]}"
+
+      - name: Download pinned AppImage tooling
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/appimage-tools"
+          curl --fail --location --retry 3 \
+            --output "$RUNNER_TEMP/appimage-tools/linuxdeploy.AppImage" \
+            https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-x86_64.AppImage
+          printf '%s  %s\n' \
+            c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d \
+            "$RUNNER_TEMP/appimage-tools/linuxdeploy.AppImage" | sha256sum --check
+          curl --fail --location --retry 3 \
+            --output "$RUNNER_TEMP/appimage-tools/appimagetool.AppImage" \
+            https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+          printf '%s  %s\n' \
+            ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0 \
+            "$RUNNER_TEMP/appimage-tools/appimagetool.AppImage" | sha256sum --check
+          chmod +x "$RUNNER_TEMP/appimage-tools"/*.AppImage
+
+      - name: Package Linux AppImage
+        if: matrix.platform == 'linux'
+        shell: bash
+        env:
+          APPIMAGETOOL: ${{ runner.temp }}/appimage-tools/appimagetool.AppImage
+          LINUXDEPLOY: ${{ runner.temp }}/appimage-tools/linuxdeploy.AppImage
+          OUTPUT_DIR: ${{ runner.temp }}/desktop-release
+          VERSION: ${{ steps.metadata.outputs.version }}
+        run: |
+          mkdir -p "$OUTPUT_DIR"
+          apps/runtime-go/script/package-linux-appimage.sh
+
+      - name: Smoke-test packaged Linux AppImage
+        if: matrix.platform == 'linux'
+        shell: bash
+        env:
+          AWSM_DESKTOP_BINARY: ${{ runner.temp }}/desktop-release/awsm-desktop-linux-x86_64-v${{ steps.metadata.outputs.version }}.AppImage
+        run: node apps/runtime-go/script/packaged-desktop-smoke.mjs
+
+      - name: Package Windows NSIS installer
+        if: matrix.platform == 'windows'
+        shell: bash
+        env:
+          VERSION: ${{ steps.metadata.outputs.version }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/desktop-release"
+          installer=$(find apps/runtime-go/cmd/awsm/build/bin -maxdepth 1 -type f -iname '*-installer.exe' -print -quit)
+          test -n "$installer"
+          cp "$installer" "$RUNNER_TEMP/desktop-release/awsm-desktop-windows-x86_64-v$VERSION-setup.exe"
+
+      - name: Package universal macOS DMG
+        if: matrix.platform == 'macos'
+        shell: bash
+        env:
+          VERSION: ${{ steps.metadata.outputs.version }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/desktop-release"
+          app=$(find apps/runtime-go/cmd/awsm/build/bin -maxdepth 1 -type d -name '*.app' -print -quit)
+          test -n "$app"
+          hdiutil create -volname AWSM -srcfolder "$app" -ov -format UDZO \
+            "$RUNNER_TEMP/desktop-release/awsm-desktop-macos-universal-v$VERSION.dmg"
+
+      - name: Verify desktop checksums
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          VERSION: ${{ steps.metadata.outputs.version }}
+          OUTPUT_DIR: ${{ runner.temp }}/desktop-release
+        run: |
+          if [[ "$PLATFORM" == "linux" ]]; then
+            artifact="awsm-desktop-linux-x86_64-v$VERSION.AppImage"
+          elif [[ "$PLATFORM" == "windows" ]]; then
+            artifact="awsm-desktop-windows-x86_64-v$VERSION-setup.exe"
+          else
+            artifact="awsm-desktop-macos-universal-v$VERSION.dmg"
+          fi
+          test -s "$OUTPUT_DIR/$artifact"
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$OUTPUT_DIR/$artifact" > "$OUTPUT_DIR/$artifact.sha256"
+            sha256sum --check "$OUTPUT_DIR/$artifact.sha256"
+          else
+            shasum -a 256 "$OUTPUT_DIR/$artifact" > "$OUTPUT_DIR/$artifact.sha256"
+            shasum -a 256 -c "$OUTPUT_DIR/$artifact.sha256"
+          fi
+
+      - name: Upload desktop release asset
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: desktop-${{ matrix.platform }}-${{ github.ref_name }}
+          path: ${{ runner.temp }}/desktop-release/*
           if-no-files-found: error
           retention-days: 30
           compression-level: 0
@@ -318,7 +511,7 @@ jobs:
           exit 1
 
   publish-chrome:
-    needs: build
+    needs: [build, desktop-build]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && vars.FIREFOX_AMO_SIGNING_ENABLED != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -349,10 +542,41 @@ jobs:
             exit 1
           fi
 
+      - name: Download validated desktop release assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: desktop-*-${{ needs.build.outputs.tag }}
+          path: dist
+          merge-multiple: true
+
+      - name: Revalidate transferred desktop assets
+        env:
+          DESKTOP_LINUX_NAME: ${{ needs.build.outputs.desktop_linux_name }}
+          DESKTOP_LINUX_CHECKSUM_NAME: ${{ needs.build.outputs.desktop_linux_checksum_name }}
+          DESKTOP_WINDOWS_NAME: ${{ needs.build.outputs.desktop_windows_name }}
+          DESKTOP_WINDOWS_CHECKSUM_NAME: ${{ needs.build.outputs.desktop_windows_checksum_name }}
+          DESKTOP_MACOS_NAME: ${{ needs.build.outputs.desktop_macos_name }}
+          DESKTOP_MACOS_CHECKSUM_NAME: ${{ needs.build.outputs.desktop_macos_checksum_name }}
+        run: |
+          cd dist
+          for checksum in "$DESKTOP_LINUX_CHECKSUM_NAME" "$DESKTOP_WINDOWS_CHECKSUM_NAME" "$DESKTOP_MACOS_CHECKSUM_NAME"; do
+            test -s "$checksum"
+            sha256sum --check "$checksum"
+          done
+          for artifact in "$DESKTOP_LINUX_NAME" "$DESKTOP_WINDOWS_NAME" "$DESKTOP_MACOS_NAME"; do
+            test -s "$artifact"
+          done
+
       - name: Publish Chrome GitHub Release
         env:
           ARCHIVE_NAME: ${{ needs.build.outputs.archive_name }}
           CHECKSUM_NAME: ${{ needs.build.outputs.checksum_name }}
+          DESKTOP_LINUX_CHECKSUM_NAME: ${{ needs.build.outputs.desktop_linux_checksum_name }}
+          DESKTOP_LINUX_NAME: ${{ needs.build.outputs.desktop_linux_name }}
+          DESKTOP_MACOS_CHECKSUM_NAME: ${{ needs.build.outputs.desktop_macos_checksum_name }}
+          DESKTOP_MACOS_NAME: ${{ needs.build.outputs.desktop_macos_name }}
+          DESKTOP_WINDOWS_CHECKSUM_NAME: ${{ needs.build.outputs.desktop_windows_checksum_name }}
+          DESKTOP_WINDOWS_NAME: ${{ needs.build.outputs.desktop_windows_name }}
           GH_TOKEN: ${{ github.token }}
           PRERELEASE: ${{ needs.build.outputs.prerelease }}
           TAG: ${{ needs.build.outputs.tag }}
@@ -364,6 +588,12 @@ jobs:
           gh release create "$TAG" \
             "dist/$ARCHIVE_NAME" \
             "dist/$CHECKSUM_NAME" \
+            "dist/$DESKTOP_LINUX_NAME" \
+            "dist/$DESKTOP_LINUX_CHECKSUM_NAME" \
+            "dist/$DESKTOP_WINDOWS_NAME" \
+            "dist/$DESKTOP_WINDOWS_CHECKSUM_NAME" \
+            "dist/$DESKTOP_MACOS_NAME" \
+            "dist/$DESKTOP_MACOS_CHECKSUM_NAME" \
             --verify-tag \
             --title "$TAG" \
             --generate-notes \
@@ -372,7 +602,7 @@ jobs:
             "${prerelease_args[@]}"
 
   publish-joint:
-    needs: build
+    needs: [build, desktop-build]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && vars.FIREFOX_AMO_SIGNING_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -420,6 +650,13 @@ jobs:
           repository: ${{ github.repository }}
           run-id: ${{ steps.proof.outputs.run_id }}
 
+      - name: Download validated desktop release assets
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: desktop-*-${{ needs.build.outputs.tag }}
+          path: dist
+          merge-multiple: true
+
       - name: Revalidate transferred assets and candidate provenance
         env:
           ARCHIVE_NAME: ${{ needs.build.outputs.archive_name }}
@@ -430,6 +667,12 @@ jobs:
           FIREFOX_CHECKSUM_NAME: ${{ needs.build.outputs.firefox_checksum_name }}
           FIREFOX_SOURCE_ARCHIVE: dist/${{ needs.build.outputs.firefox_source_name }}
           FIREFOX_XPI: dist/${{ needs.build.outputs.firefox_xpi_name }}
+          DESKTOP_LINUX_CHECKSUM_NAME: ${{ needs.build.outputs.desktop_linux_checksum_name }}
+          DESKTOP_LINUX_NAME: ${{ needs.build.outputs.desktop_linux_name }}
+          DESKTOP_MACOS_CHECKSUM_NAME: ${{ needs.build.outputs.desktop_macos_checksum_name }}
+          DESKTOP_MACOS_NAME: ${{ needs.build.outputs.desktop_macos_name }}
+          DESKTOP_WINDOWS_CHECKSUM_NAME: ${{ needs.build.outputs.desktop_windows_checksum_name }}
+          DESKTOP_WINDOWS_NAME: ${{ needs.build.outputs.desktop_windows_name }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           UNSIGNED_ARCHIVE: dist/awsm-firefox-unsigned-v${{ needs.build.outputs.version }}.zip
           VERSION: ${{ needs.build.outputs.version }}
@@ -441,6 +684,9 @@ jobs:
           cd dist
           sha256sum --check "$CHECKSUM_NAME"
           sha256sum --check "$FIREFOX_CHECKSUM_NAME"
+          sha256sum --check "$DESKTOP_LINUX_CHECKSUM_NAME"
+          sha256sum --check "$DESKTOP_WINDOWS_CHECKSUM_NAME"
+          sha256sum --check "$DESKTOP_MACOS_CHECKSUM_NAME"
           unzip -t "$ARCHIVE_NAME"
           unzip -t "$(basename "$FIREFOX_XPI")"
           if [[ "$(unzip -Z1 "$ARCHIVE_NAME" | grep -Fxc 'manifest.json')" -ne 1 ]]; then
@@ -454,6 +700,12 @@ jobs:
           CHECKSUM_NAME: ${{ needs.build.outputs.checksum_name }}
           FIREFOX_CHECKSUM_NAME: ${{ needs.build.outputs.firefox_checksum_name }}
           FIREFOX_XPI_NAME: ${{ needs.build.outputs.firefox_xpi_name }}
+          DESKTOP_LINUX_CHECKSUM_NAME: ${{ needs.build.outputs.desktop_linux_checksum_name }}
+          DESKTOP_LINUX_NAME: ${{ needs.build.outputs.desktop_linux_name }}
+          DESKTOP_MACOS_CHECKSUM_NAME: ${{ needs.build.outputs.desktop_macos_checksum_name }}
+          DESKTOP_MACOS_NAME: ${{ needs.build.outputs.desktop_macos_name }}
+          DESKTOP_WINDOWS_CHECKSUM_NAME: ${{ needs.build.outputs.desktop_windows_checksum_name }}
+          DESKTOP_WINDOWS_NAME: ${{ needs.build.outputs.desktop_windows_name }}
           GH_TOKEN: ${{ github.token }}
           PRERELEASE: ${{ needs.build.outputs.prerelease }}
           TAG: ${{ needs.build.outputs.tag }}
@@ -467,6 +719,12 @@ jobs:
             "dist/$CHECKSUM_NAME" \
             "dist/$FIREFOX_XPI_NAME" \
             "dist/$FIREFOX_CHECKSUM_NAME" \
+            "dist/$DESKTOP_LINUX_NAME" \
+            "dist/$DESKTOP_LINUX_CHECKSUM_NAME" \
+            "dist/$DESKTOP_WINDOWS_NAME" \
+            "dist/$DESKTOP_WINDOWS_CHECKSUM_NAME" \
+            "dist/$DESKTOP_MACOS_NAME" \
+            "dist/$DESKTOP_MACOS_CHECKSUM_NAME" \
             --verify-tag \
             --title "$TAG" \
             --generate-notes \

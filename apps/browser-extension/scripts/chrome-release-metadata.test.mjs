@@ -26,10 +26,18 @@ test("returns stable release metadata with exact asset names and guide URL", () 
       firefoxXpiName: "awsm-firefox-v0.1.0.xpi",
       firefoxChecksumName: "awsm-firefox-v0.1.0.xpi.sha256",
       firefoxSourceName: "awsm-firefox-source-v0.1.0.zip",
+      desktopLinuxName: "awsm-desktop-linux-x86_64-v0.1.0.AppImage",
+      desktopLinuxChecksumName: "awsm-desktop-linux-x86_64-v0.1.0.AppImage.sha256",
+      desktopWindowsName: "awsm-desktop-windows-x86_64-v0.1.0-setup.exe",
+      desktopWindowsChecksumName: "awsm-desktop-windows-x86_64-v0.1.0-setup.exe.sha256",
+      desktopMacosName: "awsm-desktop-macos-universal-v0.1.0.dmg",
+      desktopMacosChecksumName: "awsm-desktop-macos-universal-v0.1.0.dmg.sha256",
       guideUrl:
         "https://github.com/parasquid/awsm/blob/v0.1.0/docs/guides/install-chrome-extension.md",
       firefoxGuideUrl:
         "https://github.com/parasquid/awsm/blob/v0.1.0/docs/guides/install-firefox-extension.md",
+      desktopGuideUrl:
+        "https://github.com/parasquid/awsm/blob/v0.1.0/docs/guides/install-desktop-runtime.md",
     },
   );
 });
@@ -146,6 +154,13 @@ test("renders Chrome and Firefox installation guidance and one trailing newline"
   assert.match(notes, /`awsm-chrome-v0\.1\.0\.zip\.sha256`/);
   assert.match(notes, /`awsm-firefox-v0\.1\.0\.xpi`/);
   assert.match(notes, /`awsm-firefox-v0\.1\.0\.xpi\.sha256`/);
+  assert.match(notes, /`awsm-desktop-linux-x86_64-v0\.1\.0\.AppImage`/);
+  assert.match(notes, /`awsm-desktop-windows-x86_64-v0\.1\.0-setup\.exe`/);
+  assert.match(notes, /`awsm-desktop-macos-universal-v0\.1\.0\.dmg`/);
+  assert.match(notes, /Windows[^\n]*untested/iu);
+  assert.match(notes, /macOS[^\n]*untested/iu);
+  assert.match(notes, /desktop packages are unsigned/iu);
+  assert.match(notes, new RegExp(`\\]\\(${metadata.desktopGuideUrl.replaceAll(".", "\\.")}\\)`));
   assert.match(notes, new RegExp(`\\]\\(${metadata.guideUrl.replaceAll(".", "\\.")}\\)`));
   assert.match(notes, new RegExp(`\\]\\(${metadata.firefoxGuideUrl.replaceAll(".", "\\.")}\\)`));
   assert.equal(notes.endsWith("\n"), true);

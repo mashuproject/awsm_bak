@@ -86,6 +86,18 @@ test("keeps installation guidance complete with and without JavaScript", async (
 }) => {
   await page.setViewportSize({ width: 1100, height: 900 });
   await page.goto("/#install-awsm");
+  await page.getByRole("tab", { name: "Desktop" }).click();
+  await expect(page.locator("#desktop-install")).toContainText(/Linux proven/iu);
+  await expect(page.locator("#desktop-install")).toContainText(/Connect Desktop Runtime/iu);
+  await expect(
+    page.locator("#desktop-install").getByRole("link", { name: "Desktop Runtime guide" }),
+  ).toHaveAttribute(
+    "href",
+    "https://github.com/mashuproject/awsm_bak/blob/main/docs/guides/install-desktop-runtime.md",
+  );
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await expectReadableContrast(page);
+  await expect(page).toHaveScreenshot("install-desktop.png", { fullPage: true });
   await page.getByRole("tab", { name: "Firefox" }).click();
   await expect(page.locator("#firefox-install")).toContainText(/Mozilla-signed Linux beta/iu);
   await expect(page.locator("#firefox-install")).toContainText(/signed XPI/iu);
@@ -108,12 +120,19 @@ test("keeps installation guidance complete with and without JavaScript", async (
   await expect(page).toHaveScreenshot("install-firefox-narrow.png", {
     fullPage: true,
   });
+  await page.getByRole("tab", { name: "Desktop" }).click();
+  await expect(page.locator("#desktop-install")).toBeVisible();
+  await expectReadableContrast(page);
+  await expect(page).toHaveScreenshot("install-desktop-narrow.png", {
+    fullPage: true,
+  });
 
   const noJavaScript = await browser.newContext({ javaScriptEnabled: false });
   const staticPage = await noJavaScript.newPage();
   await staticPage.goto(`${localOrigin}/`);
   await expect(staticPage.getByText("Chrome and Chromium browsers")).toBeVisible();
   await expect(staticPage.getByRole("heading", { name: "Firefox" })).toBeVisible();
+  await expect(staticPage.getByRole("heading", { name: "Desktop Runtime" })).toBeVisible();
   await expect(
     staticPage.getByText("Why do I need both an Account password and a Recovery Phrase?"),
   ).toBeVisible();

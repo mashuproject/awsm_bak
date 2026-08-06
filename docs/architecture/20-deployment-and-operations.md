@@ -36,6 +36,15 @@ is verified under Xvfb where GTK/WebKitGTK are installed. The Wails management p
 extension use the same loopback API, while the extension's installation-wrapped grant and the
 management summaries keep bearer tokens out of UI and logs.
 
+The browser and desktop packages share one Git tag and version. A release publishes a Linux x86_64
+AppImage, a Windows x86_64 NSIS installer, and a universal macOS DMG alongside the browser assets;
+each asset has a SHA-256 checksum. Linux is the only desktop platform with native startup and
+packaged smoke proof in the current release. Windows and macOS artifacts are build-only and must be
+described as untested; unsigned and unnotarized artifacts must not be presented as platform proof.
+The release workflow builds the Wails target from `apps/runtime-go/cmd/awsm`, bundles Linux GTK and
+WebKitGTK dependencies through pinned AppImage tooling, and publishes the exact artifact names
+described by the [desktop installation guide](../guides/install-desktop-runtime.md).
+
 # Replica Host service
 
 A reference Host deploys an HTTP application, relational Host Policy State, optional ephemeral

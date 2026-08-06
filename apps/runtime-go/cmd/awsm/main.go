@@ -13,8 +13,10 @@ import (
 	"github.com/mashuproject/awsm_bak/apps/runtime-go/internal/application"
 )
 
+var appVersion = "dev"
+
 func main() {
-	mode := flag.String("mode", "serve", "launch mode: serve or desktop")
+	mode := flag.String("mode", defaultMode(), "launch mode: serve or desktop")
 	dataDir := flag.String("data-dir", "", "PocketBase data directory")
 	listenAddress := flag.String("listen", application.DefaultListenAddress, "HTTP listen address")
 	readyFile := flag.String("ready-file", "", "write the bound address to this file after startup")

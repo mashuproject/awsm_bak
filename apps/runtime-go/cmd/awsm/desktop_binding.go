@@ -33,6 +33,10 @@ func (b *desktopBinding) RuntimeAddress() string {
 	return b.app.Address()
 }
 
+func (b *desktopBinding) RuntimeVersion() string {
+	return appVersion
+}
+
 // VaultCommand is the Wails presentation adapter for the same tagged command
 // contract exposed by the authenticated loopback API. It does not expose
 // storage or private key material to JavaScript.

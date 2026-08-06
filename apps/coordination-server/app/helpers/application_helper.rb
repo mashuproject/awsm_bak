@@ -8,6 +8,7 @@ module ApplicationHelper
       documentation: "#{PUBLIC_REPOSITORY}/tree/main/docs",
       chrome_guide: "#{PUBLIC_REPOSITORY}/blob/main/docs/guides/install-chrome-extension.md",
       firefox_guide: "#{PUBLIC_REPOSITORY}/blob/main/docs/guides/install-firefox-extension.md",
+      desktop_guide: "#{PUBLIC_REPOSITORY}/blob/main/docs/guides/install-desktop-runtime.md",
       self_hosting: "#{PUBLIC_REPOSITORY}/blob/main/apps/coordination-server/README.md",
       security_model: "#{PUBLIC_REPOSITORY}/blob/main/docs/architecture/04-security-model.md",
       license: "#{PUBLIC_REPOSITORY}/blob/main/LICENSE"

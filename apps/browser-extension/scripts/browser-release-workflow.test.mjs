@@ -66,6 +66,38 @@ test("keeps Chrome fallback and exact proven joint publication mutually exclusiv
   assert.doesNotMatch(joint, /AMO_JWT|sign-firefox-unlisted|web-ext sign|addons\.mozilla/u);
 });
 
+test("builds and publishes desktop artifacts with the browser release", () => {
+  const desktop = job("desktop-build");
+  assert.match(desktop, /strategy:/u);
+  assert.match(desktop, /ubuntu-latest/u);
+  assert.match(desktop, /windows-latest/u);
+  assert.match(desktop, /macos-latest/u);
+  assert.match(desktop, /actions\/setup-node@/u);
+  assert.match(desktop, /wails@v2\.13\.0/u);
+  assert.match(desktop, /Set Wails product version/u);
+  assert.match(desktop, /productVersion: process\.env\.VERSION/u);
+  assert.match(desktop, /-nsis/u);
+  assert.match(desktop, /hdiutil create/u);
+  assert.match(desktop, /AppImage/u);
+  assert.match(desktop, /appimagetool\/releases\/download\/1\.9\.1/u);
+  assert.match(desktop, /shasum -a 256/u);
+  assert.match(desktop, /actions\/upload-artifact/u);
+  for (const publisher of ["publish-chrome", "publish-joint"]) {
+    assert.match(job(publisher), /needs: \[build, desktop-build\]/u);
+    assert.match(job(publisher), /DESKTOP_LINUX_NAME/u);
+    assert.match(job(publisher), /DESKTOP_WINDOWS_NAME/u);
+    assert.match(job(publisher), /DESKTOP_MACOS_NAME/u);
+  }
+});
+
+test("runs release validation when desktop or public installation surfaces change", () => {
+  assert.match(workflow, /apps\/runtime-go\/\*\*/u);
+  assert.match(workflow, /docs\/guides\/install-desktop-runtime\.md/u);
+  assert.match(workflow, /docs\/guides\/install-chrome-extension\.md/u);
+  assert.match(workflow, /docs\/guides\/install-firefox-extension\.md/u);
+  assert.match(workflow, /apps\/coordination-server\/app\/views\/\*\*/u);
+});
+
 test("fails an explicitly requested candidate when its protected gate is disabled", () => {
   const rejected = job("reject-disabled-firefox-candidate");
   assert.match(

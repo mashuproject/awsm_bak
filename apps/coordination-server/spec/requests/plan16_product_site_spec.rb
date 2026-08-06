@@ -20,6 +20,10 @@ RSpec.describe "Plan 16 product site", type: :request do
       "Why not just use the Wayback Machine?",
       "Compare AWSM with other archive tools",
       "Mozilla-signed Linux beta",
+      "Desktop Runtime",
+      "Linux AppImage",
+      "Windows installer (untested)",
+      "macOS disk image (untested)",
       "Sign in"
     )
     expect(response.body).not_to include(
@@ -35,6 +39,9 @@ RSpec.describe "Plan 16 product site", type: :request do
     expect(response.body).to include('href="/glossary#local-first"')
     expect(response.body).to include('href="/glossary#zero-knowledge-synchronization"')
     expect(response.body).to include('href="/compare/wayback-machine"')
+    expect(response.body).to include(
+      "href=\"https://github.com/mashuproject/awsm_bak/blob/main/docs/guides/install-desktop-runtime.md\""
+    )
 
     document = Nokogiri::HTML(response.body)
     expect(document.css("#optional-sync .section-heading").map(&:text)).to eq(

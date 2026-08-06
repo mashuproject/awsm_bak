@@ -185,13 +185,16 @@
         Install the preview, create a local Vault, and archive your first useful page.
       </p>
       <div class="install-tabs" data-install-selector-target="root">
-        <div class="install-tabs__nav" role="tablist" aria-label="Browser installation">
+        <div class="install-tabs__nav" role="tablist" aria-label="AWSM installation">
           <button type="button" role="tab" aria-selected="true" aria-controls="chrome-install"
                   data-install-selector-target="tab" data-panel="chrome-install"
                   data-action="install-selector#select">Chrome</button>
           <button type="button" role="tab" aria-selected="false" aria-controls="firefox-install"
                   data-install-selector-target="tab" data-panel="firefox-install"
                   data-action="install-selector#select">Firefox</button>
+          <button type="button" role="tab" aria-selected="false" aria-controls="desktop-install"
+                  data-install-selector-target="tab" data-panel="desktop-install"
+                  data-action="install-selector#select">Desktop</button>
         </div>
         <div class="install-static">
           <article id="chrome-install" class="install-panel" role="tabpanel" data-install-selector-target="panel">
@@ -222,6 +225,22 @@
               <%= link_to "Firefox installation guide", public_product_links[:firefox_guide], class: "awsm-button awsm-button--secondary" %>
             </div>
           </article>
+          <article id="desktop-install" class="install-panel" role="tabpanel" data-install-selector-target="panel">
+            <p class="awsm-badge">Linux proven · Windows and macOS untested</p>
+            <h3>Desktop Runtime</h3>
+            <p>Linux AppImage is natively started and smoke-tested. The Windows installer (untested) and macOS disk image (untested) are build-only packages for this release.</p>
+            <ol>
+              <li>Download the package for Linux x86_64, Windows x86_64, or universal macOS from the latest Release.</li>
+              <li>Verify the package against its published SHA-256 checksum.</li>
+              <li>Launch AWSM, then install the browser extension separately.</li>
+              <li>Select <strong>Connect Desktop Runtime</strong> in the extension and approve the loopback pairing in AWSM.</li>
+            </ol>
+            <p>Desktop currently manages Vaults through the same local Runtime boundary. Page capture remains an extension surface.</p>
+            <div class="button-row">
+              <%= link_to "Latest Release", public_product_links[:releases], class: "awsm-button" %>
+              <%= link_to "Desktop Runtime guide", public_product_links[:desktop_guide], class: "awsm-button awsm-button--secondary" %>
+            </div>
+          </article>
         </div>
       </div>
 
@@ -239,7 +258,7 @@
         <article class="faq-item"><h3>What can a Replica Host see?</h3><p>It stores opaque encrypted items and <%= glossary_term_link "Server-Visible Metadata", "operational metadata" %>, but does not receive Vault decryption keys.</p></article>
         <article class="faq-item"><h3>Why do I need both an Account password and a Recovery Phrase?</h3><p>The Account password proves identity to one Replica Host. The Recovery Phrase is client-held Vault recovery material. They are separate secrets.</p></article>
         <article class="faq-item"><h3>What happens when I lose internet access?</h3><p>The local Library and locally available Capture content remain usable offline. Optional synchronization waits for connectivity.</p></article>
-        <article class="faq-item"><h3>Where can I install AWSM today?</h3><p>Chrome has a downloadable unpacked preview. Desktop Linux Firefox Stable and ESR have an unlisted Mozilla-signed beta distributed through the GitHub Release. It is not a public AMO listing and does not claim AMO-managed updates.</p></article>
+        <article class="faq-item"><h3>Where can I install AWSM today?</h3><p>Chrome has a downloadable unpacked preview, desktop Linux has a natively started AppImage, and Windows and macOS desktop packages are published but untested. Desktop Linux Firefox Stable and ESR also have an unlisted Mozilla-signed beta distributed through the GitHub Release. It is not a public AMO listing and does not claim AMO-managed updates.</p></article>
         <article class="faq-item"><h3>Can I host synchronization myself?</h3><p>Yes. A self-hosted Replica Host still sees operational metadata and controls its own access logs.</p></article>
         <article class="faq-item"><h3>How do I use a Hosted Replica?</h3><p>Create an Account on that Host, then explicitly create or attach a Hosted Replica from the extension. The Host Account grants access to that Host; it is not Vault membership.</p></article>
         <article class="faq-item"><h3>Can AWSM search or summarize what I save?</h3><p>AI-generated summaries are not a shipped feature. Search and other derived local views remain separate from the Vault’s encrypted Capture data.</p></article>

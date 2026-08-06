@@ -15,21 +15,18 @@ Account registration remains deployment-specific.
 
 ## Download and try AWSM
 
-### Download AWSM for Chrome or Firefox
+### Download AWSM for Chrome, Firefox, or desktop
 
-> **[Download the Chrome ZIP (v0.3.1)](https://github.com/mashuproject/awsm_bak/releases/download/v0.3.1/awsm-chrome-v0.3.1.zip)**
->
-> [Chrome SHA-256 checksum](https://github.com/mashuproject/awsm_bak/releases/download/v0.3.1/awsm-chrome-v0.3.1.zip.sha256) ·
-> **[Download the Mozilla-signed Firefox XPI (v0.3.1)](https://github.com/mashuproject/awsm_bak/releases/download/v0.3.1/awsm-firefox-v0.3.1.xpi)**
-> ·
-> [Firefox SHA-256 checksum](https://github.com/mashuproject/awsm_bak/releases/download/v0.3.1/awsm-firefox-v0.3.1.xpi.sha256) ·
 > [View the latest Release](https://github.com/mashuproject/awsm_bak/releases/latest) ·
 > [Chrome guide](docs/guides/install-chrome-extension.md) ·
-> [Firefox guide](docs/guides/install-firefox-extension.md)
+> [Firefox guide](docs/guides/install-firefox-extension.md) ·
+> [Desktop Runtime guide](docs/guides/install-desktop-runtime.md)
 
-The latest Release contains a Chrome ZIP, a Mozilla-signed Firefox XPI, and their SHA-256 checksums.
-No source build, Account, server, test credentials, or seeded sample data is required to try the
-core local archive.
+The latest Release contains the Chrome ZIP, a Mozilla-signed Firefox XPI, and desktop Runtime
+packages for Linux x86_64, Windows x86_64, and universal macOS, each with a SHA-256 checksum. The
+Linux desktop package is natively started and smoke-tested. Windows and macOS packages are
+build-only and explicitly untested. No source build, Account, server, test credentials, or seeded
+sample data is required to try the core local archive.
 
 1. Download the Chrome ZIP and matching `.sha256` file using the links above.
 2. Verify and install the ZIP using the
@@ -42,12 +39,13 @@ For a guided walkthrough, continue with [Try a Capture](#try-a-capture) and
 see [How OpenAI tools were used](#how-openai-tools-were-used).
 
 **Released test platforms:** Chrome 116 or newer on a desktop operating system supported by Chrome,
-and the repository-pinned Firefox Stable and ESR versions on desktop Linux. AWSM must be used in a
-normal browser profile; Incognito and Firefox Private Browsing are not supported. Firefox is an
-unlisted Mozilla-signed Linux beta distributed through the GitHub Release, not a public AMO listing,
-and AWSM does not claim AMO-managed automatic updates. Safari and standalone web applications are
-not currently packaged or tested. Firefox for Android 142 or newer can accept the signed manifest,
-but AWSM is not currently tested or supported there.
+the repository-pinned Firefox Stable and ESR versions on desktop Linux, and the Linux x86_64
+desktop Runtime AppImage. AWSM must be used in a normal browser profile; Incognito and Firefox
+Private Browsing are not supported. Firefox is an unlisted Mozilla-signed Linux beta distributed
+through the GitHub Release, not a public AMO listing, and AWSM does not claim AMO-managed automatic
+updates. Windows and macOS desktop packages are currently untested. Safari and standalone web
+applications are not currently packaged or tested. Firefox for Android 142 or newer can accept the
+signed manifest, but AWSM is not currently tested or supported there.
 
 ## What works today
 
@@ -168,6 +166,19 @@ ends when Firefox restarts. Local use needs no data-transmission permission; sel
 synchronization presents Firefox's native consent prompt. Ordinary users should install the
 Mozilla-signed XPI using the
 [Firefox extension installation guide](docs/guides/install-firefox-extension.md).
+
+## Quick start: desktop Runtime
+
+Download the desktop package and matching checksum from the
+[latest Release](https://github.com/mashuproject/awsm_bak/releases/latest), then follow the
+[desktop Runtime installation guide](docs/guides/install-desktop-runtime.md). The packaged desktop
+build opens its Vault-management window by default. After installing the extension, select
+**Connect Desktop Runtime**, allow the loopback permission, and approve the pairing in the desktop
+window.
+
+The desktop Runtime can create, select, recover, Fork, close, Vacuum, and manage Hosted Replica
+metadata for its own Vaults. It does not capture pages yet; use the extension's page-capture flow
+for extension-owned Vaults. The extension-to-desktop Capture Bundle bridge is not implemented.
 
 ## Try a Capture
 
@@ -337,14 +348,15 @@ verification, portable Complete Export and Import, and future locally derived ca
 
 ## Release process
 
-Maintainers publish validated Chrome artifacts from version tags:
+Maintainers publish the browser extension and desktop Runtime artifacts from one version tag:
 
 1. Update `version` in `apps/browser-extension/package.json`.
 2. Run `corepack pnpm --filter @awsm/browser-extension test:e2e:cross-browser` locally.
 3. Commit and push the change to `main`.
 4. Create and push the matching `v<version>` tag.
-5. Wait for the Chrome Extension Release workflow to lint, typecheck, run unit tests, validate
-   both production builds, and publish the checksummed Release.
+5. Wait for the Browser Extension Release workflow to lint, typecheck, run unit tests, validate
+   both browser builds, build the Linux AppImage, Windows NSIS installer, and universal macOS DMG,
+   checksum every asset, and publish the single Release.
 
 Real-browser release proof runs locally to avoid consuming hosted CI minutes. Do not create the tag
 unless that local gate passes on the exact commit being tagged.

@@ -3,8 +3,8 @@
 ## Before You Install
 
 AWSM is pre-release software. It is not available from the Chrome Web Store and does not update
-automatically. Installation requires Chrome 116 or newer. While the AWSM repository is private, you
-also need access to it on GitHub to download a Release.
+automatically. Installation requires Chrome 116 or newer. Download the package from the public
+GitHub Release.
 
 Install and use AWSM in a normal Chrome profile. Incognito is not supported; do not enable
 **Allow in Incognito** for the extension.
@@ -17,7 +17,7 @@ not plaintext Vault content.
 
 1. Open the applicable [AWSM GitHub Release](https://github.com/mashuproject/awsm_bak/releases).
 2. In **Assets**, download the matching `.zip` and `.zip.sha256` files. For example, download both
-   `awsm-chrome-v0.1.0.zip` and `awsm-chrome-v0.1.0.zip.sha256` for version 0.1.0.
+   `awsm-chrome-v<version>.zip` and `awsm-chrome-v<version>.zip.sha256` for the same version.
 
 Do not download GitHub's automatically generated **Source code** archives. They contain repository
 source, not the built Chrome extension.
@@ -33,10 +33,8 @@ replacing `<checksumName>` with the downloaded checksum filename.
 sha256sum --check <checksumName>
 ```
 
-For version 0.1.0:
-
 ```bash
-sha256sum --check awsm-chrome-v0.1.0.zip.sha256
+sha256sum --check awsm-chrome-v<version>.zip.sha256
 ```
 
 ### macOS
@@ -45,17 +43,15 @@ sha256sum --check awsm-chrome-v0.1.0.zip.sha256
 shasum -a 256 -c <checksumName>
 ```
 
-For version 0.1.0:
-
 ```bash
-shasum -a 256 -c awsm-chrome-v0.1.0.zip.sha256
+shasum -a 256 -c awsm-chrome-v<version>.zip.sha256
 ```
 
 ### Windows PowerShell
 
 ```powershell
-$checksumName = "awsm-chrome-v0.1.0.zip.sha256"
-$archiveName = "awsm-chrome-v0.1.0.zip"
+$checksumName = "awsm-chrome-v<version>.zip.sha256"
+$archiveName = "awsm-chrome-v<version>.zip"
 $expected = (Get-Content $checksumName -Raw).Trim().Split()[0]
 $actual = (Get-FileHash $archiveName -Algorithm SHA256).Hash
 if (-not $actual.Equals($expected, [System.StringComparison]::OrdinalIgnoreCase)) {

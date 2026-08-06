@@ -16,6 +16,10 @@ import (
 //go:embed frontend/*
 var frontend embed.FS
 
+func defaultMode() string {
+	return "desktop"
+}
+
 func runDesktop(app *application.Application) error {
 	if err := wails.Run(&options.App{
 		Title:            "AWSM",

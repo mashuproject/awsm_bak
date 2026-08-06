@@ -42,6 +42,13 @@ transfer staging; they do not prove full Go Vault semantics. Before the Go Runti
 parity, every owning formal vector and the cross-language replay, cryptography, storage, and
 synchronization scenarios below must run against both implementations.
 
+Release packaging adds a Linux AppImage lane. The package is started under Xvfb with the default
+desktop mode, its loopback health route is checked, and graceful shutdown must remove the ready
+file. The workflow also validates the Windows NSIS and universal macOS DMG bytes and their
+checksums, but does not claim runtime execution on those platforms. Release metadata and workflow
+tests must prove that all three desktop assets are downloaded, revalidated, and included in the
+same GitHub Release as the browser assets.
+
 # Canonical vectors
 
 Golden fixtures cover deterministic CBOR rejection and encoding, every transcript and ID, Event

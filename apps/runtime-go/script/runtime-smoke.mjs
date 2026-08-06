@@ -81,7 +81,7 @@ async function runServe(binary, dataDirectory) {
 async function runWails(binary, dataDirectory) {
   const readyFile = resolve(dataDirectory, "desktop.ready");
   const child = spawn("xvfb-run", ["-a", "--server-args=-screen 0 1280x800x24", binary,
-    "--mode", "desktop", "--data-dir", dataDirectory, "--ready-file", readyFile,
+    "--data-dir", dataDirectory, "--ready-file", readyFile,
   ], { cwd: repositoryRoot, detached: true, stdio: ["ignore", "pipe", "pipe"] });
   child.stderr.on("data", (chunk) => process.stderr.write(`[wails] ${chunk}`));
   try {

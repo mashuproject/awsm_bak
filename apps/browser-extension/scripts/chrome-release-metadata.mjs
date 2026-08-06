@@ -32,9 +32,46 @@ export function releaseMetadata({ version, eventName, refName, repository }) {
     firefoxXpiName: `awsm-firefox-v${version}.xpi`,
     firefoxChecksumName: `awsm-firefox-v${version}.xpi.sha256`,
     firefoxSourceName: `awsm-firefox-source-v${version}.zip`,
+    desktopLinuxName: `awsm-desktop-linux-x86_64-v${version}.AppImage`,
+    desktopLinuxChecksumName: `awsm-desktop-linux-x86_64-v${version}.AppImage.sha256`,
+    desktopWindowsName: `awsm-desktop-windows-x86_64-v${version}-setup.exe`,
+    desktopWindowsChecksumName: `awsm-desktop-windows-x86_64-v${version}-setup.exe.sha256`,
+    desktopMacosName: `awsm-desktop-macos-universal-v${version}.dmg`,
+    desktopMacosChecksumName: `awsm-desktop-macos-universal-v${version}.dmg.sha256`,
     guideUrl: `https://github.com/${repository}/blob/${tag}/docs/guides/install-chrome-extension.md`,
     firefoxGuideUrl: `https://github.com/${repository}/blob/${tag}/docs/guides/install-firefox-extension.md`,
+    desktopGuideUrl: `https://github.com/${repository}/blob/${tag}/docs/guides/install-desktop-runtime.md`,
   };
+}
+
+export function renderDesktopReleaseNotes(metadata) {
+  return `## Install the desktop Runtime
+
+### Linux x86_64
+
+1. Download \`${metadata.desktopLinuxName}\` and \`${metadata.desktopLinuxChecksumName}\`.
+2. Verify the AppImage against its SHA-256 checksum.
+3. Make the AppImage executable and launch it. The desktop window opens by default.
+
+### Windows x86_64 (build-only, untested)
+
+1. Download \`${metadata.desktopWindowsName}\` and \`${metadata.desktopWindowsChecksumName}\`.
+2. Verify the installer against its SHA-256 checksum.
+3. Run the installer. Windows WebView2 is required; the installer uses its standard download strategy.
+
+### macOS universal (build-only, untested)
+
+1. Download \`${metadata.desktopMacosName}\` and \`${metadata.desktopMacosChecksumName}\`.
+2. Verify the disk image against its SHA-256 checksum.
+3. Open the disk image and launch AWSM. macOS may require an explicit Gatekeeper approval because this build is not notarized.
+
+The Linux package is the only desktop platform natively started and smoke-tested for this release.
+The desktop packages are unsigned; the macOS package is not notarized.
+The desktop Runtime manages Vaults and exposes a loopback API for a paired extension; page capture
+and the extension-to-desktop Capture Bundle bridge are not included.
+
+[Read the desktop Runtime installation and pairing guide](${metadata.desktopGuideUrl}).
+`;
 }
 
 export function renderChromeReleaseNotes(metadata) {
@@ -49,7 +86,8 @@ export function renderChromeReleaseNotes(metadata) {
 7. Keep that directory in place. For an upgrade, replace its contents and reload the extension from the same path.
 
 [Read the full installation, checksum, upgrade, and troubleshooting guide](${metadata.guideUrl}).
-`;
+
+${renderDesktopReleaseNotes(metadata)}`;
 }
 
 export function renderReleaseNotes(metadata) {
@@ -93,8 +131,15 @@ async function main() {
     ["firefox_xpi_name", metadata.firefoxXpiName],
     ["firefox_checksum_name", metadata.firefoxChecksumName],
     ["firefox_source_name", metadata.firefoxSourceName],
+    ["desktop_linux_name", metadata.desktopLinuxName],
+    ["desktop_linux_checksum_name", metadata.desktopLinuxChecksumName],
+    ["desktop_windows_name", metadata.desktopWindowsName],
+    ["desktop_windows_checksum_name", metadata.desktopWindowsChecksumName],
+    ["desktop_macos_name", metadata.desktopMacosName],
+    ["desktop_macos_checksum_name", metadata.desktopMacosChecksumName],
     ["guide_url", metadata.guideUrl],
     ["firefox_guide_url", metadata.firefoxGuideUrl],
+    ["desktop_guide_url", metadata.desktopGuideUrl],
   ];
   await appendFile(outputPath, `${outputs.map(([key, value]) => `${key}=${value}`).join("\n")}\n`);
   await mkdir("dist", { recursive: true });

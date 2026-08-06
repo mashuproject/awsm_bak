@@ -3,21 +3,31 @@
 This module is the reference AWSM desktop/headless process boundary. The same
 process serves a Wails desktop Client and a loopback HTTP API for paired API
 Clients. The browser extension can select Vaults owned by this process without
-copying their protected data into extension storage.
+copying their protected data into extension storage. Packaged desktop builds
+are published with the browser extension in the [latest Release](https://github.com/mashuproject/awsm_bak/releases/latest).
+
+For user installation, checksums, pairing, and platform limitations, read the
+[desktop Runtime installation guide](../../docs/guides/install-desktop-runtime.md).
 
 ## Modes
 
-The default command starts the loopback Runtime API:
+The development command starts the loopback Runtime API:
 
 ```bash
 go run ./cmd/awsm --mode serve --data-dir ./pb_data
 ```
 
-The desktop build uses the same executable and starts the Wails v2 shell:
+The desktop development build uses the same executable and starts the Wails v2 shell. Run it from
+the Wails project directory:
 
 ```bash
-go run -tags desktop,production ./cmd/awsm --mode desktop --data-dir ./pb_data
+cd cmd/awsm
+go run github.com/wailsapp/wails/v2/cmd/wails@v2.13.0 build -tags desktop,production,webkit2_41 -s -m -nosyncgomod -skipbindings -skipembedcreate
+./build/bin/awsm-desktop --data-dir ../../pb_data
 ```
+
+Packaged desktop builds default to the desktop window. A source build without the `desktop` build
+tag defaults to the loopback API. `--mode serve` remains available for a headless process.
 
 The HTTP API is fixed to `127.0.0.1:37373` unless `--listen` is supplied. The
 desktop UI and browser-extension transport adapter target the AWSM routes under
@@ -100,6 +110,11 @@ Native Wails startup is a separate local smoke lane and requires GTK 3, WebKitGT
 ```bash
 corepack pnpm test:runtime:wails
 ```
+
+The release packaging lane builds a Linux AppImage, a Windows x86_64 NSIS installer, and a
+universal macOS DMG. Only the Linux package is natively started and smoke-tested; Windows and
+macOS are explicitly build-only for the current release. The AppImage helper and packaged smoke
+test are `script/package-linux-appimage.sh` and `script/packaged-desktop-smoke.mjs`.
 
 These proofs cover the process boundary, Runtime API grant lifecycle, canonical
 Vault Command envelope, and transfer staging. They do not claim that the Go
