@@ -112,6 +112,7 @@ type canonicalReplicaState struct {
 	AuthorityFrontier         []string          `json:"authorityFrontier"`
 	ContinuityRecordIDs       []string          `json:"continuityRecordIds"`
 	RecordStorageItemIDs      map[string]string `json:"recordStorageItemIds"`
+	ObjectStorageItemIDs      map[string]string `json:"objectStorageItemIds"`
 }
 
 type persistedVault struct {
@@ -364,6 +365,78 @@ func (r *Runtime) AdmitOpaqueEvent(ctx context.Context, vaultID string, encoded 
 	}
 	r.signal()
 	return nil
+}
+
+// AdmitOpaqueObject is the Object counterpart to AdmitOpaqueEvent. Object
+// bytes are authenticated independently from Event DAG state and become
+// available to Library projections only after content-address verification.
+func (r *Runtime) AdmitOpaqueObject(ctx context.Context, vaultID string, encoded []byte) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	value, err := r.vaultLocked(vaultID)
+	if err != nil {
+		return err
+	}
+	if value.Canonical == nil || r.replicas[vaultID] == nil || r.deps.Artifacts == nil || r.deps.Secrets == nil {
+		return commandError("VAULT_REPLAY_UNAVAILABLE", "The authenticated Vault Replica is unavailable.")
+	}
+	vaultIdentifier, err := decodeHexIdentifier(vaultID)
+	if err != nil {
+		return commandError("VAULT_OBJECT_INVALID", "The Vault identity is invalid.")
+	}
+	epochIdentifier, err := decodeHexIdentifier(value.Canonical.KeyEpochID)
+	if err != nil {
+		return commandError("VAULT_OBJECT_INVALID", "The Key Epoch identity is invalid.")
+	}
+	secretBytes, err := r.deps.Secrets.Get(trustedSecretService, epochSecretAccount(vaultID, value.Canonical.KeyEpochID))
+	if err != nil {
+		return commandError("TRUSTED_SECRET_UNAVAILABLE", "The Key Epoch could not be opened.")
+	}
+	epochSecret, err := decodeEpochSecret(secretBytes, vaultIdentifier, epochIdentifier)
+	if err != nil {
+		return commandError("VAULT_OBJECT_INVALID", "The Key Epoch is invalid.")
+	}
+	opened, err := awsmcrypto.OpenCompactItem(vaultIdentifier, epochIdentifier, epochSecret.key, encoded)
+	if err != nil || opened.PayloadType != 2 {
+		return commandError("VAULT_OBJECT_INVALID", "The opaque Object is invalid.")
+	}
+	objectIdentifier, err := objectIDFromBytes(vaultIdentifier, opened.PayloadBytes)
+	if err != nil {
+		return commandError("VAULT_OBJECT_INVALID", "The Object content address is invalid.")
+	}
+	nextReplica := r.replicas[vaultID].Clone()
+	if err := nextReplica.AdmitObject(objectIdentifier, opened.PayloadBytes); err != nil {
+		return commandError("VAULT_OBJECT_INVALID", "The Object failed authenticated admission.")
+	}
+	envelope, err := storage.DecodeOpaqueEnvelope(encoded)
+	if err != nil {
+		return commandError("VAULT_OBJECT_INVALID", "The opaque Object envelope is invalid.")
+	}
+	before := r.snapshotLocked()
+	if err := storeOpaqueCreationItem(r.deps.Artifacts, envelope.StorageItemID, encoded); err != nil {
+		return commandError("VAULT_CREATION_STORAGE_FAILED", "The opaque Object could not be stored.")
+	}
+	value.Canonical.ObjectStorageItemIDs[hexIdentifier(objectIdentifier)] = hexIdentifier(envelope.StorageItemID)
+	r.replicas[vaultID] = nextReplica
+	if err := r.persistLocked(ctx); err != nil {
+		r.restoreLocked(before)
+		deleteOpaqueCreationItem(r.deps.Artifacts, envelope.StorageItemID)
+		return err
+	}
+	r.signal()
+	return nil
+}
+
+func objectIDFromBytes(vaultID canonical.Identifier, encoded []byte) (canonical.Identifier, error) {
+	value, err := canonical.DecodeValue(encoded)
+	if err != nil {
+		return canonical.Identifier{}, err
+	}
+	objectType, ok := replicaMapNumber(value, 2)
+	if !ok {
+		return canonical.Identifier{}, errors.New("Object type is invalid")
+	}
+	return canonical.VaultObjectID(vaultID, objectType, encoded)
 }
 
 // TransferPackageVaultID validates and reads the identity carried by the
@@ -1472,6 +1545,11 @@ func validatePersistedVault(value persistedVault) error {
 				return errors.New("Vault state contains an invalid canonical Record storage mapping")
 			}
 		}
+		for objectID, storageItemID := range value.Canonical.ObjectStorageItemIDs {
+			if !validDigest(objectID) || !validDigest(storageItemID) {
+				return errors.New("Vault state contains an invalid canonical Object storage mapping")
+			}
+		}
 	}
 	return nil
 }
@@ -1541,6 +1619,10 @@ func cloneCanonicalState(value *canonicalReplicaState) *canonicalReplicaState {
 	for recordID, storageItemID := range value.RecordStorageItemIDs {
 		copyValue.RecordStorageItemIDs[recordID] = storageItemID
 	}
+	copyValue.ObjectStorageItemIDs = make(map[string]string, len(value.ObjectStorageItemIDs))
+	for objectID, storageItemID := range value.ObjectStorageItemIDs {
+		copyValue.ObjectStorageItemIDs[objectID] = storageItemID
+	}
 	return &copyValue
 }
 
@@ -1567,6 +1649,7 @@ func canonicalReplicaFromCreation(prepared PreparedCanonicalVaultCreation) *cano
 			hexIdentifier(prepared.Baseline.RecordID): hexIdentifier(prepared.BaselineEnvelope.StorageItemID),
 			hexIdentifier(prepared.Genesis.RecordID):  hexIdentifier(prepared.GenesisEnvelope.StorageItemID),
 		},
+		ObjectStorageItemIDs: map[string]string{},
 	}
 }
 
@@ -1750,6 +1833,29 @@ func (r *Runtime) openCanonicalReplica(value persistedVault) (*Replica, error) {
 		}
 		if !progress {
 			return nil, errors.New("persisted Record graph cannot reach its admitted parents")
+		}
+	}
+	for objectID, storageItemID := range state.ObjectStorageItemIDs {
+		encoded, err := readArtifact(storageItemID)
+		if err != nil {
+			return nil, fmt.Errorf("read persisted Object %s: %w", objectID, err)
+		}
+		opened, err := awsmcrypto.OpenCompactItem(vaultID, epochID, epochSecret.key, encoded)
+		if err != nil || opened.PayloadType != 2 {
+			if err == nil {
+				err = errors.New("persisted Object payload type is invalid")
+			}
+			return nil, err
+		}
+		objectIdentifier, err := decodeHexIdentifier(objectID)
+		if err != nil {
+			return nil, err
+		}
+		if err := replica.AdmitObject(objectIdentifier, opened.PayloadBytes); err != nil {
+			return nil, fmt.Errorf("admit persisted Object %s: %w", objectID, err)
+		}
+		if hexIdentifier(opened.Envelope.StorageItemID) != storageItemID {
+			return nil, errors.New("persisted Object Storage Item identity changed")
 		}
 	}
 	actual := replica.State()

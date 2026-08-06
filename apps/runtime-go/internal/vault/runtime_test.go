@@ -367,6 +367,72 @@ func TestRuntimeAdmitsAuthenticatedOpaqueEventAndPersistsIt(t *testing.T) {
 	}
 }
 
+func TestRuntimeAdmitsAuthenticatedOpaqueObjectAndReloadsIt(t *testing.T) {
+	ctx := context.Background()
+	state := store.NewMemoryState()
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatalf("create Runtime: %v", err)
+	}
+	vaultID := createVaultForTest(t, runtime, "Object")
+	value := runtime.vaults[vaultID]
+	vaultIdentifier, err := decodeHexIdentifier(vaultID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	epochIdentifier, err := decodeHexIdentifier(value.Canonical.KeyEpochID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	epochBytes, err := dependencies.Secrets.Get(trustedSecretService, epochSecretAccount(vaultID, value.Canonical.KeyEpochID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	epochSecret, err := decodeEpochSecret(epochBytes, vaultIdentifier, epochIdentifier)
+	if err != nil {
+		t.Fatal(err)
+	}
+	featureIdentifier := mustIdentifier(t, value.Canonical.RequiredFeatureSetID)
+	objectBytes, err := canonical.EncodeValue(canonical.Map{0: uint64(1), 1: vaultIdentifier[:], 2: uint64(2), 3: featureIdentifier[:], 4: canonical.Map{}, 5: map[string][]byte{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	objectID, err := canonical.VaultObjectID(vaultIdentifier, 2, objectBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := awsmcrypto.SealCompactItem(awsmcrypto.CompactItemInput{VaultID: vaultIdentifier, KeyEpochID: epochIdentifier, KeyEpochKey: epochSecret.key, PayloadType: 2, PayloadBytes: objectBytes})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.AdmitOpaqueObject(ctx, vaultID, encoded); err != nil {
+		t.Fatalf("admit opaque Object: %v", err)
+	}
+	if value.Canonical.ObjectStorageItemIDs[hexIdentifier(objectID)] == "" {
+		t.Fatalf("Object storage mapping = %#v", value.Canonical.ObjectStorageItemIDs)
+	}
+	if _, ok := runtime.replicas[vaultID].Object(objectID); !ok {
+		t.Fatal("Runtime did not retain admitted Object")
+	}
+	restarted, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatalf("restart Runtime: %v", err)
+	}
+	if _, ok := restarted.replicas[vaultID].Object(objectID); !ok {
+		t.Fatal("restart did not retain admitted Object")
+	}
+}
+
+func mustIdentifier(t *testing.T, value string) canonical.Identifier {
+	t.Helper()
+	identifier, err := decodeHexIdentifier(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return identifier
+}
+
 func TestVaultCommandsRejectStaleContextAndKeepCaptureOutOfDesktopUI(t *testing.T) {
 	runtime, err := New(context.Background(), store.NewMemoryState(), memoryDependencies(t))
 	if err != nil {
