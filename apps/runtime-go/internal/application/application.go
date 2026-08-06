@@ -16,6 +16,7 @@ import (
 	"github.com/mashuproject/awsm_bak/apps/runtime-go/internal/artifactstore"
 	"github.com/mashuproject/awsm_bak/apps/runtime-go/internal/grants"
 	"github.com/mashuproject/awsm_bak/apps/runtime-go/internal/httpapi"
+	"github.com/mashuproject/awsm_bak/apps/runtime-go/internal/securestore"
 	"github.com/mashuproject/awsm_bak/apps/runtime-go/internal/store"
 	"github.com/mashuproject/awsm_bak/apps/runtime-go/internal/transfer"
 	"github.com/mashuproject/awsm_bak/apps/runtime-go/internal/vault"
@@ -82,7 +83,12 @@ func New(config Config) (*Application, error) {
 		_ = base.ResetBootstrapState()
 		return nil, err
 	}
-	vaultRuntime, err := vault.New(context.Background(), state)
+	secrets, err := securestore.NewKeyringStore("dev.awsm.runtime")
+	if err != nil {
+		_ = base.ResetBootstrapState()
+		return nil, err
+	}
+	vaultRuntime, err := vault.New(context.Background(), state, vault.Dependencies{Artifacts: artifacts, Secrets: secrets})
 	if err != nil {
 		_ = base.ResetBootstrapState()
 		return nil, err

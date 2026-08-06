@@ -245,7 +245,7 @@ func TestTransferEndpointStagesOneUseEnvelopeForDesktopApproval(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create artifacts: %v", err)
 	}
-	vaultRuntime, err := vault.New(ctx, state)
+	vaultRuntime, err := vault.New(ctx, state, vault.Dependencies{})
 	if err != nil {
 		t.Fatalf("create Vault Runtime: %v", err)
 	}

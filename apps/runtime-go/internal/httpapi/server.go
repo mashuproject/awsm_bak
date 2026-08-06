@@ -29,7 +29,7 @@ type Server struct {
 }
 
 func NewServer() *Server {
-	runtime, err := vault.New(context.Background(), store.NewMemoryState())
+	runtime, err := vault.New(context.Background(), store.NewMemoryState(), vault.Dependencies{})
 	if err != nil {
 		panic(err)
 	}
@@ -43,7 +43,7 @@ func NewServer() *Server {
 }
 
 func NewServerWithManager(manager *grants.Manager) *Server {
-	runtime, err := vault.New(context.Background(), store.NewMemoryState())
+	runtime, err := vault.New(context.Background(), store.NewMemoryState(), vault.Dependencies{})
 	if err != nil {
 		panic(err)
 	}

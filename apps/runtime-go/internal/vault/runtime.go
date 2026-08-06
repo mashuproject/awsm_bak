@@ -7,10 +7,10 @@
 package vault
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -22,16 +22,26 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/mashuproject/awsm_bak/apps/runtime-go/internal/artifactstore"
+	"github.com/mashuproject/awsm_bak/apps/runtime-go/internal/canonical"
+	awsmcrypto "github.com/mashuproject/awsm_bak/apps/runtime-go/internal/crypto"
+	"github.com/mashuproject/awsm_bak/apps/runtime-go/internal/securestore"
 	"github.com/mashuproject/awsm_bak/apps/runtime-go/internal/store"
 )
 
 const persistedStateKey = "awsm.runtime.vaults"
+const trustedSecretService = "awsm.runtime.trusted"
 
 var ErrNotFound = store.ErrStateNotFound
 
 type StateStore interface {
 	Put(context.Context, string, []byte) error
 	Get(context.Context, string) ([]byte, error)
+}
+
+type Dependencies struct {
+	Artifacts *artifactstore.Store
+	Secrets   securestore.Store
 }
 
 // CommandError is serialized by the HTTP adapter and mirrors the extension's
@@ -80,14 +90,33 @@ type remoteState struct {
 	Enabled  bool   `json:"enabled"`
 }
 
+type canonicalReplicaState struct {
+	VaultID                   string   `json:"vaultId"`
+	BaselineID                string   `json:"baselineId"`
+	GenesisID                 string   `json:"genesisId"`
+	KeyEpochID                string   `json:"keyEpochId"`
+	MemberID                  string   `json:"memberId"`
+	ClientCredentialID        string   `json:"clientCredentialId"`
+	BaselineStorageItemID     string   `json:"baselineStorageItemId"`
+	GenesisStorageItemID      string   `json:"genesisStorageItemId"`
+	RecoveryEnvelopeID        string   `json:"recoveryEnvelopeId"`
+	RecoveryEnvelopeStorageID string   `json:"recoveryEnvelopeStorageItemId"`
+	ClientEnvelopeID          string   `json:"clientEnvelopeId"`
+	ClientEnvelopeStorageID   string   `json:"clientEnvelopeStorageItemId"`
+	CausalFrontier            []string `json:"causalFrontier"`
+	AuthorityFrontier         []string `json:"authorityFrontier"`
+	ContinuityRecordIDs       []string `json:"continuityRecordIds"`
+}
+
 type persistedVault struct {
-	VaultID          string        `json:"vaultId"`
-	Label            *string       `json:"label"`
-	Lifecycle        string        `json:"lifecycle"`
-	RecoveryHash     string        `json:"recoveryHash"`
-	GenerationID     string        `json:"generationId"`
-	Remotes          []remoteState `json:"remotes"`
-	RecoveryRevision int           `json:"recoveryRevision"`
+	VaultID          string                 `json:"vaultId"`
+	Label            *string                `json:"label"`
+	Lifecycle        string                 `json:"lifecycle"`
+	RecoveryHash     string                 `json:"recoveryHash"`
+	GenerationID     string                 `json:"generationId"`
+	Remotes          []remoteState          `json:"remotes"`
+	RecoveryRevision int                    `json:"recoveryRevision"`
+	Canonical        *canonicalReplicaState `json:"canonical,omitempty"`
 }
 
 type pendingState struct {
@@ -109,6 +138,7 @@ type persistedState struct {
 type Runtime struct {
 	mu       sync.RWMutex
 	store    StateStore
+	deps     Dependencies
 	selected string
 	vaults   map[string]*persistedVault
 	pending  *pendingState
@@ -133,11 +163,11 @@ type TransferPackage struct {
 	Remotes      []remoteState `json:"remotes"`
 }
 
-func New(ctx context.Context, state StateStore) (*Runtime, error) {
+func New(ctx context.Context, state StateStore, dependencies Dependencies) (*Runtime, error) {
 	if state == nil {
 		return nil, errors.New("Vault state store is required")
 	}
-	runtime := &Runtime{store: state, vaults: make(map[string]*persistedVault)}
+	runtime := &Runtime{store: state, deps: dependencies, vaults: make(map[string]*persistedVault)}
 	serialized, err := state.Get(ctx, persistedStateKey)
 	if errors.Is(err, store.ErrStateNotFound) {
 		return runtime, nil
@@ -636,22 +666,75 @@ func (r *Runtime) confirmCreation(ctx context.Context, setupID, phrase string) (
 	if hashPhrase(phrase) != pending.PhraseHash {
 		return nil, commandError("RECOVERY_PHRASE_MISMATCH", "The Recovery Phrase does not match.")
 	}
-	id, err := randomID()
-	if err != nil {
-		return nil, err
+	if r.deps.Artifacts == nil || r.deps.Secrets == nil {
+		return nil, commandError("TRUSTED_SECRET_UNAVAILABLE", "This Client cannot create a Vault without its secure storage facility.")
 	}
-	generation, err := randomID()
+	prepared, err := PrepareCanonicalVaultCreation(CreationInput{
+		Label:          cloneString(pending.Label),
+		RecoveryPhrase: phrase,
+	})
 	if err != nil {
-		return nil, err
+		return nil, commandError("VAULT_CREATION_INVALID", "The Vault creation ceremony could not be prepared.")
 	}
-	value := &persistedVault{VaultID: id, Label: cloneString(pending.Label), Lifecycle: "Open", RecoveryHash: pending.PhraseHash, GenerationID: generation, Remotes: []remoteState{}, RecoveryRevision: 1}
+	canonicalState := canonicalReplicaFromCreation(prepared)
+	storedItems := [][32]byte{
+		prepared.BaselineEnvelope.StorageItemID, prepared.GenesisEnvelope.StorageItemID,
+		prepared.RecoveryKeyEnvelope.Envelope.StorageItemID, prepared.ClientKeyEnvelope.Envelope.StorageItemID,
+	}
+	cleanup := func() {
+		for _, itemID := range storedItems {
+			deleteOpaqueCreationItem(r.deps.Artifacts, itemID)
+		}
+		_ = r.deps.Secrets.Delete(trustedSecretService, clientSecretAccount(canonicalState.VaultID, canonicalState.ClientCredentialID))
+		_ = r.deps.Secrets.Delete(trustedSecretService, epochSecretAccount(canonicalState.VaultID, canonicalState.KeyEpochID))
+		wipeCreationSecrets(&prepared)
+	}
+	if err := storeOpaqueCreationItem(r.deps.Artifacts, prepared.BaselineEnvelope.StorageItemID, prepared.BaselineEnvelope.Bytes); err != nil {
+		cleanup()
+		return nil, commandError("VAULT_CREATION_STORAGE_FAILED", "The Initial Baseline could not be stored.")
+	}
+	if err := storeOpaqueCreationItem(r.deps.Artifacts, prepared.GenesisEnvelope.StorageItemID, prepared.GenesisEnvelope.Bytes); err != nil {
+		cleanup()
+		return nil, commandError("VAULT_CREATION_STORAGE_FAILED", "The Genesis could not be stored.")
+	}
+	if err := storeOpaqueCreationItem(r.deps.Artifacts, prepared.RecoveryKeyEnvelope.Envelope.StorageItemID, prepared.RecoveryKeyEnvelope.Envelope.Bytes); err != nil {
+		cleanup()
+		return nil, commandError("VAULT_CREATION_STORAGE_FAILED", "The Recovery Key Envelope could not be stored.")
+	}
+	if err := storeOpaqueCreationItem(r.deps.Artifacts, prepared.ClientKeyEnvelope.Envelope.StorageItemID, prepared.ClientKeyEnvelope.Envelope.Bytes); err != nil {
+		cleanup()
+		return nil, commandError("VAULT_CREATION_STORAGE_FAILED", "The Client Key Envelope could not be stored.")
+	}
+	clientSecret, err := encodeClientSecret(prepared)
+	if err != nil {
+		cleanup()
+		return nil, commandError("VAULT_CREATION_STORAGE_FAILED", "The Client Credential could not be protected.")
+	}
+	if err := r.deps.Secrets.Put(trustedSecretService, clientSecretAccount(canonicalState.VaultID, canonicalState.ClientCredentialID), clientSecret); err != nil {
+		cleanup()
+		return nil, commandError("TRUSTED_SECRET_UNAVAILABLE", "The Client Credential could not be stored in secure storage.")
+	}
+	epochSecret, err := encodeEpochSecret(prepared)
+	if err != nil {
+		cleanup()
+		return nil, commandError("VAULT_CREATION_STORAGE_FAILED", "The Key Epoch could not be protected.")
+	}
+	if err := r.deps.Secrets.Put(trustedSecretService, epochSecretAccount(canonicalState.VaultID, canonicalState.KeyEpochID), epochSecret); err != nil {
+		cleanup()
+		return nil, commandError("TRUSTED_SECRET_UNAVAILABLE", "The Key Epoch could not be stored in secure storage.")
+	}
+	id := canonicalState.VaultID
+	generation := hexIdentifier(prepared.IDs.GenerationID)
+	value := &persistedVault{VaultID: id, Label: cloneString(pending.Label), Lifecycle: "Open", RecoveryHash: pending.PhraseHash, GenerationID: generation, Remotes: []remoteState{}, RecoveryRevision: 1, Canonical: canonicalState}
 	r.vaults[id] = value
 	r.selected = id
 	r.pending = nil
 	if err := r.persistLocked(ctx); err != nil {
 		r.restoreLocked(before)
+		cleanup()
 		return nil, err
 	}
+	wipeCreationSecrets(&prepared)
 	r.signal()
 	return map[string]string{"vaultId": id}, nil
 }
@@ -1163,15 +1246,38 @@ func validatePersistedVault(value persistedVault) error {
 			return errors.New("Vault state contains an invalid Hosted Replica endpoint")
 		}
 	}
+	if value.Canonical != nil {
+		for _, identifier := range []string{
+			value.Canonical.VaultID, value.Canonical.BaselineID, value.Canonical.GenesisID, value.Canonical.KeyEpochID,
+			value.Canonical.MemberID, value.Canonical.ClientCredentialID,
+			value.Canonical.BaselineStorageItemID, value.Canonical.GenesisStorageItemID,
+			value.Canonical.RecoveryEnvelopeID, value.Canonical.RecoveryEnvelopeStorageID,
+			value.Canonical.ClientEnvelopeID, value.Canonical.ClientEnvelopeStorageID,
+		} {
+			if !validDigest(identifier) {
+				return errors.New("Vault state contains an invalid canonical identity")
+			}
+		}
+		if len(value.Canonical.CausalFrontier) == 0 || len(value.Canonical.AuthorityFrontier) == 0 || len(value.Canonical.ContinuityRecordIDs) == 0 {
+			return errors.New("Vault state contains incomplete canonical frontiers")
+		}
+		for _, frontier := range [][]string{value.Canonical.CausalFrontier, value.Canonical.AuthorityFrontier, value.Canonical.ContinuityRecordIDs} {
+			for _, identifier := range frontier {
+				if !validDigest(identifier) {
+					return errors.New("Vault state contains an invalid canonical frontier identity")
+				}
+			}
+		}
+	}
 	return nil
 }
 
 func recoveryPhrase() (string, error) {
-	bytes := make([]byte, 32)
+	bytes := make([]byte, 16)
 	if _, err := rand.Read(bytes); err != nil {
 		return "", fmt.Errorf("generate Recovery Phrase: %w", err)
 	}
-	return base64.RawURLEncoding.EncodeToString(bytes), nil
+	return awsmcrypto.EncodeRecoveryPhrase(bytes)
 }
 
 func hashPhrase(phrase string) string {
@@ -1218,6 +1324,91 @@ func clonePending(value *pendingState) *pendingState {
 	copyValue.Label = cloneString(value.Label)
 	return &copyValue
 }
+
+func canonicalReplicaFromCreation(prepared PreparedCanonicalVaultCreation) *canonicalReplicaState {
+	return &canonicalReplicaState{
+		VaultID:                   hexIdentifier(prepared.IDs.VaultID),
+		BaselineID:                hexIdentifier(prepared.Baseline.RecordID),
+		GenesisID:                 hexIdentifier(prepared.Genesis.RecordID),
+		KeyEpochID:                hexIdentifier(prepared.KeyEpochID),
+		MemberID:                  hexIdentifier(prepared.IDs.FirstMemberID),
+		ClientCredentialID:        hexIdentifier(prepared.IDs.ClientCredentialID),
+		BaselineStorageItemID:     hexIdentifier(prepared.BaselineEnvelope.StorageItemID),
+		GenesisStorageItemID:      hexIdentifier(prepared.GenesisEnvelope.StorageItemID),
+		RecoveryEnvelopeID:        hexIdentifier(prepared.RecoveryKeyEnvelope.ID),
+		RecoveryEnvelopeStorageID: hexIdentifier(prepared.RecoveryKeyEnvelope.Envelope.StorageItemID),
+		ClientEnvelopeID:          hexIdentifier(prepared.ClientKeyEnvelope.ID),
+		ClientEnvelopeStorageID:   hexIdentifier(prepared.ClientKeyEnvelope.Envelope.StorageItemID),
+		CausalFrontier:            []string{hexIdentifier(prepared.Genesis.RecordID)},
+		AuthorityFrontier:         []string{hexIdentifier(prepared.Genesis.RecordID)},
+		ContinuityRecordIDs:       []string{hexIdentifier(prepared.Genesis.RecordID)},
+	}
+}
+
+func hexIdentifier(value [32]byte) string {
+	return hex.EncodeToString(value[:])
+}
+
+func clientSecretAccount(vaultID, credentialID string) string {
+	return "client-secret:" + vaultID + ":" + credentialID
+}
+
+func epochSecretAccount(vaultID, epochID string) string {
+	return "epoch-secret:" + vaultID + ":" + epochID
+}
+
+func encodeClientSecret(prepared PreparedCanonicalVaultCreation) ([]byte, error) {
+	return canonical.EncodeValue(canonical.Map{
+		0: uint64(1),
+		1: prepared.IDs.VaultID[:],
+		2: prepared.IDs.FirstMemberID[:],
+		3: prepared.IDs.ClientCredentialID[:],
+		4: prepared.ClientKeys.SigningPublicKey,
+		5: prepared.ClientKeys.SigningSecretKey,
+		6: prepared.ClientKeys.WrappingPublicKey,
+		7: prepared.ClientKeys.WrappingPrivateKey,
+	})
+}
+
+func encodeEpochSecret(prepared PreparedCanonicalVaultCreation) ([]byte, error) {
+	return canonical.EncodeValue(canonical.Map{
+		0: uint64(1),
+		1: prepared.IDs.VaultID[:],
+		2: prepared.KeyEpochID[:],
+		3: uint64(0),
+		4: prepared.KeyEpochKey,
+	})
+}
+
+func storeOpaqueCreationItem(artifacts *artifactstore.Store, storageItemID [32]byte, encoded []byte) error {
+	if artifacts == nil {
+		return securestore.ErrUnavailable
+	}
+	return artifacts.Put(hexIdentifier(storageItemID), bytes.NewReader(encoded))
+}
+
+func deleteOpaqueCreationItem(artifacts *artifactstore.Store, storageItemID [32]byte) {
+	if artifacts == nil {
+		return
+	}
+	_ = artifacts.Delete(hexIdentifier(storageItemID))
+}
+
+func wipeCreationSecrets(prepared *PreparedCanonicalVaultCreation) {
+	for _, value := range [][]byte{
+		prepared.ClientKeys.SigningSeed, prepared.ClientKeys.SigningPublicKey, prepared.ClientKeys.SigningSecretKey,
+		prepared.ClientKeys.WrappingPrivateKey, prepared.ClientKeys.WrappingPublicKey,
+		prepared.RecoveryKeys.SigningSeed, prepared.RecoveryKeys.SigningPublicKey, prepared.RecoveryKeys.SigningSecretKey,
+		prepared.RecoveryKeys.WrappingPrivateKey, prepared.RecoveryKeys.WrappingPublicKey,
+		prepared.KeyEpochKey, prepared.ClientKeyEnvelope.KeyEpochKey, prepared.ClientKeyEnvelope.Bytes,
+		prepared.RecoveryKeyEnvelope.KeyEpochKey, prepared.RecoveryKeyEnvelope.Bytes,
+	} {
+		for index := range value {
+			value[index] = 0
+		}
+	}
+}
+
 func requiredString(value *string) string {
 	if value == nil {
 		return ""

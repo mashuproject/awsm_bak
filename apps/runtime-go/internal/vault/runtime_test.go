@@ -4,10 +4,57 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"sync"
 	"testing"
 
+	"github.com/mashuproject/awsm_bak/apps/runtime-go/internal/artifactstore"
+	awsmcrypto "github.com/mashuproject/awsm_bak/apps/runtime-go/internal/crypto"
+	"github.com/mashuproject/awsm_bak/apps/runtime-go/internal/securestore"
+	"github.com/mashuproject/awsm_bak/apps/runtime-go/internal/storage"
 	"github.com/mashuproject/awsm_bak/apps/runtime-go/internal/store"
 )
+
+type testSecretStore struct {
+	mu     sync.RWMutex
+	values map[string][]byte
+}
+
+func (s *testSecretStore) Get(service, account string) ([]byte, error) {
+	s.mu.RLock()
+	value, ok := s.values[service+"\x00"+account]
+	s.mu.RUnlock()
+	if !ok {
+		return nil, securestore.ErrUnavailable
+	}
+	return append([]byte(nil), value...), nil
+}
+
+func (s *testSecretStore) Put(service, account string, value []byte) error {
+	s.mu.Lock()
+	if s.values == nil {
+		s.values = map[string][]byte{}
+	}
+	s.values[service+"\x00"+account] = append([]byte(nil), value...)
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *testSecretStore) Delete(service, account string) error {
+	s.mu.Lock()
+	delete(s.values, service+"\x00"+account)
+	s.mu.Unlock()
+	return nil
+}
+
+func memoryDependencies(t *testing.T) Dependencies {
+	t.Helper()
+	artifacts, err := artifactstore.New(t.TempDir())
+	if err != nil {
+		t.Fatalf("create test artifacts: %v", err)
+	}
+	return Dependencies{Artifacts: artifacts, Secrets: &testSecretStore{values: map[string][]byte{}}}
+}
 
 type failingState struct {
 	delegate *store.MemoryState
@@ -28,7 +75,7 @@ func (s *failingState) Get(ctx context.Context, key string) ([]byte, error) {
 func TestVaultCreationSelectionAndClosurePersistAcrossRestart(t *testing.T) {
 	ctx := context.Background()
 	state := store.NewMemoryState()
-	runtime, err := New(ctx, state)
+	runtime, err := New(ctx, state, memoryDependencies(t))
 	if err != nil {
 		t.Fatalf("create Runtime: %v", err)
 	}
@@ -37,6 +84,9 @@ func TestVaultCreationSelectionAndClosurePersistAcrossRestart(t *testing.T) {
 		t.Fatalf("begin creation: %v", err)
 	}
 	setup := created.(map[string]string)
+	if _, err := awsmcrypto.DecodeRecoveryPhrase(setup["recoveryPhrase"]); err != nil {
+		t.Fatalf("BeginVaultCreation Recovery Phrase = %q: %v", setup["recoveryPhrase"], err)
+	}
 	confirmed, err := runtime.Handle(ctx, mustJSON(map[string]any{
 		"type":           "ConfirmVaultCreation",
 		"setupId":        setup["setupId"],
@@ -56,7 +106,7 @@ func TestVaultCreationSelectionAndClosurePersistAcrossRestart(t *testing.T) {
 	})); err != nil {
 		t.Fatalf("close Vault: %v", err)
 	}
-	restarted, err := New(ctx, state)
+	restarted, err := New(ctx, state, memoryDependencies(t))
 	if err != nil {
 		t.Fatalf("restart Runtime: %v", err)
 	}
@@ -69,8 +119,60 @@ func TestVaultCreationSelectionAndClosurePersistAcrossRestart(t *testing.T) {
 	}
 }
 
+func TestConfirmVaultCreationCommitsCanonicalReplicaAndTrustedSecrets(t *testing.T) {
+	ctx := context.Background()
+	state := store.NewMemoryState()
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatalf("create Runtime: %v", err)
+	}
+	created, err := runtime.Handle(ctx, json.RawMessage(`{"type":"BeginVaultCreation","expectedVaultId":null,"label":"Canonical"}`))
+	if err != nil {
+		t.Fatalf("begin creation: %v", err)
+	}
+	setup := created.(map[string]string)
+	confirmed, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "ConfirmVaultCreation", "setupId": setup["setupId"], "recoveryPhrase": setup["recoveryPhrase"],
+	}))
+	if err != nil {
+		t.Fatalf("confirm creation: %v", err)
+	}
+	vaultID := confirmed.(map[string]string)["vaultId"]
+	value := runtime.vaults[vaultID]
+	if value == nil || value.Canonical == nil {
+		t.Fatalf("persisted Vault canonical state = %#v", value)
+	}
+	if value.Canonical.BaselineID == "" || value.Canonical.GenesisID == "" || value.Canonical.KeyEpochID == "" {
+		t.Fatalf("canonical identity state = %#v", value.Canonical)
+	}
+	if len(value.Canonical.CausalFrontier) != 1 || value.Canonical.CausalFrontier[0] != value.Canonical.GenesisID {
+		t.Fatalf("canonical frontiers = %#v", value.Canonical)
+	}
+	for _, itemID := range []string{value.Canonical.BaselineStorageItemID, value.Canonical.GenesisStorageItemID} {
+		reader, openErr := dependencies.Artifacts.Open(itemID)
+		if openErr != nil {
+			t.Fatalf("open persisted opaque item %s: %v", itemID, openErr)
+		}
+		encoded, readErr := io.ReadAll(reader)
+		_ = reader.Close()
+		if readErr != nil {
+			t.Fatalf("read persisted opaque item: %v", readErr)
+		}
+		if _, decodeErr := storage.DecodeOpaqueEnvelope(encoded); decodeErr != nil {
+			t.Fatalf("persisted item is not an opaque envelope: %v", decodeErr)
+		}
+	}
+	if _, err := dependencies.Secrets.Get(trustedSecretService, clientSecretAccount(vaultID, value.Canonical.ClientCredentialID)); err != nil {
+		t.Fatalf("client Trusted Secret missing: %v", err)
+	}
+	if _, err := dependencies.Secrets.Get(trustedSecretService, epochSecretAccount(vaultID, value.Canonical.KeyEpochID)); err != nil {
+		t.Fatalf("epoch Trusted Secret missing: %v", err)
+	}
+}
+
 func TestVaultCommandsRejectStaleContextAndKeepCaptureOutOfDesktopUI(t *testing.T) {
-	runtime, err := New(context.Background(), store.NewMemoryState())
+	runtime, err := New(context.Background(), store.NewMemoryState(), memoryDependencies(t))
 	if err != nil {
 		t.Fatalf("create Runtime: %v", err)
 	}
@@ -88,7 +190,7 @@ func TestVaultCommandsRejectStaleContextAndKeepCaptureOutOfDesktopUI(t *testing.
 
 func TestVaultCommandsRejectStaleSelectedVaultContext(t *testing.T) {
 	ctx := context.Background()
-	runtime, err := New(ctx, store.NewMemoryState())
+	runtime, err := New(ctx, store.NewMemoryState(), memoryDependencies(t))
 	if err != nil {
 		t.Fatalf("create Runtime: %v", err)
 	}
@@ -124,7 +226,7 @@ func TestVaultCommandsRejectStaleSelectedVaultContext(t *testing.T) {
 func TestVaultMutationRollsBackWhenPersistenceFails(t *testing.T) {
 	ctx := context.Background()
 	state := &failingState{delegate: store.NewMemoryState()}
-	runtime, err := New(ctx, state)
+	runtime, err := New(ctx, state, memoryDependencies(t))
 	if err != nil {
 		t.Fatalf("create Runtime: %v", err)
 	}
@@ -138,7 +240,7 @@ func TestVaultMutationRollsBackWhenPersistenceFails(t *testing.T) {
 	if len(current.Vaults) != 1 || current.Vaults[0].Lifecycle != "Open" || current.SelectedVaultID == nil || *current.SelectedVaultID != vaultID {
 		t.Fatalf("in-memory state after failed close = %#v, want the original open Vault", current)
 	}
-	restarted, err := New(ctx, state)
+	restarted, err := New(ctx, state, memoryDependencies(t))
 	if err != nil {
 		t.Fatalf("restart Runtime: %v", err)
 	}
@@ -150,7 +252,7 @@ func TestVaultMutationRollsBackWhenPersistenceFails(t *testing.T) {
 func TestVaultDropsUnresumablePendingCeremonyOnRestart(t *testing.T) {
 	ctx := context.Background()
 	state := store.NewMemoryState()
-	runtime, err := New(ctx, state)
+	runtime, err := New(ctx, state, memoryDependencies(t))
 	if err != nil {
 		t.Fatalf("create Runtime: %v", err)
 	}
@@ -158,7 +260,7 @@ func TestVaultDropsUnresumablePendingCeremonyOnRestart(t *testing.T) {
 	if _, err := runtime.Handle(ctx, mustJSON(map[string]any{"type": "BeginVaultFork", "expectedVaultId": vaultID})); err != nil {
 		t.Fatalf("begin Fork: %v", err)
 	}
-	restarted, err := New(ctx, state)
+	restarted, err := New(ctx, state, memoryDependencies(t))
 	if err != nil {
 		t.Fatalf("restart Runtime: %v", err)
 	}
@@ -180,7 +282,7 @@ func TestVaultCommandsRejectTrailingJSON(t *testing.T) {
 }
 
 func TestVaultCommandsValidateUnavailableCommandFields(t *testing.T) {
-	runtime, err := New(context.Background(), store.NewMemoryState())
+	runtime, err := New(context.Background(), store.NewMemoryState(), memoryDependencies(t))
 	if err != nil {
 		t.Fatalf("create Runtime: %v", err)
 	}
@@ -192,7 +294,7 @@ func TestVaultCommandsValidateUnavailableCommandFields(t *testing.T) {
 }
 
 func TestVaultCommandsFailClosedForUnimplementedHostedOperations(t *testing.T) {
-	runtime, err := New(context.Background(), store.NewMemoryState())
+	runtime, err := New(context.Background(), store.NewMemoryState(), memoryDependencies(t))
 	if err != nil {
 		t.Fatalf("create Runtime: %v", err)
 	}
@@ -226,7 +328,7 @@ func TestVaultCommandsFailClosedForUnimplementedHostedOperations(t *testing.T) {
 
 func TestTransferPackageRoundTripsWithoutCreatingAnEvent(t *testing.T) {
 	ctx := context.Background()
-	runtime, err := New(ctx, store.NewMemoryState())
+	runtime, err := New(ctx, store.NewMemoryState(), memoryDependencies(t))
 	if err != nil {
 		t.Fatalf("create Runtime: %v", err)
 	}
@@ -246,7 +348,7 @@ func TestTransferPackageRoundTripsWithoutCreatingAnEvent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("export transfer: %v", err)
 	}
-	destination, err := New(ctx, store.NewMemoryState())
+	destination, err := New(ctx, store.NewMemoryState(), memoryDependencies(t))
 	if err != nil {
 		t.Fatalf("create destination Runtime: %v", err)
 	}
@@ -269,7 +371,7 @@ func TestTransferPackageRoundTripsWithoutCreatingAnEvent(t *testing.T) {
 
 func TestHostedReplicaMetadataAcceptsCanonicalHTTPSPaths(t *testing.T) {
 	ctx := context.Background()
-	runtime, err := New(ctx, store.NewMemoryState())
+	runtime, err := New(ctx, store.NewMemoryState(), memoryDependencies(t))
 	if err != nil {
 		t.Fatalf("create Runtime: %v", err)
 	}
