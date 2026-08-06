@@ -24,6 +24,8 @@ RSpec.describe "Plan 16 product site", type: :request do
       "Linux AppImage",
       "Windows installer (untested)",
       "macOS disk image (untested)",
+      "Current public release",
+      "Release v0.3.4",
       "Sign in"
     )
     expect(response.body).not_to include(
@@ -41,6 +43,9 @@ RSpec.describe "Plan 16 product site", type: :request do
     expect(response.body).to include('href="/compare/wayback-machine"')
     expect(response.body).to include(
       "href=\"https://github.com/mashuproject/awsm_bak/blob/main/docs/guides/install-desktop-runtime.md\""
+    )
+    expect(response.body).to include(
+      'href="https://github.com/mashuproject/awsm_bak/releases/tag/v0.3.4"'
     )
 
     document = Nokogiri::HTML(response.body)

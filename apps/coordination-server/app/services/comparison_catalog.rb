@@ -73,7 +73,7 @@ class ComparisonCatalog
         MatrixRow.new(label: "Best discovery tool", alternative: "URL history, dates, and public references", awsm: "Your local Library and Vault organization"),
         MatrixRow.new(label: "Capture scope", alternative: "Publicly reachable pages and permitted captures", awsm: "The active HTTP(S) page selected in your browser"),
         MatrixRow.new(label: "Account needed", alternative: "Not for ordinary public browsing", awsm: "No Account for local use; one is needed only for a chosen Host"),
-        MatrixRow.new(label: "Current tradeoff", alternative: "A public service cannot guarantee every page or complete replay", awsm: "The current preview is a browser extension, not a public archive or web reader")
+        MatrixRow.new(label: "Current tradeoff", alternative: "A public service cannot guarantee every page or complete replay", awsm: "The current release includes a browser extension and Desktop Runtime, not a public archive or web reader")
       ],
       essay: [
         EssaySection.new(
@@ -319,8 +319,8 @@ class ComparisonCatalog
         MatrixRow.new(label: "Primary job", alternative: "Self-hosted bookmark-everything hub", awsm: "Local-first web archive"),
         MatrixRow.new(label: "Saved material", alternative: "Links, notes, images, PDFs, highlights, and attachments", awsm: "Page Capture Bundles with screenshots, text, and structured content"),
         MatrixRow.new(label: "Discovery", alternative: "Full-text search, rules, OCR, tags, and optional AI", awsm: "Library organization and local derived views"),
-        MatrixRow.new(label: "Automation", alternative: "RSS, APIs, CLI, browser clients, and automatic fetching", awsm: "Explicit browser Capture in the current preview"),
-        MatrixRow.new(label: "Mobile", alternative: "iOS and Android apps", awsm: "Mobile clients are not shipped in the current preview"),
+        MatrixRow.new(label: "Automation", alternative: "RSS, APIs, CLI, browser clients, and automatic fetching", awsm: "Explicit browser Capture and desktop Vault management in the current release"),
+        MatrixRow.new(label: "Mobile", alternative: "iOS and Android apps", awsm: "Mobile clients are not shipped in the current release"),
         MatrixRow.new(label: "Collaboration", alternative: "Shared lists and multi-user service workflows", awsm: "Portable Vault membership and encrypted event history"),
         MatrixRow.new(label: "Privacy boundary", alternative: "You operate the self-hosted service or choose its managed offering", awsm: "Client-held Vault keys; optional Host stores opaque encrypted bytes"),
         MatrixRow.new(label: "Best fit", alternative: "An active personal or team bookmark operations hub", awsm: "A private archive whose primary copy starts on the device")

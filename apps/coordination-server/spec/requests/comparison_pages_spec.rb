@@ -14,7 +14,9 @@ RSpec.describe "Comparison pages", type: :request do
       "Compare tools",
       "Choose the archive that fits your work.",
       "AWSM today",
-      "No hosted web reader",
+      "Desktop Runtime",
+      "v0.3.4",
+      "hosted web reader",
       "Wayback Machine",
       "ArchiveBox",
       "SingleFile",
@@ -28,6 +30,9 @@ RSpec.describe "Comparison pages", type: :request do
     expect(response.body).to include('<meta name="description"')
     expect(response.body).to include('href="/"')
     expect(response.body).to include('href="/glossary#local-first"')
+    expect(response.body).to include(
+      'href="https://github.com/mashuproject/awsm_bak/releases/tag/v0.3.4"'
+    )
   end
 
   it "renders every comparison with a guide, matrix, sources, and review date" do
@@ -47,6 +52,7 @@ RSpec.describe "Comparison pages", type: :request do
         "No affiliation",
         comparison.official_url
       ), slug
+      expect(response.body).to include("Mobile clients are not shipped in the current release") if slug == "karakeep"
 
       document = Nokogiri::HTML(response.body)
       expect(document.at_css("h1").text).to include("AWSM and"), slug

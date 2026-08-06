@@ -1,10 +1,13 @@
 module ApplicationHelper
   PUBLIC_REPOSITORY = "https://github.com/mashuproject/awsm_bak".freeze
+  CURRENT_RELEASE_TAG = "v0.3.4".freeze
 
   def public_product_links
     {
       source: PUBLIC_REPOSITORY,
       releases: "#{PUBLIC_REPOSITORY}/releases/latest",
+      current_release: "#{PUBLIC_REPOSITORY}/releases/tag/#{CURRENT_RELEASE_TAG}",
+      current_release_version: CURRENT_RELEASE_TAG.delete_prefix("v"),
       documentation: "#{PUBLIC_REPOSITORY}/tree/main/docs",
       chrome_guide: "#{PUBLIC_REPOSITORY}/blob/main/docs/guides/install-chrome-extension.md",
       firefox_guide: "#{PUBLIC_REPOSITORY}/blob/main/docs/guides/install-firefox-extension.md",

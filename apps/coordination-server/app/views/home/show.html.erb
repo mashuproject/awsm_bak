@@ -183,6 +183,10 @@
       <h2 class="section-heading">Get the public preview.</h2>
       <p class="section-lede">
         Install the preview, create a local Vault, and archive your first useful page.
+        <strong>Current public release:</strong>
+        <%= link_to "v#{public_product_links[:current_release_version]}",
+                    public_product_links[:current_release],
+                    class: "term-link" %>.
       </p>
       <div class="install-tabs" data-install-selector-target="root">
         <div class="install-tabs__nav" role="tablist" aria-label="AWSM installation">
@@ -207,7 +211,8 @@
               <li>Open an HTTP(S) page and archive it from the AWSM popup.</li>
             </ol>
             <div class="button-row">
-              <%= link_to "Latest Release", public_product_links[:releases], class: "awsm-button" %>
+              <%= link_to "Release v#{public_product_links[:current_release_version]}",
+                          public_product_links[:current_release], class: "awsm-button" %>
               <%= link_to "Chrome installation guide", public_product_links[:chrome_guide], class: "awsm-button awsm-button--secondary" %>
             </div>
           </article>
@@ -221,7 +226,8 @@
               <li>Open an HTTP(S) page and archive it from the AWSM popup.</li>
             </ol>
             <div class="button-row">
-              <%= link_to "Latest Release", public_product_links[:releases], class: "awsm-button" %>
+              <%= link_to "Release v#{public_product_links[:current_release_version]}",
+                          public_product_links[:current_release], class: "awsm-button" %>
               <%= link_to "Firefox installation guide", public_product_links[:firefox_guide], class: "awsm-button awsm-button--secondary" %>
             </div>
           </article>
@@ -237,7 +243,8 @@
             </ol>
             <p>Desktop currently manages Vaults through the same local Runtime boundary. Page capture remains an extension surface.</p>
             <div class="button-row">
-              <%= link_to "Latest Release", public_product_links[:releases], class: "awsm-button" %>
+              <%= link_to "Release v#{public_product_links[:current_release_version]}",
+                          public_product_links[:current_release], class: "awsm-button" %>
               <%= link_to "Desktop Runtime guide", public_product_links[:desktop_guide], class: "awsm-button awsm-button--secondary" %>
             </div>
           </article>
