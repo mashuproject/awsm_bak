@@ -84,7 +84,22 @@ type invitationAcceptance struct {
 type invitationCreation struct {
 	capabilitiesBytes      []byte
 	redemptionVerifier     ed25519.PublicKey
+	cancellationVerifier   ed25519.PublicKey
 	receiptVerificationKey ed25519.PublicKey
+}
+
+type invitationCancellation struct {
+	invitationID          canonical.Identifier
+	authorityChallenge    []byte
+	cancellationSignature []byte
+	cancellationRequestID canonical.Identifier
+	receiptInvitationID   canonical.Identifier
+	receiptOutcome        uint64
+	receiptRequestID      canonical.Identifier
+	receiptID             canonical.Identifier
+	receiptSignature      []byte
+	receiptPrefixBytes    []byte
+	requestBytes          []byte
 }
 
 type keyEpochTransition struct {
@@ -300,6 +315,24 @@ func replayAuthenticatedKeyEpochs(events []canonical.Event, genesis canonical.Ev
 			}
 			delete(current.invitations, acceptance.invitationID)
 			current.invitationTerminals[acceptance.invitationID] = struct{}{}
+		}
+		if event.Family == canonical.AuthorityFamily && event.Type == 7 {
+			cancellation, parseErr := parseInvitationCancellation(event)
+			if parseErr != nil {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, parseErr
+			}
+			invitation, exists := current.invitations[cancellation.invitationID]
+			if !exists {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, errors.New("Invitation Cancellation references an unknown Invitation")
+			}
+			if err := validateInvitationCancellation(cancellation, invitation); err != nil {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, err
+			}
+			delete(current.invitations, cancellation.invitationID)
+			current.invitationTerminals[cancellation.invitationID] = struct{}{}
 		}
 		if event.Family == canonical.AuthorityFamily && (event.Type == 3 || event.Type == 4) {
 			targetMember, resolved, parseErr := parseAdministratorRole(event)
@@ -900,6 +933,10 @@ func parseInvitationCreation(event canonical.Event) (invitationCreation, error) 
 	if !ok {
 		return invitationCreation{}, errors.New("Invitation Redemption verifier is invalid")
 	}
+	cancellationVerifier, ok := replicaMapBytes(body, 3, ed25519.PublicKeySize)
+	if !ok {
+		return invitationCreation{}, errors.New("Invitation Cancellation verifier is invalid")
+	}
 	receiptVerificationKey, ok := replicaMapBytes(body, 5, ed25519.PublicKeySize)
 	if !ok {
 		return invitationCreation{}, errors.New("Invitation receipt verification key is invalid")
@@ -907,6 +944,7 @@ func parseInvitationCreation(event canonical.Event) (invitationCreation, error) 
 	return invitationCreation{
 		capabilitiesBytes:      append([]byte(nil), capabilitiesBytes...),
 		redemptionVerifier:     append(ed25519.PublicKey(nil), redemptionVerifier...),
+		cancellationVerifier:   append(ed25519.PublicKey(nil), cancellationVerifier...),
 		receiptVerificationKey: append(ed25519.PublicKey(nil), receiptVerificationKey...),
 	}, nil
 }
@@ -915,6 +953,7 @@ func cloneInvitationCreation(value invitationCreation) invitationCreation {
 	return invitationCreation{
 		capabilitiesBytes:      append([]byte(nil), value.capabilitiesBytes...),
 		redemptionVerifier:     append(ed25519.PublicKey(nil), value.redemptionVerifier...),
+		cancellationVerifier:   append(ed25519.PublicKey(nil), value.cancellationVerifier...),
 		receiptVerificationKey: append(ed25519.PublicKey(nil), value.receiptVerificationKey...),
 	}
 }
@@ -999,6 +1038,87 @@ func validateInvitationAcceptanceSlots(state keyEpochReplayState, acceptance inv
 				return errors.New("Invitation Acceptance Envelope slots omit a readable Key Epoch")
 			}
 		}
+	}
+	return nil
+}
+
+func parseInvitationCancellation(event canonical.Event) (invitationCancellation, error) {
+	body, ok := replicaMapValue(event.Body)
+	if !ok || !replicaMapHasKeys(body, 2) {
+		return invitationCancellation{}, errors.New("Invitation Cancellation body is invalid")
+	}
+	requestValue := replicaMapEntryMust(body, 0)
+	request, ok := replicaMapValue(requestValue)
+	if !ok || !replicaMapHasKeys(request, 3) {
+		return invitationCancellation{}, errors.New("Invitation Cancellation Request is invalid")
+	}
+	receiptValue := replicaMapEntryMust(body, 1)
+	receipt, ok := replicaMapValue(receiptValue)
+	if !ok || !replicaMapHasKeys(receipt, 6) {
+		return invitationCancellation{}, errors.New("Cancelled Invitation receipt is invalid")
+	}
+	invitationBytes, invitationOK := replicaMapBytes(request, 0, 32)
+	challenge, challengeOK := replicaMapBytes(request, 1, 32)
+	cancellationSignature, signatureOK := replicaMapBytes(request, 2, ed25519.SignatureSize)
+	receiptInvitationBytes, receiptInvitationOK := replicaMapBytes(receipt, 0, 32)
+	receiptOutcome, receiptOutcomeOK := replicaMapNumber(receipt, 1)
+	receiptRequestBytes, receiptRequestOK := replicaMapBytes(receipt, 2, 32)
+	receiptReceiptBytes, receiptIDOK := replicaMapBytes(receipt, 4, 32)
+	receiptSignature, receiptSignatureOK := replicaMapBytes(receipt, 5, ed25519.SignatureSize)
+	receiptProposal, receiptProposalOK := replicaMapEntry(receipt, 3)
+	if !invitationOK || !challengeOK || !signatureOK || !receiptInvitationOK || !receiptOutcomeOK || !receiptRequestOK || !receiptIDOK || !receiptSignatureOK || receiptProposal != nil || !receiptProposalOK || bytes.Equal(invitationBytes, make([]byte, 32)) || bytes.Equal(receiptInvitationBytes, make([]byte, 32)) || bytes.Equal(receiptRequestBytes, make([]byte, 32)) || bytes.Equal(receiptReceiptBytes, make([]byte, 32)) || receiptOutcome != 2 {
+		return invitationCancellation{}, errors.New("Invitation Cancellation identity or receipt fields are invalid")
+	}
+	requestBytes, err := canonical.EncodeValue(requestValue)
+	if err != nil {
+		return invitationCancellation{}, errors.New("Invitation Cancellation Request is not canonical")
+	}
+	requestIDTranscript, err := canonical.Transcript("awsm:invitation-cancel-request-id:v1", requestBytes)
+	if err != nil {
+		return invitationCancellation{}, errors.New("Invitation Cancellation Request identity is invalid")
+	}
+	requestID := sha256.Sum256(requestIDTranscript)
+	if !bytes.Equal(requestID[:], receiptRequestBytes) {
+		return invitationCancellation{}, errors.New("Cancelled Invitation receipt does not name its Request")
+	}
+	receiptPrefix := canonical.Map{}
+	for key := uint64(0); key < 5; key++ {
+		value, exists := replicaMapEntry(receipt, key)
+		if !exists {
+			return invitationCancellation{}, errors.New("Invitation Cancellation receipt prefix is incomplete")
+		}
+		receiptPrefix[key] = value
+	}
+	receiptPrefixBytes, err := canonical.EncodeValue(receiptPrefix)
+	if err != nil {
+		return invitationCancellation{}, errors.New("Invitation Cancellation receipt prefix is not canonical")
+	}
+	return invitationCancellation{
+		invitationID:          bytesIdentifier(invitationBytes),
+		authorityChallenge:    append([]byte(nil), challenge...),
+		cancellationSignature: append([]byte(nil), cancellationSignature...),
+		cancellationRequestID: requestID,
+		receiptInvitationID:   bytesIdentifier(receiptInvitationBytes),
+		receiptOutcome:        receiptOutcome,
+		receiptRequestID:      bytesIdentifier(receiptRequestBytes),
+		receiptID:             bytesIdentifier(receiptReceiptBytes),
+		receiptSignature:      append([]byte(nil), receiptSignature...),
+		receiptPrefixBytes:    receiptPrefixBytes,
+		requestBytes:          requestBytes,
+	}, nil
+}
+
+func validateInvitationCancellation(cancellation invitationCancellation, invitation invitationCreation) error {
+	if cancellation.receiptInvitationID != cancellation.invitationID || cancellation.receiptRequestID != cancellation.cancellationRequestID {
+		return errors.New("Invitation Cancellation receipt does not match its Request")
+	}
+	requestTranscript, err := canonical.Transcript("awsm:invitation-cancel-request:v1", cancellation.invitationID[:], cancellation.authorityChallenge)
+	if err != nil || !ed25519.Verify(invitation.cancellationVerifier, requestTranscript, cancellation.cancellationSignature) {
+		return errors.New("Invitation Cancellation proof is invalid")
+	}
+	receiptTranscript, err := canonical.Transcript("awsm:invitation-receipt:v1", cancellation.receiptPrefixBytes)
+	if err != nil || !ed25519.Verify(invitation.receiptVerificationKey, receiptTranscript, cancellation.receiptSignature) {
+		return errors.New("Invitation Cancellation receipt signature is invalid")
 	}
 	return nil
 }

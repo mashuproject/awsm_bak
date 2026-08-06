@@ -352,6 +352,55 @@ func TestReplicaAdmitsAuthenticatedInvitationAcceptanceAndActivatesClient(t *tes
 	}
 }
 
+func TestReplicaAdmitsAuthenticatedInvitationCancellationAndConsumesInvitation(t *testing.T) {
+	prepared := deterministicCreation(t)
+	replica, err := NewReplica(prepared.Baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := replica.AdmitEvent(prepared.Genesis, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit Genesis: %v", err)
+	}
+	capabilities := []canonical.Value{canonical.Map{
+		0: "awsm.vault", 1: prepared.IDs.FirstMemberID[:], 2: prepared.IDs.VaultID[:], 3: "awsm.vault.join", 4: []byte{},
+	}}
+	creation, _, _ := signInvitationAcceptanceFixture(t, prepared, capabilities, capabilities)
+	if err := replica.AdmitEvent(creation, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit Invitation Creation: %v", err)
+	}
+	cancellation := signInvitationCancellationFixture(t, prepared, creation)
+	if err := replica.AdmitEvent(cancellation, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit Invitation Cancellation: %v", err)
+	}
+	state, err := replayAuthenticatedKeyEpochs(replica.Events(), prepared.Genesis, nil)
+	if err != nil {
+		t.Fatalf("replay Invitation Cancellation: %v", err)
+	}
+	if len(state.invitations) != 0 || len(state.invitationTerminals) != 1 {
+		t.Fatalf("Authority state after Invitation Cancellation = active %#v terminals %#v", state.invitations, state.invitationTerminals)
+	}
+}
+
+func TestReplicaRejectsInvitationCancellationForUnknownInvitation(t *testing.T) {
+	prepared := deterministicCreation(t)
+	replica, err := NewReplica(prepared.Baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := replica.AdmitEvent(prepared.Genesis, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit Genesis: %v", err)
+	}
+	unknownCreation, _, _ := signInvitationAcceptanceFixture(t, prepared, []canonical.Value{canonical.Map{
+		0: "awsm.vault", 1: prepared.IDs.FirstMemberID[:], 2: prepared.IDs.VaultID[:], 3: "awsm.vault.join", 4: []byte{},
+	}}, []canonical.Value{canonical.Map{
+		0: "awsm.vault", 1: prepared.IDs.FirstMemberID[:], 2: prepared.IDs.VaultID[:], 3: "awsm.vault.join", 4: []byte{},
+	}})
+	cancellation := signInvitationCancellationFixture(t, prepared, unknownCreation)
+	if err := replica.AdmitEvent(cancellation, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err == nil {
+		t.Fatal("Replica accepted Invitation Cancellation for an unknown Invitation")
+	}
+}
+
 func signInvitationAcceptanceFixture(t *testing.T, prepared PreparedCanonicalVaultCreation, invitationCapabilities, acceptedCapabilities []canonical.Value) (canonical.Event, canonical.Event, ed25519.PublicKey) {
 	t.Helper()
 	invitationID := filledCreationID(250)
@@ -444,6 +493,53 @@ func signInvitationAcceptanceFixture(t *testing.T, prepared PreparedCanonicalVau
 		t.Fatalf("sign Invitation Acceptance: %v", err)
 	}
 	return creation, acceptance, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)
+}
+
+func signInvitationCancellationFixture(t *testing.T, prepared PreparedCanonicalVaultCreation, creation canonical.Event) canonical.Event {
+	t.Helper()
+	invitationID, err := parseInvitationCreationID(creation)
+	if err != nil {
+		t.Fatalf("parse Invitation ID: %v", err)
+	}
+	challenge := bytes.Repeat([]byte{0x79}, 32)
+	cancellationKey := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x72}, ed25519.SeedSize))
+	receiptKey := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x73}, ed25519.SeedSize))
+	cancellationTranscript, err := canonical.Transcript("awsm:invitation-cancel-request:v1", invitationID[:], challenge)
+	if err != nil {
+		t.Fatalf("Invitation Cancellation transcript: %v", err)
+	}
+	request := canonical.Map{0: invitationID[:], 1: challenge, 2: ed25519.Sign(cancellationKey, cancellationTranscript)}
+	requestBytes, err := canonical.EncodeValue(request)
+	if err != nil {
+		t.Fatalf("encode Invitation Cancellation Request: %v", err)
+	}
+	requestIDTranscript, err := canonical.Transcript("awsm:invitation-cancel-request-id:v1", requestBytes)
+	if err != nil {
+		t.Fatalf("Invitation Cancellation Request ID transcript: %v", err)
+	}
+	requestID := sha256.Sum256(requestIDTranscript)
+	receiptID := filledCreationID(247)
+	receipt := canonical.Map{0: invitationID[:], 1: uint64(2), 2: requestID[:], 3: nil, 4: receiptID[:], 5: nil}
+	receiptPrefix := canonical.Map{0: receipt[0], 1: receipt[1], 2: receipt[2], 3: receipt[3], 4: receipt[4]}
+	receiptPrefixBytes, err := canonical.EncodeValue(receiptPrefix)
+	if err != nil {
+		t.Fatalf("encode Invitation Cancellation receipt prefix: %v", err)
+	}
+	receiptTranscript, err := canonical.Transcript("awsm:invitation-receipt:v1", receiptPrefixBytes)
+	if err != nil {
+		t.Fatalf("Invitation Cancellation receipt transcript: %v", err)
+	}
+	receipt[5] = ed25519.Sign(receiptKey, receiptTranscript)
+	event, err := canonical.SignEvent(canonical.EventInput{
+		VaultID: prepared.IDs.VaultID, GenerationID: prepared.IDs.GenerationID,
+		ParentRecordIDs: []canonical.Identifier{creation.RecordID}, AuthorityParentIDs: []canonical.Identifier{creation.RecordID},
+		RequiredFeatureSetID: prepared.RequiredFeatureSetID, Extensions: map[string][]byte{}, Family: canonical.AuthorityFamily, Type: 7,
+		SignerCredentialID: prepared.IDs.ClientCredentialID, AssertedAt: 210, Body: canonical.Map{0: request, 1: receipt},
+	}, ed25519.PrivateKey(prepared.ClientKeys.SigningSecretKey))
+	if err != nil {
+		t.Fatalf("sign Invitation Cancellation: %v", err)
+	}
+	return event
 }
 
 func TestReplicaAdmitsContentAddressedObject(t *testing.T) {
@@ -608,7 +704,7 @@ func signReplicaChildWithCredential(t *testing.T, prepared PreparedCanonicalVaul
 		VaultID: prepared.IDs.VaultID, GenerationID: prepared.IDs.GenerationID,
 		ParentRecordIDs: []canonical.Identifier{parent}, AuthorityParentIDs: []canonical.Identifier{parent},
 		Dependencies: []canonical.Dependency{}, RequiredFeatureSetID: prepared.RequiredFeatureSetID,
-		Extensions: map[string][]byte{}, Family: canonical.AuthorityFamily, Type: eventType,
+		Extensions: map[string][]byte{}, Family: canonical.ContentFamily, Type: eventType,
 		SignerCredentialID: credential, AssertedAt: 124 + int64(eventType),
 		Body: canonical.Map{0: uint64(eventType)},
 	}, ed25519.PrivateKey(prepared.ClientKeys.SigningSecretKey))
