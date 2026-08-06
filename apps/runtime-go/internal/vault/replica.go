@@ -25,6 +25,16 @@ type Replica struct {
 	authorityFrontier   []canonical.Identifier
 	continuityRecordIDs []canonical.Identifier
 	credentialKeys      map[canonical.Identifier]ed25519.PublicKey
+	objects             map[canonical.Identifier]ReplicaObject
+}
+
+type ReplicaObject struct {
+	ObjectID             canonical.Identifier
+	VaultID              canonical.Identifier
+	ObjectType           uint64
+	RequiredFeatureSetID canonical.Identifier
+	Body                 canonical.Value
+	Bytes                []byte
 }
 
 type ReplicaState struct {
@@ -60,6 +70,7 @@ func NewReplica(baseline canonical.Baseline) (*Replica, error) {
 		records:        map[canonical.Identifier]canonical.Record{baseline.RecordID: {Kind: canonical.BaselineKind, Baseline: &decoded, Bytes: append([]byte(nil), decoded.Bytes...), RecordID: decoded.RecordID}},
 		graph:          graph,
 		credentialKeys: make(map[canonical.Identifier]ed25519.PublicKey),
+		objects:        make(map[canonical.Identifier]ReplicaObject),
 	}, nil
 }
 
@@ -148,6 +159,87 @@ func (r *Replica) AdmitKnownEvent(event canonical.Event) error {
 	return r.AdmitEvent(event, key)
 }
 
+// AdmitObject verifies the canonical content address and Vault/Feature
+// binding before retaining one immutable Object. Objects are independent of
+// Event DAG order but remain local Replica state for Library reduction.
+func (r *Replica) AdmitObject(objectID canonical.Identifier, encoded []byte) error {
+	if r == nil {
+		return errors.New("Replica is required")
+	}
+	object, err := decodeReplicaObject(objectID, encoded)
+	if err != nil {
+		return err
+	}
+	if object.VaultID != r.vaultID || object.RequiredFeatureSetID != r.baseline.RequiredFeatureSetID {
+		return errors.New("Object belongs to another accepted Vault context")
+	}
+	if existing, ok := r.objects[objectID]; ok {
+		if bytes.Equal(existing.Bytes, encoded) {
+			return nil
+		}
+		return errors.New("Object identity collision")
+	}
+	r.objects[objectID] = object
+	return nil
+}
+
+func (r *Replica) Object(objectID canonical.Identifier) (ReplicaObject, bool) {
+	if r == nil {
+		return ReplicaObject{}, false
+	}
+	object, ok := r.objects[objectID]
+	if !ok {
+		return ReplicaObject{}, false
+	}
+	object.Bytes = append([]byte(nil), object.Bytes...)
+	return object, true
+}
+
+func decodeReplicaObject(objectID canonical.Identifier, encoded []byte) (ReplicaObject, error) {
+	value, err := canonical.DecodeValue(encoded)
+	if err != nil {
+		return ReplicaObject{}, fmt.Errorf("decode Vault Object: %w", err)
+	}
+	if !replicaMapHasKeys(value, 6) {
+		return ReplicaObject{}, errors.New("Vault Object fields are invalid")
+	}
+	format, ok := replicaMapNumber(value, 0)
+	if !ok || format != 1 {
+		return ReplicaObject{}, errors.New("Vault Object format is invalid")
+	}
+	vaultBytes, ok := replicaMapBytes(value, 1, 32)
+	if !ok {
+		return ReplicaObject{}, errors.New("Vault Object Vault ID is invalid")
+	}
+	var vaultID canonical.Identifier
+	copy(vaultID[:], vaultBytes)
+	objectType, ok := replicaMapNumber(value, 2)
+	if !ok || objectType < 1 || objectType > 3 {
+		return ReplicaObject{}, errors.New("Vault Object type is invalid")
+	}
+	featureBytes, ok := replicaMapBytes(value, 3, 32)
+	if !ok {
+		return ReplicaObject{}, errors.New("Vault Object Required Feature Set ID is invalid")
+	}
+	var featureID canonical.Identifier
+	copy(featureID[:], featureBytes)
+	body, ok := replicaMapEntry(value, 4)
+	if !ok {
+		return ReplicaObject{}, errors.New("Vault Object body is missing")
+	}
+	if _, ok := replicaMapEntry(value, 5); !ok {
+		return ReplicaObject{}, errors.New("Vault Object extensions are missing")
+	}
+	derived, err := canonical.VaultObjectID(vaultID, objectType, encoded)
+	if err != nil {
+		return ReplicaObject{}, err
+	}
+	if derived != objectID {
+		return ReplicaObject{}, errors.New("Vault Object content address does not match its bytes")
+	}
+	return ReplicaObject{ObjectID: objectID, VaultID: vaultID, ObjectType: objectType, RequiredFeatureSetID: featureID, Body: body, Bytes: append([]byte(nil), encoded...)}, nil
+}
+
 func (r *Replica) Record(id canonical.Identifier) (canonical.Record, bool) {
 	if r == nil {
 		return canonical.Record{}, false
@@ -205,9 +297,15 @@ func (r *Replica) Clone() *Replica {
 		authorityFrontier:   cloneIdentifiers(r.authorityFrontier),
 		continuityRecordIDs: cloneIdentifiers(r.continuityRecordIDs),
 		credentialKeys:      make(map[canonical.Identifier]ed25519.PublicKey, len(r.credentialKeys)),
+		objects:             make(map[canonical.Identifier]ReplicaObject, len(r.objects)),
 	}
 	for id, key := range r.credentialKeys {
 		clone.credentialKeys[id] = append(ed25519.PublicKey(nil), key...)
+	}
+	for id, object := range r.objects {
+		copyObject := object
+		copyObject.Bytes = append([]byte(nil), object.Bytes...)
+		clone.objects[id] = copyObject
 	}
 	clone.baseline.Bytes = append([]byte(nil), r.baseline.Bytes...)
 	_ = clone.graph.AddBaseline(clone.baselineID, nil)
@@ -268,6 +366,29 @@ func (r *Replica) Clone() *Replica {
 		}
 	}
 	return clone
+}
+
+func (r *Replica) Events() []canonical.Event {
+	if r == nil {
+		return nil
+	}
+	events := make([]canonical.Event, 0, len(r.records))
+	for _, record := range r.records {
+		if record.Event == nil {
+			continue
+		}
+		event := *record.Event
+		event.Bytes = append([]byte(nil), record.Event.Bytes...)
+		event.ParentRecordIDs = append([]canonical.Identifier(nil), record.Event.ParentRecordIDs...)
+		event.AuthorityParentIDs = append([]canonical.Identifier(nil), record.Event.AuthorityParentIDs...)
+		event.Dependencies = append([]canonical.Dependency(nil), record.Event.Dependencies...)
+		event.Signature = append([]byte(nil), record.Event.Signature...)
+		events = append(events, event)
+	}
+	sort.Slice(events, func(left, right int) bool {
+		return bytes.Compare(events[left].RecordID[:], events[right].RecordID[:]) < 0
+	})
+	return events
 }
 
 func (r *Replica) requireParents(parents []canonical.Identifier, label string) error {
@@ -351,6 +472,15 @@ func replicaMapBytes(value canonical.Value, key uint64, length int) ([]byte, boo
 	}
 	bytesValue, ok := entry.([]byte)
 	return bytesValue, ok && len(bytesValue) == length
+}
+
+func replicaMapNumber(value canonical.Value, key uint64) (uint64, bool) {
+	entry, ok := replicaMapEntry(value, key)
+	if !ok {
+		return 0, false
+	}
+	number, ok := entry.(uint64)
+	return number, ok
 }
 
 func hasDependency(dependencies []canonical.Dependency, kind uint64, id canonical.Identifier) bool {

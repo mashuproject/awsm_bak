@@ -75,6 +75,98 @@ func TestReplicaRejectsEventWithUnknownSignerCredential(t *testing.T) {
 	}
 }
 
+func TestReplicaAdmitsContentAddressedObject(t *testing.T) {
+	prepared := deterministicCreation(t)
+	replica, err := NewReplica(prepared.Baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	objectBytes, err := canonical.EncodeValue(canonical.Map{
+		0: uint64(1), 1: prepared.IDs.VaultID[:], 2: uint64(1), 3: prepared.RequiredFeatureSetID[:],
+		4: canonical.Map{}, 5: map[string][]byte{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	objectID, err := canonical.VaultObjectID(prepared.IDs.VaultID, 1, objectBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := replica.AdmitObject(objectID, objectBytes); err != nil {
+		t.Fatalf("AdmitObject: %v", err)
+	}
+	stored, ok := replica.Object(objectID)
+	if !ok || !bytes.Equal(stored.Bytes, objectBytes) {
+		t.Fatalf("stored Object = %#v, want exact bytes", stored)
+	}
+	if err := replica.AdmitObject(objectID, append([]byte(nil), objectBytes...)); err != nil {
+		t.Fatalf("duplicate Object admission: %v", err)
+	}
+}
+
+func TestProjectLibraryReducesBundleRegistrationAndDescriptor(t *testing.T) {
+	prepared := deterministicCreation(t)
+	replica, err := NewReplica(prepared.Baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := replica.AdmitEvent(prepared.Genesis, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatal(err)
+	}
+	bundleID := filledCreationID(210)
+	collectionID := filledCreationID(211)
+	artifactObjectBytes, err := canonical.EncodeValue(canonical.Map{
+		0: uint64(1), 1: prepared.IDs.VaultID[:], 2: uint64(2), 3: prepared.RequiredFeatureSetID[:], 4: canonical.Map{}, 5: map[string][]byte{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifactObjectID, err := canonical.VaultObjectID(prepared.IDs.VaultID, 2, artifactObjectBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	descriptorBody := canonical.Map{
+		0: uint64(1), 1: bundleID[:], 2: int64(1234), 3: "https://example.test/a", 4: "https://example.test/b",
+		5: "awsm.capture.web-page-snapshot", 6: "awsm.adapter.browser-web-page", 7: uint64(1), 8: "Example",
+		9: []canonical.Value{canonical.Map{0: artifactObjectID[:], 1: "awsm.artifact.primary"}}, 10: []canonical.Value{}, 11: canonical.Map{0: uint64(1), 1: []byte{1}},
+	}
+	descriptorBytes, err := canonical.EncodeValue(canonical.Map{
+		0: uint64(1), 1: prepared.IDs.VaultID[:], 2: uint64(1), 3: prepared.RequiredFeatureSetID[:], 4: descriptorBody, 5: map[string][]byte{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	descriptorID, err := canonical.VaultObjectID(prepared.IDs.VaultID, 1, descriptorBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := replica.AdmitObject(artifactObjectID, artifactObjectBytes); err != nil {
+		t.Fatal(err)
+	}
+	if err := replica.AdmitObject(descriptorID, descriptorBytes); err != nil {
+		t.Fatal(err)
+	}
+	event, err := canonical.SignEvent(canonical.EventInput{
+		VaultID: prepared.IDs.VaultID, GenerationID: prepared.IDs.GenerationID,
+		ParentRecordIDs: []canonical.Identifier{prepared.Genesis.RecordID}, AuthorityParentIDs: []canonical.Identifier{prepared.Genesis.RecordID},
+		RequiredFeatureSetID: prepared.RequiredFeatureSetID, Extensions: map[string][]byte{}, Family: canonical.ContentFamily, Type: 3,
+		SignerCredentialID: prepared.IDs.ClientCredentialID, AssertedAt: 1234, Body: canonical.Map{0: bundleID[:], 1: descriptorID[:], 2: collectionID[:]},
+	}, ed25519.PrivateKey(prepared.ClientKeys.SigningSecretKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := replica.AdmitEvent(event, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatal(err)
+	}
+	items, err := ProjectLibrary(replica)
+	if err != nil {
+		t.Fatalf("ProjectLibrary: %v", err)
+	}
+	if len(items) != 1 || items[0].BundleID != hexIdentifier(bundleID) || items[0].CollectionID != hexIdentifier(collectionID) || items[0].ArtifactID != hexIdentifier(artifactObjectID) || !items[0].AvailableLocally || items[0].Title == nil || *items[0].Title != "Example" {
+		t.Fatalf("Library items = %#v", items)
+	}
+}
+
 func deterministicCreation(t *testing.T) PreparedCanonicalVaultCreation {
 	t.Helper()
 	ids := CreationIDs{

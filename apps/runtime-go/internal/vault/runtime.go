@@ -571,10 +571,7 @@ func (r *Runtime) Handle(ctx context.Context, raw json.RawMessage) (any, error) 
 		if err := decode(raw, &input); err != nil {
 			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "ListLibrary contains invalid fields")
 		}
-		if err := r.requireVault(input.ExpectedVaultID); err != nil {
-			return nil, err
-		}
-		return []any{}, nil
+		return r.listLibrary(input.ExpectedVaultID)
 	case "ListRemotes":
 		var input struct {
 			Type            string `json:"type"`
@@ -1191,6 +1188,26 @@ func (r *Runtime) listRemotes(id string) (any, error) {
 		result = append(result, RemoteSummary{RemoteID: remote.RemoteID, Name: remote.Name, Endpoint: remote.Endpoint, Enabled: remote.Enabled})
 	}
 	return result, nil
+}
+
+func (r *Runtime) listLibrary(id string) (any, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if err := r.requireExpectedLocked(&id); err != nil {
+		return nil, err
+	}
+	if _, err := r.vaultLockedRead(id); err != nil {
+		return nil, err
+	}
+	replica := r.replicas[id]
+	if replica == nil {
+		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The authenticated Vault Replica is unavailable.")
+	}
+	items, err := ProjectLibrary(replica)
+	if err != nil {
+		return nil, commandError("LIBRARY_UNAVAILABLE", "The Vault Library could not be rebuilt from authenticated state.")
+	}
+	return items, nil
 }
 
 func (r *Runtime) renameRemote(ctx context.Context, id, remoteID, name string) (any, error) {
