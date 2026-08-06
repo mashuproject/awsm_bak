@@ -1287,6 +1287,69 @@ func TestHostedReplicaAttachmentMaterializationAndPull(t *testing.T) {
 	}
 }
 
+func TestHostedReplicaPullAdoptsVacuumSuccessor(t *testing.T) {
+	ctx := context.Background()
+	fixture := newHostedSyncFixture(t)
+	sourceDependencies := memoryDependencies(t)
+	sourceDependencies.HTTPClient = fixture.Client
+	source, err := New(ctx, store.NewMemoryState(), sourceDependencies)
+	if err != nil {
+		t.Fatalf("create source Runtime: %v", err)
+	}
+	vaultID, phrase := createVaultWithPhraseForTest(t, source, "Hosted Vacuum")
+	collectionID := filledCreationID(224)
+	admitForkCollectionTitleEvent(t, source, sourceDependencies, vaultID, collectionID, "Saved pages")
+	preVacuumExport, err := source.ExportComplete(vaultID, phrase)
+	if err != nil {
+		t.Fatalf("export pre-Vacuum source: %v", err)
+	}
+	if _, err := source.Handle(ctx, mustJSON(map[string]any{"type": "VacuumVault", "expectedVaultId": vaultID})); err != nil {
+		t.Fatalf("Vacuum source: %v", err)
+	}
+	remoteValue, err := source.Handle(ctx, mustJSON(map[string]any{
+		"type": "CreateHostedReplica", "expectedVaultId": vaultID,
+		"endpoint": fixture.Endpoint, "name": "Hosted Vacuum", "username": "alice", "password": "secret",
+	}))
+	if err != nil {
+		t.Fatalf("create source Hosted Replica: %v", err)
+	}
+	remote := remoteValue.(RemoteSummary)
+	if _, err := source.Handle(ctx, mustJSON(map[string]any{"type": "MaterializeHostedReplica", "expectedVaultId": vaultID, "remoteId": remote.RemoteID})); err != nil {
+		t.Fatalf("materialize source Vacuum successor: %v", err)
+	}
+
+	destinationDependencies := memoryDependencies(t)
+	destinationDependencies.HTTPClient = fixture.Client
+	destination, err := New(ctx, store.NewMemoryState(), destinationDependencies)
+	if err != nil {
+		t.Fatalf("create destination Runtime: %v", err)
+	}
+	if _, err := destination.ImportComplete(ctx, phrase, preVacuumExport); err != nil {
+		t.Fatalf("import pre-Vacuum destination: %v", err)
+	}
+	if _, err := destination.Handle(ctx, mustJSON(map[string]any{
+		"type": "CreateHostedReplica", "expectedVaultId": vaultID,
+		"endpoint": fixture.Endpoint, "name": "Hosted Vacuum", "username": "alice", "password": "secret",
+	})); err != nil {
+		t.Fatalf("create destination Hosted Replica: %v", err)
+	}
+	pulledValue, err := destination.Handle(ctx, mustJSON(map[string]any{"type": "PullHostedReplicas", "expectedVaultId": vaultID}))
+	if err != nil {
+		t.Fatalf("pull Vacuum successor: %v", err)
+	}
+	pulled := pulledValue.([]map[string]string)
+	if len(pulled) != 1 || pulled[0]["status"] != "Completed" {
+		t.Fatalf("pull Vacuum successor status = %#v", pulled)
+	}
+	projection, err := ProjectLibraryProjection(destination.replicas[vaultID])
+	if err != nil {
+		t.Fatalf("project pulled Vacuum successor: %v", err)
+	}
+	if len(projection.Collections) != 1 || projection.Collections[0].CollectionID != hexIdentifier(collectionID) || projection.Collections[0].Title != "Saved pages" {
+		t.Fatalf("pulled Collection projection = %#v", projection.Collections)
+	}
+}
+
 func TestHostedReplicaMaterializesFeatureManifestItems(t *testing.T) {
 	ctx := context.Background()
 	fixture := newHostedSyncFixture(t)

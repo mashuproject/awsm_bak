@@ -375,6 +375,8 @@ func (r *Runtime) pullHostedReplicas(ctx context.Context, id string) (any, error
 		var cursor *int64
 		var position *[32]byte
 		seenPositions := make(map[[32]byte]struct{})
+		pendingBaselines := make(map[canonical.Identifier][]byte)
+		pendingVacuumEvents := make(map[canonical.Identifier][]byte)
 		failed := false
 		for {
 			page, pageErr := host.inventory(ctx, remote.ReplicaHandle, cursor, position, remote.InventoryPageSize)
@@ -411,21 +413,87 @@ func (r *Runtime) pullHostedReplicas(ctx context.Context, id string) (any, error
 					if baseline, baselineErr := canonical.DecodeBaseline(opened.PayloadBytes); baselineErr == nil {
 						r.mu.RLock()
 						current := r.vaults[id]
+						currentReplica := r.replicas[id]
 						var generationID canonical.Identifier
 						var generationErr error
 						if current != nil {
 							generationID, generationErr = decodeHexIdentifier(current.GenerationID)
 						}
-						matches := current != nil && current.Canonical != nil && generationErr == nil &&
-							baseline.VaultID == vaultID &&
-							baseline.GenerationID == generationID &&
-							hexIdentifier(baseline.RecordID) == current.Canonical.BaselineID
-						r.mu.RUnlock()
-						if !matches {
-							failed = true
+						matches := current != nil && current.Canonical != nil && generationErr == nil && baseline.VaultID == vaultID && baseline.GenerationID == generationID && hexIdentifier(baseline.RecordID) == current.Canonical.BaselineID
+						known := currentReplica != nil
+						if known {
+							_, known = currentReplica.Record(baseline.RecordID)
 						}
-					} else if admitErr := r.AdmitOpaqueEvent(ctx, id, encoded); admitErr != nil {
-						failed = true
+						r.mu.RUnlock()
+						if matches || known {
+							continue
+						}
+						if baseline.VaultID != vaultID || generationErr != nil {
+							failed = true
+							break
+						}
+						pendingBaselines[baseline.RecordID] = append([]byte(nil), encoded...)
+						if eventEncoded, waiting := pendingVacuumEvents[baseline.RecordID]; waiting {
+							if admitErr := r.admitOpaqueVacuum(ctx, id, encoded, eventEncoded); admitErr != nil {
+								failed = true
+								break
+							}
+							delete(pendingVacuumEvents, baseline.RecordID)
+							delete(pendingBaselines, baseline.RecordID)
+						}
+					} else {
+						event, eventErr := canonical.DecodeEvent(opened.PayloadBytes)
+						if eventErr != nil {
+							failed = true
+							break
+						}
+						r.mu.RLock()
+						currentReplica := r.replicas[id]
+						current := r.vaults[id]
+						known := currentReplica != nil
+						if known {
+							_, known = currentReplica.Record(event.RecordID)
+						}
+						var currentGeneration canonical.Identifier
+						var generationErr error
+						if current != nil {
+							currentGeneration, generationErr = decodeHexIdentifier(current.GenerationID)
+						}
+						r.mu.RUnlock()
+						if known {
+							continue
+						}
+						if event.Family == canonical.LifecycleFamily && event.Type == 1 {
+							var successorBaselineID canonical.Identifier
+							for _, dependency := range event.Dependencies {
+								if dependency.Type == 2 {
+									successorBaselineID = dependency.ID
+									break
+								}
+							}
+							if successorBaselineID == (canonical.Identifier{}) {
+								failed = true
+								break
+							}
+							if baselineEncoded, waiting := pendingBaselines[successorBaselineID]; waiting {
+								if admitErr := r.admitOpaqueVacuum(ctx, id, baselineEncoded, encoded); admitErr != nil {
+									failed = true
+									break
+								}
+								delete(pendingBaselines, successorBaselineID)
+							} else {
+								pendingVacuumEvents[successorBaselineID] = append([]byte(nil), encoded...)
+							}
+							continue
+						}
+						if generationErr != nil || event.GenerationID != currentGeneration {
+							failed = true
+							break
+						}
+						if admitErr := r.AdmitOpaqueEvent(ctx, id, encoded); admitErr != nil {
+							failed = true
+							break
+						}
 					}
 				case 2:
 					if admitErr := r.AdmitOpaqueObject(ctx, id, encoded); admitErr != nil {
@@ -452,6 +520,19 @@ func (r *Runtime) pullHostedReplicas(ctx context.Context, id string) (any, error
 			seenPositions[*page.NextPosition] = struct{}{}
 			next := *page.NextPosition
 			position = &next
+		}
+		if !failed {
+			for successorBaselineID, eventEncoded := range pendingVacuumEvents {
+				baselineEncoded, ok := pendingBaselines[successorBaselineID]
+				if !ok || r.admitOpaqueVacuum(ctx, id, baselineEncoded, eventEncoded) != nil {
+					failed = true
+					break
+				}
+				delete(pendingBaselines, successorBaselineID)
+			}
+		}
+		if !failed && len(pendingBaselines) != 0 {
+			failed = true
 		}
 		if failed {
 			result["status"] = "Failed"

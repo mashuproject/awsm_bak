@@ -512,6 +512,96 @@ func (r *Runtime) AdmitOpaqueEvent(ctx context.Context, vaultID string, encoded 
 	return nil
 }
 
+func (r *Runtime) admitOpaqueVacuum(ctx context.Context, vaultID string, baselineEncoded, eventEncoded []byte) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	value, err := r.vaultLocked(vaultID)
+	if err != nil {
+		return err
+	}
+	if value.Canonical == nil || r.replicas[vaultID] == nil || r.deps.Artifacts == nil || r.deps.Secrets == nil {
+		return commandError("VAULT_REPLAY_UNAVAILABLE", "The authenticated Vault Replica is unavailable.")
+	}
+	vaultIdentifier, err := decodeHexIdentifier(vaultID)
+	if err != nil {
+		return commandError("VAULT_VACUUM_INVALID", "The Vault identity is invalid.")
+	}
+	baselineOpened, err := r.openOpaqueWithKnownEpochs(vaultID, value.Canonical, vaultIdentifier, baselineEncoded)
+	if err != nil || baselineOpened.PayloadType != 1 {
+		return commandError("VAULT_VACUUM_INVALID", "The successor Baseline envelope is invalid.")
+	}
+	eventOpened, err := r.openOpaqueWithKnownEpochs(vaultID, value.Canonical, vaultIdentifier, eventEncoded)
+	if err != nil || eventOpened.PayloadType != 1 {
+		return commandError("VAULT_VACUUM_INVALID", "The Vacuum Event envelope is invalid.")
+	}
+	baseline, err := canonical.DecodeBaseline(baselineOpened.PayloadBytes)
+	if err != nil || baseline.VaultID != vaultIdentifier {
+		return commandError("VAULT_VACUUM_INVALID", "The successor Baseline is invalid.")
+	}
+	event, err := canonical.DecodeEvent(eventOpened.PayloadBytes)
+	if err != nil || event.VaultID != vaultIdentifier || event.GenerationID != r.replicas[vaultID].generationID {
+		return commandError("VAULT_VACUUM_INVALID", "The Vacuum Event context is invalid.")
+	}
+	if baseline.GenerationID == r.replicas[vaultID].generationID {
+		if value.Canonical.AdoptionEventID != "" {
+			adoptionID, adoptionErr := decodeHexIdentifier(value.Canonical.AdoptionEventID)
+			if adoptionErr == nil && event.RecordID == adoptionID {
+				return nil
+			}
+		}
+		return commandError("VAULT_VACUUM_INVALID", "The successor Baseline is not a new Generation.")
+	}
+	nextReplica, err := r.replicas[vaultID].AdoptVacuum(baseline, event)
+	if err != nil {
+		return commandError("VAULT_VACUUM_INVALID", "The Vacuum Event could not be adopted.")
+	}
+	baselineEnvelope, err := storage.DecodeOpaqueEnvelope(baselineEncoded)
+	if err != nil {
+		return commandError("VAULT_VACUUM_INVALID", "The successor Baseline envelope is invalid.")
+	}
+	eventEnvelope, err := storage.DecodeOpaqueEnvelope(eventEncoded)
+	if err != nil {
+		return commandError("VAULT_VACUUM_INVALID", "The Vacuum Event envelope is invalid.")
+	}
+	before := r.snapshotLocked()
+	if err := storeOpaqueCreationItem(r.deps.Artifacts, baselineEnvelope.StorageItemID, baselineEncoded); err != nil {
+		return commandError("VAULT_CREATION_STORAGE_FAILED", "The successor Baseline could not be stored.")
+	}
+	if err := storeOpaqueCreationItem(r.deps.Artifacts, eventEnvelope.StorageItemID, eventEncoded); err != nil {
+		deleteOpaqueCreationItem(r.deps.Artifacts, baselineEnvelope.StorageItemID)
+		return commandError("VAULT_CREATION_STORAGE_FAILED", "The Vacuum Event could not be stored.")
+	}
+	predecessorGenerationID := value.GenerationID
+	value.GenerationID = hexIdentifier(baseline.GenerationID)
+	value.Canonical.GenerationID = value.GenerationID
+	value.Canonical.PredecessorGenerationID = predecessorGenerationID
+	value.Canonical.BaselineID = hexIdentifier(baseline.RecordID)
+	value.Canonical.BaselineStorageItemID = hexIdentifier(baselineEnvelope.StorageItemID)
+	value.Canonical.AdoptionEventID = hexIdentifier(event.RecordID)
+	state := nextReplica.State()
+	value.Canonical.CausalFrontier = identifiersToHex(state.CausalFrontier)
+	value.Canonical.AuthorityFrontier = identifiersToHex(state.AuthorityFrontier)
+	value.Canonical.ContinuityRecordIDs = identifiersToHex(state.ContinuityRecordIDs)
+	if value.Canonical.RecordStorageItemIDs == nil {
+		value.Canonical.RecordStorageItemIDs = map[string]string{}
+	}
+	baselineStorageItemID := hexIdentifier(baselineEnvelope.StorageItemID)
+	eventStorageItemID := hexIdentifier(eventEnvelope.StorageItemID)
+	value.Canonical.RecordStorageItemIDs[hexIdentifier(baseline.RecordID)] = baselineStorageItemID
+	value.Canonical.RecordStorageItemIDs[hexIdentifier(event.RecordID)] = eventStorageItemID
+	bindStorageItemKeyEpoch(value.Canonical, baselineStorageItemID, baselineOpened.KeyEpochID)
+	bindStorageItemKeyEpoch(value.Canonical, eventStorageItemID, eventOpened.KeyEpochID)
+	r.replicas[vaultID] = nextReplica
+	if err := r.persistLocked(ctx); err != nil {
+		r.restoreLocked(before)
+		deleteOpaqueCreationItem(r.deps.Artifacts, baselineEnvelope.StorageItemID)
+		deleteOpaqueCreationItem(r.deps.Artifacts, eventEnvelope.StorageItemID)
+		return err
+	}
+	r.signal()
+	return nil
+}
+
 // AdmitOpaqueObject is the Object counterpart to AdmitOpaqueEvent. Object
 // bytes are authenticated independently from Event DAG state and become
 // available to Library projections only after content-address verification.
