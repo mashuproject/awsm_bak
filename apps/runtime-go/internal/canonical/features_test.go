@@ -94,6 +94,22 @@ func TestFeatureManifestValidationRejectsUnsatisfiedAndConflictingSets(t *testin
 	}
 }
 
+func TestFeatureManifestRevisionMatchesBrowserSafeIntegerBoundary(t *testing.T) {
+	input := FeatureManifestInput{
+		FeatureKey:          "awsm.safe-revision",
+		Revision:            1<<53 - 1,
+		RequiredManifestIDs: []Identifier{},
+		IncompatibleKeys:    []string{},
+	}
+	if _, err := EncodeFeatureManifest(input); err != nil {
+		t.Fatalf("browser-safe Feature Manifest revision was rejected: %v", err)
+	}
+	input.Revision = 1 << 53
+	if _, err := EncodeFeatureManifest(input); err == nil {
+		t.Fatal("Feature Manifest revision outside browser safe integer range was accepted")
+	}
+}
+
 func TestFeatureManifestDecodeRejectsNonCanonicalBytes(t *testing.T) {
 	nonCanonical, err := EncodeValue(Map{
 		0: "awsm.feature",

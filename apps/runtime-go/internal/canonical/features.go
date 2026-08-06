@@ -256,6 +256,9 @@ func validateFeatureManifestInput(input FeatureManifestInput) error {
 	if err := validateScopedKey(input.FeatureKey); err != nil {
 		return fmt.Errorf("Feature Manifest key is invalid: %w", err)
 	}
+	if input.Revision > 1<<53-1 {
+		return errors.New("Feature Manifest revision must be a browser-safe integer")
+	}
 	seenIDs := make(map[Identifier]struct{}, len(input.RequiredManifestIDs))
 	for _, id := range input.RequiredManifestIDs {
 		if _, exists := seenIDs[id]; exists {
