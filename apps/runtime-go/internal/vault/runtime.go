@@ -2161,16 +2161,9 @@ func (r *Runtime) vacuumVault(ctx context.Context, id string) (any, error) {
 	if err != nil {
 		return nil, commandError("VAULT_VACUUM_REQUIRES_REPLAY", "The authenticated Library projection is unavailable for Vacuum.")
 	}
-	for _, accepted := range replica.Events() {
-		if accepted.GenerationID != replica.generationID {
-			continue
-		}
-		if accepted.Family == canonical.AuthorityFamily && accepted.Type != canonical.GenesisEvent {
-			return nil, commandError("VAULT_VACUUM_REQUIRES_REPLAY", "This Runtime cannot vacuum unsupported Authority state.")
-		}
-		if accepted.Family == canonical.LifecycleFamily {
-			return nil, commandError("VAULT_VACUUM_REQUIRES_REPLAY", "This Runtime cannot vacuum unsupported Lifecycle state.")
-		}
+	authorityCheckpoint, err := buildVacuumAuthorityCheckpoint(replica)
+	if err != nil {
+		return nil, commandError("VAULT_VACUUM_REQUIRES_REPLAY", err.Error())
 	}
 	vaultID, err := decodeHexIdentifier(id)
 	if err != nil {
@@ -2218,22 +2211,11 @@ func (r *Runtime) vacuumVault(ctx context.Context, id string) (any, error) {
 		return nil, err
 	}
 	frontier := replica.State()
-	oldBody, ok := replicaMapValue(replica.baseline.Body)
-	if !ok {
-		return nil, commandError("VAULT_VACUUM_INVALID", "The predecessor Baseline state is invalid.")
-	}
 	oldContent, err := baselineContentCheckpoint(replica.baseline)
 	if err != nil {
 		return nil, commandError("VAULT_VACUUM_INVALID", "The predecessor content checkpoint is invalid.")
 	}
-	authorityCheckpoint, ok := replicaMapEntry(oldBody, 3)
-	if !ok {
-		return nil, commandError("VAULT_VACUUM_INVALID", "The predecessor Authority checkpoint is missing.")
-	}
-	lifecycleCheckpoint, ok := replicaMapEntry(oldBody, 4)
-	if !ok {
-		return nil, commandError("VAULT_VACUUM_INVALID", "The predecessor Lifecycle checkpoint is missing.")
-	}
+	lifecycleCheckpoint := canonical.Map{0: uint64(1)}
 	contentCheckpoint, err := buildVacuumContentCheckpoint(replica, projection)
 	if err != nil {
 		return nil, commandError("VAULT_VACUUM_REQUIRES_REPLAY", err.Error())

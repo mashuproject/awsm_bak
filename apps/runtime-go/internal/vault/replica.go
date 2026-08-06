@@ -154,13 +154,11 @@ func (r *Replica) AdmitEvent(event canonical.Event, signerPublicKey ed25519.Publ
 		return errors.New("Event signature is invalid")
 	}
 	if !(decoded.Family == canonical.AuthorityFamily && decoded.Type == canonical.GenesisEvent) {
-		events := r.Events()
-		events = append(events, decoded)
 		genesisRecord, exists := r.records[r.genesisID]
 		if !exists || genesisRecord.Event == nil {
 			return errors.New("Event has no authenticated Genesis")
 		}
-		if _, replayErr := replayAuthenticatedKeyEpochs(events, *genesisRecord.Event, nil); replayErr != nil {
+		if _, replayErr := replayReplicaAuthorityState(r, &decoded, nil); replayErr != nil {
 			return fmt.Errorf("admit authenticated Event: %w", replayErr)
 		}
 	}
@@ -300,7 +298,7 @@ func (r *Replica) acceptsRequiredFeatureSet(featureSetID canonical.Identifier) b
 	if !ok || genesis.Event == nil {
 		return false
 	}
-	replayed, err := replayAuthenticatedKeyEpochs(r.Events(), *genesis.Event, nil)
+	replayed, err := replayReplicaAuthorityState(r, nil, nil)
 	return err == nil && !replayed.featureSetConflict && replayed.featureSetID == featureSetID
 }
 
@@ -517,7 +515,7 @@ func (r *Replica) AuthorityState() (AuthorityState, error) {
 	if !ok || genesisRecord.Event == nil {
 		return AuthorityState{}, errors.New("authenticated Genesis is unavailable")
 	}
-	replayed, err := replayAuthenticatedKeyEpochs(r.Events(), *genesisRecord.Event, nil)
+	replayed, err := replayReplicaAuthorityState(r, nil, nil)
 	if err != nil {
 		return AuthorityState{}, fmt.Errorf("replay Authority State: %w", err)
 	}

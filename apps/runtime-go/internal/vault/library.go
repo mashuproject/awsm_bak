@@ -2917,7 +2917,7 @@ func captureEventAttribution(replica *Replica, event canonical.Event) (canonical
 	if !ok || genesisRecord.Event == nil {
 		return nil, errors.New("Capture attribution requires authenticated Genesis")
 	}
-	replayed, err := replayAuthenticatedKeyEpochs(replica.Events(), *genesisRecord.Event, nil)
+	replayed, err := replayReplicaAuthorityState(replica, nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("replay Capture attribution: %w", err)
 	}

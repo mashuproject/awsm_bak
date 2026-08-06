@@ -904,6 +904,104 @@ func TestVacuumAdoptsAuthenticatedSuccessorBaselineAndReopens(t *testing.T) {
 	}
 }
 
+func TestVacuumPreservesAuthenticatedAuthorityCheckpointAfterKeyEpochTransition(t *testing.T) {
+	ctx := context.Background()
+	state := store.NewMemoryState()
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatal(err)
+	}
+	phrase := "abandon amount liar amount expire adjust cage candy arch gather drum buyer"
+	prepared, err := PrepareCanonicalVaultCreation(CreationInput{RecoveryPhrase: phrase})
+	if err != nil {
+		t.Fatalf("prepare Vault: %v", err)
+	}
+	vaultID := installPreparedCreationForTest(t, runtime, dependencies, prepared)
+	vaultIdentifier := mustIdentifier(t, vaultID)
+	newKey := bytes.Repeat([]byte{0x5a}, 32)
+	newEpochID, err := awsmcrypto.KeyEpochID(vaultIdentifier, newKey)
+	if err != nil {
+		t.Fatalf("derive second Key Epoch: %v", err)
+	}
+	if err := dependencies.Secrets.Put(trustedSecretService, epochSecretAccount(vaultID, hexIdentifier(newEpochID)), mustEncodeImportedEpochSecret(vaultIdentifier, newEpochID, newKey)); err != nil {
+		t.Fatalf("store second Key Epoch: %v", err)
+	}
+	admitTestKeyEpochTransition(t, runtime, dependencies, vaultID, prepared, newEpochID, newKey)
+
+	resultValue, err := runtime.Handle(ctx, mustJSON(map[string]any{"type": "VacuumVault", "expectedVaultId": vaultID}))
+	if err != nil {
+		t.Fatalf("VacuumVault: %v", err)
+	}
+	result, ok := resultValue.(map[string]string)
+	if !ok || result["successorBaselineId"] == "" {
+		t.Fatalf("Vacuum result = %#v", resultValue)
+	}
+	baselineRecord, ok := runtime.replicas[vaultID].Record(mustIdentifier(t, result["successorBaselineId"]))
+	if !ok || baselineRecord.Baseline == nil {
+		t.Fatalf("successor Baseline = %#v", baselineRecord)
+	}
+	body, ok := replicaMapValue(baselineRecord.Baseline.Body)
+	if !ok {
+		t.Fatal("successor Baseline body is not a map")
+	}
+	authority, ok := replicaMapValue(replicaMapEntryMust(body, 3))
+	if !ok {
+		t.Fatal("successor Authority checkpoint is not a map")
+	}
+	epochs, ok := replicaMapArray(authority, 6)
+	if !ok || len(epochs) != 2 {
+		t.Fatalf("successor Key Epoch checkpoint = %#v", replicaMapEntryMust(authority, 6))
+	}
+	foundCurrent := false
+	for _, epoch := range epochs {
+		epochID, idOK := replicaIdentifier(epoch, 0)
+		display, displayOK := replicaMapNumber(epoch, 1)
+		current, currentOK := replicaMapEntry(epoch, 2)
+		if !idOK || !displayOK || !currentOK {
+			t.Fatalf("successor Key Epoch summary = %#v", epoch)
+		}
+		if epochID == newEpochID {
+			if display != 1 || current != true {
+				t.Fatalf("successor current Key Epoch summary = %#v", epoch)
+			}
+			foundCurrent = true
+		} else if epochID != prepared.KeyEpochID || display != 0 || current != false {
+			t.Fatalf("successor predecessor Key Epoch summary = %#v", epoch)
+		}
+	}
+	if !foundCurrent {
+		t.Fatalf("successor checkpoint omitted current Key Epoch %s", hexIdentifier(newEpochID))
+	}
+}
+
+func TestVacuumCanRepeatAcrossSuccessorGenerations(t *testing.T) {
+	ctx := context.Background()
+	state := store.NewMemoryState()
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vaultID := createVaultForTest(t, runtime, "Repeated Vacuum")
+	firstValue, err := runtime.Handle(ctx, mustJSON(map[string]any{"type": "VacuumVault", "expectedVaultId": vaultID}))
+	if err != nil {
+		t.Fatalf("first VacuumVault: %v", err)
+	}
+	first, ok := firstValue.(map[string]string)
+	if !ok || first["successorBaselineId"] == "" {
+		t.Fatalf("first Vacuum result = %#v", firstValue)
+	}
+	secondValue, err := runtime.Handle(ctx, mustJSON(map[string]any{"type": "VacuumVault", "expectedVaultId": vaultID}))
+	if err != nil {
+		t.Fatalf("second VacuumVault: %v", err)
+	}
+	second, ok := secondValue.(map[string]string)
+	if !ok || second["successorBaselineId"] == "" || second["successorBaselineId"] == first["successorBaselineId"] {
+		t.Fatalf("second Vacuum result = %#v", secondValue)
+	}
+}
+
 func TestVacuumPreservesCollectionTitleInSuccessorCheckpoint(t *testing.T) {
 	ctx := context.Background()
 	state := store.NewMemoryState()

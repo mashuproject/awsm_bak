@@ -30,12 +30,15 @@ type keyEpochReplayState struct {
 	administratorHeads       map[canonical.Identifier]map[canonical.Identifier]bool
 	administratorConflicts   map[canonical.Identifier][]administratorConflictCandidate
 	clientMembers            map[canonical.Identifier]canonical.Identifier
+	clientCertificates       map[canonical.Identifier]clientCredentialDescriptor
 	epochs                   map[canonical.Identifier]uint64
 	epochCauses              map[canonical.Identifier]canonical.Identifier
 	heads                    map[canonical.Identifier]struct{}
 	headSlots                map[canonical.Identifier][]keyEpochEnvelopeSlot
+	epochSlots               map[canonical.Identifier][]keyEpochEnvelopeSlot
 	keyEpochConflicts        []keyEpochConflictCandidate
 	recoveryMembers          map[canonical.Identifier]canonical.Identifier
+	recoveryCredentials      map[canonical.Identifier]recoveryCredentialDescriptor
 	recoveryRevisions        map[canonical.Identifier]uint64
 	recoverySigningKeys      map[canonical.Identifier]ed25519.PublicKey
 	recoveryCauses           map[canonical.Identifier]canonical.Identifier
@@ -52,12 +55,26 @@ type keyEpochReplayState struct {
 	closed                   bool
 }
 
+type clientCredentialDescriptor struct {
+	memberID    canonical.Identifier
+	signingKey  ed25519.PublicKey
+	wrappingKey []byte
+}
+
+type recoveryCredentialDescriptor struct {
+	memberID    canonical.Identifier
+	revision    uint64
+	signingKey  ed25519.PublicKey
+	wrappingKey []byte
+}
+
 type recoveryReplacement struct {
 	memberID        canonical.Identifier
 	replacedIDs     []canonical.Identifier
 	recoveryID      canonical.Identifier
 	revision        uint64
 	signingKey      ed25519.PublicKey
+	wrappingKey     []byte
 	keyEpochSlots   []keyEpochEnvelopeSlot
 	descriptorBytes []byte
 	slotsBytes      []byte
@@ -92,7 +109,9 @@ type invitationAcceptance struct {
 	recoveryCredentialID    canonical.Identifier
 	recoveryRevision        uint64
 	clientSigningKey        ed25519.PublicKey
+	clientWrappingKey       []byte
 	recoverySigningKey      ed25519.PublicKey
+	recoveryWrappingKey     []byte
 	clientPossessionProof   []byte
 	recoveryPossessionProof []byte
 	redemptionProof         []byte
@@ -113,6 +132,8 @@ type invitationAcceptance struct {
 }
 
 type invitationCreation struct {
+	creationRecordID       canonical.Identifier
+	redemptionAuthorityID  canonical.Identifier
 	capabilitiesBytes      []byte
 	redemptionVerifier     ed25519.PublicKey
 	cancellationVerifier   ed25519.PublicKey
@@ -178,31 +199,37 @@ type keyEpochEnvelopeSlot struct {
 // verifies every supplied secret's Vault-scoped commitment and requires a key
 // for every authenticated Epoch. A nil map performs only structural replay.
 func replayAuthenticatedKeyEpochs(events []canonical.Event, genesis canonical.Event, epochKeys map[canonical.Identifier][]byte) (keyEpochReplayState, error) {
-	genesisID := genesis.RecordID
 	initialEpoch, firstMember, firstClient, firstRecovery, err := parseGenesisEpochIdentity(genesis)
 	if err != nil {
 		return keyEpochReplayState{}, err
 	}
-	state := keyEpochReplayState{
+	firstClientDescriptor, firstRecoveryDescriptor, err := parseGenesisCredentialDescriptors(genesis)
+	if err != nil {
+		return keyEpochReplayState{}, err
+	}
+	initial := keyEpochReplayState{
 		firstClientCredential:  firstClient,
 		featureSetID:           genesis.RequiredFeatureSetID,
-		featureSetCause:        genesisID,
+		featureSetCause:        genesis.RecordID,
 		featureManifests:       map[canonical.Identifier]canonical.FeatureManifest{},
 		activeMembers:          map[canonical.Identifier]struct{}{firstMember: {}},
 		members:                map[canonical.Identifier]struct{}{firstMember: {}},
 		administrators:         map[canonical.Identifier]struct{}{firstMember: {}},
-		administratorHeads:     map[canonical.Identifier]map[canonical.Identifier]bool{firstMember: {genesisID: true}},
+		administratorHeads:     map[canonical.Identifier]map[canonical.Identifier]bool{firstMember: {genesis.RecordID: true}},
 		administratorConflicts: map[canonical.Identifier][]administratorConflictCandidate{},
 		clientMembers:          map[canonical.Identifier]canonical.Identifier{firstClient: firstMember},
+		clientCertificates:     map[canonical.Identifier]clientCredentialDescriptor{firstClient: firstClientDescriptor},
 		epochs:                 map[canonical.Identifier]uint64{initialEpoch: 0},
-		epochCauses:            map[canonical.Identifier]canonical.Identifier{initialEpoch: genesisID},
+		epochCauses:            map[canonical.Identifier]canonical.Identifier{initialEpoch: genesis.RecordID},
 		heads:                  map[canonical.Identifier]struct{}{initialEpoch: {}},
 		headSlots:              map[canonical.Identifier][]keyEpochEnvelopeSlot{},
+		epochSlots:             map[canonical.Identifier][]keyEpochEnvelopeSlot{},
 		keyEpochConflicts:      []keyEpochConflictCandidate{},
 		recoveryMembers:        map[canonical.Identifier]canonical.Identifier{firstRecovery: firstMember},
+		recoveryCredentials:    map[canonical.Identifier]recoveryCredentialDescriptor{firstRecovery: firstRecoveryDescriptor},
 		recoveryRevisions:      map[canonical.Identifier]uint64{firstRecovery: 0},
 		recoverySigningKeys:    map[canonical.Identifier]ed25519.PublicKey{firstRecovery: genesisRecoverySigningKey(genesis)},
-		recoveryCauses:         map[canonical.Identifier]canonical.Identifier{firstRecovery: genesisID},
+		recoveryCauses:         map[canonical.Identifier]canonical.Identifier{firstRecovery: genesis.RecordID},
 		recoveryTargets:        map[canonical.Identifier]uint64{firstRecovery: 0},
 		recoveryConflicts:      map[canonical.Identifier][]recoveryConflictCandidate{},
 		clientTargets:          map[canonical.Identifier]struct{}{firstClient: {}},
@@ -213,6 +240,12 @@ func replayAuthenticatedKeyEpochs(events []canonical.Event, genesis canonical.Ev
 		invitationConflicts:    map[canonical.Identifier]struct{}{},
 		invitationResolutions:  map[canonical.Identifier]struct{}{},
 	}
+	return replayAuthenticatedKeyEpochsWithInitialState(events, genesis, initial, epochKeys)
+}
+
+func replayAuthenticatedKeyEpochsWithInitialState(events []canonical.Event, genesis canonical.Event, initial keyEpochReplayState, epochKeys map[canonical.Identifier][]byte) (keyEpochReplayState, error) {
+	genesisID := genesis.RecordID
+	state := cloneKeyEpochReplayState(initial)
 	byID := make(map[canonical.Identifier]canonical.Event, len(events))
 	for _, event := range events {
 		if event.VaultID != genesis.VaultID || event.GenerationID != genesis.GenerationID {
@@ -389,12 +422,21 @@ func replayAuthenticatedKeyEpochs(events []canonical.Event, genesis canonical.Ev
 			current.members[acceptance.memberID] = struct{}{}
 			current.activeMembers[acceptance.memberID] = struct{}{}
 			current.clientMembers[acceptance.clientCredentialID] = acceptance.memberID
+			current.clientCertificates[acceptance.clientCredentialID] = clientCredentialDescriptor{
+				memberID: acceptance.memberID, signingKey: append(ed25519.PublicKey(nil), acceptance.clientSigningKey...), wrappingKey: append([]byte(nil), acceptance.clientWrappingKey...),
+			}
 			current.clientTargets[acceptance.clientCredentialID] = struct{}{}
 			current.recoveryMembers[acceptance.recoveryCredentialID] = acceptance.memberID
+			current.recoveryCredentials[acceptance.recoveryCredentialID] = recoveryCredentialDescriptor{
+				memberID: acceptance.memberID, revision: acceptance.recoveryRevision, signingKey: append(ed25519.PublicKey(nil), acceptance.recoverySigningKey...), wrappingKey: append([]byte(nil), acceptance.recoveryWrappingKey...),
+			}
 			current.recoveryRevisions[acceptance.recoveryCredentialID] = acceptance.recoveryRevision
 			current.recoverySigningKeys[acceptance.recoveryCredentialID] = append(ed25519.PublicKey(nil), acceptance.recoverySigningKey...)
 			current.recoveryCauses[acceptance.recoveryCredentialID] = event.RecordID
 			current.recoveryTargets[acceptance.recoveryCredentialID] = acceptance.recoveryRevision
+			for _, slot := range acceptance.envelopeSlots {
+				appendEpochEnvelopeSlot(&current, slot)
+			}
 			if acceptance.administrator {
 				current.administrators[acceptance.memberID] = struct{}{}
 			}
@@ -552,7 +594,13 @@ func replayAuthenticatedKeyEpochs(events []canonical.Event, genesis canonical.Ev
 				return keyEpochReplayState{}, errors.New("Client Enrollment reuses a Client Credential identity")
 			}
 			current.clientMembers[enrollment.credentialID] = enrollment.memberID
+			current.clientCertificates[enrollment.credentialID] = clientCredentialDescriptor{
+				memberID: enrollment.memberID, signingKey: append(ed25519.PublicKey(nil), enrollment.signingPublicKey...), wrappingKey: append([]byte(nil), enrollment.wrappingPublicKey...),
+			}
 			current.clientTargets[enrollment.credentialID] = struct{}{}
+			for _, slot := range enrollment.envelopeSlots {
+				appendEpochEnvelopeSlot(&current, slot)
+			}
 		}
 		if event.Family == canonical.AuthorityFamily && event.Type == 10 {
 			targetCredential, parseErr := parseAuthorityTargetCredential(event)
@@ -626,10 +674,16 @@ func replayAuthenticatedKeyEpochs(events []canonical.Event, genesis canonical.Ev
 				delete(current.recoveryTargets, recoveryID)
 			}
 			current.recoveryMembers[replacement.recoveryID] = replacement.memberID
+			current.recoveryCredentials[replacement.recoveryID] = recoveryCredentialDescriptor{
+				memberID: replacement.memberID, revision: replacement.revision, signingKey: append(ed25519.PublicKey(nil), replacement.signingKey...), wrappingKey: append([]byte(nil), replacement.wrappingKey...),
+			}
 			current.recoveryRevisions[replacement.recoveryID] = replacement.revision
 			current.recoverySigningKeys[replacement.recoveryID] = append(ed25519.PublicKey(nil), replacement.signingKey...)
 			current.recoveryCauses[replacement.recoveryID] = event.RecordID
 			current.recoveryTargets[replacement.recoveryID] = replacement.revision
+			for _, slot := range replacement.keyEpochSlots {
+				appendEpochEnvelopeSlot(&current, slot)
+			}
 		}
 		if event.Family == canonical.AuthorityFamily && event.Type == 12 {
 			signerMember, signerOK := current.activeClientMember(event.SignerCredentialID)
@@ -657,6 +711,7 @@ func replayAuthenticatedKeyEpochs(events []canonical.Event, genesis canonical.Ev
 			current.epochs[transition.newEpochID] = transition.displayNumber
 			current.epochCauses[transition.newEpochID] = event.RecordID
 			current.headSlots[transition.newEpochID] = cloneKeyEpochEnvelopeSlots(transition.slots)
+			current.epochSlots[transition.newEpochID] = cloneKeyEpochEnvelopeSlots(transition.slots)
 		}
 		if event.Family == canonical.AuthorityFamily && event.Type == 13 {
 			delivery, parseErr := parseKeyDelivery(event)
@@ -670,6 +725,7 @@ func replayAuthenticatedKeyEpochs(events []canonical.Event, genesis canonical.Ev
 			}
 			for _, slot := range delivery.slots {
 				current.deliveredSlots[keyDeliverySlotKey(slot)] = struct{}{}
+				appendEpochEnvelopeSlot(&current, slot)
 			}
 		}
 		if event.Family == canonical.AuthorityFamily && event.Type == 14 {
@@ -773,6 +829,599 @@ func replayAuthenticatedKeyEpochs(events []canonical.Event, genesis canonical.Ev
 	return final, nil
 }
 
+// buildVacuumAuthorityCheckpoint derives the canonical portable Authority
+// checkpoint from the authenticated Authority/Lifecycle DAG. The predecessor
+// Baseline contributes only the initial envelope-slot inventory; all
+// membership, credential, invitation, Epoch, and conflict facts come from
+// authenticated replay and are re-encoded here.
+func buildVacuumAuthorityCheckpoint(replica *Replica) (canonical.Value, error) {
+	if replica == nil {
+		return nil, errors.New("Replica is required")
+	}
+	state, err := replayReplicaAuthorityState(replica, nil, nil)
+	if err != nil {
+		return nil, fmt.Errorf("replay Authority State: %w", err)
+	}
+	if state.featureSetConflict {
+		return nil, errors.New("Required Feature Set conflict is not checkpointable")
+	}
+	if state.closed {
+		return nil, errors.New("Closed Authority State cannot become an Open Vacuum successor")
+	}
+	if err := seedBaselineAuthoritySlots(replica, &state); err != nil {
+		return nil, err
+	}
+
+	activeMembers := sortedIdentifierKeys(state.activeMembers)
+	administrators := sortedIdentifierKeys(state.administrators)
+	clientCertificates, err := authorityClientCertificateValues(state)
+	if err != nil {
+		return nil, err
+	}
+	recoveryCredentials, err := authorityRecoveryCredentialValues(state)
+	if err != nil {
+		return nil, err
+	}
+	activeInvitations, err := authorityInvitationValues(state)
+	if err != nil {
+		return nil, err
+	}
+	keyEpochs := authorityKeyEpochValues(state)
+	envelopeSlots, err := authorityEnvelopeSlotValues(state)
+	if err != nil {
+		return nil, err
+	}
+	activeConflicts, fences, err := authorityConflictAndFenceValues(state, replica.vaultID)
+	if err != nil {
+		return nil, err
+	}
+	return canonical.Map{
+		0: uint64(1),
+		1: canonicalSetValues(identifiersToValues(activeMembers)),
+		2: canonicalSetValues(identifiersToValues(administrators)),
+		3: canonicalSetValues(clientCertificates),
+		4: canonicalSetValues(recoveryCredentials),
+		5: canonicalSetValues(activeInvitations),
+		6: canonicalSetValues(keyEpochs),
+		7: canonicalSetValues(envelopeSlots),
+		8: canonicalSetValues(activeConflicts),
+		9: canonicalSetValues(fences),
+	}, nil
+}
+
+func replayReplicaAuthorityState(replica *Replica, extra *canonical.Event, epochKeys map[canonical.Identifier][]byte) (keyEpochReplayState, error) {
+	if replica == nil {
+		return keyEpochReplayState{}, errors.New("Replica is required")
+	}
+	genesisRecord, ok := replica.records[replica.genesisID]
+	if !ok || genesisRecord.Event == nil {
+		return keyEpochReplayState{}, errors.New("authenticated Genesis is unavailable")
+	}
+	events := replica.Events()
+	if extra != nil {
+		events = append(events, *extra)
+	}
+	if replica.generationID == genesisRecord.Event.GenerationID {
+		return replayAuthenticatedKeyEpochs(events, *genesisRecord.Event, epochKeys)
+	}
+	anchorID, ok := replica.currentGenerationAuthorityAnchor()
+	if !ok {
+		return keyEpochReplayState{}, errors.New("current Generation Authority anchor is unavailable")
+	}
+	initial, err := parseAuthorityCheckpointState(replica, anchorID)
+	if err != nil {
+		return keyEpochReplayState{}, err
+	}
+	anchor := canonical.Event{
+		EventInput: canonical.EventInput{
+			VaultID: replica.vaultID, GenerationID: replica.generationID,
+			RequiredFeatureSetID: replica.baseline.RequiredFeatureSetID, Family: canonical.AuthorityFamily, Type: canonical.GenesisEvent,
+		},
+		RecordID: anchorID,
+	}
+	currentEvents := make([]canonical.Event, 0, len(events))
+	for _, event := range events {
+		if event.GenerationID == replica.generationID {
+			currentEvents = append(currentEvents, event)
+		}
+	}
+	return replayAuthenticatedKeyEpochsWithInitialState(currentEvents, anchor, initial, epochKeys)
+}
+
+func (r *Replica) currentGenerationAuthorityAnchor() (canonical.Identifier, bool) {
+	if r == nil {
+		return canonical.Identifier{}, false
+	}
+	for _, record := range r.records {
+		if record.Event == nil || record.Event.Family != canonical.LifecycleFamily || record.Event.Type != 1 {
+			continue
+		}
+		if hasDependency(record.Event.Dependencies, 2, r.baselineID) {
+			return record.Event.RecordID, true
+		}
+	}
+	return canonical.Identifier{}, false
+}
+
+func parseAuthorityCheckpointState(replica *Replica, anchorID canonical.Identifier) (keyEpochReplayState, error) {
+	if replica == nil || anchorID == (canonical.Identifier{}) {
+		return keyEpochReplayState{}, errors.New("Authority checkpoint anchor is invalid")
+	}
+	body, ok := replicaMapValue(replica.baseline.Body)
+	if !ok {
+		return keyEpochReplayState{}, errors.New("Baseline body is not a map")
+	}
+	authority, ok := replicaMapValue(replicaMapEntryMust(body, 3))
+	if !ok || !replicaMapHasKeys(authority, 10) {
+		return keyEpochReplayState{}, errors.New("Baseline Authority checkpoint is invalid")
+	}
+	activeMemberValues, ok := replicaMapArrayValue(replicaMapEntryMust(authority, 1))
+	if !ok || len(activeMemberValues) == 0 {
+		return keyEpochReplayState{}, errors.New("Baseline active Member set is invalid")
+	}
+	activeMembers := make(map[canonical.Identifier]struct{}, len(activeMemberValues))
+	for _, value := range activeMemberValues {
+		memberID, ok := replicaIdentifierValue(value)
+		if !ok {
+			return keyEpochReplayState{}, errors.New("Baseline active Member set contains an invalid identity")
+		}
+		activeMembers[memberID] = struct{}{}
+	}
+	administratorValues, ok := replicaMapArrayValue(replicaMapEntryMust(authority, 2))
+	if !ok {
+		return keyEpochReplayState{}, errors.New("Baseline Administrator set is invalid")
+	}
+	administrators := make(map[canonical.Identifier]struct{}, len(administratorValues))
+	for _, value := range administratorValues {
+		memberID, ok := replicaIdentifierValue(value)
+		if !ok {
+			return keyEpochReplayState{}, errors.New("Baseline Administrator set contains an invalid identity")
+		}
+		administrators[memberID] = struct{}{}
+	}
+	state := keyEpochReplayState{
+		featureSetID:           replica.baseline.RequiredFeatureSetID,
+		featureSetCause:        anchorID,
+		featureManifests:       map[canonical.Identifier]canonical.FeatureManifest{},
+		activeMembers:          activeMembers,
+		members:                make(map[canonical.Identifier]struct{}, len(activeMembers)),
+		administrators:         administrators,
+		administratorHeads:     make(map[canonical.Identifier]map[canonical.Identifier]bool, len(activeMembers)),
+		administratorConflicts: map[canonical.Identifier][]administratorConflictCandidate{},
+		clientMembers:          map[canonical.Identifier]canonical.Identifier{},
+		clientCertificates:     map[canonical.Identifier]clientCredentialDescriptor{},
+		epochs:                 map[canonical.Identifier]uint64{},
+		epochCauses:            map[canonical.Identifier]canonical.Identifier{},
+		heads:                  map[canonical.Identifier]struct{}{},
+		headSlots:              map[canonical.Identifier][]keyEpochEnvelopeSlot{},
+		epochSlots:             map[canonical.Identifier][]keyEpochEnvelopeSlot{},
+		keyEpochConflicts:      []keyEpochConflictCandidate{},
+		recoveryMembers:        map[canonical.Identifier]canonical.Identifier{},
+		recoveryCredentials:    map[canonical.Identifier]recoveryCredentialDescriptor{},
+		recoveryRevisions:      map[canonical.Identifier]uint64{},
+		recoverySigningKeys:    map[canonical.Identifier]ed25519.PublicKey{},
+		recoveryCauses:         map[canonical.Identifier]canonical.Identifier{},
+		recoveryTargets:        map[canonical.Identifier]uint64{},
+		recoveryConflicts:      map[canonical.Identifier][]recoveryConflictCandidate{},
+		clientTargets:          map[canonical.Identifier]struct{}{},
+		deliveredSlots:         map[string]struct{}{},
+		invitations:            map[canonical.Identifier]invitationCreation{},
+		invitationTerminals:    map[canonical.Identifier]struct{}{},
+		invitationCandidates:   map[canonical.Identifier]map[canonical.Identifier]invitationTerminalCandidate{},
+		invitationConflicts:    map[canonical.Identifier]struct{}{},
+		invitationResolutions:  map[canonical.Identifier]struct{}{},
+	}
+	for memberID := range activeMembers {
+		state.members[memberID] = struct{}{}
+		_, isAdmin := administrators[memberID]
+		state.administratorHeads[memberID] = map[canonical.Identifier]bool{anchorID: isAdmin}
+	}
+
+	clientValues, ok := replicaMapArrayValue(replicaMapEntryMust(authority, 3))
+	if !ok {
+		return keyEpochReplayState{}, errors.New("Baseline Client Certificate set is invalid")
+	}
+	for _, value := range clientValues {
+		descriptor, ok := replicaMapValue(value)
+		if !ok || !replicaMapHasKeys(descriptor, 4) {
+			return keyEpochReplayState{}, errors.New("Baseline Client Certificate is invalid")
+		}
+		credentialID, credentialOK := replicaIdentifier(descriptor, 0)
+		memberID, memberOK := replicaIdentifier(descriptor, 1)
+		signingKey, signingOK := replicaMapBytes(descriptor, 2, ed25519.PublicKeySize)
+		wrappingKey, wrappingOK := replicaMapBytes(descriptor, 3, 32)
+		if !credentialOK || !memberOK || !signingOK || !wrappingOK {
+			return keyEpochReplayState{}, errors.New("Baseline Client Certificate fields are invalid")
+		}
+		if _, duplicate := state.clientCertificates[credentialID]; duplicate {
+			return keyEpochReplayState{}, errors.New("Baseline Client Certificate identity is duplicated")
+		}
+		state.clientMembers[credentialID] = memberID
+		state.clientCertificates[credentialID] = clientCredentialDescriptor{memberID: memberID, signingKey: append(ed25519.PublicKey(nil), signingKey...), wrappingKey: append([]byte(nil), wrappingKey...)}
+		if _, active := activeMembers[memberID]; active {
+			state.clientTargets[credentialID] = struct{}{}
+			state.members[memberID] = struct{}{}
+		}
+	}
+	if len(state.clientCertificates) > 0 {
+		state.firstClientCredential = sortedIdentifierKeys(state.clientCertificates)[0]
+	}
+
+	recoveryValues, ok := replicaMapArrayValue(replicaMapEntryMust(authority, 4))
+	if !ok {
+		return keyEpochReplayState{}, errors.New("Baseline Recovery Credential set is invalid")
+	}
+	for _, value := range recoveryValues {
+		descriptor, ok := replicaMapValue(value)
+		if !ok || !replicaMapHasKeys(descriptor, 5) {
+			return keyEpochReplayState{}, errors.New("Baseline Recovery Credential is invalid")
+		}
+		credentialID, credentialOK := replicaIdentifier(descriptor, 0)
+		memberID, memberOK := replicaIdentifier(descriptor, 1)
+		revision, revisionOK := replicaMapNumber(descriptor, 2)
+		signingKey, signingOK := replicaMapBytes(descriptor, 3, ed25519.PublicKeySize)
+		wrappingKey, wrappingOK := replicaMapBytes(descriptor, 4, 32)
+		if !credentialOK || !memberOK || !revisionOK || !signingOK || !wrappingOK {
+			return keyEpochReplayState{}, errors.New("Baseline Recovery Credential fields are invalid")
+		}
+		if _, duplicate := state.recoveryCredentials[credentialID]; duplicate {
+			return keyEpochReplayState{}, errors.New("Baseline Recovery Credential identity is duplicated")
+		}
+		state.members[memberID] = struct{}{}
+		state.recoveryMembers[credentialID] = memberID
+		state.recoveryCredentials[credentialID] = recoveryCredentialDescriptor{memberID: memberID, revision: revision, signingKey: append(ed25519.PublicKey(nil), signingKey...), wrappingKey: append([]byte(nil), wrappingKey...)}
+		state.recoveryRevisions[credentialID] = revision
+		state.recoverySigningKeys[credentialID] = append(ed25519.PublicKey(nil), signingKey...)
+		state.recoveryCauses[credentialID] = anchorID
+		if _, active := activeMembers[memberID]; active {
+			state.recoveryTargets[credentialID] = revision
+		}
+	}
+
+	epochValues, ok := replicaMapArrayValue(replicaMapEntryMust(authority, 6))
+	if !ok || len(epochValues) == 0 {
+		return keyEpochReplayState{}, errors.New("Baseline Key Epoch set is invalid")
+	}
+	for _, value := range epochValues {
+		epoch, ok := replicaMapValue(value)
+		if !ok || !replicaMapHasKeys(epoch, 3) {
+			return keyEpochReplayState{}, errors.New("Baseline Key Epoch summary is invalid")
+		}
+		epochID, idOK := replicaIdentifier(epoch, 0)
+		display, displayOK := replicaMapNumber(epoch, 1)
+		current, currentOK := replicaMapEntry(epoch, 2)
+		isCurrent, boolOK := current.(bool)
+		if !idOK || !displayOK || !currentOK || !boolOK {
+			return keyEpochReplayState{}, errors.New("Baseline Key Epoch summary fields are invalid")
+		}
+		state.epochs[epochID] = display
+		state.epochCauses[epochID] = anchorID
+		if isCurrent {
+			state.heads[epochID] = struct{}{}
+		}
+	}
+	if len(state.heads) == 0 {
+		return keyEpochReplayState{}, errors.New("Baseline Key Epoch set has no current head")
+	}
+	if slotsValue, exists := replicaMapEntry(authority, 7); exists {
+		slots, err := parseKeyEpochEnvelopeSlots(slotsValue, "Baseline envelope slots")
+		if err != nil {
+			return keyEpochReplayState{}, err
+		}
+		for _, slot := range slots {
+			if _, established := state.epochs[slot.epochID]; !established {
+				return keyEpochReplayState{}, errors.New("Baseline envelope slot names an unknown Key Epoch")
+			}
+			appendEpochEnvelopeSlot(&state, slot)
+		}
+	}
+	if lifecycle, exists := replicaMapEntry(body, 4); exists {
+		lifecycleMap, lifecycleOK := replicaMapValue(lifecycle)
+		lifecycleState, stateOK := replicaMapNumber(lifecycleMap, 0)
+		if !lifecycleOK || !stateOK || lifecycleState != 1 {
+			state.closed = true
+		}
+	}
+	if err := parseAuthorityCheckpointConflicts(authority, &state, replica.vaultID); err != nil {
+		return keyEpochReplayState{}, err
+	}
+	deriveAdministratorConflicts(&state)
+	deriveKeyEpochConflicts(&state)
+	deriveRecoveryConflicts(&state)
+	return state, nil
+}
+
+func parseAuthorityCheckpointConflicts(authority canonical.Value, state *keyEpochReplayState, vaultID canonical.Identifier) error {
+	values, ok := replicaMapArrayValue(replicaMapEntryMust(authority, 8))
+	if !ok {
+		return errors.New("Baseline Authority conflict set is invalid")
+	}
+	for _, value := range values {
+		conflict, ok := replicaMapValue(value)
+		if !ok || !replicaMapHasKeys(conflict, 3) {
+			return errors.New("Baseline Authority conflict is invalid")
+		}
+		kind, kindOK := replicaMapNumber(conflict, 0)
+		subject, subjectOK := replicaIdentifier(conflict, 1)
+		candidates, candidatesOK := replicaMapArrayValue(replicaMapEntryMust(conflict, 2))
+		if !kindOK || !subjectOK || !candidatesOK || len(candidates) == 0 {
+			return errors.New("Baseline Authority conflict fields are invalid")
+		}
+		switch kind {
+		case 1:
+			state.invitationConflicts[subject] = struct{}{}
+			state.invitationTerminals[subject] = struct{}{}
+			candidateMap := make(map[canonical.Identifier]invitationTerminalCandidate, len(candidates))
+			for _, candidateValue := range candidates {
+				candidate, ok := replicaMapValue(candidateValue)
+				if !ok || !replicaMapHasKeys(candidate, 5) {
+					return errors.New("Baseline Invitation conflict candidate is invalid")
+				}
+				recordID, recordOK := replicaIdentifier(candidate, 0)
+				outcome, outcomeOK := replicaMapNumber(candidate, 1)
+				receiptID, receiptOK := replicaIdentifier(candidate, 2)
+				if !recordOK || !outcomeOK || !receiptOK || (outcome != 1 && outcome != 2) {
+					return errors.New("Baseline Invitation conflict candidate fields are invalid")
+				}
+				joinRequestID, err := parseAuthorityNullableIdentifier(replicaMapEntryMust(candidate, 3), outcome == 1)
+				if err != nil {
+					return err
+				}
+				memberID, err := parseAuthorityNullableIdentifier(replicaMapEntryMust(candidate, 4), outcome == 1)
+				if err != nil {
+					return err
+				}
+				entry := invitationTerminalCandidate{recordID: recordID, outcome: outcome, receiptID: receiptID}
+				if joinRequestID != nil {
+					entry.joinRequestID = *joinRequestID
+				}
+				if memberID != nil {
+					entry.memberID = *memberID
+				}
+				candidateMap[recordID] = entry
+			}
+			state.invitationCandidates[subject] = candidateMap
+		case 2:
+			candidateList := make([]recoveryConflictCandidate, 0, len(candidates))
+			for _, candidateValue := range candidates {
+				candidate, ok := replicaMapValue(candidateValue)
+				if !ok || !replicaMapHasKeys(candidate, 2) {
+					return errors.New("Baseline Recovery conflict candidate is invalid")
+				}
+				recordID, recordOK := replicaIdentifier(candidate, 0)
+				recoveryID, recoveryOK := replicaIdentifier(candidate, 1)
+				if !recordOK || !recoveryOK {
+					return errors.New("Baseline Recovery conflict candidate fields are invalid")
+				}
+				candidateList = append(candidateList, recoveryConflictCandidate{headRecordID: recordID, recoveryCredentialID: recoveryID})
+			}
+			state.recoveryConflicts[subject] = candidateList
+		case 3:
+			if subject != vaultID {
+				return errors.New("Baseline Key Epoch conflict subject is invalid")
+			}
+			state.keyEpochConflicts = nil
+			for _, candidateValue := range candidates {
+				candidate, ok := replicaMapValue(candidateValue)
+				if !ok || !replicaMapHasKeys(candidate, 2) {
+					return errors.New("Baseline Key Epoch conflict candidate is invalid")
+				}
+				recordID, recordOK := replicaIdentifier(candidate, 0)
+				epochID, epochOK := replicaIdentifier(candidate, 1)
+				if !recordOK || !epochOK {
+					return errors.New("Baseline Key Epoch conflict candidate fields are invalid")
+				}
+				state.keyEpochConflicts = append(state.keyEpochConflicts, keyEpochConflictCandidate{headRecordID: recordID, keyEpochID: epochID})
+				state.heads[epochID] = struct{}{}
+				state.epochCauses[epochID] = recordID
+			}
+		case 4:
+			candidateHeads := make(map[canonical.Identifier]bool, len(candidates))
+			for _, candidateValue := range candidates {
+				candidate, ok := replicaMapValue(candidateValue)
+				if !ok || !replicaMapHasKeys(candidate, 2) {
+					return errors.New("Baseline Administrator conflict candidate is invalid")
+				}
+				recordID, recordOK := replicaIdentifier(candidate, 0)
+				administratorValue, administratorOK := replicaMapEntry(candidate, 1)
+				administrator, administratorBoolOK := administratorValue.(bool)
+				if !recordOK || !administratorOK || !administratorBoolOK {
+					return errors.New("Baseline Administrator conflict candidate fields are invalid")
+				}
+				candidateHeads[recordID] = administrator
+			}
+			state.administratorHeads[subject] = candidateHeads
+		default:
+			return errors.New("Baseline Authority conflict kind is unsupported")
+		}
+	}
+	return nil
+}
+
+func parseAuthorityNullableIdentifier(value canonical.Value, required bool) (*canonical.Identifier, error) {
+	if value == nil {
+		if required {
+			return nil, errors.New("Authority conflict candidate omits a required identity")
+		}
+		return nil, nil
+	}
+	identifier, ok := replicaIdentifierValue(value)
+	if !ok {
+		return nil, errors.New("Authority conflict candidate identity is invalid")
+	}
+	return &identifier, nil
+}
+
+func seedBaselineAuthoritySlots(replica *Replica, state *keyEpochReplayState) error {
+	if replica == nil || state == nil {
+		return errors.New("Authority checkpoint replay state is incomplete")
+	}
+	body, ok := replicaMapValue(replica.baseline.Body)
+	if !ok {
+		return errors.New("Baseline body is not a map")
+	}
+	authority, ok := replicaMapValue(replicaMapEntryMust(body, 3))
+	if !ok {
+		return errors.New("Baseline Authority checkpoint is not a map")
+	}
+	slotsValue, ok := replicaMapEntry(authority, 7)
+	if !ok {
+		return errors.New("Baseline envelope-slot checkpoint is missing")
+	}
+	slots, err := parseKeyEpochEnvelopeSlots(slotsValue, "Baseline envelope slots")
+	if err != nil {
+		return err
+	}
+	for _, slot := range slots {
+		if _, established := state.epochs[slot.epochID]; !established {
+			return errors.New("Baseline envelope slot names an unauthenticated Key Epoch")
+		}
+		appendEpochEnvelopeSlot(state, slot)
+	}
+	return nil
+}
+
+func authorityClientCertificateValues(state keyEpochReplayState) ([]canonical.Value, error) {
+	ids := sortedIdentifierKeys(state.clientCertificates)
+	values := make([]canonical.Value, 0, len(ids))
+	for _, credentialID := range ids {
+		memberID, active := state.activeClientMember(credentialID)
+		if !active {
+			continue
+		}
+		descriptor, exists := state.clientCertificates[credentialID]
+		if !exists || descriptor.memberID != memberID || len(descriptor.signingKey) != ed25519.PublicKeySize || len(descriptor.wrappingKey) != 32 {
+			return nil, fmt.Errorf("active Client Credential %s is missing its certificate", hexIdentifier(credentialID))
+		}
+		values = append(values, canonical.Map{0: credentialID[:], 1: memberID[:], 2: append([]byte(nil), descriptor.signingKey...), 3: append([]byte(nil), descriptor.wrappingKey...)})
+	}
+	return values, nil
+}
+
+func authorityRecoveryCredentialValues(state keyEpochReplayState) ([]canonical.Value, error) {
+	ids := sortedIdentifierKeys(state.recoveryTargets)
+	values := make([]canonical.Value, 0, len(ids))
+	for _, credentialID := range ids {
+		revision, effective := state.recoveryTargets[credentialID]
+		if !effective {
+			continue
+		}
+		memberID, memberOK := state.recoveryMembers[credentialID]
+		descriptor, descriptorOK := state.recoveryCredentials[credentialID]
+		if !memberOK || !descriptorOK || descriptor.memberID != memberID || descriptor.revision != revision || len(descriptor.signingKey) != ed25519.PublicKeySize || len(descriptor.wrappingKey) != 32 {
+			return nil, fmt.Errorf("effective Recovery Credential %s is missing its descriptor", hexIdentifier(credentialID))
+		}
+		values = append(values, canonical.Map{0: credentialID[:], 1: memberID[:], 2: revision, 3: append([]byte(nil), descriptor.signingKey...), 4: append([]byte(nil), descriptor.wrappingKey...)})
+	}
+	return values, nil
+}
+
+func authorityInvitationValues(state keyEpochReplayState) ([]canonical.Value, error) {
+	ids := sortedIdentifierKeys(state.invitations)
+	values := make([]canonical.Value, 0, len(ids))
+	for _, invitationID := range ids {
+		invitation := state.invitations[invitationID]
+		capabilities, err := canonical.DecodeValue(invitation.capabilitiesBytes)
+		if err != nil {
+			return nil, fmt.Errorf("Invitation %s capabilities are not canonical: %w", hexIdentifier(invitationID), err)
+		}
+		if invitation.creationRecordID == (canonical.Identifier{}) || invitation.redemptionAuthorityID == (canonical.Identifier{}) || len(invitation.redemptionVerifier) != ed25519.PublicKeySize || len(invitation.cancellationVerifier) != ed25519.PublicKeySize || len(invitation.receiptVerificationKey) != ed25519.PublicKeySize {
+			return nil, fmt.Errorf("active Invitation %s is missing portable state", hexIdentifier(invitationID))
+		}
+		values = append(values, canonical.Map{0: invitationID[:], 1: append([]byte(nil), invitation.redemptionVerifier...), 2: append([]byte(nil), invitation.cancellationVerifier...), 3: capabilities, 4: invitation.creationRecordID[:], 5: invitation.redemptionAuthorityID[:], 6: append([]byte(nil), invitation.receiptVerificationKey...)})
+	}
+	return values, nil
+}
+
+func authorityKeyEpochValues(state keyEpochReplayState) []canonical.Value {
+	ids := sortedIdentifierKeys(state.epochs)
+	values := make([]canonical.Value, 0, len(ids))
+	current := len(state.heads) == 1
+	for _, epochID := range ids {
+		_, isHead := state.heads[epochID]
+		values = append(values, canonical.Map{0: epochID[:], 1: state.epochs[epochID], 2: current && isHead})
+	}
+	return values
+}
+
+func authorityEnvelopeSlotValues(state keyEpochReplayState) ([]canonical.Value, error) {
+	values := make([]canonical.Value, 0)
+	for _, epochID := range sortedIdentifierKeys(state.epochs) {
+		for _, slot := range state.epochSlots[epochID] {
+			usable := false
+			switch slot.targetKind {
+			case awsmcrypto.ClientCredentialTarget:
+				_, usable = state.activeClientMember(slot.targetID)
+			case awsmcrypto.RecoveryCredentialTarget:
+				revision, effective := state.recoveryTargets[slot.targetID]
+				usable = effective && slot.targetRevision != nil && revision == *slot.targetRevision
+			default:
+				return nil, errors.New("Authority checkpoint contains an invalid envelope target kind")
+			}
+			if !usable {
+				continue
+			}
+			if slot.targetKind == awsmcrypto.RecoveryCredentialTarget && slot.targetRevision == nil {
+				return nil, errors.New("Authority checkpoint Recovery envelope slot omits its revision")
+			}
+			var revision canonical.Value
+			if slot.targetRevision != nil {
+				revision = *slot.targetRevision
+			}
+			values = append(values, canonical.Map{0: slot.epochID[:], 1: slot.targetKind, 2: slot.targetID[:], 3: revision, 4: slot.envelopeID[:]})
+		}
+	}
+	return values, nil
+}
+
+func authorityConflictAndFenceValues(state keyEpochReplayState, vaultID canonical.Identifier) ([]canonical.Value, []canonical.Value, error) {
+	conflicts := make([]canonical.Value, 0)
+	fences := make([]canonical.Value, 0)
+	for invitationID := range state.invitationConflicts {
+		candidates := state.invitationCandidates[invitationID]
+		candidateValues := make([]canonical.Value, 0, len(candidates))
+		fenceCauses := make([]canonical.Value, 0)
+		for _, candidate := range candidates {
+			var joinRequestID, memberID canonical.Value
+			if candidate.outcome == 1 {
+				joinRequestID = candidate.joinRequestID[:]
+				memberID = candidate.memberID[:]
+				fenceCauses = append(fenceCauses, candidate.recordID[:])
+			}
+			candidateValues = append(candidateValues, canonical.Map{0: candidate.recordID[:], 1: candidate.outcome, 2: candidate.receiptID[:], 3: joinRequestID, 4: memberID})
+		}
+		conflicts = append(conflicts, canonical.Map{0: uint64(1), 1: invitationID[:], 2: canonicalSetValues(candidateValues)})
+		if len(fenceCauses) > 0 {
+			fences = append(fences, canonical.Map{0: uint64(3), 1: invitationID[:], 2: canonicalSetValues(fenceCauses)})
+		}
+	}
+	for memberID, candidates := range state.recoveryConflicts {
+		candidateValues := make([]canonical.Value, 0, len(candidates))
+		for _, candidate := range candidates {
+			candidateValues = append(candidateValues, canonical.Map{0: candidate.headRecordID[:], 1: candidate.recoveryCredentialID[:]})
+		}
+		conflicts = append(conflicts, canonical.Map{0: uint64(2), 1: memberID[:], 2: canonicalSetValues(candidateValues)})
+	}
+	if len(state.keyEpochConflicts) > 0 {
+		candidateValues := make([]canonical.Value, 0, len(state.keyEpochConflicts))
+		fenceCauses := make([]canonical.Value, 0, len(state.keyEpochConflicts))
+		for _, candidate := range state.keyEpochConflicts {
+			candidateValues = append(candidateValues, canonical.Map{0: candidate.headRecordID[:], 1: candidate.keyEpochID[:]})
+			fenceCauses = append(fenceCauses, candidate.headRecordID[:])
+		}
+		conflicts = append(conflicts, canonical.Map{0: uint64(3), 1: vaultID[:], 2: canonicalSetValues(candidateValues)})
+		fences = append(fences, canonical.Map{0: uint64(4), 1: vaultID[:], 2: canonicalSetValues(fenceCauses)})
+	}
+	for memberID, candidates := range state.administratorConflicts {
+		candidateValues := make([]canonical.Value, 0, len(candidates))
+		for _, candidate := range candidates {
+			candidateValues = append(candidateValues, canonical.Map{0: candidate.headRecordID[:], 1: candidate.administrator})
+		}
+		conflicts = append(conflicts, canonical.Map{0: uint64(4), 1: memberID[:], 2: canonicalSetValues(candidateValues)})
+	}
+	return conflicts, fences, nil
+}
+
 func cloneKeyEpochReplayState(value keyEpochReplayState) keyEpochReplayState {
 	clone := keyEpochReplayState{
 		firstClientCredential:    value.firstClientCredential,
@@ -788,12 +1437,15 @@ func cloneKeyEpochReplayState(value keyEpochReplayState) keyEpochReplayState {
 		administratorHeads:       make(map[canonical.Identifier]map[canonical.Identifier]bool, len(value.administratorHeads)),
 		administratorConflicts:   make(map[canonical.Identifier][]administratorConflictCandidate, len(value.administratorConflicts)),
 		clientMembers:            make(map[canonical.Identifier]canonical.Identifier, len(value.clientMembers)),
+		clientCertificates:       make(map[canonical.Identifier]clientCredentialDescriptor, len(value.clientCertificates)),
 		epochs:                   make(map[canonical.Identifier]uint64, len(value.epochs)),
 		epochCauses:              make(map[canonical.Identifier]canonical.Identifier, len(value.epochCauses)),
 		heads:                    make(map[canonical.Identifier]struct{}, len(value.heads)),
 		headSlots:                make(map[canonical.Identifier][]keyEpochEnvelopeSlot, len(value.headSlots)),
+		epochSlots:               make(map[canonical.Identifier][]keyEpochEnvelopeSlot, len(value.epochSlots)),
 		keyEpochConflicts:        append([]keyEpochConflictCandidate(nil), value.keyEpochConflicts...),
 		recoveryMembers:          make(map[canonical.Identifier]canonical.Identifier, len(value.recoveryMembers)),
+		recoveryCredentials:      make(map[canonical.Identifier]recoveryCredentialDescriptor, len(value.recoveryCredentials)),
 		recoveryRevisions:        make(map[canonical.Identifier]uint64, len(value.recoveryRevisions)),
 		recoverySigningKeys:      make(map[canonical.Identifier]ed25519.PublicKey, len(value.recoverySigningKeys)),
 		recoveryCauses:           make(map[canonical.Identifier]canonical.Identifier, len(value.recoveryCauses)),
@@ -832,6 +1484,11 @@ func cloneKeyEpochReplayState(value keyEpochReplayState) keyEpochReplayState {
 	for credentialID, memberID := range value.clientMembers {
 		clone.clientMembers[credentialID] = memberID
 	}
+	for credentialID, descriptor := range value.clientCertificates {
+		clone.clientCertificates[credentialID] = clientCredentialDescriptor{
+			memberID: descriptor.memberID, signingKey: append(ed25519.PublicKey(nil), descriptor.signingKey...), wrappingKey: append([]byte(nil), descriptor.wrappingKey...),
+		}
+	}
 	for id, display := range value.epochs {
 		clone.epochs[id] = display
 	}
@@ -841,6 +1498,9 @@ func cloneKeyEpochReplayState(value keyEpochReplayState) keyEpochReplayState {
 	for id, slots := range value.headSlots {
 		clone.headSlots[id] = cloneKeyEpochEnvelopeSlots(slots)
 	}
+	for id, slots := range value.epochSlots {
+		clone.epochSlots[id] = cloneKeyEpochEnvelopeSlots(slots)
+	}
 	for id := range value.heads {
 		clone.heads[id] = struct{}{}
 	}
@@ -849,6 +1509,11 @@ func cloneKeyEpochReplayState(value keyEpochReplayState) keyEpochReplayState {
 	}
 	for credentialID, memberID := range value.recoveryMembers {
 		clone.recoveryMembers[credentialID] = memberID
+	}
+	for credentialID, descriptor := range value.recoveryCredentials {
+		clone.recoveryCredentials[credentialID] = recoveryCredentialDescriptor{
+			memberID: descriptor.memberID, revision: descriptor.revision, signingKey: append(ed25519.PublicKey(nil), descriptor.signingKey...), wrappingKey: append([]byte(nil), descriptor.wrappingKey...),
+		}
 	}
 	for credentialID, revision := range value.recoveryRevisions {
 		clone.recoveryRevisions[credentialID] = revision
@@ -899,12 +1564,15 @@ func mergeKeyEpochReplayStates(values []keyEpochReplayState) keyEpochReplayState
 			administratorHeads:     make(map[canonical.Identifier]map[canonical.Identifier]bool),
 			administratorConflicts: make(map[canonical.Identifier][]administratorConflictCandidate),
 			clientMembers:          make(map[canonical.Identifier]canonical.Identifier),
+			clientCertificates:     make(map[canonical.Identifier]clientCredentialDescriptor),
 			epochs:                 make(map[canonical.Identifier]uint64),
 			epochCauses:            make(map[canonical.Identifier]canonical.Identifier),
 			heads:                  make(map[canonical.Identifier]struct{}),
 			headSlots:              make(map[canonical.Identifier][]keyEpochEnvelopeSlot),
+			epochSlots:             make(map[canonical.Identifier][]keyEpochEnvelopeSlot),
 			keyEpochConflicts:      []keyEpochConflictCandidate{},
 			recoveryMembers:        make(map[canonical.Identifier]canonical.Identifier),
+			recoveryCredentials:    make(map[canonical.Identifier]recoveryCredentialDescriptor),
 			recoveryRevisions:      make(map[canonical.Identifier]uint64),
 			recoverySigningKeys:    make(map[canonical.Identifier]ed25519.PublicKey),
 			recoveryCauses:         make(map[canonical.Identifier]canonical.Identifier),
@@ -965,6 +1633,13 @@ func mergeKeyEpochReplayStates(values []keyEpochReplayState) keyEpochReplayState
 		for credentialID, memberID := range value.clientMembers {
 			merged.clientMembers[credentialID] = memberID
 		}
+		for credentialID, descriptor := range value.clientCertificates {
+			if _, exists := merged.clientCertificates[credentialID]; !exists {
+				merged.clientCertificates[credentialID] = clientCredentialDescriptor{
+					memberID: descriptor.memberID, signingKey: append(ed25519.PublicKey(nil), descriptor.signingKey...), wrappingKey: append([]byte(nil), descriptor.wrappingKey...),
+				}
+			}
+		}
 		for id, display := range value.epochs {
 			if existing, ok := merged.epochs[id]; ok && existing != display {
 				continue
@@ -984,6 +1659,11 @@ func mergeKeyEpochReplayStates(values []keyEpochReplayState) keyEpochReplayState
 				merged.headSlots[id] = cloneKeyEpochEnvelopeSlots(slots)
 			}
 		}
+		for _, slots := range value.epochSlots {
+			for _, slot := range slots {
+				appendEpochEnvelopeSlot(&merged, slot)
+			}
+		}
 		for id, revision := range value.recoveryTargets {
 			if existing, ok := merged.recoveryTargets[id]; !ok || revision > existing {
 				merged.recoveryTargets[id] = revision
@@ -991,6 +1671,13 @@ func mergeKeyEpochReplayStates(values []keyEpochReplayState) keyEpochReplayState
 		}
 		for credentialID, memberID := range value.recoveryMembers {
 			merged.recoveryMembers[credentialID] = memberID
+		}
+		for credentialID, descriptor := range value.recoveryCredentials {
+			if _, exists := merged.recoveryCredentials[credentialID]; !exists {
+				merged.recoveryCredentials[credentialID] = recoveryCredentialDescriptor{
+					memberID: descriptor.memberID, revision: descriptor.revision, signingKey: append(ed25519.PublicKey(nil), descriptor.signingKey...), wrappingKey: append([]byte(nil), descriptor.wrappingKey...),
+				}
+			}
 		}
 		for credentialID, revision := range value.recoveryRevisions {
 			if existing, ok := merged.recoveryRevisions[credentialID]; !ok || revision > existing {
@@ -1219,6 +1906,26 @@ func cloneKeyEpochEnvelopeSlots(values []keyEpochEnvelopeSlot) []keyEpochEnvelop
 	return result
 }
 
+func appendEpochEnvelopeSlot(state *keyEpochReplayState, slot keyEpochEnvelopeSlot) {
+	if state == nil {
+		return
+	}
+	existing := state.epochSlots[slot.epochID]
+	for _, candidate := range existing {
+		if candidate.epochID == slot.epochID && candidate.targetKind == slot.targetKind && candidate.targetID == slot.targetID && sameOptionalUint64(candidate.targetRevision, slot.targetRevision) {
+			return
+		}
+	}
+	state.epochSlots[slot.epochID] = append(existing, slot)
+}
+
+func sameOptionalUint64(left, right *uint64) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
+}
+
 func parseGenesisEpochIdentity(event canonical.Event) (canonical.Identifier, canonical.Identifier, canonical.Identifier, canonical.Identifier, error) {
 	body, ok := replicaMapValue(event.Body)
 	if !ok || !replicaMapHasKeys(body, 7) {
@@ -1263,6 +1970,38 @@ func genesisRecoverySigningKey(event canonical.Event) ed25519.PublicKey {
 		return nil
 	}
 	return append(ed25519.PublicKey(nil), key...)
+}
+
+func parseGenesisCredentialDescriptors(event canonical.Event) (clientCredentialDescriptor, recoveryCredentialDescriptor, error) {
+	body, ok := replicaMapValue(event.Body)
+	if !ok || !replicaMapHasKeys(body, 7) {
+		return clientCredentialDescriptor{}, recoveryCredentialDescriptor{}, errors.New("Genesis authority body is invalid")
+	}
+	clientValue, ok := replicaMapValue(replicaMapEntryMust(body, 2))
+	if !ok || !replicaMapHasKeys(clientValue, 4) {
+		return clientCredentialDescriptor{}, recoveryCredentialDescriptor{}, errors.New("Genesis Client Credential certificate is invalid")
+	}
+	clientID, clientIDOK := replicaMapBytes(clientValue, 0, 32)
+	clientMember, clientMemberOK := replicaMapBytes(clientValue, 1, 32)
+	clientSigning, clientSigningOK := replicaMapBytes(clientValue, 2, ed25519.PublicKeySize)
+	clientWrapping, clientWrappingOK := replicaMapBytes(clientValue, 3, 32)
+	recoveryValue, ok := replicaMapValue(replicaMapEntryMust(body, 3))
+	if !ok || !replicaMapHasKeys(recoveryValue, 5) {
+		return clientCredentialDescriptor{}, recoveryCredentialDescriptor{}, errors.New("Genesis Recovery Credential descriptor is invalid")
+	}
+	recoveryID, recoveryIDOK := replicaMapBytes(recoveryValue, 0, 32)
+	recoveryMember, recoveryMemberOK := replicaMapBytes(recoveryValue, 1, 32)
+	recoveryRevision, recoveryRevisionOK := replicaMapNumber(recoveryValue, 2)
+	recoverySigning, recoverySigningOK := replicaMapBytes(recoveryValue, 3, ed25519.PublicKeySize)
+	recoveryWrapping, recoveryWrappingOK := replicaMapBytes(recoveryValue, 4, 32)
+	if !clientIDOK || !clientMemberOK || !clientSigningOK || !clientWrappingOK || !recoveryIDOK || !recoveryMemberOK || !recoveryRevisionOK || !recoverySigningOK || !recoveryWrappingOK || bytes.Equal(clientID, make([]byte, 32)) || bytes.Equal(recoveryID, make([]byte, 32)) || recoveryRevision != 0 || !bytes.Equal(clientMember, recoveryMember) {
+		return clientCredentialDescriptor{}, recoveryCredentialDescriptor{}, errors.New("Genesis Credential descriptor fields are invalid")
+	}
+	return clientCredentialDescriptor{
+			memberID: bytesIdentifier(clientMember), signingKey: append(ed25519.PublicKey(nil), clientSigning...), wrappingKey: append([]byte(nil), clientWrapping...),
+		}, recoveryCredentialDescriptor{
+			memberID: bytesIdentifier(recoveryMember), revision: recoveryRevision, signingKey: append(ed25519.PublicKey(nil), recoverySigning...), wrappingKey: append([]byte(nil), recoveryWrapping...),
+		}, nil
 }
 
 func parseAuthorityTargetMember(event canonical.Event) (canonical.Identifier, error) {
@@ -1403,7 +2142,13 @@ func parseInvitationCreation(event canonical.Event) (invitationCreation, error) 
 	if !ok {
 		return invitationCreation{}, errors.New("Invitation receipt verification key is invalid")
 	}
+	redemptionAuthorityID, ok := replicaMapBytes(body, 4, 32)
+	if !ok || bytes.Equal(redemptionAuthorityID, make([]byte, 32)) {
+		return invitationCreation{}, errors.New("Invitation Redemption Authority identity is invalid")
+	}
 	return invitationCreation{
+		creationRecordID:       event.RecordID,
+		redemptionAuthorityID:  bytesIdentifier(redemptionAuthorityID),
 		capabilitiesBytes:      append([]byte(nil), capabilitiesBytes...),
 		redemptionVerifier:     append(ed25519.PublicKey(nil), redemptionVerifier...),
 		cancellationVerifier:   append(ed25519.PublicKey(nil), cancellationVerifier...),
@@ -1413,6 +2158,8 @@ func parseInvitationCreation(event canonical.Event) (invitationCreation, error) 
 
 func cloneInvitationCreation(value invitationCreation) invitationCreation {
 	return invitationCreation{
+		creationRecordID:       value.creationRecordID,
+		redemptionAuthorityID:  value.redemptionAuthorityID,
 		capabilitiesBytes:      append([]byte(nil), value.capabilitiesBytes...),
 		redemptionVerifier:     append(ed25519.PublicKey(nil), value.redemptionVerifier...),
 		cancellationVerifier:   append(ed25519.PublicKey(nil), value.cancellationVerifier...),
@@ -1705,7 +2452,8 @@ func parseInvitationAcceptance(event canonical.Event) (invitationAcceptance, err
 	clientBytes, clientOK := replicaMapBytes(certificate, 0, 32)
 	clientMemberBytes, clientMemberOK := replicaMapBytes(certificate, 1, 32)
 	clientSigningKey, clientSigningOK := replicaMapBytes(certificate, 2, ed25519.PublicKeySize)
-	if !clientOK || !clientMemberOK || !clientSigningOK || !bytes.Equal(memberBytes, clientMemberBytes) || bytes.Equal(clientBytes, make([]byte, 32)) {
+	clientWrappingKey, clientWrappingOK := replicaMapBytes(certificate, 3, 32)
+	if !clientOK || !clientMemberOK || !clientSigningOK || !clientWrappingOK || !bytes.Equal(memberBytes, clientMemberBytes) || bytes.Equal(clientBytes, make([]byte, 32)) {
 		return invitationAcceptance{}, errors.New("Invitation Acceptance Client Certificate fields are invalid")
 	}
 	recovery, ok := replicaMapValue(replicaMapEntryMust(join, 4))
@@ -1716,7 +2464,8 @@ func parseInvitationAcceptance(event canonical.Event) (invitationAcceptance, err
 	recoveryMemberBytes, recoveryMemberOK := replicaMapBytes(recovery, 1, 32)
 	recoveryRevision, recoveryRevisionOK := replicaMapNumber(recovery, 2)
 	recoverySigningKey, recoverySigningOK := replicaMapBytes(recovery, 3, ed25519.PublicKeySize)
-	if !recoveryOK || !recoveryMemberOK || !recoveryRevisionOK || !recoverySigningOK || !bytes.Equal(memberBytes, recoveryMemberBytes) || bytes.Equal(recoveryBytes, make([]byte, 32)) {
+	recoveryWrappingKey, recoveryWrappingOK := replicaMapBytes(recovery, 4, 32)
+	if !recoveryOK || !recoveryMemberOK || !recoveryRevisionOK || !recoverySigningOK || !recoveryWrappingOK || !bytes.Equal(memberBytes, recoveryMemberBytes) || bytes.Equal(recoveryBytes, make([]byte, 32)) {
 		return invitationAcceptance{}, errors.New("Invitation Acceptance Recovery Credential fields are invalid")
 	}
 	proposalAuthorityIDs, err := parseCanonicalIdentifierSet(replicaMapEntryMust(proposal, 2), "Invitation Acceptance Authority Parents", true)
@@ -1829,7 +2578,9 @@ func parseInvitationAcceptance(event canonical.Event) (invitationAcceptance, err
 		recoveryCredentialID:    bytesIdentifier(recoveryBytes),
 		recoveryRevision:        recoveryRevision,
 		clientSigningKey:        append(ed25519.PublicKey(nil), clientSigningKey...),
+		clientWrappingKey:       append([]byte(nil), clientWrappingKey...),
 		recoverySigningKey:      append(ed25519.PublicKey(nil), recoverySigningKey...),
+		recoveryWrappingKey:     append([]byte(nil), recoveryWrappingKey...),
 		clientPossessionProof:   append([]byte(nil), clientProof...),
 		recoveryPossessionProof: append([]byte(nil), recoveryProof...),
 		redemptionProof:         append([]byte(nil), redemptionProof...),
@@ -1876,7 +2627,8 @@ func parseRecoveryReplacement(event canonical.Event) (recoveryReplacement, error
 		!bytes.Equal(memberBytes, descriptorMemberBytes) {
 		return recoveryReplacement{}, errors.New("Recovery Replacement Credential descriptor fields are invalid")
 	}
-	if _, wrappingKeyOK := replicaMapBytes(descriptor, 4, 32); !wrappingKeyOK {
+	wrappingKey, wrappingKeyOK := replicaMapBytes(descriptor, 4, 32)
+	if !wrappingKeyOK {
 		return recoveryReplacement{}, errors.New("Recovery Replacement wrapping public key is invalid")
 	}
 	slotsValue := replicaMapEntryMust(body, 3)
@@ -1902,6 +2654,7 @@ func parseRecoveryReplacement(event canonical.Event) (recoveryReplacement, error
 		recoveryID:      bytesIdentifier(recoveryBytes),
 		revision:        revision,
 		signingKey:      append(ed25519.PublicKey(nil), signingKey...),
+		wrappingKey:     append([]byte(nil), wrappingKey...),
 		keyEpochSlots:   slots,
 		descriptorBytes: descriptorBytes,
 		slotsBytes:      slotsBytes,
@@ -2482,7 +3235,7 @@ func validateReplicaKeyEpochHistory(replica *Replica, state *canonicalReplicaSta
 	if !ok || genesis.Event == nil {
 		return errors.New("authenticated Genesis is unavailable")
 	}
-	structural, err := replayAuthenticatedKeyEpochs(replica.Events(), *genesis.Event, nil)
+	structural, err := replayReplicaAuthorityState(replica, nil, nil)
 	if err != nil {
 		return err
 	}

@@ -107,6 +107,37 @@ func TestRuntimeCompleteExportImportsCollectionVacuumSuccessor(t *testing.T) {
 	}
 }
 
+func TestRuntimeCompleteExportImportsRepeatedVacuumSuccessor(t *testing.T) {
+	ctx := context.Background()
+	phrase := "abandon amount liar amount expire adjust cage candy arch gather drum buyer"
+	sourceDependencies := memoryDependencies(t)
+	source, err := New(ctx, store.NewMemoryState(), sourceDependencies)
+	if err != nil {
+		t.Fatalf("create source Runtime: %v", err)
+	}
+	vaultID, _ := createVaultWithPhraseForTest(t, source, "Repeated Vacuum export")
+	for index := 0; index < 2; index++ {
+		if _, err := source.Handle(ctx, mustJSON(map[string]any{"type": "VacuumVault", "expectedVaultId": vaultID})); err != nil {
+			t.Fatalf("Vacuum %d: %v", index+1, err)
+		}
+	}
+	complete, err := source.ExportComplete(vaultID, phrase)
+	if err != nil {
+		t.Fatalf("export repeated Vacuum successor: %v", err)
+	}
+	destinationDependencies := memoryDependencies(t)
+	destination, err := New(ctx, store.NewMemoryState(), destinationDependencies)
+	if err != nil {
+		t.Fatalf("create destination Runtime: %v", err)
+	}
+	if _, err := destination.ImportComplete(ctx, phrase, complete); err != nil {
+		t.Fatalf("import repeated Vacuum successor: %v", err)
+	}
+	if _, err := ProjectLibraryProjection(destination.replicas[vaultID]); err != nil {
+		t.Fatalf("project imported repeated Vacuum successor: %v", err)
+	}
+}
+
 func TestRuntimeCompleteExportPreservesPerItemKeyEpochsAcrossImportAndRestart(t *testing.T) {
 	ctx := context.Background()
 	dependencies := memoryDependencies(t)

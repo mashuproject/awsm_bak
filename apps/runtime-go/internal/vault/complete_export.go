@@ -331,135 +331,15 @@ func prepareCompleteImport(manifest completeexport.Manifest, inventory completee
 			return preparedCompleteImport{}, errors.New("Complete Export omits a referenced Key Epoch Key")
 		}
 	}
-	var baseline *canonical.Baseline
-	var predecessorBaseline *canonical.Baseline
-	var genesis *canonical.Event
 	baselineRootID := findTypedRoot(manifest.TypedLogicalRoots, 2)
-	for index := range recordValues {
-		record := recordValues[index]
-		if record.Kind == canonical.BaselineKind {
-			copyValue := *record.Baseline
-			if copyValue.RecordID == baselineRootID {
-				if baseline != nil {
-					return preparedCompleteImport{}, errors.New("Complete Export repeats its active Baseline")
-				}
-				baseline = &copyValue
-			} else {
-				if predecessorBaseline != nil {
-					return preparedCompleteImport{}, errors.New("Complete Export contains more than one predecessor Baseline")
-				}
-				predecessorBaseline = &copyValue
-			}
-		} else if record.Event != nil && record.Event.Family == canonical.AuthorityFamily && record.Event.Type == canonical.GenesisEvent {
-			if genesis != nil {
-				return preparedCompleteImport{}, errors.New("Complete Export contains multiple Genesis Events")
-			}
-			copyValue := *record.Event
-			genesis = &copyValue
-		}
-	}
-	if baseline == nil || genesis == nil || baseline.RecordID != baselineRootID {
-		return preparedCompleteImport{}, errors.New("Complete Export Baseline or Genesis is missing")
-	}
-	if baseline.VaultID != manifest.VaultID || baseline.GenerationID != manifest.GenerationID || genesis.VaultID != manifest.VaultID {
-		return preparedCompleteImport{}, errors.New("Complete Export Record context is invalid")
-	}
-	genesisPredecessorBaselineID := canonical.Identifier{}
-	for _, dependency := range genesis.Dependencies {
-		if dependency.Type == 2 {
-			genesisPredecessorBaselineID = dependency.ID
-			break
-		}
-	}
-	if genesisPredecessorBaselineID == (canonical.Identifier{}) {
-		return preparedCompleteImport{}, errors.New("Complete Export Genesis Baseline dependency is missing")
-	}
-	adoptedGeneration := baseline.RecordID != genesisPredecessorBaselineID
-	if !adoptedGeneration && predecessorBaseline != nil {
-		return preparedCompleteImport{}, errors.New("Complete Export Initial Baseline is ambiguous")
-	}
-	if adoptedGeneration {
-		if predecessorBaseline == nil || predecessorBaseline.RecordID != genesisPredecessorBaselineID || predecessorBaseline.VaultID != manifest.VaultID || predecessorBaseline.GenerationID != genesis.GenerationID {
-			return preparedCompleteImport{}, errors.New("Complete Export Vacuum predecessor Baseline is invalid")
-		}
-	} else if genesis.GenerationID != baseline.GenerationID {
-		return preparedCompleteImport{}, errors.New("Complete Export Genesis Generation is invalid")
-	}
-	genesisCredentialID, genesisSigningKey, err := genesisCredential(*genesis)
+	allRecordValues := append([]canonical.Record(nil), recordValues...)
+	baseline, genesis, replica, adoptionEvent, predecessorGenerationID, err := reconstructCompleteImportReplica(manifest, baselineRootID, allRecordValues)
 	if err != nil {
 		return preparedCompleteImport{}, err
 	}
-	allRecordValues := append([]canonical.Record(nil), recordValues...)
-	var replica *Replica
-	var adoptionEvent *canonical.Event
-	var predecessorGenerationID canonical.Identifier
-	if !adoptedGeneration {
-		replica, err = NewReplica(*baseline)
-		if err != nil {
-			return preparedCompleteImport{}, err
-		}
-		if err := replica.AdmitEvent(*genesis, genesisSigningKey); err != nil {
-			return preparedCompleteImport{}, fmt.Errorf("admit Complete Export Genesis: %w", err)
-		}
-		pending := make([]canonical.Event, 0, len(allRecordValues))
-		for _, record := range allRecordValues {
-			if record.Event != nil && record.Event.RecordID != genesis.RecordID {
-				if record.Event.GenerationID != baseline.GenerationID {
-					return preparedCompleteImport{}, errors.New("Complete Export Record belongs to an unknown Generation")
-				}
-				pending = append(pending, *record.Event)
-			}
-		}
-		if err := admitCompleteImportEvents(replica, pending, "Complete Export Record"); err != nil {
-			return preparedCompleteImport{}, err
-		}
-	} else {
-		oldReplica, replicaErr := NewReplica(*predecessorBaseline)
-		if replicaErr != nil {
-			return preparedCompleteImport{}, replicaErr
-		}
-		if err := oldReplica.AdmitEvent(*genesis, genesisSigningKey); err != nil {
-			return preparedCompleteImport{}, fmt.Errorf("admit Complete Export Genesis: %w", err)
-		}
-		oldEvents := make([]canonical.Event, 0)
-		successorEvents := make([]canonical.Event, 0)
-		var adoption *canonical.Event
-		for _, record := range allRecordValues {
-			if record.Event == nil || record.Event.RecordID == genesis.RecordID {
-				continue
-			}
-			event := *record.Event
-			if event.Family == canonical.LifecycleFamily && event.Type == 1 {
-				if adoption != nil {
-					return preparedCompleteImport{}, errors.New("Complete Export contains multiple Vacuum Events")
-				}
-				adoption = &event
-				continue
-			}
-			switch event.GenerationID {
-			case predecessorBaseline.GenerationID:
-				oldEvents = append(oldEvents, event)
-			case baseline.GenerationID:
-				successorEvents = append(successorEvents, event)
-			default:
-				return preparedCompleteImport{}, errors.New("Complete Export Record belongs to an unknown Vacuum Generation")
-			}
-		}
-		if adoption == nil || !hasDependency(adoption.Dependencies, 2, baseline.RecordID) {
-			return preparedCompleteImport{}, errors.New("Complete Export Vacuum Adoption Event is missing")
-		}
-		adoptionEvent = adoption
-		predecessorGenerationID = predecessorBaseline.GenerationID
-		if err := admitCompleteImportEvents(oldReplica, oldEvents, "Complete Export predecessor Record"); err != nil {
-			return preparedCompleteImport{}, err
-		}
-		replica, err = oldReplica.AdoptVacuum(*baseline, *adoption)
-		if err != nil {
-			return preparedCompleteImport{}, fmt.Errorf("adopt Complete Export Vacuum: %w", err)
-		}
-		if err := admitCompleteImportEvents(replica, successorEvents, "Complete Export successor Record"); err != nil {
-			return preparedCompleteImport{}, err
-		}
+	genesisCredentialID, _, err := genesisCredential(*genesis)
+	if err != nil {
+		return preparedCompleteImport{}, err
 	}
 	epochKeys := make(map[canonical.Identifier][]byte, len(keyBytesByID))
 	for epochIDText, keyBytes := range keyBytesByID {
@@ -469,13 +349,7 @@ func prepareCompleteImport(manifest completeexport.Manifest, inventory completee
 		}
 		epochKeys[epochID] = append([]byte(nil), keyBytes...)
 	}
-	events := make([]canonical.Event, 0, len(allRecordValues))
-	for _, record := range allRecordValues {
-		if record.Event != nil {
-			events = append(events, *record.Event)
-		}
-	}
-	epochReplay, err := replayAuthenticatedKeyEpochs(events, *genesis, epochKeys)
+	epochReplay, err := replayReplicaAuthorityState(replica, nil, epochKeys)
 	if err != nil {
 		return preparedCompleteImport{}, fmt.Errorf("Complete Export Key Epoch Authority history is invalid: %w", err)
 	}
@@ -643,6 +517,186 @@ func findTypedRoot(roots []canonical.Dependency, kind uint64) canonical.Identifi
 		}
 	}
 	return canonical.Identifier{}
+}
+
+type completeVacuumBoundary struct {
+	event                   canonical.Event
+	baseline                canonical.Baseline
+	predecessorGenerationID canonical.Identifier
+}
+
+func reconstructCompleteImportReplica(manifest completeexport.Manifest, activeBaselineID canonical.Identifier, records []canonical.Record) (*canonical.Baseline, *canonical.Event, *Replica, *canonical.Event, canonical.Identifier, error) {
+	baselinesByID := make(map[canonical.Identifier]canonical.Baseline)
+	baselinesByGeneration := make(map[canonical.Identifier]canonical.Baseline)
+	events := make([]canonical.Event, 0)
+	var genesis *canonical.Event
+	for _, record := range records {
+		if record.Baseline != nil {
+			baseline := *record.Baseline
+			if _, exists := baselinesByID[baseline.RecordID]; exists {
+				return nil, nil, nil, nil, canonical.Identifier{}, errors.New("Complete Export repeats a Baseline")
+			}
+			if _, exists := baselinesByGeneration[baseline.GenerationID]; exists {
+				return nil, nil, nil, nil, canonical.Identifier{}, errors.New("Complete Export repeats a Baseline Generation")
+			}
+			baselinesByID[baseline.RecordID] = baseline
+			baselinesByGeneration[baseline.GenerationID] = baseline
+		}
+		if record.Event == nil {
+			continue
+		}
+		event := *record.Event
+		events = append(events, event)
+		if event.Family == canonical.AuthorityFamily && event.Type == canonical.GenesisEvent {
+			if genesis != nil {
+				return nil, nil, nil, nil, canonical.Identifier{}, errors.New("Complete Export contains multiple Genesis Events")
+			}
+			genesis = &event
+		}
+	}
+	activeBaseline, ok := baselinesByID[activeBaselineID]
+	if !ok || activeBaseline.VaultID != manifest.VaultID || activeBaseline.GenerationID != manifest.GenerationID {
+		return nil, nil, nil, nil, canonical.Identifier{}, errors.New("Complete Export active Baseline is missing or has invalid context")
+	}
+	if genesis == nil || genesis.VaultID != manifest.VaultID {
+		return nil, nil, nil, nil, canonical.Identifier{}, errors.New("Complete Export Genesis is missing or has invalid context")
+	}
+	initialBaselineID := canonical.Identifier{}
+	for _, dependency := range genesis.Dependencies {
+		if dependency.Type == 2 {
+			initialBaselineID = dependency.ID
+			break
+		}
+	}
+	if initialBaselineID == (canonical.Identifier{}) {
+		return nil, nil, nil, nil, canonical.Identifier{}, errors.New("Complete Export Genesis Baseline dependency is missing")
+	}
+	initialBaseline, ok := baselinesByID[initialBaselineID]
+	if !ok || initialBaseline.GenerationID != genesis.GenerationID {
+		return nil, nil, nil, nil, canonical.Identifier{}, errors.New("Complete Export Initial Baseline is invalid")
+	}
+	boundariesReverse := make([]completeVacuumBoundary, 0)
+	currentBaseline := activeBaseline
+	for currentBaseline.RecordID != initialBaseline.RecordID {
+		var boundary *completeVacuumBoundary
+		for _, event := range events {
+			if event.Family != canonical.LifecycleFamily || event.Type != 1 || !hasDependency(event.Dependencies, 2, currentBaseline.RecordID) {
+				continue
+			}
+			parsed, err := parseCompleteVacuumBoundary(event, currentBaseline)
+			if err != nil {
+				return nil, nil, nil, nil, canonical.Identifier{}, err
+			}
+			if boundary != nil {
+				return nil, nil, nil, nil, canonical.Identifier{}, errors.New("Complete Export contains competing Vacuum boundaries for one successor")
+			}
+			boundary = &parsed
+		}
+		if boundary == nil {
+			return nil, nil, nil, nil, canonical.Identifier{}, errors.New("Complete Export is missing a Vacuum boundary")
+		}
+		predecessor, ok := baselinesByGeneration[boundary.predecessorGenerationID]
+		if !ok {
+			return nil, nil, nil, nil, canonical.Identifier{}, errors.New("Complete Export Vacuum predecessor Baseline is missing")
+		}
+		boundariesReverse = append(boundariesReverse, *boundary)
+		currentBaseline = predecessor
+	}
+	boundaries := make([]completeVacuumBoundary, len(boundariesReverse))
+	for index := range boundariesReverse {
+		boundaries[len(boundariesReverse)-index-1] = boundariesReverse[index]
+	}
+	_, genesisSigningKey, err := genesisCredential(*genesis)
+	if err != nil {
+		return nil, nil, nil, nil, canonical.Identifier{}, err
+	}
+	replica, err := NewReplica(initialBaseline)
+	if err != nil {
+		return nil, nil, nil, nil, canonical.Identifier{}, err
+	}
+	if err := replica.AdmitEvent(*genesis, genesisSigningKey); err != nil {
+		return nil, nil, nil, nil, canonical.Identifier{}, fmt.Errorf("admit Complete Export Genesis: %w", err)
+	}
+	selectedVacuumIDs := make(map[canonical.Identifier]struct{}, len(boundaries))
+	for _, boundary := range boundaries {
+		selectedVacuumIDs[boundary.event.RecordID] = struct{}{}
+	}
+	var latestAdoption *canonical.Event
+	var predecessorGenerationID canonical.Identifier
+	for _, boundary := range boundaries {
+		if replica.generationID != boundary.event.GenerationID {
+			return nil, nil, nil, nil, canonical.Identifier{}, errors.New("Complete Export Vacuum chain has a Generation discontinuity")
+		}
+		ordinary := make([]canonical.Event, 0)
+		for _, event := range events {
+			if event.RecordID == genesis.RecordID || event.GenerationID != replica.generationID {
+				continue
+			}
+			if event.Family == canonical.LifecycleFamily && event.Type == 1 {
+				if event.RecordID != boundary.event.RecordID {
+					return nil, nil, nil, nil, canonical.Identifier{}, errors.New("Complete Export contains an unselected Vacuum boundary")
+				}
+				continue
+			}
+			ordinary = append(ordinary, event)
+		}
+		if err := admitCompleteImportEvents(replica, ordinary, "Complete Export Generation Record"); err != nil {
+			return nil, nil, nil, nil, canonical.Identifier{}, err
+		}
+		predecessorGenerationID = replica.generationID
+		next, err := replica.AdoptVacuum(boundary.baseline, boundary.event)
+		if err != nil {
+			return nil, nil, nil, nil, canonical.Identifier{}, fmt.Errorf("adopt Complete Export Vacuum: %w", err)
+		}
+		replica = next
+		adoption := boundary.event
+		latestAdoption = &adoption
+	}
+	ordinary := make([]canonical.Event, 0)
+	for _, event := range events {
+		if event.RecordID == genesis.RecordID || event.GenerationID != replica.generationID {
+			continue
+		}
+		if event.Family == canonical.LifecycleFamily && event.Type == 1 {
+			if _, selected := selectedVacuumIDs[event.RecordID]; !selected {
+				return nil, nil, nil, nil, canonical.Identifier{}, errors.New("Complete Export contains an unselected Vacuum boundary")
+			}
+			continue
+		}
+		ordinary = append(ordinary, event)
+	}
+	if err := admitCompleteImportEvents(replica, ordinary, "Complete Export active Generation Record"); err != nil {
+		return nil, nil, nil, nil, canonical.Identifier{}, err
+	}
+	for _, event := range events {
+		if _, admitted := replica.records[event.RecordID]; !admitted {
+			return nil, nil, nil, nil, canonical.Identifier{}, errors.New("Complete Export contains an unselected Record branch")
+		}
+	}
+	for baselineID := range baselinesByID {
+		if _, admitted := replica.records[baselineID]; !admitted {
+			return nil, nil, nil, nil, canonical.Identifier{}, errors.New("Complete Export contains an unselected Baseline")
+		}
+	}
+	return &activeBaseline, genesis, replica, latestAdoption, predecessorGenerationID, nil
+}
+
+func parseCompleteVacuumBoundary(event canonical.Event, successor canonical.Baseline) (completeVacuumBoundary, error) {
+	body, ok := replicaMapValue(event.Body)
+	if !ok || !replicaMapHasKeys(body, 7) {
+		return completeVacuumBoundary{}, errors.New("Complete Export Vacuum Event body is invalid")
+	}
+	predecessorBytes, predecessorOK := replicaMapBytes(body, 0, 32)
+	successorGenerationBytes, successorGenerationOK := replicaMapBytes(body, 2, 32)
+	successorBaselineBytes, successorBaselineOK := replicaMapBytes(body, 3, 32)
+	if !predecessorOK || !successorGenerationOK || !successorBaselineOK {
+		return completeVacuumBoundary{}, errors.New("Complete Export Vacuum Event identity fields are invalid")
+	}
+	predecessorGenerationID := bytesIdentifier(predecessorBytes)
+	if bytesIdentifier(successorGenerationBytes) != successor.GenerationID || bytesIdentifier(successorBaselineBytes) != successor.RecordID || event.VaultID != successor.VaultID {
+		return completeVacuumBoundary{}, errors.New("Complete Export Vacuum Event does not bind its successor Baseline")
+	}
+	return completeVacuumBoundary{event: event, baseline: successor, predecessorGenerationID: predecessorGenerationID}, nil
 }
 
 func admitCompleteImportEvents(replica *Replica, events []canonical.Event, label string) error {
