@@ -172,6 +172,113 @@ func TestForkReauthorsBundleDescriptorAndRegisteredEvent(t *testing.T) {
 	}
 }
 
+func TestForkReauthorsCollectionTitleEvent(t *testing.T) {
+	ctx := context.Background()
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, store.NewMemoryState(), dependencies)
+	if err != nil {
+		t.Fatalf("create Runtime: %v", err)
+	}
+	sourceID, _ := createVaultWithPhraseForTest(t, runtime, "Collection Fork source")
+	sourceCollectionID := filledCreationID(253)
+	admitForkCollectionTitleEvent(t, runtime, dependencies, sourceID, sourceCollectionID, "Saved pages")
+	started, err := runtime.Handle(ctx, mustJSON(map[string]any{"type": "BeginVaultFork", "expectedVaultId": sourceID}))
+	if err != nil {
+		t.Fatalf("begin Fork: %v", err)
+	}
+	setup := started.(map[string]string)
+	confirmed, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "ConfirmVaultFork", "setupId": setup["setupId"], "recoveryPhrase": setup["recoveryPhrase"],
+	}))
+	if err != nil {
+		t.Fatalf("confirm Collection Fork: %v", err)
+	}
+	forkID := confirmed.(map[string]string)["vaultId"]
+	var found *canonical.Event
+	for _, event := range runtime.replicas[forkID].Events() {
+		if event.Family == canonical.ContentFamily && event.Type == 7 {
+			candidate := event
+			found = &candidate
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("Fork omitted Collection Title Event")
+	}
+	body, ok := replicaMapValue(found.Body)
+	if !ok {
+		t.Fatalf("Fork Collection Title body = %#v", found.Body)
+	}
+	mappedCollectionID, ok := replicaIdentifier(body, 0)
+	if !ok || mappedCollectionID == sourceCollectionID {
+		t.Fatalf("Fork Collection ID mapping = %x, want fresh", mappedCollectionID)
+	}
+	title, ok := replicaMapText(body, 1)
+	if !ok || title != "Saved pages" {
+		t.Fatalf("Fork Collection Title = %q, want Saved pages", title)
+	}
+}
+
+func TestForkReauthorsOrganizationEvents(t *testing.T) {
+	ctx := context.Background()
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, store.NewMemoryState(), dependencies)
+	if err != nil {
+		t.Fatalf("create Runtime: %v", err)
+	}
+	sourceID, _ := createVaultWithPhraseForTest(t, runtime, "Organization Fork source")
+	collectionA := filledCreationID(254)
+	collectionB := filledCreationID(255)
+	folderID := filledCreationID(180)
+	tagA := filledCreationID(181)
+	tagB := filledCreationID(182)
+	assignmentID := filledCreationID(183)
+	collectionTitleID := signAndAdmitForkNoteEvent(t, runtime, dependencies, sourceID, 7, canonical.Map{0: collectionA[:], 1: "Saved"}, nil)
+	mergeID := signAndAdmitForkNoteEvent(t, runtime, dependencies, sourceID, 8, canonical.Map{0: canonicalSetValues([]canonical.Value{collectionA[:]}), 1: collectionB[:]}, nil)
+	signAndAdmitForkNoteEvent(t, runtime, dependencies, sourceID, 9, canonical.Map{0: mergeID[:]}, nil)
+	signAndAdmitForkNoteEvent(t, runtime, dependencies, sourceID, 10, canonical.Map{0: canonicalSetValues([]canonical.Value{mergeID[:]}), 1: []canonical.Value{canonical.Map{0: collectionA[:], 1: collectionB[:]}}}, nil)
+	signAndAdmitForkNoteEvent(t, runtime, dependencies, sourceID, 11, canonical.Map{0: collectionA[:], 1: nil}, nil)
+	folderCreatedID := signAndAdmitForkNoteEvent(t, runtime, dependencies, sourceID, 12, canonical.Map{0: folderID[:], 1: "Archive", 2: nil}, nil)
+	signAndAdmitForkNoteEvent(t, runtime, dependencies, sourceID, 13, canonical.Map{0: folderID[:], 1: "Saved pages"}, nil)
+	signAndAdmitForkNoteEvent(t, runtime, dependencies, sourceID, 14, canonical.Map{0: folderID[:], 1: nil}, nil)
+	signAndAdmitForkNoteEvent(t, runtime, dependencies, sourceID, 15, canonical.Map{0: folderID[:]}, nil)
+	signAndAdmitForkNoteEvent(t, runtime, dependencies, sourceID, 16, canonical.Map{0: folderID[:]}, nil)
+	signAndAdmitForkNoteEvent(t, runtime, dependencies, sourceID, 17, canonical.Map{0: canonicalSetValues([]canonical.Value{folderCreatedID[:]}), 1: []canonical.Value{canonical.Map{0: folderID[:], 1: nil}}}, nil)
+	signAndAdmitForkNoteEvent(t, runtime, dependencies, sourceID, 18, canonical.Map{0: tagA[:], 1: "Reading"}, nil)
+	signAndAdmitForkNoteEvent(t, runtime, dependencies, sourceID, 19, canonical.Map{0: tagA[:], 1: "Read"}, nil)
+	assignmentEventID := signAndAdmitForkNoteEvent(t, runtime, dependencies, sourceID, 20, canonical.Map{0: assignmentID[:], 1: tagA[:], 2: canonical.Map{0: uint64(1), 1: collectionB[:]}}, nil)
+	signAndAdmitForkNoteEvent(t, runtime, dependencies, sourceID, 21, canonical.Map{0: canonicalSetValues([]canonical.Value{assignmentEventID[:]})}, nil)
+	signAndAdmitForkNoteEvent(t, runtime, dependencies, sourceID, 22, canonical.Map{0: tagA[:]}, nil)
+	signAndAdmitForkNoteEvent(t, runtime, dependencies, sourceID, 23, canonical.Map{0: tagA[:]}, nil)
+	tagMergeID := signAndAdmitForkNoteEvent(t, runtime, dependencies, sourceID, 24, canonical.Map{0: canonicalSetValues([]canonical.Value{tagA[:]}), 1: tagB[:]}, nil)
+	signAndAdmitForkNoteEvent(t, runtime, dependencies, sourceID, 25, canonical.Map{0: tagMergeID[:]}, nil)
+	signAndAdmitForkNoteEvent(t, runtime, dependencies, sourceID, 26, canonical.Map{0: canonicalSetValues([]canonical.Value{tagMergeID[:]}), 1: []canonical.Value{canonical.Map{0: tagA[:], 1: tagB[:]}}}, nil)
+	_ = collectionTitleID
+	started, err := runtime.Handle(ctx, mustJSON(map[string]any{"type": "BeginVaultFork", "expectedVaultId": sourceID}))
+	if err != nil {
+		t.Fatalf("begin Fork: %v", err)
+	}
+	setup := started.(map[string]string)
+	confirmed, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "ConfirmVaultFork", "setupId": setup["setupId"], "recoveryPhrase": setup["recoveryPhrase"],
+	}))
+	if err != nil {
+		t.Fatalf("confirm Organization Fork: %v", err)
+	}
+	forkID := confirmed.(map[string]string)["vaultId"]
+	counts := map[uint64]int{}
+	for _, event := range runtime.replicas[forkID].Events() {
+		if event.Family == canonical.ContentFamily {
+			counts[event.Type]++
+		}
+	}
+	for eventType := uint64(7); eventType <= 26; eventType++ {
+		if counts[eventType] != 1 {
+			t.Fatalf("Fork organization Content Event type %d count = %d, want 1", eventType, counts[eventType])
+		}
+	}
+}
+
 func TestForkReauthorsNoteObjectAndEvents(t *testing.T) {
 	ctx := context.Background()
 	state := store.NewMemoryState()
@@ -322,6 +429,49 @@ func admitForkLabelEvent(t *testing.T, runtime *Runtime, dependencies Dependenci
 	}
 	if err := runtime.AdmitOpaqueEvent(context.Background(), vaultID, encoded); err != nil {
 		t.Fatalf("admit source label Event: %v", err)
+	}
+}
+
+func admitForkCollectionTitleEvent(t *testing.T, runtime *Runtime, dependencies Dependencies, vaultID string, collectionID canonical.Identifier, title string) {
+	t.Helper()
+	value := runtime.vaults[vaultID]
+	vaultIdentifier := mustIdentifier(t, vaultID)
+	generationID := mustIdentifier(t, value.GenerationID)
+	memberID := mustIdentifier(t, value.Canonical.MemberID)
+	credentialID := mustIdentifier(t, value.Canonical.ClientCredentialID)
+	featureSetID := mustIdentifier(t, value.Canonical.RequiredFeatureSetID)
+	clientBytes, err := dependencies.Secrets.Get(trustedSecretService, clientSecretAccount(vaultID, value.Canonical.ClientCredentialID))
+	if err != nil {
+		t.Fatalf("read source Client Credential: %v", err)
+	}
+	clientSecret, err := decodeClientSecret(clientBytes, vaultIdentifier, memberID, credentialID)
+	if err != nil {
+		t.Fatalf("decode source Client Credential: %v", err)
+	}
+	event, err := canonical.SignEvent(canonical.EventInput{
+		VaultID: vaultIdentifier, GenerationID: generationID,
+		ParentRecordIDs: runtime.replicas[vaultID].State().CausalFrontier, AuthorityParentIDs: runtime.replicas[vaultID].State().AuthorityFrontier,
+		Dependencies: []canonical.Dependency{}, RequiredFeatureSetID: featureSetID, Extensions: map[string][]byte{},
+		Family: canonical.ContentFamily, Type: 7, SignerCredentialID: credentialID, AssertedAt: 43, Body: canonical.Map{0: collectionID[:], 1: title},
+	}, ed25519.PrivateKey(clientSecret.signingSecretKey))
+	if err != nil {
+		t.Fatalf("sign source Collection Title Event: %v", err)
+	}
+	epochID := mustIdentifier(t, value.Canonical.KeyEpochID)
+	epochBytes, err := dependencies.Secrets.Get(trustedSecretService, epochSecretAccount(vaultID, value.Canonical.KeyEpochID))
+	if err != nil {
+		t.Fatalf("read source Key Epoch: %v", err)
+	}
+	epochSecret, err := decodeEpochSecret(epochBytes, vaultIdentifier, epochID)
+	if err != nil {
+		t.Fatalf("decode source Key Epoch: %v", err)
+	}
+	encoded, err := awsmcrypto.SealCompactItem(awsmcrypto.CompactItemInput{VaultID: vaultIdentifier, KeyEpochID: epochID, KeyEpochKey: epochSecret.key, PayloadType: 1, PayloadBytes: event.Bytes})
+	if err != nil {
+		t.Fatalf("seal source Collection Title Event: %v", err)
+	}
+	if err := runtime.AdmitOpaqueEvent(context.Background(), vaultID, encoded); err != nil {
+		t.Fatalf("admit source Collection Title Event: %v", err)
 	}
 }
 

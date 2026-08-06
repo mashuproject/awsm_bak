@@ -67,7 +67,7 @@ func reauthorForkContentEventsWithMappings(
 	content := make([]canonical.Event, 0)
 	for _, event := range source.Events() {
 		if event.Family == canonical.ContentFamily {
-			if event.Type != 1 && event.Type != 3 && (event.Type < 27 || event.Type > 31) {
+			if event.Type != 1 && event.Type != 3 && (event.Type < 7 || event.Type > 31) {
 				return fmt.Errorf("Fork Content Event type %d re-authoring is not implemented by this Runtime", event.Type)
 			}
 			if event.Type == 1 && len(event.Dependencies) != 0 {
@@ -86,7 +86,12 @@ func reauthorForkContentEventsWithMappings(
 		return bytes.Compare(content[left].RecordID[:], content[right].RecordID[:]) < 0
 	})
 	translated := make(map[canonical.Identifier]canonical.Identifier, len(content))
+	translated[source.baselineID] = creation.Genesis.RecordID
+	translated[source.genesisID] = creation.Genesis.RecordID
 	collectionMappings := make(map[canonical.Identifier]canonical.Identifier)
+	folderMappings := make(map[canonical.Identifier]canonical.Identifier)
+	tagMappings := make(map[canonical.Identifier]canonical.Identifier)
+	tagAssignmentMappings := make(map[canonical.Identifier]canonical.Identifier)
 	stored := make([]string, 0, len(content))
 	cleanup := func() {
 		for _, storageItemID := range stored {
@@ -131,6 +136,15 @@ func reauthorForkContentEventsWithMappings(
 					return errors.New("Fork Bundle Registered dependencies are unavailable")
 				}
 				mappedBody, mappedDependencies, err := reauthorForkBundleRegistered(sourceEvent.Body, sourceEvent.Dependencies, objectMappings, bundleMappings, collectionMappings)
+				if err != nil {
+					cleanup()
+					return err
+				}
+				body = mappedBody
+				dependencies = mappedDependencies
+			}
+			if sourceEvent.Type >= 7 && sourceEvent.Type <= 26 {
+				mappedBody, mappedDependencies, err := reauthorForkOrganizationEvent(sourceEvent, translated, bundleMappings, collectionMappings, folderMappings, tagMappings, tagAssignmentMappings)
 				if err != nil {
 					cleanup()
 					return err
@@ -202,6 +216,444 @@ func reauthorForkContentEventsWithMappings(
 	state.AuthorityFrontier = identifiersToHex(next.AuthorityFrontier)
 	state.ContinuityRecordIDs = identifiersToHex(next.ContinuityRecordIDs)
 	return nil
+}
+
+func reauthorForkOrganizationEvent(
+	event canonical.Event,
+	translated map[canonical.Identifier]canonical.Identifier,
+	bundleMappings map[canonical.Identifier]canonical.Identifier,
+	collectionMappings map[canonical.Identifier]canonical.Identifier,
+	folderMappings map[canonical.Identifier]canonical.Identifier,
+	tagMappings map[canonical.Identifier]canonical.Identifier,
+	tagAssignmentMappings map[canonical.Identifier]canonical.Identifier,
+) (canonical.Value, []canonical.Dependency, error) {
+	body, ok := replicaMapValue(event.Body)
+	if !ok {
+		return nil, nil, fmt.Errorf("Fork organization Content Event type %d body is invalid", event.Type)
+	}
+	fresh := func(source canonical.Identifier, field string) (canonical.Identifier, error) {
+		textID, err := randomID()
+		if err != nil {
+			return canonical.Identifier{}, err
+		}
+		mapped, err := decodeHexIdentifier(textID)
+		if err != nil {
+			return canonical.Identifier{}, err
+		}
+		if mapped == source {
+			return canonical.Identifier{}, fmt.Errorf("Fork %s identity was not fresh", field)
+		}
+		return mapped, nil
+	}
+	mapID := func(source canonical.Identifier, mappings map[canonical.Identifier]canonical.Identifier, field string) (canonical.Identifier, error) {
+		if mapped, exists := mappings[source]; exists {
+			return mapped, nil
+		}
+		mapped, err := fresh(source, field)
+		if err != nil {
+			return canonical.Identifier{}, err
+		}
+		mappings[source] = mapped
+		return mapped, nil
+	}
+	mapCollection := func(source canonical.Identifier) (canonical.Identifier, error) {
+		return mapID(source, collectionMappings, "Collection")
+	}
+	mapFolder := func(source canonical.Identifier) (canonical.Identifier, error) {
+		return mapID(source, folderMappings, "Folder")
+	}
+	mapTag := func(source canonical.Identifier) (canonical.Identifier, error) {
+		return mapID(source, tagMappings, "Tag")
+	}
+	mapAssignment := func(source canonical.Identifier) (canonical.Identifier, error) {
+		return mapID(source, tagAssignmentMappings, "Tag Assignment")
+	}
+	mapBundle := func(source canonical.Identifier) (canonical.Identifier, error) {
+		return mapID(source, bundleMappings, "Bundle")
+	}
+	mapCause := func(source canonical.Identifier) (canonical.Identifier, error) {
+		mapped, exists := translated[source]
+		if !exists {
+			return canonical.Identifier{}, fmt.Errorf("Fork Content Event type %d Cause %s is unavailable", event.Type, hexIdentifier(source))
+		}
+		return mapped, nil
+	}
+	mapCauseSet := func(value canonical.Value, field string) ([]canonical.Value, error) {
+		values, err := parseCanonicalIdentifierSet(value, field, true)
+		if err != nil {
+			return nil, err
+		}
+		mapped := make([]canonical.Identifier, 0, len(values))
+		for _, source := range values {
+			destination, mapErr := mapCause(source)
+			if mapErr != nil {
+				return nil, mapErr
+			}
+			mapped = append(mapped, destination)
+		}
+		return identifiersToValues(sortUniqueIdentifiers(mapped)), nil
+	}
+	mapIDSet := func(value canonical.Value, field string, mapper func(canonical.Identifier) (canonical.Identifier, error)) ([]canonical.Value, error) {
+		values, err := parseCanonicalIdentifierSet(value, field, true)
+		if err != nil {
+			return nil, err
+		}
+		mapped := make([]canonical.Identifier, 0, len(values))
+		for _, source := range values {
+			destination, mapErr := mapper(source)
+			if mapErr != nil {
+				return nil, mapErr
+			}
+			mapped = append(mapped, destination)
+		}
+		return identifiersToValues(sortUniqueIdentifiers(mapped)), nil
+	}
+	mapNullable := func(value canonical.Value, field string, mapper func(canonical.Identifier) (canonical.Identifier, error)) (canonical.Value, error) {
+		if value == nil {
+			return nil, nil
+		}
+		source, ok := replicaIdentifierValue(value)
+		if !ok {
+			return nil, fmt.Errorf("Fork %s is invalid", field)
+		}
+		destination, err := mapper(source)
+		if err != nil {
+			return nil, err
+		}
+		return destination[:], nil
+	}
+	mapTarget := func(value canonical.Value) (canonical.Value, error) {
+		if !replicaMapHasKeys(value, 2) {
+			return nil, errors.New("Fork organization target is invalid")
+		}
+		kind, ok := replicaUnsignedNumber(replicaMapEntryMust(value, 0))
+		if !ok || (kind != 1 && kind != 2) {
+			return nil, errors.New("Fork organization target kind is invalid")
+		}
+		source, ok := replicaIdentifierValue(replicaMapEntryMust(value, 1))
+		if !ok {
+			return nil, errors.New("Fork organization target ID is invalid")
+		}
+		var destination canonical.Identifier
+		var err error
+		if kind == 1 {
+			destination, err = mapCollection(source)
+		} else {
+			destination, err = mapBundle(source)
+		}
+		if err != nil {
+			return nil, err
+		}
+		return canonical.Map{0: kind, 1: destination[:]}, nil
+	}
+	mapRedirects := func(value canonical.Value, field string, mapper func(canonical.Identifier) (canonical.Identifier, error)) (canonical.Value, error) {
+		entries, ok := replicaMapArrayValue(value)
+		if !ok {
+			return nil, fmt.Errorf("Fork %s redirects are invalid", field)
+		}
+		mapped := make([]canonical.Value, 0, len(entries))
+		for index, entry := range entries {
+			if !replicaMapHasKeys(entry, 2) {
+				return nil, fmt.Errorf("Fork %s redirect %d is invalid", field, index)
+			}
+			source, sourceOK := replicaIdentifier(entry, 0)
+			destination, destinationOK := replicaIdentifier(entry, 1)
+			if !sourceOK || !destinationOK {
+				return nil, fmt.Errorf("Fork %s redirect %d IDs are invalid", field, index)
+			}
+			mappedSource, err := mapper(source)
+			if err != nil {
+				return nil, err
+			}
+			mappedDestination, err := mapper(destination)
+			if err != nil {
+				return nil, err
+			}
+			mapped = append(mapped, canonical.Map{0: mappedSource[:], 1: mappedDestination[:]})
+		}
+		sort.Slice(mapped, func(left, right int) bool {
+			leftBytes, _ := canonical.EncodeValue(mapped[left])
+			rightBytes, _ := canonical.EncodeValue(mapped[right])
+			return bytes.Compare(leftBytes, rightBytes) < 0
+		})
+		return mapped, nil
+	}
+	noDependencies := func() ([]canonical.Dependency, error) {
+		if len(event.Dependencies) != 0 {
+			return nil, fmt.Errorf("Fork organization Content Event type %d has unexpected dependencies", event.Type)
+		}
+		return nil, nil
+	}
+	switch event.Type {
+	case 7:
+		if !replicaMapHasKeys(body, 2) {
+			return nil, nil, errors.New("Fork Collection Title body is invalid")
+		}
+		source, ok := replicaIdentifier(body, 0)
+		if !ok {
+			return nil, nil, errors.New("Fork Collection Title Collection ID is invalid")
+		}
+		destination, err := mapCollection(source)
+		if err != nil {
+			return nil, nil, err
+		}
+		dependencies, depErr := noDependencies()
+		return canonical.Map{0: destination[:], 1: replicaMapEntryMust(body, 1)}, dependencies, depErr
+	case 8:
+		if !replicaMapHasKeys(body, 2) {
+			return nil, nil, errors.New("Fork Collections Merged body is invalid")
+		}
+		sources, err := mapIDSet(replicaMapEntryMust(body, 0), "Source Collection IDs", mapCollection)
+		if err != nil {
+			return nil, nil, err
+		}
+		destinationSource, ok := replicaIdentifier(body, 1)
+		if !ok {
+			return nil, nil, errors.New("Fork destination Collection ID is invalid")
+		}
+		destination, err := mapCollection(destinationSource)
+		if err != nil {
+			return nil, nil, err
+		}
+		dependencies, depErr := noDependencies()
+		return canonical.Map{0: sources, 1: destination[:]}, dependencies, depErr
+	case 9, 25:
+		if !replicaMapHasKeys(body, 1) {
+			return nil, nil, fmt.Errorf("Fork Content Event type %d body is invalid", event.Type)
+		}
+		cause, ok := replicaIdentifier(body, 0)
+		if !ok {
+			return nil, nil, fmt.Errorf("Fork Content Event type %d Cause ID is invalid", event.Type)
+		}
+		mapped, err := mapCause(cause)
+		if err != nil {
+			return nil, nil, err
+		}
+		dependencies, depErr := noDependencies()
+		return canonical.Map{0: mapped[:]}, dependencies, depErr
+	case 10, 26:
+		if !replicaMapHasKeys(body, 2) {
+			return nil, nil, fmt.Errorf("Fork Content Event type %d body is invalid", event.Type)
+		}
+		causes, err := mapCauseSet(replicaMapEntryMust(body, 0), "Conflict Cause IDs")
+		if err != nil {
+			return nil, nil, err
+		}
+		mapper := mapCollection
+		if event.Type == 26 {
+			mapper = mapTag
+		}
+		redirects, err := mapRedirects(replicaMapEntryMust(body, 1), "Conflict", mapper)
+		if err != nil {
+			return nil, nil, err
+		}
+		dependencies, depErr := noDependencies()
+		return canonical.Map{0: causes, 1: redirects}, dependencies, depErr
+	case 11:
+		if !replicaMapHasKeys(body, 2) {
+			return nil, nil, errors.New("Fork Collection Folder Placement body is invalid")
+		}
+		collection, ok := replicaIdentifier(body, 0)
+		if !ok {
+			return nil, nil, errors.New("Fork Collection Folder Placement Collection ID is invalid")
+		}
+		mappedCollection, err := mapCollection(collection)
+		if err != nil {
+			return nil, nil, err
+		}
+		mappedFolder, err := mapNullable(replicaMapEntryMust(body, 1), "Folder ID", mapFolder)
+		if err != nil {
+			return nil, nil, err
+		}
+		dependencies, depErr := noDependencies()
+		return canonical.Map{0: mappedCollection[:], 1: mappedFolder}, dependencies, depErr
+	case 12:
+		if !replicaMapHasKeys(body, 3) {
+			return nil, nil, errors.New("Fork Folder Created body is invalid")
+		}
+		folder, ok := replicaIdentifier(body, 0)
+		if !ok {
+			return nil, nil, errors.New("Fork Folder Created Folder ID is invalid")
+		}
+		mappedFolder, err := mapFolder(folder)
+		if err != nil {
+			return nil, nil, err
+		}
+		parent, err := mapNullable(replicaMapEntryMust(body, 2), "Parent Folder ID", mapFolder)
+		if err != nil {
+			return nil, nil, err
+		}
+		dependencies, depErr := noDependencies()
+		return canonical.Map{0: mappedFolder[:], 1: replicaMapEntryMust(body, 1), 2: parent}, dependencies, depErr
+	case 13:
+		if !replicaMapHasKeys(body, 2) {
+			return nil, nil, errors.New("Fork Folder Renamed body is invalid")
+		}
+		folder, ok := replicaIdentifier(body, 0)
+		if !ok {
+			return nil, nil, errors.New("Fork Folder Renamed Folder ID is invalid")
+		}
+		mappedFolder, err := mapFolder(folder)
+		if err != nil {
+			return nil, nil, err
+		}
+		dependencies, depErr := noDependencies()
+		return canonical.Map{0: mappedFolder[:], 1: replicaMapEntryMust(body, 1)}, dependencies, depErr
+	case 14:
+		if !replicaMapHasKeys(body, 2) {
+			return nil, nil, errors.New("Fork Folder Parent Placement body is invalid")
+		}
+		folder, ok := replicaIdentifier(body, 0)
+		if !ok {
+			return nil, nil, errors.New("Fork Folder Parent Placement Folder ID is invalid")
+		}
+		mappedFolder, err := mapFolder(folder)
+		if err != nil {
+			return nil, nil, err
+		}
+		parent, err := mapNullable(replicaMapEntryMust(body, 1), "Parent Folder ID", mapFolder)
+		if err != nil {
+			return nil, nil, err
+		}
+		dependencies, depErr := noDependencies()
+		return canonical.Map{0: mappedFolder[:], 1: parent}, dependencies, depErr
+	case 15, 16:
+		if !replicaMapHasKeys(body, 1) {
+			return nil, nil, fmt.Errorf("Fork Folder Event type %d body is invalid", event.Type)
+		}
+		folder, ok := replicaIdentifier(body, 0)
+		if !ok {
+			return nil, nil, fmt.Errorf("Fork Folder Event type %d Folder ID is invalid", event.Type)
+		}
+		mappedFolder, err := mapFolder(folder)
+		if err != nil {
+			return nil, nil, err
+		}
+		dependencies, depErr := noDependencies()
+		return canonical.Map{0: mappedFolder[:]}, dependencies, depErr
+	case 17:
+		if !replicaMapHasKeys(body, 2) {
+			return nil, nil, errors.New("Fork Folder Conflict Resolution body is invalid")
+		}
+		causes, err := mapCauseSet(replicaMapEntryMust(body, 0), "Conflicting Folder Cause IDs")
+		if err != nil {
+			return nil, nil, err
+		}
+		placements, ok := replicaMapArrayValue(replicaMapEntryMust(body, 1))
+		if !ok {
+			return nil, nil, errors.New("Fork Folder placements are invalid")
+		}
+		mapped := make([]canonical.Value, 0, len(placements))
+		for _, entry := range placements {
+			if !replicaMapHasKeys(entry, 2) {
+				return nil, nil, errors.New("Fork Folder placement is invalid")
+			}
+			folder, ok := replicaIdentifier(entry, 0)
+			if !ok {
+				return nil, nil, errors.New("Fork Folder placement Folder ID is invalid")
+			}
+			mappedFolder, err := mapFolder(folder)
+			if err != nil {
+				return nil, nil, err
+			}
+			parent, err := mapNullable(replicaMapEntryMust(entry, 1), "Parent Folder ID", mapFolder)
+			if err != nil {
+				return nil, nil, err
+			}
+			mapped = append(mapped, canonical.Map{0: mappedFolder[:], 1: parent})
+		}
+		sort.Slice(mapped, func(left, right int) bool {
+			leftID, _ := replicaIdentifier(mapped[left], 0)
+			rightID, _ := replicaIdentifier(mapped[right], 0)
+			return bytes.Compare(leftID[:], rightID[:]) < 0
+		})
+		dependencies, depErr := noDependencies()
+		return canonical.Map{0: causes, 1: mapped}, dependencies, depErr
+	case 18, 19:
+		if !replicaMapHasKeys(body, 2) {
+			return nil, nil, fmt.Errorf("Fork Tag Event type %d body is invalid", event.Type)
+		}
+		tag, ok := replicaIdentifier(body, 0)
+		if !ok {
+			return nil, nil, fmt.Errorf("Fork Tag Event type %d Tag ID is invalid", event.Type)
+		}
+		mappedTag, err := mapTag(tag)
+		if err != nil {
+			return nil, nil, err
+		}
+		dependencies, depErr := noDependencies()
+		return canonical.Map{0: mappedTag[:], 1: replicaMapEntryMust(body, 1)}, dependencies, depErr
+	case 20:
+		if !replicaMapHasKeys(body, 3) {
+			return nil, nil, errors.New("Fork Tag Assigned body is invalid")
+		}
+		assignment, ok := replicaIdentifier(body, 0)
+		if !ok {
+			return nil, nil, errors.New("Fork Tag Assignment ID is invalid")
+		}
+		mappedAssignment, err := mapAssignment(assignment)
+		if err != nil {
+			return nil, nil, err
+		}
+		tag, ok := replicaIdentifier(body, 1)
+		if !ok {
+			return nil, nil, errors.New("Fork Tag ID is invalid")
+		}
+		mappedTag, err := mapTag(tag)
+		if err != nil {
+			return nil, nil, err
+		}
+		target, err := mapTarget(replicaMapEntryMust(body, 2))
+		if err != nil {
+			return nil, nil, err
+		}
+		dependencies, depErr := noDependencies()
+		return canonical.Map{0: mappedAssignment[:], 1: mappedTag[:], 2: target}, dependencies, depErr
+	case 21:
+		if !replicaMapHasKeys(body, 1) {
+			return nil, nil, errors.New("Fork Tag Removed body is invalid")
+		}
+		causes, err := mapCauseSet(replicaMapEntryMust(body, 0), "Tag Assignment Cause IDs")
+		if err != nil {
+			return nil, nil, err
+		}
+		dependencies, depErr := noDependencies()
+		return canonical.Map{0: causes}, dependencies, depErr
+	case 22, 23:
+		if !replicaMapHasKeys(body, 1) {
+			return nil, nil, fmt.Errorf("Fork Tag Event type %d body is invalid", event.Type)
+		}
+		tag, ok := replicaIdentifier(body, 0)
+		if !ok {
+			return nil, nil, fmt.Errorf("Fork Tag Event type %d Tag ID is invalid", event.Type)
+		}
+		mappedTag, err := mapTag(tag)
+		if err != nil {
+			return nil, nil, err
+		}
+		dependencies, depErr := noDependencies()
+		return canonical.Map{0: mappedTag[:]}, dependencies, depErr
+	case 24:
+		if !replicaMapHasKeys(body, 2) {
+			return nil, nil, errors.New("Fork Tags Merged body is invalid")
+		}
+		sources, err := mapIDSet(replicaMapEntryMust(body, 0), "Source Tag IDs", mapTag)
+		if err != nil {
+			return nil, nil, err
+		}
+		destinationSource, ok := replicaIdentifier(body, 1)
+		if !ok {
+			return nil, nil, errors.New("Fork destination Tag ID is invalid")
+		}
+		destination, err := mapTag(destinationSource)
+		if err != nil {
+			return nil, nil, err
+		}
+		dependencies, depErr := noDependencies()
+		return canonical.Map{0: sources, 1: destination[:]}, dependencies, depErr
+	default:
+		return nil, nil, fmt.Errorf("Fork organization Content Event type %d is not supported", event.Type)
+	}
 }
 
 func reauthorForkNoteEvent(
