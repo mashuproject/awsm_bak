@@ -31,7 +31,9 @@ type keyEpochReplayState struct {
 	recoveryMembers       map[canonical.Identifier]canonical.Identifier
 	recoveryRevisions     map[canonical.Identifier]uint64
 	recoverySigningKeys   map[canonical.Identifier]ed25519.PublicKey
+	recoveryCauses        map[canonical.Identifier]canonical.Identifier
 	recoveryTargets       map[canonical.Identifier]uint64
+	recoveryConflicts     map[canonical.Identifier][]recoveryConflictCandidate
 	clientTargets         map[canonical.Identifier]struct{}
 	deliveredSlots        map[string]struct{}
 	members               map[canonical.Identifier]struct{}
@@ -53,6 +55,11 @@ type recoveryReplacement struct {
 	descriptorBytes []byte
 	slotsBytes      []byte
 	possessionProof []byte
+}
+
+type recoveryConflictCandidate struct {
+	headRecordID         canonical.Identifier
+	recoveryCredentialID canonical.Identifier
 }
 
 type keyDelivery struct {
@@ -173,7 +180,9 @@ func replayAuthenticatedKeyEpochs(events []canonical.Event, genesis canonical.Ev
 		recoveryMembers:       map[canonical.Identifier]canonical.Identifier{firstRecovery: firstMember},
 		recoveryRevisions:     map[canonical.Identifier]uint64{firstRecovery: 0},
 		recoverySigningKeys:   map[canonical.Identifier]ed25519.PublicKey{firstRecovery: genesisRecoverySigningKey(genesis)},
+		recoveryCauses:        map[canonical.Identifier]canonical.Identifier{firstRecovery: genesisID},
 		recoveryTargets:       map[canonical.Identifier]uint64{firstRecovery: 0},
+		recoveryConflicts:     map[canonical.Identifier][]recoveryConflictCandidate{},
 		clientTargets:         map[canonical.Identifier]struct{}{firstClient: {}},
 		deliveredSlots:        map[string]struct{}{},
 		invitations:           map[canonical.Identifier]invitationCreation{},
@@ -355,6 +364,7 @@ func replayAuthenticatedKeyEpochs(events []canonical.Event, genesis canonical.Ev
 			current.recoveryMembers[acceptance.recoveryCredentialID] = acceptance.memberID
 			current.recoveryRevisions[acceptance.recoveryCredentialID] = acceptance.recoveryRevision
 			current.recoverySigningKeys[acceptance.recoveryCredentialID] = append(ed25519.PublicKey(nil), acceptance.recoverySigningKey...)
+			current.recoveryCauses[acceptance.recoveryCredentialID] = event.RecordID
 			current.recoveryTargets[acceptance.recoveryCredentialID] = acceptance.recoveryRevision
 			if acceptance.administrator {
 				current.administrators[acceptance.memberID] = struct{}{}
@@ -577,6 +587,7 @@ func replayAuthenticatedKeyEpochs(events []canonical.Event, genesis canonical.Ev
 			current.recoveryMembers[replacement.recoveryID] = replacement.memberID
 			current.recoveryRevisions[replacement.recoveryID] = replacement.revision
 			current.recoverySigningKeys[replacement.recoveryID] = append(ed25519.PublicKey(nil), replacement.signingKey...)
+			current.recoveryCauses[replacement.recoveryID] = event.RecordID
 			current.recoveryTargets[replacement.recoveryID] = replacement.revision
 		}
 		if event.Family == canonical.AuthorityFamily && event.Type == 12 {
@@ -660,6 +671,7 @@ func replayAuthenticatedKeyEpochs(events []canonical.Event, genesis canonical.Ev
 			}
 			current.closed = true
 		}
+		deriveRecoveryConflicts(&current)
 		delete(visiting, recordID)
 		cache[recordID] = cloneKeyEpochReplayState(current)
 		return current, nil
@@ -732,7 +744,9 @@ func cloneKeyEpochReplayState(value keyEpochReplayState) keyEpochReplayState {
 		recoveryMembers:       make(map[canonical.Identifier]canonical.Identifier, len(value.recoveryMembers)),
 		recoveryRevisions:     make(map[canonical.Identifier]uint64, len(value.recoveryRevisions)),
 		recoverySigningKeys:   make(map[canonical.Identifier]ed25519.PublicKey, len(value.recoverySigningKeys)),
+		recoveryCauses:        make(map[canonical.Identifier]canonical.Identifier, len(value.recoveryCauses)),
 		recoveryTargets:       make(map[canonical.Identifier]uint64, len(value.recoveryTargets)),
+		recoveryConflicts:     make(map[canonical.Identifier][]recoveryConflictCandidate, len(value.recoveryConflicts)),
 		clientTargets:         make(map[canonical.Identifier]struct{}, len(value.clientTargets)),
 		deliveredSlots:        make(map[string]struct{}, len(value.deliveredSlots)),
 		invitations:           make(map[canonical.Identifier]invitationCreation, len(value.invitations)),
@@ -778,6 +792,12 @@ func cloneKeyEpochReplayState(value keyEpochReplayState) keyEpochReplayState {
 	for credentialID, signingKey := range value.recoverySigningKeys {
 		clone.recoverySigningKeys[credentialID] = append(ed25519.PublicKey(nil), signingKey...)
 	}
+	for credentialID, causeID := range value.recoveryCauses {
+		clone.recoveryCauses[credentialID] = causeID
+	}
+	for memberID, candidates := range value.recoveryConflicts {
+		clone.recoveryConflicts[memberID] = append([]recoveryConflictCandidate(nil), candidates...)
+	}
 	for id := range value.clientTargets {
 		clone.clientTargets[id] = struct{}{}
 	}
@@ -819,7 +839,9 @@ func mergeKeyEpochReplayStates(values []keyEpochReplayState) keyEpochReplayState
 			recoveryMembers:       make(map[canonical.Identifier]canonical.Identifier),
 			recoveryRevisions:     make(map[canonical.Identifier]uint64),
 			recoverySigningKeys:   make(map[canonical.Identifier]ed25519.PublicKey),
+			recoveryCauses:        make(map[canonical.Identifier]canonical.Identifier),
 			recoveryTargets:       make(map[canonical.Identifier]uint64),
+			recoveryConflicts:     make(map[canonical.Identifier][]recoveryConflictCandidate),
 			clientTargets:         make(map[canonical.Identifier]struct{}),
 			deliveredSlots:        make(map[string]struct{}),
 			invitations:           make(map[canonical.Identifier]invitationCreation),
@@ -885,6 +907,11 @@ func mergeKeyEpochReplayStates(values []keyEpochReplayState) keyEpochReplayState
 				merged.recoverySigningKeys[credentialID] = append(ed25519.PublicKey(nil), signingKey...)
 			}
 		}
+		for credentialID, causeID := range value.recoveryCauses {
+			if _, exists := merged.recoveryCauses[credentialID]; !exists {
+				merged.recoveryCauses[credentialID] = causeID
+			}
+		}
 		for id := range value.clientTargets {
 			merged.clientTargets[id] = struct{}{}
 		}
@@ -921,8 +948,39 @@ func mergeKeyEpochReplayStates(values []keyEpochReplayState) keyEpochReplayState
 		}
 		merged.closed = merged.closed || value.closed
 	}
+	deriveRecoveryConflicts(&merged)
 	reduceInvitationConflicts(&merged)
 	return merged
+}
+
+func deriveRecoveryConflicts(state *keyEpochReplayState) {
+	if state == nil {
+		return
+	}
+	state.recoveryConflicts = make(map[canonical.Identifier][]recoveryConflictCandidate)
+	byMember := make(map[canonical.Identifier][]recoveryConflictCandidate)
+	for recoveryID := range state.recoveryTargets {
+		memberID, memberOK := state.recoveryMembers[recoveryID]
+		causeID, causeOK := state.recoveryCauses[recoveryID]
+		if !memberOK || !causeOK {
+			continue
+		}
+		byMember[memberID] = append(byMember[memberID], recoveryConflictCandidate{
+			headRecordID: causeID, recoveryCredentialID: recoveryID,
+		})
+	}
+	for memberID, candidates := range byMember {
+		if len(candidates) < 2 {
+			continue
+		}
+		sort.Slice(candidates, func(left, right int) bool {
+			if candidates[left].headRecordID != candidates[right].headRecordID {
+				return bytes.Compare(candidates[left].headRecordID[:], candidates[right].headRecordID[:]) < 0
+			}
+			return bytes.Compare(candidates[left].recoveryCredentialID[:], candidates[right].recoveryCredentialID[:]) < 0
+		})
+		state.recoveryConflicts[memberID] = candidates
+	}
 }
 
 func reduceInvitationConflicts(state *keyEpochReplayState) {

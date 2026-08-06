@@ -56,8 +56,19 @@ type AuthorityState struct {
 	AdministratorIDs               []canonical.Identifier
 	ActiveClientCredentialIDs      []canonical.Identifier
 	EffectiveRecoveryCredentialIDs []canonical.Identifier
+	RecoveryConflicts              []AuthorityRecoveryConflict
 	CurrentKeyEpochIDs             []canonical.Identifier
 	Lifecycle                      string
+}
+
+type AuthorityRecoveryConflict struct {
+	MemberID   canonical.Identifier
+	Candidates []AuthorityRecoveryConflictCandidate
+}
+
+type AuthorityRecoveryConflictCandidate struct {
+	HeadRecordID         canonical.Identifier
+	RecoveryCredentialID canonical.Identifier
 }
 
 func NewReplica(baseline canonical.Baseline) (*Replica, error) {
@@ -464,6 +475,18 @@ func (r *Replica) AuthorityState() (AuthorityState, error) {
 		CurrentKeyEpochIDs:             sortedIdentifierKeys(replayed.heads),
 		Lifecycle:                      "Open",
 	}
+	for memberID, candidates := range replayed.recoveryConflicts {
+		conflict := AuthorityRecoveryConflict{MemberID: memberID, Candidates: make([]AuthorityRecoveryConflictCandidate, 0, len(candidates))}
+		for _, candidate := range candidates {
+			conflict.Candidates = append(conflict.Candidates, AuthorityRecoveryConflictCandidate{
+				HeadRecordID: candidate.headRecordID, RecoveryCredentialID: candidate.recoveryCredentialID,
+			})
+		}
+		state.RecoveryConflicts = append(state.RecoveryConflicts, conflict)
+	}
+	sort.Slice(state.RecoveryConflicts, func(left, right int) bool {
+		return bytes.Compare(state.RecoveryConflicts[left].MemberID[:], state.RecoveryConflicts[right].MemberID[:]) < 0
+	})
 	for credentialID := range replayed.clientTargets {
 		if _, active := replayed.activeClientMember(credentialID); active {
 			state.ActiveClientCredentialIDs = append(state.ActiveClientCredentialIDs, credentialID)

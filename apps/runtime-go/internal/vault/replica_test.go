@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/mashuproject/awsm_bak/apps/runtime-go/internal/canonical"
+	awsmcrypto "github.com/mashuproject/awsm_bak/apps/runtime-go/internal/crypto"
 )
 
 func TestReplicaAdmitsAuthenticatedCreationAndTracksFrontiers(t *testing.T) {
@@ -318,6 +319,53 @@ func TestReplicaAdvancesFeatureSetAfterAuthenticatedActivation(t *testing.T) {
 	}
 	if err := replica.AdmitEvent(wrongChild, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err == nil {
 		t.Fatal("Replica accepted an Event with a stale Required Feature Set")
+	}
+}
+
+func TestReplicaSurfacesConcurrentRecoveryReplacementConflict(t *testing.T) {
+	prepared := deterministicCreation(t)
+	replica, err := NewReplica(prepared.Baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := replica.AdmitEvent(prepared.Genesis, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit Genesis: %v", err)
+	}
+	firstID := filledCreationID(232)
+	secondID := filledCreationID(233)
+	first := signRecoveryReplacementFixture(t, prepared, firstID, bytes.Repeat([]byte{0x81}, 16), 1, 218)
+	second := signRecoveryReplacementFixture(t, prepared, secondID, bytes.Repeat([]byte{0x82}, 16), 1, 219)
+	if err := replica.AdmitEvent(first, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit first Recovery Replacement: %v", err)
+	}
+	if err := replica.AdmitEvent(second, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit concurrent Recovery Replacement: %v", err)
+	}
+	state, err := replica.AuthorityState()
+	if err != nil {
+		t.Fatalf("AuthorityState: %v", err)
+	}
+	if len(state.RecoveryConflicts) != 1 || state.RecoveryConflicts[0].MemberID != prepared.IDs.FirstMemberID {
+		t.Fatalf("AuthorityState RecoveryConflicts = %#v", state.RecoveryConflicts)
+	}
+	if len(state.RecoveryConflicts[0].Candidates) != 2 {
+		t.Fatalf("Recovery conflict candidates = %#v", state.RecoveryConflicts[0].Candidates)
+	}
+	resolutionID := filledCreationID(234)
+	resolutionParents := []canonical.Identifier{first.RecordID, second.RecordID}
+	sort.Slice(resolutionParents, func(left, right int) bool {
+		return bytes.Compare(resolutionParents[left][:], resolutionParents[right][:]) < 0
+	})
+	resolution := signRecoveryReplacementFixtureWithParents(t, prepared, resolutionParents, []canonical.Identifier{firstID, secondID}, resolutionID, bytes.Repeat([]byte{0x83}, 16), 2, 220)
+	if err := replica.AdmitEvent(resolution, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit Recovery Conflict resolution: %v", err)
+	}
+	state, err = replica.AuthorityState()
+	if err != nil {
+		t.Fatalf("AuthorityState after Recovery Conflict resolution: %v", err)
+	}
+	if len(state.RecoveryConflicts) != 0 || len(state.EffectiveRecoveryCredentialIDs) != 1 || state.EffectiveRecoveryCredentialIDs[0] != resolutionID {
+		t.Fatalf("AuthorityState after Recovery Conflict resolution = %#v", state)
 	}
 }
 
@@ -768,6 +816,57 @@ func signInvitationCancellationFixture(t *testing.T, prepared PreparedCanonicalV
 	}, ed25519.PrivateKey(prepared.ClientKeys.SigningSecretKey))
 	if err != nil {
 		t.Fatalf("sign Invitation Cancellation: %v", err)
+	}
+	return event
+}
+
+func signRecoveryReplacementFixture(t *testing.T, prepared PreparedCanonicalVaultCreation, recoveryID [32]byte, entropy []byte, revision uint64, assertedAt int64) canonical.Event {
+	return signRecoveryReplacementFixtureWithParents(t, prepared, []canonical.Identifier{prepared.Genesis.RecordID}, []canonical.Identifier{prepared.IDs.RecoveryCredentialID}, recoveryID, entropy, revision, assertedAt)
+}
+
+func signRecoveryReplacementFixtureWithParents(t *testing.T, prepared PreparedCanonicalVaultCreation, parents []canonical.Identifier, replacedIDs []canonical.Identifier, recoveryID [32]byte, entropy []byte, revision uint64, assertedAt int64) canonical.Event {
+	t.Helper()
+	keys, err := awsmcrypto.DeriveRecoveryCredential(entropy)
+	if err != nil {
+		t.Fatalf("derive replacement Recovery Credential: %v", err)
+	}
+	envelope, err := awsmcrypto.SealKeyEnvelope(awsmcrypto.KeyEnvelopeInput{
+		VaultID: prepared.IDs.VaultID, KeyEpochID: prepared.KeyEpochID, KeyEpochKey: prepared.KeyEpochKey,
+		TargetKind: awsmcrypto.RecoveryCredentialTarget, TargetCredentialID: recoveryID, TargetRevision: &revision,
+		RecipientWrappingPublicKey: keys.WrappingPublicKey, Padding: bytes.Repeat([]byte{0x91}, 32), EphemeralSeed: bytes.Repeat([]byte{0x92}, 32),
+	})
+	if err != nil {
+		t.Fatalf("seal replacement Recovery Envelope: %v", err)
+	}
+	descriptor := canonical.Map{0: recoveryID[:], 1: prepared.IDs.FirstMemberID[:], 2: revision, 3: keys.SigningPublicKey, 4: keys.WrappingPublicKey}
+	slot := canonical.Map{0: prepared.KeyEpochID[:], 1: uint64(1), 2: recoveryID[:], 3: revision, 4: envelope.ID[:]}
+	slots := canonicalSetValues([]canonical.Value{slot})
+	descriptorBytes, err := canonical.EncodeValue(descriptor)
+	if err != nil {
+		t.Fatalf("encode replacement descriptor: %v", err)
+	}
+	slotsBytes, err := canonical.EncodeValue(slots)
+	if err != nil {
+		t.Fatalf("encode replacement slots: %v", err)
+	}
+	parentValues := make([]canonical.Value, 0, len(parents))
+	for _, parent := range parents {
+		parentValues = append(parentValues, parent[:])
+	}
+	canonicalParents := canonicalSetValues(parentValues)
+	transcript, err := canonical.Transcript("awsm:recovery-replacement-possession:v1", prepared.IDs.VaultID[:], prepared.IDs.FirstMemberID[:], mustCanonical(canonicalParents), descriptorBytes, slotsBytes)
+	if err != nil {
+		t.Fatalf("replacement possession transcript: %v", err)
+	}
+	event, err := canonical.SignEvent(canonical.EventInput{
+		VaultID: prepared.IDs.VaultID, GenerationID: prepared.IDs.GenerationID,
+		ParentRecordIDs: parents, AuthorityParentIDs: parents,
+		Dependencies: []canonical.Dependency{{Type: 7, ID: envelope.ID}}, RequiredFeatureSetID: prepared.RequiredFeatureSetID,
+		Extensions: map[string][]byte{}, Family: canonical.AuthorityFamily, Type: 11, SignerCredentialID: prepared.IDs.ClientCredentialID,
+		AssertedAt: assertedAt, Body: canonical.Map{0: prepared.IDs.FirstMemberID[:], 1: canonicalSetValues(identifiersToValues(replacedIDs)), 2: descriptor, 3: slots, 4: ed25519.Sign(keys.SigningSecretKey, transcript)},
+	}, ed25519.PrivateKey(prepared.ClientKeys.SigningSecretKey))
+	if err != nil {
+		t.Fatalf("sign Recovery Replacement: %v", err)
 	}
 	return event
 }
