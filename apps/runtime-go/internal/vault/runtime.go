@@ -1503,9 +1503,6 @@ func (r *Runtime) beginFork(ctx context.Context, id string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if value.Lifecycle != "Open" {
-		return nil, commandError("VAULT_READ_ONLY", "A closed Vault cannot be Forked from this Client.")
-	}
 	if r.pending != nil {
 		return nil, commandError("VAULT_SETUP_PENDING", "Finish or cancel the existing Vault setup first.")
 	}

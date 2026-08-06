@@ -646,6 +646,35 @@ func TestForkCreatesFreshCanonicalReplicaForEmptyVault(t *testing.T) {
 	}
 }
 
+func TestForkCreatesFreshVaultFromClosedSource(t *testing.T) {
+	ctx := context.Background()
+	state := store.NewMemoryState()
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceID := createVaultForTest(t, runtime, "Closed Fork")
+	if _, err := runtime.Handle(ctx, mustJSON(map[string]any{"type": "CloseVault", "expectedVaultId": sourceID})); err != nil {
+		t.Fatalf("close source Vault: %v", err)
+	}
+	started, err := runtime.Handle(ctx, mustJSON(map[string]any{"type": "BeginVaultFork", "expectedVaultId": sourceID}))
+	if err != nil {
+		t.Fatalf("begin Fork from closed source: %v", err)
+	}
+	setup := started.(map[string]string)
+	confirmed, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "ConfirmVaultFork", "setupId": setup["setupId"], "recoveryPhrase": setup["recoveryPhrase"],
+	}))
+	if err != nil {
+		t.Fatalf("confirm Fork from closed source: %v", err)
+	}
+	forkID := confirmed.(map[string]string)["vaultId"]
+	if forkID == sourceID || runtime.vaults[forkID] == nil || runtime.vaults[forkID].Lifecycle != "Open" {
+		t.Fatalf("Fork from closed source = %#v, want a fresh Open Vault", runtime.vaults[forkID])
+	}
+}
+
 func TestRecoverMemberEnrollsFreshClientCredentialAndReopens(t *testing.T) {
 	ctx := context.Background()
 	state := store.NewMemoryState()
