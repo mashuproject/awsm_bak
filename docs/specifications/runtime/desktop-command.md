@@ -66,9 +66,10 @@ the package encrypted, requires an explicit passphrase for each operation, and r
 Vault projection after a successful Import. A locally available
 Artifact row offers an explicit confirmation before issuing `StorageRelief`; after the Runtime
 commits the eviction, the view refetches Library state and shows the returned loss warning and
-`Needs hydration` state. The Hosted Replica panel can create, rename, pause/resume, materialize,
-pull, and retire local Remote bindings. Retirement does not contact or delete the Hosted Replica.
-The Wails view does not claim that another Replica exists.
+`Needs hydration` state. The Hosted Replica panel can create or attach an existing Host Replica,
+inspect opaque Replica candidates before selecting one, rename, pause/resume, materialize, pull,
+and retire local Remote bindings. Retirement does not contact or delete the Hosted Replica. The
+Wails view does not claim that another Replica exists.
 
 Successful responses use:
 

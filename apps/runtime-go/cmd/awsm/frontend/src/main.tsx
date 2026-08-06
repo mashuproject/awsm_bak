@@ -152,6 +152,16 @@ type Remote = {
   readonly replicaHandle: string;
 };
 
+type HostedReplicaAttachmentCandidate = {
+  readonly replicaHandle: string;
+  readonly storedBytes: number;
+};
+
+type HostedReplicaAttachmentSetup = {
+  readonly setupId: string;
+  readonly replicas: readonly HostedReplicaAttachmentCandidate[];
+};
+
 type Pairing = {
   readonly pairingId: string;
   readonly clientName: string;
@@ -221,6 +231,28 @@ function displayCaptureTitle(title: string | null, finalUrl: string): string {
 
 function displayIdentifier(identifier: string): string {
   return identifier.length <= 16 ? identifier : `${identifier.slice(0, 12)}…`;
+}
+
+function decodeHostedReplicaAttachment(value: unknown): HostedReplicaAttachmentSetup {
+  if (value === null || typeof value !== "object")
+    throw new Error("The Hosted Replica attachment response is invalid.");
+  const record = value as Record<string, unknown>;
+  if (typeof record.setupId !== "string" || !Array.isArray(record.replicas))
+    throw new Error("The Hosted Replica attachment response is invalid.");
+  const replicas = record.replicas.map((candidate) => {
+    if (candidate === null || typeof candidate !== "object")
+      throw new Error("The Hosted Replica candidate is invalid.");
+    const item = candidate as Record<string, unknown>;
+    if (
+      typeof item.replicaHandle !== "string" ||
+      typeof item.storedBytes !== "number" ||
+      !Number.isSafeInteger(item.storedBytes) ||
+      item.storedBytes < 0
+    )
+      throw new Error("The Hosted Replica candidate is invalid.");
+    return { replicaHandle: item.replicaHandle, storedBytes: item.storedBytes };
+  });
+  return { setupId: record.setupId, replicas };
 }
 
 function errorMessage(error: unknown): string {
@@ -870,6 +902,13 @@ function HostedReplicas({
   const [password, setPassword] = React.useState("");
   const [renamingRemoteId, setRenamingRemoteId] = React.useState<string>();
   const [renameName, setRenameName] = React.useState("");
+  const [attachmentOpen, setAttachmentOpen] = React.useState(false);
+  const [attachmentEndpoint, setAttachmentEndpoint] = React.useState("");
+  const [attachmentName, setAttachmentName] = React.useState("");
+  const [attachmentUsername, setAttachmentUsername] = React.useState("");
+  const [attachmentPassword, setAttachmentPassword] = React.useState("");
+  const [attachmentSetup, setAttachmentSetup] = React.useState<HostedReplicaAttachmentSetup>();
+  const [selectedAttachmentHandle, setSelectedAttachmentHandle] = React.useState<string>();
   const [busy, setBusy] = React.useState(false);
   const save = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -981,6 +1020,75 @@ function HostedReplicas({
       setBusy(false);
     }
   };
+  const clearAttachment = () => {
+    setAttachmentOpen(false);
+    setAttachmentSetup(undefined);
+    setSelectedAttachmentHandle(undefined);
+    setAttachmentEndpoint("");
+    setAttachmentName("");
+    setAttachmentUsername("");
+    setAttachmentPassword("");
+  };
+  const beginAttachment = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setBusy(true);
+    try {
+      const result = await binding.VaultCommand?.({
+        type: "BeginHostedReplicaAttachment",
+        expectedVaultId: vaultId,
+        endpoint: attachmentEndpoint,
+        name: attachmentName,
+        username: attachmentUsername,
+        password: attachmentPassword,
+      });
+      setAttachmentSetup(decodeHostedReplicaAttachment(result));
+      setSelectedAttachmentHandle(undefined);
+      setAttachmentPassword("");
+      onStatus("Hosted Replica candidates loaded.");
+    } catch (error) {
+      onError(error);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const confirmAttachment = async () => {
+    if (attachmentSetup === undefined || selectedAttachmentHandle === undefined) return;
+    setBusy(true);
+    try {
+      await binding.VaultCommand?.({
+        type: "ConfirmHostedReplicaAttachment",
+        expectedVaultId: vaultId,
+        setupId: attachmentSetup.setupId,
+        replicaHandle: selectedAttachmentHandle,
+      });
+      clearAttachment();
+      onRefresh();
+      onStatus("Hosted Replica attached to this Client.");
+    } catch (error) {
+      onError(error);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const cancelAttachment = async () => {
+    if (attachmentSetup === undefined) {
+      clearAttachment();
+      return;
+    }
+    setBusy(true);
+    try {
+      await binding.VaultCommand?.({
+        type: "CancelHostedReplicaAttachment",
+        setupId: attachmentSetup.setupId,
+      });
+      clearAttachment();
+      onStatus("Hosted Replica attachment cancelled.");
+    } catch (error) {
+      onError(error);
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <section className="grid gap-5" aria-labelledby="hosted-replicas-heading">
       <div className="grid gap-2">
@@ -1004,7 +1112,131 @@ function HostedReplicas({
         >
           Check for updates
         </Button>
+        {!attachmentOpen ? (
+          <Button type="button" variant="quiet" busy={busy} onClick={() => setAttachmentOpen(true)}>
+            Attach existing Hosted Replica
+          </Button>
+        ) : null}
       </ActionRow>
+      {attachmentOpen && attachmentSetup === undefined ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Attach an existing Hosted Replica</CardTitle>
+            <CardDescription>
+              Sign in to the Replica Host, inspect its opaque Replica choices, and attach one to
+              this Client. The Host remains another copy of the Vault.
+            </CardDescription>
+          </CardHeader>
+          <form
+            className="mt-6 grid max-w-xl gap-5"
+            onSubmit={(event) => void beginAttachment(event)}
+          >
+            <Field label="Hosted Replica HTTPS address for attachment">
+              <input
+                className={inputClassName}
+                type="url"
+                value={attachmentEndpoint}
+                onChange={(event) => setAttachmentEndpoint(event.target.value)}
+                required
+              />
+            </Field>
+            <Field label="Hosted Replica name for attachment">
+              <input
+                className={inputClassName}
+                value={attachmentName}
+                onChange={(event) => setAttachmentName(event.target.value)}
+                required
+              />
+            </Field>
+            <Field label="Account username for attachment">
+              <input
+                className={inputClassName}
+                value={attachmentUsername}
+                onChange={(event) => setAttachmentUsername(event.target.value)}
+                autoComplete="username"
+                required
+              />
+            </Field>
+            <Field label="Account password for attachment">
+              <input
+                className={inputClassName}
+                type="password"
+                value={attachmentPassword}
+                onChange={(event) => setAttachmentPassword(event.target.value)}
+                autoComplete="current-password"
+                required
+              />
+            </Field>
+            <ActionRow>
+              <Button type="submit" busy={busy}>
+                Find Hosted Replicas
+              </Button>
+              <Button
+                type="button"
+                variant="quiet"
+                busy={busy}
+                onClick={() => void cancelAttachment()}
+              >
+                Cancel attachment
+              </Button>
+            </ActionRow>
+          </form>
+        </Card>
+      ) : null}
+      {attachmentSetup !== undefined ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Choose a Hosted Replica</CardTitle>
+            <CardDescription>
+              These opaque candidates came from the Host. Choose the Replica this Client should
+              access; no Vault data is opened during selection.
+            </CardDescription>
+          </CardHeader>
+          <ul className="mt-6 grid gap-3">
+            {attachmentSetup.replicas.map((candidate) => (
+              <li
+                key={candidate.replicaHandle}
+                className="grid gap-2 border-t-2 border-awsm-border-subtle py-4"
+              >
+                <strong className="font-mono text-sm text-awsm-ink">
+                  {displayIdentifier(candidate.replicaHandle)}
+                </strong>
+                <span className="text-sm text-awsm-text-muted">
+                  {candidate.storedBytes.toLocaleString()} stored bytes
+                </span>
+                <Button
+                  type="button"
+                  variant={
+                    selectedAttachmentHandle === candidate.replicaHandle ? "primary" : "secondary"
+                  }
+                  busy={busy}
+                  onClick={() => setSelectedAttachmentHandle(candidate.replicaHandle)}
+                >
+                  Use Hosted Replica {displayIdentifier(candidate.replicaHandle)}
+                </Button>
+              </li>
+            ))}
+          </ul>
+          <ActionRow>
+            <Button
+              type="button"
+              busy={busy}
+              disabled={selectedAttachmentHandle === undefined}
+              onClick={() => void confirmAttachment()}
+            >
+              Attach selected Hosted Replica
+            </Button>
+            <Button
+              type="button"
+              variant="quiet"
+              busy={busy}
+              onClick={() => void cancelAttachment()}
+            >
+              Cancel attachment
+            </Button>
+          </ActionRow>
+        </Card>
+      ) : null}
       {remotes.length === 0 ? (
         <EmptyState title="No Hosted Replicas">
           <p>No Hosted Replicas are configured on this Client.</p>

@@ -463,7 +463,7 @@ test("Wails Vault surface exports and imports a Complete Export package", async 
 
 test("Wails Vault surface runs hosted pull, materialization, and Artifact hydration actions", async ({
   page,
-}) => {
+}, testInfo) => {
   const vaultId = "c".repeat(64);
   const artifactId = "d".repeat(64);
   await page.addInitScript(
@@ -499,6 +499,8 @@ test("Wails Vault surface runs hosted pull, materialization, and Artifact hydrat
           replicaHandle: "11111111-1111-4111-8111-111111111111",
         },
       ];
+      const attachmentSetupId = "attachment-setup-1";
+      const attachmentReplicaHandle = "22222222-2222-4222-8222-222222222222";
       const authority = {
         vaultId: selectedVaultId,
         activeMemberIds: ["1".repeat(64)],
@@ -520,7 +522,13 @@ test("Wails Vault surface runs hosted pull, materialization, and Artifact hydrat
             PendingPairings: async () => [],
             ListGrants: async () => [],
             RuntimeAddress: () => "127.0.0.1:37373",
-            VaultCommand: async (request: { type: string; remoteId?: string; name?: string }) => {
+            VaultCommand: async (request: {
+              type: string;
+              remoteId?: string;
+              name?: string;
+              setupId?: string;
+              replicaHandle?: string;
+            }) => {
               if (request.type === "GetState") return state;
               if (request.type === "ListLibraryProjection")
                 return {
@@ -534,6 +542,40 @@ test("Wails Vault surface runs hosted pull, materialization, and Artifact hydrat
                 };
               if (request.type === "ListRemotes") return remotes;
               if (request.type === "GetAuthorityState") return authority;
+              if (request.type === "BeginHostedReplicaAttachment") {
+                (globalThis as unknown as { __awsmCalls?: string[] }).__awsmCalls?.push(
+                  request.type,
+                );
+                return {
+                  setupId: attachmentSetupId,
+                  replicas: [{ replicaHandle: attachmentReplicaHandle, storedBytes: 4096 }],
+                };
+              }
+              if (request.type === "ConfirmHostedReplicaAttachment") {
+                (globalThis as unknown as { __awsmCalls?: string[] }).__awsmCalls?.push(
+                  request.type,
+                );
+                if (
+                  request.setupId !== attachmentSetupId ||
+                  request.replicaHandle !== attachmentReplicaHandle
+                )
+                  throw new Error("invalid Hosted Replica attachment");
+                const remote = {
+                  remoteId: "remote-2",
+                  name: "Attached Host",
+                  endpoint: "https://attached.example.test",
+                  enabled: true,
+                  replicaHandle: attachmentReplicaHandle,
+                };
+                remotes = [...remotes, remote];
+                return remote;
+              }
+              if (request.type === "CancelHostedReplicaAttachment") {
+                (globalThis as unknown as { __awsmCalls?: string[] }).__awsmCalls?.push(
+                  request.type,
+                );
+                return null;
+              }
               if (request.type === "RenameRemote") {
                 const remote = remotes.find((candidate) => candidate.remoteId === request.remoteId);
                 if (remote === undefined || request.name === undefined)
@@ -582,21 +624,65 @@ test("Wails Vault surface runs hosted pull, materialization, and Artifact hydrat
   await page.goto("/");
   await expect(page.getByText("Home Host", { exact: true })).toBeVisible();
   await expect(page.getByText("Enabled", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Rename Hosted Replica" }).click();
+  await page.getByRole("button", { name: "Attach existing Hosted Replica" }).click();
+  await page
+    .getByLabel("Hosted Replica HTTPS address for attachment")
+    .fill("https://attached.example.test");
+  await page.getByLabel("Hosted Replica name for attachment").fill("Attached Host");
+  await page.getByLabel("Account username for attachment").fill("alice");
+  await page.getByLabel("Account password for attachment").fill("secret");
+  await page.getByRole("button", { name: "Find Hosted Replicas" }).click();
+  await expect(page.getByRole("heading", { name: "Choose a Hosted Replica" })).toBeVisible();
+  await page.screenshot({
+    path: testInfo.outputPath("desktop-hosted-replica-selection-wide.png"),
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({
+    path: testInfo.outputPath("desktop-hosted-replica-selection-narrow.png"),
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.getByRole("button", { name: /^Use Hosted Replica/u }).click();
+  await page.getByRole("button", { name: "Attach selected Hosted Replica" }).click();
+  await expect(page.getByText("Attached Host", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Rename Hosted Replica" }).first().click();
   await page.getByLabel("New Hosted Replica name").fill("Renamed Host");
   await page.getByRole("button", { name: "Save Hosted Replica name" }).click();
   await expect(page.getByText("Renamed Host", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Materialize now" }).click();
+  await page.getByRole("button", { name: "Materialize now" }).first().click();
   await expect(page.getByText("Hosted Replica materialized.")).toBeVisible();
   await page.getByRole("button", { name: "Check for updates" }).click();
   await expect(page.getByText("Hosted Replica pull completed.")).toBeVisible();
   await page.getByRole("button", { name: "Hydrate Artifact" }).click();
   await expect(page.getByText("Available locally")).toBeVisible();
   page.once("dialog", (dialog) => dialog.accept());
-  await page.getByRole("button", { name: "Remove Hosted Replica" }).click();
+  await page.getByRole("button", { name: "Remove Hosted Replica" }).nth(1).click();
+  await expect(page.getByText("Attached Host", { exact: true })).toHaveCount(0);
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Remove Hosted Replica" }).first().click();
   await expect(page.getByText("No Hosted Replicas are configured on this Client.")).toBeVisible();
+  await page.getByRole("button", { name: "Attach existing Hosted Replica" }).click();
+  await page
+    .getByLabel("Hosted Replica HTTPS address for attachment")
+    .fill("https://attached.example.test");
+  await page.getByLabel("Hosted Replica name for attachment").fill("Cancelled Host");
+  await page.getByLabel("Account username for attachment").fill("alice");
+  await page.getByLabel("Account password for attachment").fill("secret");
+  await page.getByRole("button", { name: "Find Hosted Replicas" }).click();
+  await expect(page.getByRole("heading", { name: "Choose a Hosted Replica" })).toBeVisible();
+  await page.getByRole("button", { name: "Cancel attachment" }).click();
+  await expect(page.getByRole("heading", { name: "Choose a Hosted Replica" })).toHaveCount(0);
   const observed = await page.evaluate(
     () => (globalThis as unknown as { __awsmCalls: string[] }).__awsmCalls,
   );
-  expect(observed).toEqual(["MaterializeHostedReplica", "PullHostedReplicas", "HydrateArtifact"]);
+  expect(observed).toEqual([
+    "BeginHostedReplicaAttachment",
+    "ConfirmHostedReplicaAttachment",
+    "MaterializeHostedReplica",
+    "PullHostedReplicas",
+    "HydrateArtifact",
+    "BeginHostedReplicaAttachment",
+    "CancelHostedReplicaAttachment",
+  ]);
 });
