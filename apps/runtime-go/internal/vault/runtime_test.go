@@ -882,6 +882,56 @@ func TestRecoveryPhraseReplacementAuthorsAuthenticatedAuthorityEvent(t *testing.
 	}
 }
 
+func TestRotateKeyEpochAuthorsAuthenticatedTransitionAndReopens(t *testing.T) {
+	ctx := context.Background()
+	state := store.NewMemoryState()
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vaultID, _ := createVaultWithPhraseForTest(t, runtime, "Key Epoch rotation")
+	oldEpochID := runtime.vaults[vaultID].Canonical.KeyEpochID
+	result, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "RotateKeyEpoch", "expectedVaultId": vaultID,
+	}))
+	if err != nil {
+		t.Fatalf("RotateKeyEpoch: %v", err)
+	}
+	rotated, ok := result.(map[string]any)
+	if !ok {
+		t.Fatalf("RotateKeyEpoch result = %#v", result)
+	}
+	newEpochID, ok := rotated["keyEpochId"].(string)
+	if !ok || newEpochID == oldEpochID || !validDigest(newEpochID) {
+		t.Fatalf("RotateKeyEpoch key epoch = %#v", rotated["keyEpochId"])
+	}
+	if rotated["displayNumber"] != uint64(1) {
+		t.Fatalf("RotateKeyEpoch display number = %#v, want 1", rotated["displayNumber"])
+	}
+	recordID, ok := rotated["eventRecordId"].(string)
+	if !ok || !validDigest(recordID) {
+		t.Fatalf("RotateKeyEpoch event record = %#v", rotated["eventRecordId"])
+	}
+	record, ok := runtime.replicas[vaultID].Record(mustIdentifier(t, recordID))
+	if !ok || record.Event == nil || record.Event.Type != 12 {
+		t.Fatalf("RotateKeyEpoch record = %#v", record)
+	}
+	if got := runtime.vaults[vaultID].Canonical.KeyEpochID; got != newEpochID {
+		t.Fatalf("canonical current Key Epoch = %s, want %s", got, newEpochID)
+	}
+	if _, err := dependencies.Secrets.Get(trustedSecretService, epochSecretAccount(vaultID, newEpochID)); err != nil {
+		t.Fatalf("new Key Epoch secret: %v", err)
+	}
+	restarted, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatalf("restart after Key Epoch rotation: %v", err)
+	}
+	if restarted.vaults[vaultID].Canonical.KeyEpochID != newEpochID {
+		t.Fatalf("restarted current Key Epoch = %s, want %s", restarted.vaults[vaultID].Canonical.KeyEpochID, newEpochID)
+	}
+}
+
 func TestReplicaRejectsRecoveryReplacementWithInvalidPossessionProof(t *testing.T) {
 	ctx := context.Background()
 	state := store.NewMemoryState()

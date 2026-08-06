@@ -100,6 +100,12 @@ test("Wails Vault surface renders the selected Vault management slice", async ({
             if (request.type === "ListRemotes") return [];
             if (request.type === "GetAuthorityState") return authority;
             if (request.type === "GarbageCollect") return { deletedStorageItemIds: [] };
+            if (request.type === "RotateKeyEpoch")
+              return {
+                keyEpochId: "5".repeat(64),
+                displayNumber: 1,
+                eventRecordId: "6".repeat(64),
+              };
             throw new Error(`unexpected command: ${request.type}`);
           },
           PendingTransfers: async () => [],
@@ -122,9 +128,13 @@ test("Wails Vault surface renders the selected Vault management slice", async ({
   await expect(page.getByText("Current Key Epochs", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Vacuum this Vault" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Run Garbage Collection" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Rotate Key Epoch" })).toBeVisible();
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Run Garbage Collection" }).click();
   await expect(page.getByText("Garbage Collection completed.")).toBeVisible();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Rotate Key Epoch" }).click();
+  await expect(page.getByText("Vault Key Epoch 1 is now current.")).toBeVisible();
   await expect(page.getByText("No captures are stored in this Vault yet.")).toBeVisible();
   await expect(page.getByText("No Hosted Replicas are configured on this Client.")).toBeVisible();
   await expect(page.locator("body")).not.toHaveCSS("overflow-x", "scroll");

@@ -1176,6 +1176,15 @@ func (r *Runtime) Handle(ctx context.Context, raw json.RawMessage) (any, error) 
 			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "VacuumVault contains invalid fields")
 		}
 		return r.vacuumVault(ctx, input.ExpectedVaultID)
+	case "RotateKeyEpoch":
+		var input struct {
+			Type            string `json:"type"`
+			ExpectedVaultID string `json:"expectedVaultId"`
+		}
+		if err := decode(raw, &input); err != nil {
+			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "RotateKeyEpoch contains invalid fields")
+		}
+		return r.rotateKeyEpoch(ctx, input.ExpectedVaultID)
 	case "ExportComplete":
 		var input struct {
 			Type            string `json:"type"`

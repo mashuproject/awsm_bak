@@ -1566,6 +1566,27 @@ function VaultsView({
       setBusy(false);
     }
   };
+  const rotateKeyEpoch = async () => {
+    if (selected === undefined || !window.confirm("Create a new Vault Key Epoch? Continue?"))
+      return;
+    setBusy(true);
+    try {
+      const result = (await binding.VaultCommand?.({
+        type: "RotateKeyEpoch",
+        expectedVaultId: selected.vaultId,
+      })) as { keyEpochId?: string; displayNumber?: number } | undefined;
+      refresh();
+      onStatus(
+        result?.displayNumber === undefined
+          ? "Vault Key Epoch rotated."
+          : `Vault Key Epoch ${result.displayNumber} is now current.`,
+      );
+    } catch (error) {
+      onError(error);
+    } finally {
+      setBusy(false);
+    }
+  };
   if (state?.pendingVaultCreation !== undefined)
     return (
       <PendingCreationPanel
@@ -1690,6 +1711,9 @@ function VaultsView({
                 </Button>
                 <Button variant="secondary" busy={busy} onClick={() => void garbageCollect()}>
                   Run Garbage Collection
+                </Button>
+                <Button variant="secondary" busy={busy} onClick={() => void rotateKeyEpoch()}>
+                  Rotate Key Epoch
                 </Button>
                 <Button
                   variant="danger"
