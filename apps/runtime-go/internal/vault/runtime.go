@@ -9,6 +9,7 @@ package vault
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -26,6 +27,7 @@ import (
 	"github.com/mashuproject/awsm_bak/apps/runtime-go/internal/canonical"
 	awsmcrypto "github.com/mashuproject/awsm_bak/apps/runtime-go/internal/crypto"
 	"github.com/mashuproject/awsm_bak/apps/runtime-go/internal/securestore"
+	"github.com/mashuproject/awsm_bak/apps/runtime-go/internal/storage"
 	"github.com/mashuproject/awsm_bak/apps/runtime-go/internal/store"
 )
 
@@ -141,6 +143,7 @@ type Runtime struct {
 	deps     Dependencies
 	selected string
 	vaults   map[string]*persistedVault
+	replicas map[string]*Replica
 	pending  *pendingState
 	notify   func()
 }
@@ -148,6 +151,7 @@ type Runtime struct {
 type runtimeSnapshot struct {
 	selected string
 	vaults   map[string]*persistedVault
+	replicas map[string]*Replica
 	pending  *pendingState
 }
 
@@ -167,7 +171,7 @@ func New(ctx context.Context, state StateStore, dependencies Dependencies) (*Run
 	if state == nil {
 		return nil, errors.New("Vault state store is required")
 	}
-	runtime := &Runtime{store: state, deps: dependencies, vaults: make(map[string]*persistedVault)}
+	runtime := &Runtime{store: state, deps: dependencies, vaults: make(map[string]*persistedVault), replicas: make(map[string]*Replica)}
 	serialized, err := state.Get(ctx, persistedStateKey)
 	if errors.Is(err, store.ErrStateNotFound) {
 		return runtime, nil
@@ -186,6 +190,13 @@ func New(ctx context.Context, state StateStore, dependencies Dependencies) (*Run
 		copyValue := value
 		copyValue.Remotes = append([]remoteState(nil), value.Remotes...)
 		runtime.vaults[value.VaultID] = &copyValue
+		if value.Canonical != nil {
+			replica, err := runtime.openCanonicalReplica(copyValue)
+			if err != nil {
+				return nil, fmt.Errorf("open Vault %s: %w", value.VaultID, err)
+			}
+			runtime.replicas[value.VaultID] = replica
+		}
 	}
 	runtime.selected = snapshot.SelectedVaultID
 	if runtime.selected != "" {
@@ -726,7 +737,13 @@ func (r *Runtime) confirmCreation(ctx context.Context, setupID, phrase string) (
 	id := canonicalState.VaultID
 	generation := hexIdentifier(prepared.IDs.GenerationID)
 	value := &persistedVault{VaultID: id, Label: cloneString(pending.Label), Lifecycle: "Open", RecoveryHash: pending.PhraseHash, GenerationID: generation, Remotes: []remoteState{}, RecoveryRevision: 1, Canonical: canonicalState}
+	replica, err := newReplicaFromPreparedCreation(prepared)
+	if err != nil {
+		cleanup()
+		return nil, commandError("VAULT_CREATION_INVALID", "The authenticated initial Replica could not be opened.")
+	}
 	r.vaults[id] = value
+	r.replicas[id] = replica
 	r.selected = id
 	r.pending = nil
 	if err := r.persistLocked(ctx); err != nil {
@@ -1173,6 +1190,7 @@ func (r *Runtime) persistLocked(ctx context.Context) error {
 	snapshot := persistedState{SelectedVaultID: r.selected, Pending: r.pending, Vaults: make([]persistedVault, 0, len(r.vaults))}
 	for _, value := range r.vaults {
 		copyValue := *value
+		copyValue.Canonical = cloneCanonicalState(value.Canonical)
 		copyValue.Remotes = append([]remoteState(nil), value.Remotes...)
 		snapshot.Vaults = append(snapshot.Vaults, copyValue)
 	}
@@ -1187,12 +1205,16 @@ func (r *Runtime) persistLocked(ctx context.Context) error {
 }
 
 func (r *Runtime) snapshotLocked() runtimeSnapshot {
-	snapshot := runtimeSnapshot{selected: r.selected, pending: clonePending(r.pending), vaults: make(map[string]*persistedVault, len(r.vaults))}
+	snapshot := runtimeSnapshot{selected: r.selected, pending: clonePending(r.pending), vaults: make(map[string]*persistedVault, len(r.vaults)), replicas: make(map[string]*Replica, len(r.replicas))}
 	for id, value := range r.vaults {
 		copyValue := *value
 		copyValue.Label = cloneString(value.Label)
+		copyValue.Canonical = cloneCanonicalState(value.Canonical)
 		copyValue.Remotes = append([]remoteState(nil), value.Remotes...)
 		snapshot.vaults[id] = &copyValue
+	}
+	for id, replica := range r.replicas {
+		snapshot.replicas[id] = replica.Clone()
 	}
 	return snapshot
 }
@@ -1201,11 +1223,16 @@ func (r *Runtime) restoreLocked(snapshot runtimeSnapshot) {
 	r.selected = snapshot.selected
 	r.pending = clonePending(snapshot.pending)
 	r.vaults = make(map[string]*persistedVault, len(snapshot.vaults))
+	r.replicas = make(map[string]*Replica, len(snapshot.replicas))
 	for id, value := range snapshot.vaults {
 		copyValue := *value
 		copyValue.Label = cloneString(value.Label)
+		copyValue.Canonical = cloneCanonicalState(value.Canonical)
 		copyValue.Remotes = append([]remoteState(nil), value.Remotes...)
 		r.vaults[id] = &copyValue
+	}
+	for id, replica := range snapshot.replicas {
+		r.replicas[id] = replica.Clone()
 	}
 }
 
@@ -1325,6 +1352,17 @@ func clonePending(value *pendingState) *pendingState {
 	return &copyValue
 }
 
+func cloneCanonicalState(value *canonicalReplicaState) *canonicalReplicaState {
+	if value == nil {
+		return nil
+	}
+	copyValue := *value
+	copyValue.CausalFrontier = append([]string(nil), value.CausalFrontier...)
+	copyValue.AuthorityFrontier = append([]string(nil), value.AuthorityFrontier...)
+	copyValue.ContinuityRecordIDs = append([]string(nil), value.ContinuityRecordIDs...)
+	return &copyValue
+}
+
 func canonicalReplicaFromCreation(prepared PreparedCanonicalVaultCreation) *canonicalReplicaState {
 	return &canonicalReplicaState{
 		VaultID:                   hexIdentifier(prepared.IDs.VaultID),
@@ -1343,6 +1381,304 @@ func canonicalReplicaFromCreation(prepared PreparedCanonicalVaultCreation) *cano
 		AuthorityFrontier:         []string{hexIdentifier(prepared.Genesis.RecordID)},
 		ContinuityRecordIDs:       []string{hexIdentifier(prepared.Genesis.RecordID)},
 	}
+}
+
+func newReplicaFromPreparedCreation(prepared PreparedCanonicalVaultCreation) (*Replica, error) {
+	replica, err := NewReplica(prepared.Baseline)
+	if err != nil {
+		return nil, err
+	}
+	if err := replica.AdmitEvent(prepared.Genesis, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		return nil, err
+	}
+	return replica, nil
+}
+
+func (r *Runtime) openCanonicalReplica(value persistedVault) (*Replica, error) {
+	if value.Canonical == nil {
+		return nil, errors.New("canonical Replica state is missing")
+	}
+	if r.deps.Artifacts == nil || r.deps.Secrets == nil {
+		return nil, securestore.ErrUnavailable
+	}
+	state := value.Canonical
+	vaultID, err := decodeHexIdentifier(state.VaultID)
+	if err != nil {
+		return nil, err
+	}
+	generationID, err := decodeHexIdentifier(value.GenerationID)
+	if err != nil {
+		return nil, err
+	}
+	epochID, err := decodeHexIdentifier(state.KeyEpochID)
+	if err != nil {
+		return nil, err
+	}
+	epochSecretBytes, err := r.deps.Secrets.Get(trustedSecretService, epochSecretAccount(state.VaultID, state.KeyEpochID))
+	if err != nil {
+		return nil, fmt.Errorf("read Key Epoch Trusted Secret: %w", err)
+	}
+	epochSecret, err := decodeEpochSecret(epochSecretBytes, vaultID, epochID)
+	if err != nil {
+		return nil, err
+	}
+	clientCredentialID, err := decodeHexIdentifier(state.ClientCredentialID)
+	if err != nil {
+		return nil, err
+	}
+	memberID, err := decodeHexIdentifier(state.MemberID)
+	if err != nil {
+		return nil, err
+	}
+	clientSecretBytes, err := r.deps.Secrets.Get(trustedSecretService, clientSecretAccount(state.VaultID, state.ClientCredentialID))
+	if err != nil {
+		return nil, fmt.Errorf("read Client Credential Trusted Secret: %w", err)
+	}
+	clientSecret, err := decodeClientSecret(clientSecretBytes, vaultID, memberID, clientCredentialID)
+	if err != nil {
+		return nil, err
+	}
+	readArtifact := func(id string) ([]byte, error) {
+		reader, err := r.deps.Artifacts.Open(id)
+		if err != nil {
+			return nil, err
+		}
+		defer reader.Close()
+		return io.ReadAll(reader)
+	}
+	baselineBytes, err := readArtifact(state.BaselineStorageItemID)
+	if err != nil {
+		return nil, fmt.Errorf("read Initial Baseline: %w", err)
+	}
+	openedBaseline, err := awsmcrypto.OpenCompactItem(vaultID, epochID, epochSecret.key, baselineBytes)
+	if err != nil || openedBaseline.PayloadType != 1 {
+		if err == nil {
+			err = errors.New("Initial Baseline payload type is invalid")
+		}
+		return nil, err
+	}
+	if hexIdentifier(openedBaseline.Envelope.StorageItemID) != state.BaselineStorageItemID {
+		return nil, errors.New("Initial Baseline Storage Item identity changed")
+	}
+	baseline, err := canonical.DecodeBaseline(openedBaseline.PayloadBytes)
+	if err != nil {
+		return nil, fmt.Errorf("decode Initial Baseline: %w", err)
+	}
+	if baseline.VaultID != vaultID || baseline.GenerationID != generationID || hexIdentifier(baseline.RecordID) != state.BaselineID {
+		return nil, errors.New("Initial Baseline identity does not match persisted Replica state")
+	}
+	genesisBytes, err := readArtifact(state.GenesisStorageItemID)
+	if err != nil {
+		return nil, fmt.Errorf("read Genesis: %w", err)
+	}
+	openedGenesis, err := awsmcrypto.OpenCompactItem(vaultID, epochID, epochSecret.key, genesisBytes)
+	if err != nil || openedGenesis.PayloadType != 1 {
+		if err == nil {
+			err = errors.New("Genesis payload type is invalid")
+		}
+		return nil, err
+	}
+	if hexIdentifier(openedGenesis.Envelope.StorageItemID) != state.GenesisStorageItemID {
+		return nil, errors.New("Genesis Storage Item identity changed")
+	}
+	genesis, err := canonical.DecodeEvent(openedGenesis.PayloadBytes)
+	if err != nil {
+		return nil, fmt.Errorf("decode Genesis: %w", err)
+	}
+	if genesis.VaultID != vaultID || genesis.GenerationID != generationID || hexIdentifier(genesis.RecordID) != state.GenesisID {
+		return nil, errors.New("Genesis identity does not match persisted Replica state")
+	}
+	clientEnvelopeBytes, err := readArtifact(state.ClientEnvelopeStorageID)
+	if err != nil {
+		return nil, fmt.Errorf("read Client Key Envelope: %w", err)
+	}
+	clientEnvelope, err := awsmcrypto.OpenKeyEnvelope(awsmcrypto.ClientCredentialTarget, clientSecret.wrappingPrivateKey, clientEnvelopeBytes)
+	if err != nil {
+		return nil, fmt.Errorf("open Client Key Envelope: %w", err)
+	}
+	if hexIdentifier(clientEnvelope.ID) != state.ClientEnvelopeID || clientEnvelope.VaultID != vaultID || clientEnvelope.KeyEpochID != epochID || clientEnvelope.TargetCredentialID != clientCredentialID {
+		return nil, errors.New("Client Key Envelope identity does not match persisted Replica state")
+	}
+	recoveryEnvelopeBytes, err := readArtifact(state.RecoveryEnvelopeStorageID)
+	if err != nil {
+		return nil, fmt.Errorf("read Recovery Key Envelope: %w", err)
+	}
+	recoveryEnvelope, err := storage.DecodeOpaqueEnvelope(recoveryEnvelopeBytes)
+	if err != nil || hexIdentifier(recoveryEnvelope.StorageItemID) != state.RecoveryEnvelopeStorageID {
+		if err == nil {
+			err = errors.New("Recovery Key Envelope Storage Item identity changed")
+		}
+		return nil, err
+	}
+	replica, err := NewReplica(baseline)
+	if err != nil {
+		return nil, err
+	}
+	if err := replica.AdmitEvent(genesis, ed25519.PublicKey(clientSecret.signingPublicKey)); err != nil {
+		return nil, fmt.Errorf("admit persisted Genesis: %w", err)
+	}
+	actual := replica.State()
+	if !identifierSetEqual(actual.CausalFrontier, state.CausalFrontier) || !identifierSetEqual(actual.AuthorityFrontier, state.AuthorityFrontier) || !identifierSetEqual(actual.ContinuityRecordIDs, state.ContinuityRecordIDs) {
+		return nil, errors.New("persisted Replica frontiers do not match authenticated records")
+	}
+	return replica, nil
+}
+
+type decodedEpochSecret struct {
+	key []byte
+}
+
+type decodedClientSecret struct {
+	signingPublicKey   []byte
+	wrappingPrivateKey []byte
+}
+
+func decodeEpochSecret(encoded []byte, vaultID, epochID canonical.Identifier) (decodedEpochSecret, error) {
+	value, err := canonical.DecodeValue(encoded)
+	if err != nil {
+		return decodedEpochSecret{}, fmt.Errorf("decode Key Epoch Trusted Secret: %w", err)
+	}
+	if !canonicalMapHasKeys(value, 5) {
+		return decodedEpochSecret{}, errors.New("Key Epoch Trusted Secret fields are invalid")
+	}
+	if number, ok := canonicalMapNumber(value, 0); !ok || number != 1 {
+		return decodedEpochSecret{}, errors.New("Key Epoch Trusted Secret format is invalid")
+	}
+	encodedVault, ok := canonicalMapBytes(value, 1, 32)
+	if !ok || !bytes.Equal(encodedVault, vaultID[:]) {
+		return decodedEpochSecret{}, errors.New("Key Epoch Trusted Secret Vault binding is invalid")
+	}
+	encodedEpoch, ok := canonicalMapBytes(value, 2, 32)
+	if !ok || !bytes.Equal(encodedEpoch, epochID[:]) {
+		return decodedEpochSecret{}, errors.New("Key Epoch Trusted Secret identity is invalid")
+	}
+	key, ok := canonicalMapBytes(value, 4, 32)
+	if !ok {
+		return decodedEpochSecret{}, errors.New("Key Epoch Trusted Secret key is invalid")
+	}
+	derived, err := awsmcrypto.KeyEpochID(vaultID, key)
+	if err != nil || derived != epochID {
+		return decodedEpochSecret{}, errors.New("Key Epoch Trusted Secret key binding is invalid")
+	}
+	return decodedEpochSecret{key: key}, nil
+}
+
+func decodeClientSecret(encoded []byte, vaultID, memberID, credentialID canonical.Identifier) (decodedClientSecret, error) {
+	value, err := canonical.DecodeValue(encoded)
+	if err != nil {
+		return decodedClientSecret{}, fmt.Errorf("decode Client Credential Trusted Secret: %w", err)
+	}
+	if !canonicalMapHasKeys(value, 8) {
+		return decodedClientSecret{}, errors.New("Client Credential Trusted Secret fields are invalid")
+	}
+	if number, ok := canonicalMapNumber(value, 0); !ok || number != 1 {
+		return decodedClientSecret{}, errors.New("Client Credential Trusted Secret format is invalid")
+	}
+	encodedVault, ok := canonicalMapBytes(value, 1, 32)
+	if !ok || !bytes.Equal(encodedVault, vaultID[:]) {
+		return decodedClientSecret{}, errors.New("Client Credential Trusted Secret Vault binding is invalid")
+	}
+	encodedMember, ok := canonicalMapBytes(value, 2, 32)
+	if !ok || !bytes.Equal(encodedMember, memberID[:]) {
+		return decodedClientSecret{}, errors.New("Client Credential Trusted Secret Member binding is invalid")
+	}
+	encodedCredential, ok := canonicalMapBytes(value, 3, 32)
+	if !ok || !bytes.Equal(encodedCredential, credentialID[:]) {
+		return decodedClientSecret{}, errors.New("Client Credential Trusted Secret identity is invalid")
+	}
+	signingPublicKey, ok := canonicalMapBytes(value, 4, ed25519.PublicKeySize)
+	if !ok {
+		return decodedClientSecret{}, errors.New("Client Credential signing public key is invalid")
+	}
+	signingSecretKey, ok := canonicalMapBytes(value, 5, ed25519.PrivateKeySize)
+	if !ok || !bytes.Equal(ed25519.PrivateKey(signingSecretKey).Public().(ed25519.PublicKey), signingPublicKey) {
+		return decodedClientSecret{}, errors.New("Client Credential signing key binding is invalid")
+	}
+	wrappingPrivateKey, ok := canonicalMapBytes(value, 7, 32)
+	if !ok {
+		return decodedClientSecret{}, errors.New("Client Credential wrapping key is invalid")
+	}
+	return decodedClientSecret{signingPublicKey: signingPublicKey, wrappingPrivateKey: wrappingPrivateKey}, nil
+}
+
+func canonicalMapHasKeys(value canonical.Value, count int) bool {
+	switch typed := value.(type) {
+	case canonical.Map:
+		if len(typed) != count {
+			return false
+		}
+		for index := 0; index < count; index++ {
+			if _, ok := typed[uint64(index)]; !ok {
+				return false
+			}
+		}
+		return true
+	case map[any]any:
+		if len(typed) != count {
+			return false
+		}
+		for index := 0; index < count; index++ {
+			if _, ok := typed[uint64(index)]; !ok {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+func canonicalMapValue(value canonical.Value, key uint64) (canonical.Value, bool) {
+	switch typed := value.(type) {
+	case canonical.Map:
+		entry, ok := typed[key]
+		return entry, ok
+	case map[any]any:
+		entry, ok := typed[key]
+		return entry, ok
+	default:
+		return nil, false
+	}
+}
+
+func canonicalMapBytes(value canonical.Value, key uint64, length int) ([]byte, bool) {
+	entry, ok := canonicalMapValue(value, key)
+	if !ok {
+		return nil, false
+	}
+	bytesValue, ok := entry.([]byte)
+	return bytesValue, ok && len(bytesValue) == length
+}
+
+func canonicalMapNumber(value canonical.Value, key uint64) (uint64, bool) {
+	entry, ok := canonicalMapValue(value, key)
+	if !ok {
+		return 0, false
+	}
+	number, ok := entry.(uint64)
+	return number, ok
+}
+
+func decodeHexIdentifier(value string) (canonical.Identifier, error) {
+	decoded, err := hex.DecodeString(value)
+	if err != nil || len(decoded) != 32 {
+		return canonical.Identifier{}, errors.New("identifier must contain exactly 32 bytes")
+	}
+	var identifier canonical.Identifier
+	copy(identifier[:], decoded)
+	return identifier, nil
+}
+
+func identifierSetEqual(left []canonical.Identifier, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index, value := range left {
+		if hexIdentifier(value) != right[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func hexIdentifier(value [32]byte) string {

@@ -30,6 +30,7 @@ type ReplicaState struct {
 	VaultID             canonical.Identifier
 	GenerationID        canonical.Identifier
 	BaselineID          canonical.Identifier
+	GenesisID           canonical.Identifier
 	CausalFrontier      []canonical.Identifier
 	AuthorityFrontier   []canonical.Identifier
 	ContinuityRecordIDs []canonical.Identifier
@@ -149,10 +150,92 @@ func (r *Replica) State() ReplicaState {
 		VaultID:             r.vaultID,
 		GenerationID:        r.generationID,
 		BaselineID:          r.baselineID,
+		GenesisID:           r.genesisID,
 		CausalFrontier:      cloneIdentifiers(r.causalFrontier),
 		AuthorityFrontier:   cloneIdentifiers(r.authorityFrontier),
 		ContinuityRecordIDs: cloneIdentifiers(r.continuityRecordIDs),
 	}
+}
+
+// Clone copies the authenticated Replica indexes without sharing mutable
+// slices or record byte buffers. The canonical Record bytes themselves remain
+// immutable values; callers may safely use the clone for a compare-and-swap
+// mutation and discard it on persistence failure.
+func (r *Replica) Clone() *Replica {
+	if r == nil {
+		return nil
+	}
+	clone := &Replica{
+		vaultID:             r.vaultID,
+		generationID:        r.generationID,
+		baseline:            r.baseline,
+		baselineID:          r.baselineID,
+		genesisID:           r.genesisID,
+		records:             make(map[canonical.Identifier]canonical.Record, len(r.records)),
+		graph:               canonical.NewCausalGraph(),
+		causalFrontier:      cloneIdentifiers(r.causalFrontier),
+		authorityFrontier:   cloneIdentifiers(r.authorityFrontier),
+		continuityRecordIDs: cloneIdentifiers(r.continuityRecordIDs),
+	}
+	clone.baseline.Bytes = append([]byte(nil), r.baseline.Bytes...)
+	_ = clone.graph.AddBaseline(clone.baselineID, nil)
+	for id, record := range r.records {
+		copyRecord := record
+		copyRecord.Bytes = append([]byte(nil), record.Bytes...)
+		if record.Event != nil {
+			event := *record.Event
+			event.Bytes = append([]byte(nil), record.Event.Bytes...)
+			event.ParentRecordIDs = append([]canonical.Identifier(nil), record.Event.ParentRecordIDs...)
+			event.AuthorityParentIDs = append([]canonical.Identifier(nil), record.Event.AuthorityParentIDs...)
+			event.Dependencies = append([]canonical.Dependency(nil), record.Event.Dependencies...)
+			event.Signature = append([]byte(nil), record.Event.Signature...)
+			copyRecord.Event = &event
+		}
+		if record.Baseline != nil {
+			baseline := *record.Baseline
+			baseline.Bytes = append([]byte(nil), record.Baseline.Bytes...)
+			copyRecord.Baseline = &baseline
+		}
+		clone.records[id] = copyRecord
+	}
+	// Rebuild the graph in causal depth order. Every admitted non-Baseline
+	// Record already has all of its parents in the source graph, so repeatedly
+	// admitting a ready Record is deterministic and cannot invent new edges.
+	pending := make(map[canonical.Identifier]canonical.Record)
+	for id, record := range clone.records {
+		if id != clone.baselineID {
+			pending[id] = record
+		}
+	}
+	for len(pending) > 0 {
+		progress := false
+		for id, record := range pending {
+			if record.Event == nil {
+				delete(pending, id)
+				progress = true
+				continue
+			}
+			ready := true
+			for _, parent := range record.Event.ParentRecordIDs {
+				if !clone.graph.Has(parent) {
+					ready = false
+					break
+				}
+			}
+			if !ready {
+				continue
+			}
+			if err := clone.graph.Add(id, record.Event.ParentRecordIDs); err != nil {
+				return clone
+			}
+			delete(pending, id)
+			progress = true
+		}
+		if !progress {
+			break
+		}
+	}
+	return clone
 }
 
 func (r *Replica) requireParents(parents []canonical.Identifier, label string) error {

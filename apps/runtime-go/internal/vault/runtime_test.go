@@ -75,7 +75,8 @@ func (s *failingState) Get(ctx context.Context, key string) ([]byte, error) {
 func TestVaultCreationSelectionAndClosurePersistAcrossRestart(t *testing.T) {
 	ctx := context.Background()
 	state := store.NewMemoryState()
-	runtime, err := New(ctx, state, memoryDependencies(t))
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, state, dependencies)
 	if err != nil {
 		t.Fatalf("create Runtime: %v", err)
 	}
@@ -106,7 +107,7 @@ func TestVaultCreationSelectionAndClosurePersistAcrossRestart(t *testing.T) {
 	})); err != nil {
 		t.Fatalf("close Vault: %v", err)
 	}
-	restarted, err := New(ctx, state, memoryDependencies(t))
+	restarted, err := New(ctx, state, dependencies)
 	if err != nil {
 		t.Fatalf("restart Runtime: %v", err)
 	}
@@ -171,6 +172,44 @@ func TestConfirmVaultCreationCommitsCanonicalReplicaAndTrustedSecrets(t *testing
 	}
 }
 
+func TestRestartReopensCanonicalReplicaFromOpaqueRecords(t *testing.T) {
+	ctx := context.Background()
+	state := store.NewMemoryState()
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatalf("create Runtime: %v", err)
+	}
+	created, err := runtime.Handle(ctx, json.RawMessage(`{"type":"BeginVaultCreation","expectedVaultId":null,"label":"Restart"}`))
+	if err != nil {
+		t.Fatalf("begin creation: %v", err)
+	}
+	setup := created.(map[string]string)
+	confirmed, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "ConfirmVaultCreation", "setupId": setup["setupId"], "recoveryPhrase": setup["recoveryPhrase"],
+	}))
+	if err != nil {
+		t.Fatalf("confirm creation: %v", err)
+	}
+	vaultID := confirmed.(map[string]string)["vaultId"]
+	restarted, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatalf("restart Runtime: %v", err)
+	}
+	replica := restarted.replicas[vaultID]
+	if replica == nil {
+		t.Fatalf("restarted Runtime did not reopen canonical Replica")
+	}
+	value := restarted.vaults[vaultID]
+	if value == nil || value.Canonical == nil {
+		t.Fatalf("restarted canonical metadata = %#v", value)
+	}
+	replicaState := replica.State()
+	if hexIdentifier(replicaState.VaultID) != vaultID || hexIdentifier(replicaState.BaselineID) != value.Canonical.BaselineID || len(replicaState.CausalFrontier) != 1 || hexIdentifier(replicaState.CausalFrontier[0]) != value.Canonical.GenesisID {
+		t.Fatalf("reopened Replica state = %#v, metadata = %#v", replicaState, value.Canonical)
+	}
+}
+
 func TestVaultCommandsRejectStaleContextAndKeepCaptureOutOfDesktopUI(t *testing.T) {
 	runtime, err := New(context.Background(), store.NewMemoryState(), memoryDependencies(t))
 	if err != nil {
@@ -226,7 +265,8 @@ func TestVaultCommandsRejectStaleSelectedVaultContext(t *testing.T) {
 func TestVaultMutationRollsBackWhenPersistenceFails(t *testing.T) {
 	ctx := context.Background()
 	state := &failingState{delegate: store.NewMemoryState()}
-	runtime, err := New(ctx, state, memoryDependencies(t))
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, state, dependencies)
 	if err != nil {
 		t.Fatalf("create Runtime: %v", err)
 	}
@@ -240,7 +280,7 @@ func TestVaultMutationRollsBackWhenPersistenceFails(t *testing.T) {
 	if len(current.Vaults) != 1 || current.Vaults[0].Lifecycle != "Open" || current.SelectedVaultID == nil || *current.SelectedVaultID != vaultID {
 		t.Fatalf("in-memory state after failed close = %#v, want the original open Vault", current)
 	}
-	restarted, err := New(ctx, state, memoryDependencies(t))
+	restarted, err := New(ctx, state, dependencies)
 	if err != nil {
 		t.Fatalf("restart Runtime: %v", err)
 	}
@@ -252,7 +292,8 @@ func TestVaultMutationRollsBackWhenPersistenceFails(t *testing.T) {
 func TestVaultDropsUnresumablePendingCeremonyOnRestart(t *testing.T) {
 	ctx := context.Background()
 	state := store.NewMemoryState()
-	runtime, err := New(ctx, state, memoryDependencies(t))
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, state, dependencies)
 	if err != nil {
 		t.Fatalf("create Runtime: %v", err)
 	}
@@ -260,7 +301,7 @@ func TestVaultDropsUnresumablePendingCeremonyOnRestart(t *testing.T) {
 	if _, err := runtime.Handle(ctx, mustJSON(map[string]any{"type": "BeginVaultFork", "expectedVaultId": vaultID})); err != nil {
 		t.Fatalf("begin Fork: %v", err)
 	}
-	restarted, err := New(ctx, state, memoryDependencies(t))
+	restarted, err := New(ctx, state, dependencies)
 	if err != nil {
 		t.Fatalf("restart Runtime: %v", err)
 	}
