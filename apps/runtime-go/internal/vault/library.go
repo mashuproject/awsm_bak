@@ -25,10 +25,31 @@ type LibraryItem struct {
 	Lifecycle        string  `json:"lifecycle"`
 }
 
+// LibraryCollection is the deterministic Collection projection used by the
+// Client Library. Collection identity is its stable ID; title and tail are
+// derived from authenticated Content Events and active captures.
+type LibraryCollection struct {
+	CollectionID       string  `json:"collectionId"`
+	ExplicitTitle      *string `json:"explicitTitle"`
+	Title              string  `json:"title"`
+	TailBundleID       *string `json:"tailBundleId"`
+	ActiveCaptureCount int     `json:"activeCaptureCount"`
+	RedirectedTo       *string `json:"redirectedTo"`
+	FolderID           *string `json:"folderId"`
+}
+
+// LibraryProjection is a rebuildable user-facing view. It is derived solely
+// from the authenticated Replica and is never an authority source.
+type LibraryProjection struct {
+	Captures    []LibraryItem       `json:"captures"`
+	Collections []LibraryCollection `json:"collections"`
+}
+
 type libraryCapture struct {
-	item         LibraryItem
-	lifecycleID  canonical.Identifier
-	collectionID canonical.Identifier
+	item           LibraryItem
+	registrationID canonical.Identifier
+	lifecycleID    canonical.Identifier
+	collectionID   canonical.Identifier
 }
 
 // ProjectLibrary reduces Bundle Registered, Capture lifecycle, and placement
@@ -36,10 +57,25 @@ type libraryCapture struct {
 // hard projection error: displaying a partial capture would claim metadata
 // that the Runtime has not verified.
 func ProjectLibrary(replica *Replica) ([]LibraryItem, error) {
+	projection, err := ProjectLibraryProjection(replica)
+	if err != nil {
+		return nil, err
+	}
+	return projection.Captures, nil
+}
+
+// ProjectLibraryProjection reduces the authenticated capture and Collection
+// Content Events into the current Library view. This first semantic slice
+// covers Collection titles and capture-derived tails; redirect and folder
+// reducers extend the same projection without changing its source of truth.
+func ProjectLibraryProjection(replica *Replica) (LibraryProjection, error) {
 	if replica == nil {
-		return nil, errors.New("Replica is required")
+		return LibraryProjection{}, errors.New("Replica is required")
 	}
 	captures := make(map[string]*libraryCapture)
+	collectionTitles := make(map[canonical.Identifier]collectionTitleFact)
+	collectionRedirects := make(map[canonical.Identifier]collectionRedirectFact)
+	inactiveRedirects := make(map[canonical.Identifier]struct{})
 	for _, event := range replica.Events() {
 		if event.Family != canonical.ContentFamily {
 			continue
@@ -48,14 +84,12 @@ func ProjectLibrary(replica *Replica) ([]LibraryItem, error) {
 		case 3:
 			capture, err := registeredCapture(replica, event)
 			if err != nil {
-				return nil, err
+				return LibraryProjection{}, err
 			}
-			key := hexIdentifier(capture.collectionID)
-			_ = key
 			bundleKey := capture.item.BundleID
 			if existing, ok := captures[bundleKey]; ok {
 				if existing.item.ArtifactID != capture.item.ArtifactID || existing.item.CollectionID != capture.item.CollectionID {
-					return nil, fmt.Errorf("Capture identity conflict for Bundle %s", bundleKey)
+					return LibraryProjection{}, fmt.Errorf("Capture identity conflict for Bundle %s", bundleKey)
 				}
 				continue
 			}
@@ -63,7 +97,7 @@ func ProjectLibrary(replica *Replica) ([]LibraryItem, error) {
 		case 4, 5:
 			ids, err := bundleIDSet(event.Body)
 			if err != nil {
-				return nil, err
+				return LibraryProjection{}, err
 			}
 			for _, bundleID := range ids {
 				capture := captures[hexIdentifier(bundleID)]
@@ -80,7 +114,7 @@ func ProjectLibrary(replica *Replica) ([]LibraryItem, error) {
 		case 6:
 			moves, err := captureMoves(event.Body)
 			if err != nil {
-				return nil, err
+				return LibraryProjection{}, err
 			}
 			for _, move := range moves {
 				capture := captures[hexIdentifier(move.bundleID)]
@@ -90,6 +124,77 @@ func ProjectLibrary(replica *Replica) ([]LibraryItem, error) {
 				capture.collectionID = event.RecordID
 				capture.item.CollectionID = hexIdentifier(move.destinationID)
 			}
+		case 7:
+			collectionID, ok := replicaIdentifier(event.Body, 0)
+			if !ok {
+				return LibraryProjection{}, errors.New("Collection Title Collection ID is invalid")
+			}
+			title, ok := replicaMapNullableText(event.Body, 1)
+			if !ok {
+				return LibraryProjection{}, errors.New("Collection Title title is invalid")
+			}
+			if previous, exists := collectionTitles[collectionID]; !exists || newerEvent(replica, previous.causeID, event.RecordID) {
+				collectionTitles[collectionID] = collectionTitleFact{causeID: event.RecordID, title: title}
+			}
+		case 8:
+			body, ok := replicaMapValue(event.Body)
+			if !ok || !replicaMapHasKeys(body, 2) {
+				return LibraryProjection{}, errors.New("Collections Merged body is invalid")
+			}
+			sources, err := parseCanonicalIdentifierSet(replicaMapEntryMust(body, 0), "Source Collection IDs", true)
+			if err != nil {
+				return LibraryProjection{}, err
+			}
+			destination, ok := replicaIdentifier(body, 1)
+			if !ok {
+				return LibraryProjection{}, errors.New("Collections Merged destination Collection ID is invalid")
+			}
+			edges := make([]collectionRedirectEdge, 0, len(sources))
+			for _, source := range sources {
+				edges = append(edges, collectionRedirectEdge{sourceID: source, destinationID: destination, causeID: event.RecordID})
+			}
+			collectionRedirects[event.RecordID] = collectionRedirectFact{causeID: event.RecordID, edges: edges}
+		case 9:
+			cause, ok := replicaIdentifier(event.Body, 0)
+			if !ok {
+				return LibraryProjection{}, errors.New("Collection Merge Reverted cause ID is invalid")
+			}
+			fact, exists := collectionRedirects[cause]
+			if !exists || !replica.IsAncestor(fact.causeID, event.RecordID) {
+				return LibraryProjection{}, errors.New("Collection Merge Reverted cause is not an observed redirect")
+			}
+			inactiveRedirects[cause] = struct{}{}
+		}
+	}
+	activeRedirects := make([]collectionRedirectEdge, 0)
+	for cause, fact := range collectionRedirects {
+		if _, inactive := inactiveRedirects[cause]; inactive {
+			continue
+		}
+		activeRedirects = append(activeRedirects, fact.edges...)
+	}
+	redirected := make(map[canonical.Identifier]canonical.Identifier)
+	redirectIDs := make(map[canonical.Identifier]struct{})
+	for _, edge := range activeRedirects {
+		redirectIDs[edge.sourceID] = struct{}{}
+		redirectIDs[edge.destinationID] = struct{}{}
+	}
+	for collectionID := range redirectIDs {
+		resolved, err := resolveCollectionRedirect(collectionID, activeRedirects)
+		if err != nil {
+			return LibraryProjection{}, err
+		}
+		if resolved != collectionID {
+			redirected[collectionID] = resolved
+		}
+	}
+	for _, capture := range captures {
+		collectionID, err := decodeHexIdentifier(capture.item.CollectionID)
+		if err != nil {
+			return LibraryProjection{}, fmt.Errorf("decode Capture Collection ID: %w", err)
+		}
+		if effective, ok := redirected[collectionID]; ok {
+			capture.item.CollectionID = hexIdentifier(effective)
 		}
 	}
 	items := make([]LibraryItem, 0, len(captures))
@@ -97,8 +202,98 @@ func ProjectLibrary(replica *Replica) ([]LibraryItem, error) {
 		items = append(items, capture.item)
 	}
 	sort.Slice(items, func(left, right int) bool { return items[left].BundleID < items[right].BundleID })
-	return items, nil
+	collectionIDs := make(map[canonical.Identifier]struct{})
+	for _, capture := range captures {
+		collectionID, err := decodeHexIdentifier(capture.item.CollectionID)
+		if err != nil {
+			return LibraryProjection{}, fmt.Errorf("decode Capture Collection ID: %w", err)
+		}
+		collectionIDs[collectionID] = struct{}{}
+	}
+	for collectionID := range collectionTitles {
+		collectionIDs[collectionID] = struct{}{}
+	}
+	for collectionID := range redirectIDs {
+		collectionIDs[collectionID] = struct{}{}
+	}
+	collections := make([]LibraryCollection, 0, len(collectionIDs))
+	for collectionID := range collectionIDs {
+		active := make([]*libraryCapture, 0)
+		for _, capture := range captures {
+			if capture.item.Lifecycle != "Active" || capture.item.CollectionID != hexIdentifier(collectionID) {
+				continue
+			}
+			active = append(active, capture)
+		}
+		var tail *libraryCapture
+		for _, candidate := range active {
+			if tail == nil || newerEvent(replica, tail.registrationID, candidate.registrationID) ||
+				(!replica.IsAncestor(candidate.registrationID, tail.registrationID) && !replica.IsAncestor(tail.registrationID, candidate.registrationID) && bytes.Compare(candidate.registrationID[:], tail.registrationID[:]) > 0) {
+				tail = candidate
+			}
+		}
+		explicitTitle := collectionTitles[collectionID].title
+		collection := LibraryCollection{CollectionID: hexIdentifier(collectionID), ExplicitTitle: explicitTitle, Title: "Empty Collection", ActiveCaptureCount: len(active)}
+		if effective, ok := redirected[collectionID]; ok {
+			collection.RedirectedTo = pointerString(hexIdentifier(effective))
+		}
+		if tail != nil {
+			collection.TailBundleID = pointerString(tail.item.BundleID)
+			if tail.item.Title != nil && *tail.item.Title != "" {
+				collection.Title = *tail.item.Title
+			} else if tail.item.FinalURL != "" {
+				collection.Title = tail.item.FinalURL
+			}
+		}
+		if explicitTitle != nil {
+			collection.Title = *explicitTitle
+		}
+		collections = append(collections, collection)
+	}
+	sort.Slice(collections, func(left, right int) bool { return collections[left].CollectionID < collections[right].CollectionID })
+	return LibraryProjection{Captures: items, Collections: collections}, nil
 }
+
+type collectionTitleFact struct {
+	causeID canonical.Identifier
+	title   *string
+}
+
+type collectionRedirectFact struct {
+	causeID canonical.Identifier
+	edges   []collectionRedirectEdge
+}
+
+type collectionRedirectEdge struct {
+	sourceID      canonical.Identifier
+	destinationID canonical.Identifier
+	causeID       canonical.Identifier
+}
+
+func resolveCollectionRedirect(collectionID canonical.Identifier, edges []collectionRedirectEdge) (canonical.Identifier, error) {
+	bySource := make(map[canonical.Identifier]canonical.Identifier)
+	for _, edge := range edges {
+		if previous, exists := bySource[edge.sourceID]; exists && previous != edge.destinationID {
+			return canonical.Identifier{}, fmt.Errorf("Collection Merge Conflict has multiple destinations for %s", hexIdentifier(edge.sourceID))
+		}
+		bySource[edge.sourceID] = edge.destinationID
+	}
+	current := collectionID
+	visited := make(map[canonical.Identifier]struct{})
+	for {
+		destination, exists := bySource[current]
+		if !exists {
+			return current, nil
+		}
+		if _, seen := visited[current]; seen {
+			return canonical.Identifier{}, fmt.Errorf("Collection Merge Conflict contains a redirect cycle at %s", hexIdentifier(current))
+		}
+		visited[current] = struct{}{}
+		current = destination
+	}
+}
+
+func pointerString(value string) *string { return &value }
 
 func registeredCapture(replica *Replica, event canonical.Event) (*libraryCapture, error) {
 	body, ok := replicaMapValue(event.Body)
@@ -137,7 +332,7 @@ func registeredCapture(replica *Replica, event canonical.Event) (*libraryCapture
 		AvailableLocally: ok && primary.ObjectType == 2,
 		Lifecycle:        "Active",
 	}
-	return &libraryCapture{item: item, lifecycleID: event.RecordID, collectionID: event.RecordID}, nil
+	return &libraryCapture{item: item, registrationID: event.RecordID, lifecycleID: event.RecordID, collectionID: event.RecordID}, nil
 }
 
 type descriptorMetadata struct {

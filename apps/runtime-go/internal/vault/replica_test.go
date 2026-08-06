@@ -1308,12 +1308,35 @@ func TestProjectLibraryReducesBundleRegistrationAndDescriptor(t *testing.T) {
 	if err := replica.AdmitEvent(event, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
 		t.Fatal(err)
 	}
+	titleEvent, err := canonical.SignEvent(canonical.EventInput{
+		VaultID: prepared.IDs.VaultID, GenerationID: prepared.IDs.GenerationID,
+		ParentRecordIDs: []canonical.Identifier{event.RecordID}, AuthorityParentIDs: []canonical.Identifier{event.RecordID},
+		RequiredFeatureSetID: prepared.RequiredFeatureSetID, Extensions: map[string][]byte{}, Family: canonical.ContentFamily, Type: 7,
+		SignerCredentialID: prepared.IDs.ClientCredentialID, AssertedAt: 1235, Body: canonical.Map{0: collectionID[:], 1: "Reading list"},
+	}, ed25519.PrivateKey(prepared.ClientKeys.SigningSecretKey))
+	if err != nil {
+		t.Fatalf("Sign Collection Title: %v", err)
+	}
+	if err := replica.AdmitEvent(titleEvent, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit Collection Title: %v", err)
+	}
 	items, err := ProjectLibrary(replica)
 	if err != nil {
 		t.Fatalf("ProjectLibrary: %v", err)
 	}
 	if len(items) != 1 || items[0].BundleID != hexIdentifier(bundleID) || items[0].CollectionID != hexIdentifier(collectionID) || items[0].ArtifactID != hexIdentifier(artifactObjectID) || !items[0].AvailableLocally || items[0].Title == nil || *items[0].Title != "Example" {
 		t.Fatalf("Library items = %#v", items)
+	}
+	projection, err := ProjectLibraryProjection(replica)
+	if err != nil {
+		t.Fatalf("ProjectLibraryProjection: %v", err)
+	}
+	if len(projection.Collections) != 1 {
+		t.Fatalf("Collections = %#v, want one collection", projection.Collections)
+	}
+	collection := projection.Collections[0]
+	if collection.CollectionID != hexIdentifier(collectionID) || collection.Title != "Reading list" || collection.TailBundleID == nil || *collection.TailBundleID != hexIdentifier(bundleID) || collection.ActiveCaptureCount != 1 {
+		t.Fatalf("Collection projection = %#v", collection)
 	}
 }
 
