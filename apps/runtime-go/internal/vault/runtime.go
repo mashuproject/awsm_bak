@@ -1549,6 +1549,34 @@ func (r *Runtime) confirmFork(ctx context.Context, setupID, phrase string) (any,
 	if err != nil {
 		return nil, commandError("VAULT_FORK_INVALID", "The source Key Epoch identity is invalid.")
 	}
+	sourceProjection, err := ProjectLibraryProjection(r.replicas[pending.SourceVaultID])
+	if err != nil {
+		return nil, commandError("VAULT_FORK_INVALID", "The source Library state could not be authenticated.")
+	}
+	sourceContentCheckpoint, err := buildVacuumContentCheckpoint(r.replicas[pending.SourceVaultID], sourceProjection)
+	if err != nil {
+		return nil, commandError("VAULT_FORK_INVALID", "The source Library state could not be reduced for Fork.")
+	}
+	sourceContentMap, ok := replicaMapValue(sourceContentCheckpoint)
+	if !ok {
+		return nil, commandError("VAULT_FORK_INVALID", "The source Fork content checkpoint is invalid.")
+	}
+	sourceLabelCheckpoint, ok := replicaMapValue(replicaMapEntryMust(sourceContentMap, 1))
+	if !ok {
+		return nil, commandError("VAULT_FORK_INVALID", "The source Vault label checkpoint is invalid.")
+	}
+	label, ok := replicaMapNullableText(sourceLabelCheckpoint, 0)
+	if !ok {
+		return nil, commandError("VAULT_FORK_INVALID", "The source Vault label checkpoint is invalid.")
+	}
+	sourceRequiredFeatureSetID, err := decodeHexIdentifier(source.Canonical.RequiredFeatureSetID)
+	if err != nil {
+		return nil, commandError("VAULT_FORK_INVALID", "The source Required Feature Set identity is invalid.")
+	}
+	featureInputs, err := forkFeatureInputs(r.replicas[pending.SourceVaultID], sourceRequiredFeatureSetID)
+	if err != nil {
+		return nil, commandError("VAULT_FORK_INVALID", err.Error())
+	}
 	var sourceEpochKey []byte
 	if len(source.Canonical.ObjectStorageItemIDs) > 0 || len(source.Canonical.ArtifactStorageItemIDs) > 0 {
 		encodedEpoch, secretErr := r.deps.Secrets.Get(trustedSecretService, epochSecretAccount(source.VaultID, source.Canonical.KeyEpochID))
@@ -1563,17 +1591,35 @@ func (r *Runtime) confirmFork(ctx context.Context, setupID, phrase string) (any,
 		zeroBytes(epochSecret.key)
 		defer zeroBytes(sourceEpochKey)
 	}
-	label := cloneString(pending.Label)
-	if label != nil {
-		forkLabel := *label + " (Fork)"
-		label = &forkLabel
+	temporary, err := PrepareCanonicalVaultCreation(CreationInput{Label: label, RecoveryPhrase: phrase, FeatureManifests: featureInputs})
+	if err != nil {
+		return nil, commandError("VAULT_FORK_INVALID", "The canonical Fork ceremony could not be prepared.")
 	}
-	prepared, err := PrepareCanonicalVaultCreation(CreationInput{Label: label, RecoveryPhrase: phrase})
+	mappings, err := prepareForkObjectMappings(r.replicas[pending.SourceVaultID], source.Canonical, temporary.IDs.VaultID, temporary.RequiredFeatureSetID)
+	if err != nil {
+		wipeCreationSecrets(&temporary)
+		return nil, commandError("VAULT_FORK_INVALID", err.Error())
+	}
+	mappedContentCheckpoint, err := mapForkContentCheckpoint(sourceContentCheckpoint, mappings)
+	if err != nil {
+		wipeCreationSecrets(&temporary)
+		return nil, commandError("VAULT_FORK_INVALID", err.Error())
+	}
+	prepared, err := PrepareCanonicalVaultCreation(CreationInput{
+		Label: label, ContentCheckpoint: mappedContentCheckpoint, RecoveryPhrase: phrase,
+		FeatureManifests: featureInputs, IDs: &temporary.IDs,
+		ClientSigningSeed: temporary.ClientKeys.SigningSeed, ClientWrappingPrivateKey: temporary.ClientKeys.WrappingPrivateKey,
+		KeyEpochKey: temporary.KeyEpochKey,
+	})
+	wipeCreationSecrets(&temporary)
 	if err != nil {
 		return nil, commandError("VAULT_FORK_INVALID", "The canonical Fork ceremony could not be prepared.")
 	}
 	canonicalState := canonicalReplicaFromCreation(prepared)
 	storedItems := [][32]byte{prepared.BaselineEnvelope.StorageItemID, prepared.GenesisEnvelope.StorageItemID, prepared.RecoveryKeyEnvelope.Envelope.StorageItemID, prepared.ClientKeyEnvelope.Envelope.StorageItemID}
+	for _, feature := range prepared.FeatureManifests {
+		storedItems = append(storedItems, feature.Envelope.StorageItemID)
+	}
 	cleanup := func() {
 		for _, itemID := range storedItems {
 			deleteOpaqueCreationItem(r.deps.Artifacts, itemID)
@@ -1589,6 +1635,11 @@ func (r *Runtime) confirmFork(ctx context.Context, setupID, phrase string) (any,
 			}
 		}
 		for _, itemID := range canonicalState.ArtifactStorageItemIDs {
+			if decoded, decodeErr := decodeHexIdentifier(itemID); decodeErr == nil {
+				deleteOpaqueCreationItem(r.deps.Artifacts, decoded)
+			}
+		}
+		for _, itemID := range canonicalState.FeatureManifestStorageItemIDs {
 			if decoded, decodeErr := decodeHexIdentifier(itemID); decodeErr == nil {
 				deleteOpaqueCreationItem(r.deps.Artifacts, decoded)
 			}
@@ -1611,6 +1662,12 @@ func (r *Runtime) confirmFork(ctx context.Context, setupID, phrase string) (any,
 			return nil, commandError("VAULT_FORK_STORAGE_FAILED", fmt.Sprintf("The Fork item %d could not be stored.", index))
 		}
 	}
+	for _, feature := range prepared.FeatureManifests {
+		if err := storeOpaqueCreationItem(r.deps.Artifacts, feature.Envelope.StorageItemID, feature.Envelope.Bytes); err != nil {
+			cleanup()
+			return nil, commandError("VAULT_FORK_STORAGE_FAILED", "The Fork Feature Manifest could not be stored.")
+		}
+	}
 	clientSecret, err := encodeClientSecret(prepared)
 	if err != nil {
 		cleanup()
@@ -1630,13 +1687,22 @@ func (r *Runtime) confirmFork(ctx context.Context, setupID, phrase string) (any,
 		return nil, commandError("TRUSTED_SECRET_UNAVAILABLE", "The Fork Key Epoch could not be stored.")
 	}
 	id := canonicalState.VaultID
-	value := &persistedVault{VaultID: id, Label: label, Lifecycle: "Open", RecoveryHash: pending.PhraseHash, GenerationID: canonicalState.GenerationID, Remotes: append([]remoteState(nil), source.Remotes...), RecoveryRevision: 0, Canonical: canonicalState}
+	value := &persistedVault{VaultID: id, Label: cloneString(label), Lifecycle: "Open", RecoveryHash: pending.PhraseHash, GenerationID: canonicalState.GenerationID, Remotes: []remoteState{}, RecoveryRevision: 0, Canonical: canonicalState}
 	replica, err := newReplicaFromPreparedCreation(prepared)
 	if err != nil {
 		cleanup()
 		return nil, commandError("VAULT_FORK_INVALID", "The authenticated Fork Replica could not be opened.")
 	}
-	if err := reauthorForkContentEvents(r.replicas[pending.SourceVaultID], replica, prepared, canonicalState, source.Canonical, sourceVaultIdentifier, sourceEpochIdentifier, sourceEpochKey, r.deps); err != nil {
+	objectMappings := mappings.objects
+	if err := reauthorForkArtifactObjects(r.replicas[pending.SourceVaultID], replica, prepared, canonicalState, source.Canonical, sourceVaultIdentifier, sourceEpochIdentifier, sourceEpochKey, objectMappings, r.deps); err != nil {
+		cleanup()
+		return nil, commandError("VAULT_FORK_INVALID", err.Error())
+	}
+	if err := reauthorForkNoteObjects(r.replicas[pending.SourceVaultID], replica, prepared, canonicalState, source.Canonical, sourceVaultIdentifier, sourceEpochIdentifier, sourceEpochKey, objectMappings, r.deps); err != nil {
+		cleanup()
+		return nil, commandError("VAULT_FORK_INVALID", err.Error())
+	}
+	if err := reauthorForkBundleObjects(r.replicas[pending.SourceVaultID], replica, prepared, canonicalState, source.Canonical, sourceVaultIdentifier, sourceEpochIdentifier, sourceEpochKey, objectMappings, mappings.bundles, r.deps); err != nil {
 		cleanup()
 		return nil, commandError("VAULT_FORK_INVALID", err.Error())
 	}

@@ -26,6 +26,7 @@ type CreationIDs struct {
 
 type CreationInput struct {
 	Label                        *string
+	ContentCheckpoint            canonical.Value
 	AssertedAt                   int64
 	RecoveryPhrase               string
 	FeatureManifests             []canonical.FeatureManifestInput
@@ -168,11 +169,26 @@ func PrepareCanonicalVaultCreation(input CreationInput) (PreparedCanonicalVaultC
 		0: append([]byte(nil), epochID[:]...), 1: uint64(2), 2: append([]byte(nil), ids.ClientCredentialID[:]...),
 		3: nil, 4: append([]byte(nil), clientEnvelope.ID[:]...),
 	}
-	contentCheckpoint := canonical.Map{
+	var contentCheckpoint canonical.Value = canonical.Map{
 		0: uint64(1),
 		1: canonical.Map{0: cloneLabel(input.Label), 1: valuesForLabel(input.Label, ids.LabelCauseID)},
 		2: []canonical.Value{}, 3: []canonical.Value{}, 4: []canonical.Value{}, 5: []canonical.Value{},
 		6: []canonical.Value{}, 7: []canonical.Value{}, 8: []canonical.Value{}, 9: []canonical.Value{},
+	}
+	if input.ContentCheckpoint != nil {
+		encodedCheckpoint, encodeErr := canonical.EncodeValue(input.ContentCheckpoint)
+		if encodeErr != nil {
+			return PreparedCanonicalVaultCreation{}, fmt.Errorf("encode Initial Baseline content checkpoint: %w", encodeErr)
+		}
+		decodedCheckpoint, decodeErr := canonical.DecodeValue(encodedCheckpoint)
+		if decodeErr != nil || !replicaMapHasKeys(decodedCheckpoint, 10) {
+			return PreparedCanonicalVaultCreation{}, errors.New("Initial Baseline content checkpoint is invalid")
+		}
+		format, formatOK := replicaMapNumber(decodedCheckpoint, 0)
+		if !formatOK || format != 1 {
+			return PreparedCanonicalVaultCreation{}, errors.New("Initial Baseline content checkpoint format is invalid")
+		}
+		contentCheckpoint = decodedCheckpoint
 	}
 	authorityCheckpoint := canonical.Map{
 		0: uint64(1),

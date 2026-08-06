@@ -114,13 +114,13 @@ container for the supported single-Key-Epoch closure and installs it as an autho
 Replica.
 
 Remaining work is deliberately narrower: complete multi-Key-Epoch and adopted-Vacuum Complete Export
-reachability/import; complete the remaining organization and other dependency-bearing
-Content Fork re-authoring; implement the broader Authority and Key-Epoch event families; expose
-conflict/rebase and sparse-Replica state; and finish Wails workflow coverage beyond the current
-Vault-management controls, plus cross-surface journeys.
-The Go Runtime now re-authors Note Content Objects and Note Created/Revised/Deleted/Restored/Conflict
-Resolution Events with their exact object and cause mappings. Capture remains extension-only and the
-extension-to-desktop Capture Bundle bridge is out of scope for this release.
+reachability/import; implement Event Re-authoring for eligible unpublished Capture work; implement
+the broader Authority and Key-Epoch event families; expose conflict/rebase and sparse-Replica state;
+and finish Wails workflow coverage beyond the current Vault-management controls, plus cross-surface
+journeys. State-only Fork now copies the authenticated Library checkpoint, remaps content identities,
+and rewraps its object and Feature Manifest closure without source Content Event re-authoring.
+Capture remains extension-only and the extension-to-desktop Capture Bundle bridge is out of scope for
+this release.
 
 Promotion requires formal cross-language vectors plus restart/crash, authority, conflict, sparse
 Replica, multi-Remote convergence, sync-proof, Wails, and browser-to-desktop tests. Keep the Command

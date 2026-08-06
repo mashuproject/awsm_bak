@@ -1704,10 +1704,7 @@ func buildVacuumContentCheckpoint(replica *Replica, projection LibraryProjection
 		if decodeErr != nil {
 			return nil, fmt.Errorf("Capture checkpoint identity is invalid: %w", decodeErr)
 		}
-		if capture.lifecycleCode == 2 {
-			continue
-		}
-		if capture.lifecycleCode != 1 || capture.registrationCause == (canonical.Identifier{}) || capture.registrationAttribution == nil {
+		if (capture.lifecycleCode != 1 && capture.lifecycleCode != 2) || capture.registrationCause == (canonical.Identifier{}) || capture.registrationAttribution == nil {
 			return nil, errors.New("Capture checkpoint state is invalid")
 		}
 		assignmentCauses := make([]canonical.Value, 0, len(capture.assignmentCauses))
@@ -2168,7 +2165,18 @@ func buildVacuumVaultLabelCheckpoint(replica *Replica, oldContent canonical.Valu
 	for index, candidate := range facts {
 		superseded := false
 		for otherIndex, other := range facts {
-			if index != otherIndex && replica.IsAncestor(candidate.causeID, other.causeID) {
+			if index == otherIndex {
+				continue
+			}
+			// A source baseline is the state before every Content Event. Its
+			// opaque checkpoint cause is not a DAG vertex, so represent that
+			// ordering explicitly instead of letting a random identifier win
+			// against a later label Event.
+			if !candidate.event && other.event {
+				superseded = true
+				break
+			}
+			if candidate.event && other.event && replica.IsAncestor(candidate.causeID, other.causeID) {
 				superseded = true
 				break
 			}

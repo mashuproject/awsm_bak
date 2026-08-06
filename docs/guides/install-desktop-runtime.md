@@ -101,7 +101,7 @@ release:
 - the extension-to-desktop Capture Bundle bridge;
 - multi-Key-Epoch and adopted-Vacuum Complete Export closures (single-Key-Epoch Feature Manifest
   closures are supported);
-- remaining organization and other dependency-bearing Content Fork re-authoring and broader Authority/Key-Epoch events;
+- Event Re-authoring for eligible unpublished Capture work and broader Authority/Key-Epoch events;
 - conflict/rebase and sparse-Replica projections; and
 - remaining Wails workflow coverage beyond the current Vault-management and Library controls.
 

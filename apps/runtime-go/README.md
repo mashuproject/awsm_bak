@@ -60,8 +60,9 @@ adapter supplies its own Channel Authenticator and Replica Access Grant
 verification. A Runtime API bearer token never authorizes that surface.
 
 The Go Runtime implements the canonical tagged Command contract for persistent Vault management:
-creation and selection, Recovery Phrase confirmation/replacement and same-member recovery, Fork
-for an empty state or Artifact/Bundle/Note content closures and dependency-free content labels, Closure, Vacuum adoption, Library projection, authenticated Event/Object replay,
+creation and selection, Recovery Phrase confirmation/replacement and same-member recovery, state-only
+Fork for the authenticated Library checkpoint and referenced Artifact/Bundle/Note object closure,
+Closure, Vacuum adoption, Library projection, authenticated Event/Object replay,
 Storage Relief, Garbage Collection, Hosted Replica creation and attachment, Compact materialization,
 receiver-initiated pull, and explicit Artifact hydration. The Wails surface and loopback API use this
 same Runtime; a paired extension reaches it under the single `runtime.vault` grant.
@@ -81,8 +82,9 @@ The Runtime command boundary also produces and accepts the browser-compatible Co
 container for the supported single-Key-Epoch closure, including authenticated Feature Manifest and
 Streamable Artifact wrappers. Imported Replicas are readable but have no selected authoring Credential or private key.
 Multi-Key-Epoch and adopted-Vacuum Complete Export semantics remain explicit limits, along with
-remaining organization and other dependency-bearing Content Fork re-authoring, broader Authority/Key-Epoch event families, conflict/rebase projections, and
-the remaining Wails workflow coverage beyond the current Vault-management controls and cross-surface journeys.
+Event Re-authoring for eligible unpublished Capture work, broader Authority/Key-Epoch event families,
+conflict/rebase projections, sparse-Replica state, and the remaining Wails workflow coverage beyond
+the current Vault-management controls and cross-surface journeys.
 
 The move boundary is deliberately separate from Vault synchronization. A source Client seals the
 canonical opaque closure and trusted local secrets with a one-use secret, stages it in the desktop
@@ -130,5 +132,5 @@ These proofs cover the process boundary, Runtime API grant lifecycle, canonical 
 envelope, authenticated replay, Hosted Replica sync boundaries, Library Storage Relief and
 hydration, and encrypted transfer staging. They do not claim desktop page Capture, the
 extension-to-desktop Capture Bundle bridge, advanced Complete Export closures beyond the supported
-single-Key-Epoch vectors, remaining organization and other dependency-bearing Content Fork
-re-authoring, or user-facing search/AI semantics.
+single-Key-Epoch vectors, Event Re-authoring for eligible unpublished Capture work, or user-facing
+search/AI semantics.

@@ -70,13 +70,13 @@ closures; Complete Import creates a readable Replica without a local authoring C
 extension's backend router merges local and desktop Vault
 summaries, then routes Commands by Vault ID; it does not copy desktop Vault bytes into the browser.
 Desktop page acquisition is intentionally unavailable. Capture remains available for extension-owned
-local Vaults; the extension-to-desktop Capture Bundle bridge is not implemented. Multi-Key-Epoch and
-adopted-Vacuum Complete Export semantics, remaining organization and other
-dependency-bearing Content Fork re-authoring, broader Authority and Key-Epoch event families,
-conflict/rebase projections, and the remaining Wails workflow coverage beyond the current
-Vault-management controls and cross-surface journeys remain explicit parity boundaries.
-The Go Runtime re-authors Note Content Objects and Note Created/Revised/Deleted/Restored/Conflict
-Resolution Events with fresh destination identities and authenticated object/cause dependencies.
+local Vaults; the extension-to-desktop Capture Bundle bridge is not implemented. State-only Fork
+copies the authenticated Library checkpoint into a fresh Initial Baseline and rewraps its referenced
+Objects and Feature Manifest closure without source Content Event re-authoring. Multi-Key-Epoch and
+adopted-Vacuum Complete Export semantics, Event Re-authoring for eligible unpublished Capture work,
+broader Authority and Key-Epoch event families, conflict/rebase projections, and the remaining Wails
+workflow coverage beyond the current Vault-management controls and cross-surface journeys remain
+explicit parity boundaries.
 
 The move boundary is an explicit one-use transfer ceremony, not synchronization. The source
 Client seals a transfer package with the transfer secret, the desktop process authenticates and
