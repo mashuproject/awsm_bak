@@ -230,6 +230,53 @@ func TestForkReauthorsNoteObjectAndEvents(t *testing.T) {
 	}
 }
 
+func TestForkReauthorsNoteLifecycleAndConflictResolutionEvents(t *testing.T) {
+	ctx := context.Background()
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, store.NewMemoryState(), dependencies)
+	if err != nil {
+		t.Fatalf("create Runtime: %v", err)
+	}
+	sourceID, _ := createVaultWithPhraseForTest(t, runtime, "Note lifecycle Fork source")
+	noteID, contentObjectID, createdID, revisedID := admitForkNoteEvents(t, runtime, dependencies, sourceID)
+	deletedID := signAndAdmitForkNoteEvent(t, runtime, dependencies, sourceID, 29, canonical.Map{0: noteID[:], 1: []canonical.Value{revisedID[:]}}, nil, nil)
+	restoredID := signAndAdmitForkNoteEvent(t, runtime, dependencies, sourceID, 30, canonical.Map{0: noteID[:], 1: []canonical.Value{deletedID[:]}}, nil, nil)
+	branchParents := []canonical.Identifier{restoredID}
+	branchA := signAndAdmitForkNoteEvent(t, runtime, dependencies, sourceID, 28, canonical.Map{0: noteID[:], 1: []canonical.Value{restoredID[:]}, 2: contentObjectID[:]}, []canonical.Dependency{{Type: 6, ID: contentObjectID}}, branchParents)
+	branchB := signAndAdmitForkNoteEvent(t, runtime, dependencies, sourceID, 28, canonical.Map{0: noteID[:], 1: []canonical.Value{restoredID[:]}, 2: contentObjectID[:]}, []canonical.Dependency{{Type: 6, ID: contentObjectID}}, branchParents)
+	resolutionParents := runtime.replicas[sourceID].State().CausalFrontier
+	resolutionID := signAndAdmitForkNoteEvent(t, runtime, dependencies, sourceID, 31, canonical.Map{
+		0: noteID[:], 1: []canonical.Value{branchA[:], branchB[:]}, 2: contentObjectID[:], 3: []canonical.Value{},
+	}, []canonical.Dependency{{Type: 6, ID: contentObjectID}}, resolutionParents)
+
+	started, err := runtime.Handle(ctx, mustJSON(map[string]any{"type": "BeginVaultFork", "expectedVaultId": sourceID}))
+	if err != nil {
+		t.Fatalf("begin Fork: %v", err)
+	}
+	setup := started.(map[string]string)
+	confirmed, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "ConfirmVaultFork", "setupId": setup["setupId"], "recoveryPhrase": setup["recoveryPhrase"],
+	}))
+	if err != nil {
+		t.Fatalf("confirm lifecycle Fork: %v", err)
+	}
+	forkID := confirmed.(map[string]string)["vaultId"]
+	counts := map[uint64]int{}
+	for _, event := range runtime.replicas[forkID].Events() {
+		if event.Family == canonical.ContentFamily {
+			counts[event.Type]++
+			if event.RecordID == createdID || event.RecordID == revisedID || event.RecordID == deletedID || event.RecordID == restoredID || event.RecordID == branchA || event.RecordID == branchB || event.RecordID == resolutionID {
+				t.Fatalf("Fork reused source Note Event %x", event.RecordID)
+			}
+		}
+	}
+	for eventType, want := range map[uint64]int{27: 1, 28: 3, 29: 1, 30: 1, 31: 1} {
+		if counts[eventType] != want {
+			t.Fatalf("Fork Note Event type %d count = %d, want %d", eventType, counts[eventType], want)
+		}
+	}
+}
+
 func admitForkLabelEvent(t *testing.T, runtime *Runtime, dependencies Dependencies, vaultID, label string) {
 	t.Helper()
 	value := runtime.vaults[vaultID]
@@ -345,6 +392,54 @@ func admitForkNoteEvents(t *testing.T, runtime *Runtime, dependencies Dependenci
 	revisedBody := canonical.Map{0: noteID[:], 1: []canonical.Value{createdID[:]}, 2: contentObjectID[:]}
 	revisedID := signAndAdmit(28, revisedBody, []canonical.Dependency{{Type: 6, ID: contentObjectID}})
 	return noteID, contentObjectID, createdID, revisedID
+}
+
+func signAndAdmitForkNoteEvent(t *testing.T, runtime *Runtime, dependencies Dependencies, vaultID string, eventType uint64, body canonical.Value, dependenciesList []canonical.Dependency, parentsOverride ...[]canonical.Identifier) canonical.Identifier {
+	t.Helper()
+	value := runtime.vaults[vaultID]
+	vaultIdentifier := mustIdentifier(t, vaultID)
+	featureSetID := mustIdentifier(t, value.Canonical.RequiredFeatureSetID)
+	epochID := mustIdentifier(t, value.Canonical.KeyEpochID)
+	epochBytes, err := dependencies.Secrets.Get(trustedSecretService, epochSecretAccount(vaultID, value.Canonical.KeyEpochID))
+	if err != nil {
+		t.Fatalf("read source Key Epoch: %v", err)
+	}
+	epochSecret, err := decodeEpochSecret(epochBytes, vaultIdentifier, epochID)
+	if err != nil {
+		t.Fatalf("decode source Key Epoch: %v", err)
+	}
+	credentialID := mustIdentifier(t, value.Canonical.ClientCredentialID)
+	clientBytes, err := dependencies.Secrets.Get(trustedSecretService, clientSecretAccount(vaultID, value.Canonical.ClientCredentialID))
+	if err != nil {
+		t.Fatalf("read source Client Credential: %v", err)
+	}
+	clientSecret, err := decodeClientSecret(clientBytes, vaultIdentifier, mustIdentifier(t, value.Canonical.MemberID), credentialID)
+	if err != nil {
+		t.Fatalf("decode source Client Credential: %v", err)
+	}
+	parents := runtime.replicas[vaultID].State().CausalFrontier
+	if len(parentsOverride) > 0 && parentsOverride[0] != nil {
+		parents = append([]canonical.Identifier(nil), parentsOverride[0]...)
+	}
+	event, err := canonical.SignEvent(canonical.EventInput{
+		VaultID: vaultIdentifier, GenerationID: mustIdentifier(t, value.GenerationID), ParentRecordIDs: parents,
+		AuthorityParentIDs: runtime.replicas[vaultID].State().AuthorityFrontier, Dependencies: dependenciesList,
+		RequiredFeatureSetID: featureSetID, Extensions: map[string][]byte{}, Family: canonical.ContentFamily,
+		Type: eventType, SignerCredentialID: credentialID, AssertedAt: 200 + int64(eventType) + int64(len(runtime.replicas[vaultID].Events())), Body: body,
+	}, ed25519.PrivateKey(clientSecret.signingSecretKey))
+	if err != nil {
+		t.Fatalf("sign Note Event %d: %v", eventType, err)
+	}
+	encoded, err := awsmcrypto.SealCompactItem(awsmcrypto.CompactItemInput{
+		VaultID: vaultIdentifier, KeyEpochID: epochID, KeyEpochKey: epochSecret.key, PayloadType: 1, PayloadBytes: event.Bytes,
+	})
+	if err != nil {
+		t.Fatalf("seal Note Event %d: %v", eventType, err)
+	}
+	if err := runtime.AdmitOpaqueEvent(context.Background(), vaultID, encoded); err != nil {
+		t.Fatalf("admit Note Event %d: %v", eventType, err)
+	}
+	return event.RecordID
 }
 
 func admitForkBundleRegisteredEvent(t *testing.T, runtime *Runtime, dependencies Dependencies, vaultID string, artifactID canonical.Identifier) (canonical.Identifier, canonical.Identifier) {

@@ -38,7 +38,7 @@ Content-Type: application/json
 
 The body is one tagged `CanonicalApplicationRequest`. The Go Runtime implements `GetState`, Vault
 creation and selection, Recovery Phrase ceremonies, `RecoverMember`, empty-state Fork,
-Artifact/Bundle capture-closure Fork, and dependency-free label Fork, `CloseVault`,
+Artifact/Bundle/Note content-closure Fork, and dependency-free label Fork, `CloseVault`,
 `VacuumVault`, `ListLibrary`, Storage Relief/GC through the Runtime API, Hosted Replica
 creation/attachment/materialization, receiver pull, and Artifact hydration. Capture remains an
 extension-only surface; the extension-to-desktop Capture Bundle bridge is not implemented.

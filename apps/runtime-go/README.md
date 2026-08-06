@@ -61,7 +61,7 @@ verification. A Runtime API bearer token never authorizes that surface.
 
 The Go Runtime implements the canonical tagged Command contract for persistent Vault management:
 creation and selection, Recovery Phrase confirmation/replacement and same-member recovery, Fork
-for an empty state or Artifact/Bundle capture closures and dependency-free content labels, Closure, Vacuum adoption, Library projection, authenticated Event/Object replay,
+for an empty state or Artifact/Bundle/Note content closures and dependency-free content labels, Closure, Vacuum adoption, Library projection, authenticated Event/Object replay,
 Storage Relief, Garbage Collection, Hosted Replica creation and attachment, Compact materialization,
 receiver-initiated pull, and explicit Artifact hydration. The Wails surface and loopback API use this
 same Runtime; a paired extension reaches it under the single `runtime.vault` grant.
@@ -81,7 +81,7 @@ The Runtime command boundary also produces and accepts the browser-compatible Co
 container for the supported single-Key-Epoch closure, including authenticated Streamable Artifact
 wrappers. Imported Replicas are readable but have no selected authoring Credential or private key.
 Multi-Key-Epoch, Feature Manifest, and adopted-Vacuum Complete Export semantics remain explicit limits, along with
-Note and other dependency-bearing Content Fork re-authoring, broader Authority/Key-Epoch event families, conflict/rebase projections, and
+remaining organization and other dependency-bearing Content Fork re-authoring, broader Authority/Key-Epoch event families, conflict/rebase projections, and
 full Wails workflow coverage.
 
 The move boundary is deliberately separate from Vault synchronization. A source Client seals the
@@ -130,5 +130,5 @@ These proofs cover the process boundary, Runtime API grant lifecycle, canonical 
 envelope, authenticated replay, Hosted Replica sync boundaries, Artifact hydration, and encrypted
 transfer staging. They do not claim desktop page Capture, the extension-to-desktop Capture Bundle
 bridge, advanced Complete Export closures beyond the supported single-Key-Epoch vectors,
-Note and other dependency-bearing Content Fork re-authoring,
+remaining organization and other dependency-bearing Content Fork re-authoring,
 or user-facing search/AI semantics.

@@ -64,8 +64,8 @@ The browser extension currently supports:
   supplies and the Client verifies it.
 
 The reference Go Runtime also provides a desktop/headless Client mode behind the same tagged
-Command boundary. It can create, select, recover, Fork an empty state or re-author Artifact and
-Bundle capture closures plus dependency-free content labels, close, Vacuum, replay
+Command boundary. It can create, select, recover, Fork an empty state or re-author Artifact, Bundle,
+and Note content closures plus dependency-free content labels, close, Vacuum, replay
 authenticated Records/Objects, project its Library, perform Storage Relief/GC, attach and
 materialize Hosted Replicas, pull opaque Compact items, hydrate a known Artifact, accept an
 encrypted Go-to-Go transfer closure, and export/import the browser-compatible Complete Export
@@ -91,7 +91,7 @@ Current limits are intentional: direct peer transports, complete Authority-branc
 global freshness claims, automatic redundancy tracking, and user-facing AI features are not shipped
 in this release. Desktop page capture and the extension-to-desktop Capture Bundle bridge are not
 available. Multi-Key-Epoch, Feature Manifest, and adopted-Vacuum Complete Export semantics,
-Note and other dependency-bearing Content Fork re-authoring, broader Authority/Key-Epoch event families,
+remaining organization and other dependency-bearing Content Fork re-authoring, broader Authority/Key-Epoch event families,
 conflict/rebase projections, and complete Wails workflow coverage remain explicit parity work; see
 the living specifications and roadmap. The supported single-Key-Epoch Complete Export now
 authenticates and carries Streamable Artifact wrappers.
