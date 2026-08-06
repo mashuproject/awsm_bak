@@ -123,12 +123,20 @@ func (r *Replica) AdmitEvent(event canonical.Event, signerPublicKey ed25519.Publ
 		}
 	}
 	var enrollment *enrollmentCredential
+	var acceptance *invitationAcceptance
 	if decoded.Family == canonical.AuthorityFamily && decoded.Type == 9 {
 		parsed, err := parseEnrollmentCredential(decoded)
 		if err != nil {
 			return err
 		}
 		enrollment = &parsed
+	}
+	if decoded.Family == canonical.AuthorityFamily && decoded.Type == 6 {
+		parsed, err := parseInvitationAcceptance(decoded)
+		if err != nil {
+			return err
+		}
+		acceptance = &parsed
 	}
 	if decoded.Family == canonical.AuthorityFamily && decoded.Type == canonical.GenesisEvent {
 		if r.genesisID != (canonical.Identifier{}) || len(decoded.ParentRecordIDs) != 0 || len(decoded.AuthorityParentIDs) != 0 {
@@ -174,6 +182,9 @@ func (r *Replica) AdmitEvent(event canonical.Event, signerPublicKey ed25519.Publ
 			return errors.New("Client Enrollment reuses a Client Credential identity")
 		}
 		r.credentialKeys[enrollment.credentialID] = append(ed25519.PublicKey(nil), enrollment.signingPublicKey...)
+	}
+	if acceptance != nil {
+		r.credentialKeys[acceptance.clientCredentialID] = append(ed25519.PublicKey(nil), acceptance.clientSigningKey...)
 	}
 	if decoded.Family == canonical.AuthorityFamily || decoded.Family == canonical.LifecycleFamily {
 		r.continuityRecordIDs = appendUniqueSorted(r.continuityRecordIDs, decoded.RecordID)

@@ -30,7 +30,9 @@ type keyEpochReplayState struct {
 	recoverySigningKeys   map[canonical.Identifier]ed25519.PublicKey
 	recoveryTargets       map[canonical.Identifier]uint64
 	clientTargets         map[canonical.Identifier]struct{}
-	invitations           map[canonical.Identifier]struct{}
+	members               map[canonical.Identifier]struct{}
+	invitations           map[canonical.Identifier]invitationCreation
+	invitationTerminals   map[canonical.Identifier]struct{}
 	closed                bool
 }
 
@@ -53,20 +55,36 @@ type keyDelivery struct {
 type invitationAcceptance struct {
 	invitationID            canonical.Identifier
 	joinRequestID           canonical.Identifier
+	proposalID              canonical.Identifier
 	memberID                canonical.Identifier
 	clientCredentialID      canonical.Identifier
 	recoveryCredentialID    canonical.Identifier
+	recoveryRevision        uint64
 	clientSigningKey        ed25519.PublicKey
 	recoverySigningKey      ed25519.PublicKey
 	clientPossessionProof   []byte
 	recoveryPossessionProof []byte
 	redemptionProof         []byte
 	receiptID               canonical.Identifier
+	receiptInvitationID     canonical.Identifier
+	receiptOutcome          uint64
+	receiptJoinRequestID    canonical.Identifier
+	receiptProposalID       canonical.Identifier
 	receiptSignature        []byte
 	envelopeSlots           []keyEpochEnvelopeSlot
+	proposalAuthorityIDs    []canonical.Identifier
 	joinRequestPrefixBytes  []byte
+	joinRequestBytes        []byte
+	proposalBytes           []byte
 	receiptPrefixBytes      []byte
 	capabilitiesBytes       []byte
+	administrator           bool
+}
+
+type invitationCreation struct {
+	capabilitiesBytes      []byte
+	redemptionVerifier     ed25519.PublicKey
+	receiptVerificationKey ed25519.PublicKey
 }
 
 type keyEpochTransition struct {
@@ -97,6 +115,7 @@ func replayAuthenticatedKeyEpochs(events []canonical.Event, genesis canonical.Ev
 	state := keyEpochReplayState{
 		firstClientCredential: firstClient,
 		activeMembers:         map[canonical.Identifier]struct{}{firstMember: {}},
+		members:               map[canonical.Identifier]struct{}{firstMember: {}},
 		administrators:        map[canonical.Identifier]struct{}{firstMember: {}},
 		clientMembers:         map[canonical.Identifier]canonical.Identifier{firstClient: firstMember},
 		epochs:                map[canonical.Identifier]uint64{initialEpoch: 0},
@@ -107,7 +126,8 @@ func replayAuthenticatedKeyEpochs(events []canonical.Event, genesis canonical.Ev
 		recoverySigningKeys:   map[canonical.Identifier]ed25519.PublicKey{firstRecovery: genesisRecoverySigningKey(genesis)},
 		recoveryTargets:       map[canonical.Identifier]uint64{firstRecovery: 0},
 		clientTargets:         map[canonical.Identifier]struct{}{firstClient: {}},
-		invitations:           map[canonical.Identifier]struct{}{},
+		invitations:           map[canonical.Identifier]invitationCreation{},
+		invitationTerminals:   map[canonical.Identifier]struct{}{},
 	}
 	byID := make(map[canonical.Identifier]canonical.Event, len(events))
 	for _, event := range events {
@@ -233,7 +253,12 @@ func replayAuthenticatedKeyEpochs(events []canonical.Event, genesis canonical.Ev
 				delete(visiting, recordID)
 				return keyEpochReplayState{}, errors.New("Invitation Creation reuses an Invitation identity")
 			}
-			current.invitations[invitationID] = struct{}{}
+			creation, creationErr := parseInvitationCreation(event)
+			if creationErr != nil {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, creationErr
+			}
+			current.invitations[invitationID] = creation
 		}
 		if event.Family == canonical.AuthorityFamily && event.Type == 6 {
 			acceptance, parseErr := parseInvitationAcceptance(event)
@@ -241,10 +266,40 @@ func replayAuthenticatedKeyEpochs(events []canonical.Event, genesis canonical.Ev
 				delete(visiting, recordID)
 				return keyEpochReplayState{}, parseErr
 			}
-			if _, exists := current.invitations[acceptance.invitationID]; !exists {
+			invitation, exists := current.invitations[acceptance.invitationID]
+			if !exists {
 				delete(visiting, recordID)
 				return keyEpochReplayState{}, errors.New("Invitation Acceptance references an unknown Invitation")
 			}
+			if err := validateInvitationAcceptance(current, event, acceptance, invitation); err != nil {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, err
+			}
+			if _, exists := current.members[acceptance.memberID]; exists {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, errors.New("Invitation Acceptance reuses a Member identity")
+			}
+			if _, exists := current.clientMembers[acceptance.clientCredentialID]; exists {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, errors.New("Invitation Acceptance reuses a Client Credential identity")
+			}
+			if _, exists := current.recoveryMembers[acceptance.recoveryCredentialID]; exists {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, errors.New("Invitation Acceptance reuses a Recovery Credential identity")
+			}
+			current.members[acceptance.memberID] = struct{}{}
+			current.activeMembers[acceptance.memberID] = struct{}{}
+			current.clientMembers[acceptance.clientCredentialID] = acceptance.memberID
+			current.clientTargets[acceptance.clientCredentialID] = struct{}{}
+			current.recoveryMembers[acceptance.recoveryCredentialID] = acceptance.memberID
+			current.recoveryRevisions[acceptance.recoveryCredentialID] = acceptance.recoveryRevision
+			current.recoverySigningKeys[acceptance.recoveryCredentialID] = append(ed25519.PublicKey(nil), acceptance.recoverySigningKey...)
+			current.recoveryTargets[acceptance.recoveryCredentialID] = acceptance.recoveryRevision
+			if acceptance.administrator {
+				current.administrators[acceptance.memberID] = struct{}{}
+			}
+			delete(current.invitations, acceptance.invitationID)
+			current.invitationTerminals[acceptance.invitationID] = struct{}{}
 		}
 		if event.Family == canonical.AuthorityFamily && (event.Type == 3 || event.Type == 4) {
 			targetMember, resolved, parseErr := parseAdministratorRole(event)
@@ -498,6 +553,7 @@ func cloneKeyEpochReplayState(value keyEpochReplayState) keyEpochReplayState {
 	clone := keyEpochReplayState{
 		firstClientCredential: value.firstClientCredential,
 		activeMembers:         make(map[canonical.Identifier]struct{}, len(value.activeMembers)),
+		members:               make(map[canonical.Identifier]struct{}, len(value.members)),
 		administrators:        make(map[canonical.Identifier]struct{}, len(value.administrators)),
 		clientMembers:         make(map[canonical.Identifier]canonical.Identifier, len(value.clientMembers)),
 		epochs:                make(map[canonical.Identifier]uint64, len(value.epochs)),
@@ -508,11 +564,15 @@ func cloneKeyEpochReplayState(value keyEpochReplayState) keyEpochReplayState {
 		recoverySigningKeys:   make(map[canonical.Identifier]ed25519.PublicKey, len(value.recoverySigningKeys)),
 		recoveryTargets:       make(map[canonical.Identifier]uint64, len(value.recoveryTargets)),
 		clientTargets:         make(map[canonical.Identifier]struct{}, len(value.clientTargets)),
-		invitations:           make(map[canonical.Identifier]struct{}, len(value.invitations)),
+		invitations:           make(map[canonical.Identifier]invitationCreation, len(value.invitations)),
+		invitationTerminals:   make(map[canonical.Identifier]struct{}, len(value.invitationTerminals)),
 		closed:                value.closed,
 	}
 	for id := range value.activeMembers {
 		clone.activeMembers[id] = struct{}{}
+	}
+	for id := range value.members {
+		clone.members[id] = struct{}{}
 	}
 	for id := range value.administrators {
 		clone.administrators[id] = struct{}{}
@@ -544,8 +604,11 @@ func cloneKeyEpochReplayState(value keyEpochReplayState) keyEpochReplayState {
 	for id := range value.clientTargets {
 		clone.clientTargets[id] = struct{}{}
 	}
-	for id := range value.invitations {
-		clone.invitations[id] = struct{}{}
+	for id, invitation := range value.invitations {
+		clone.invitations[id] = cloneInvitationCreation(invitation)
+	}
+	for id := range value.invitationTerminals {
+		clone.invitationTerminals[id] = struct{}{}
 	}
 	return clone
 }
@@ -554,6 +617,7 @@ func mergeKeyEpochReplayStates(values []keyEpochReplayState) keyEpochReplayState
 	if len(values) == 0 {
 		return keyEpochReplayState{
 			activeMembers:       make(map[canonical.Identifier]struct{}),
+			members:             make(map[canonical.Identifier]struct{}),
 			administrators:      make(map[canonical.Identifier]struct{}),
 			clientMembers:       make(map[canonical.Identifier]canonical.Identifier),
 			epochs:              make(map[canonical.Identifier]uint64),
@@ -564,13 +628,17 @@ func mergeKeyEpochReplayStates(values []keyEpochReplayState) keyEpochReplayState
 			recoverySigningKeys: make(map[canonical.Identifier]ed25519.PublicKey),
 			recoveryTargets:     make(map[canonical.Identifier]uint64),
 			clientTargets:       make(map[canonical.Identifier]struct{}),
-			invitations:         make(map[canonical.Identifier]struct{}),
+			invitations:         make(map[canonical.Identifier]invitationCreation),
+			invitationTerminals: make(map[canonical.Identifier]struct{}),
 		}
 	}
 	merged := cloneKeyEpochReplayState(values[0])
 	for _, value := range values[1:] {
 		for id := range value.activeMembers {
 			merged.activeMembers[id] = struct{}{}
+		}
+		for id := range value.members {
+			merged.members[id] = struct{}{}
 		}
 		for id := range value.administrators {
 			merged.administrators[id] = struct{}{}
@@ -613,8 +681,17 @@ func mergeKeyEpochReplayStates(values []keyEpochReplayState) keyEpochReplayState
 		for id := range value.clientTargets {
 			merged.clientTargets[id] = struct{}{}
 		}
-		for id := range value.invitations {
-			merged.invitations[id] = struct{}{}
+		for id, invitation := range value.invitations {
+			if existing, exists := merged.invitations[id]; !exists {
+				merged.invitations[id] = cloneInvitationCreation(invitation)
+			} else if !bytes.Equal(existing.capabilitiesBytes, invitation.capabilitiesBytes) {
+				delete(merged.invitations, id)
+				merged.invitationTerminals[id] = struct{}{}
+			}
+		}
+		for id := range value.invitationTerminals {
+			delete(merged.invitations, id)
+			merged.invitationTerminals[id] = struct{}{}
 		}
 		merged.closed = merged.closed || value.closed
 	}
@@ -806,6 +883,138 @@ func parseInvitationCreationID(event canonical.Event) (canonical.Identifier, err
 	return bytesIdentifier(invitationBytes), nil
 }
 
+func parseInvitationCreation(event canonical.Event) (invitationCreation, error) {
+	body, ok := replicaMapValue(event.Body)
+	if !ok || !replicaMapHasKeys(body, 6) {
+		return invitationCreation{}, errors.New("Invitation Creation body is invalid")
+	}
+	capabilities, ok := replicaMapEntry(body, 1)
+	if !ok {
+		return invitationCreation{}, errors.New("Invitation Creation capabilities are missing")
+	}
+	capabilitiesBytes, err := canonical.EncodeValue(capabilities)
+	if err != nil {
+		return invitationCreation{}, errors.New("Invitation Creation capabilities are not canonical")
+	}
+	redemptionVerifier, ok := replicaMapBytes(body, 2, ed25519.PublicKeySize)
+	if !ok {
+		return invitationCreation{}, errors.New("Invitation Redemption verifier is invalid")
+	}
+	receiptVerificationKey, ok := replicaMapBytes(body, 5, ed25519.PublicKeySize)
+	if !ok {
+		return invitationCreation{}, errors.New("Invitation receipt verification key is invalid")
+	}
+	return invitationCreation{
+		capabilitiesBytes:      append([]byte(nil), capabilitiesBytes...),
+		redemptionVerifier:     append(ed25519.PublicKey(nil), redemptionVerifier...),
+		receiptVerificationKey: append(ed25519.PublicKey(nil), receiptVerificationKey...),
+	}, nil
+}
+
+func cloneInvitationCreation(value invitationCreation) invitationCreation {
+	return invitationCreation{
+		capabilitiesBytes:      append([]byte(nil), value.capabilitiesBytes...),
+		redemptionVerifier:     append(ed25519.PublicKey(nil), value.redemptionVerifier...),
+		receiptVerificationKey: append(ed25519.PublicKey(nil), value.receiptVerificationKey...),
+	}
+}
+
+func validateInvitationAcceptance(state keyEpochReplayState, event canonical.Event, acceptance invitationAcceptance, invitation invitationCreation) error {
+	if !bytes.Equal(invitation.capabilitiesBytes, acceptance.capabilitiesBytes) {
+		return errors.New("Invitation Acceptance capabilities differ from the Invitation")
+	}
+	if !sameIdentifierSlice(acceptance.proposalAuthorityIDs, event.AuthorityParentIDs) {
+		return errors.New("Invitation Acceptance Authority Parents differ from its Proposal")
+	}
+	if acceptance.receiptInvitationID != acceptance.invitationID || acceptance.receiptOutcome != 1 ||
+		acceptance.receiptJoinRequestID != acceptance.joinRequestID || acceptance.receiptProposalID != acceptance.proposalID {
+		return errors.New("Invitation Acceptance receipt does not match its request")
+	}
+	joinTranscript, err := canonical.Transcript("awsm:invitation-join-request:v1", acceptance.joinRequestPrefixBytes)
+	if err != nil || !ed25519.Verify(acceptance.clientSigningKey, joinTranscript, acceptance.clientPossessionProof) ||
+		!ed25519.Verify(acceptance.recoverySigningKey, joinTranscript, acceptance.recoveryPossessionProof) ||
+		!ed25519.Verify(invitation.redemptionVerifier, joinTranscript, acceptance.redemptionProof) {
+		return errors.New("Invitation Acceptance possession or redemption proof is invalid")
+	}
+	receiptTranscript, err := canonical.Transcript("awsm:invitation-receipt:v1", acceptance.receiptPrefixBytes)
+	if err != nil || !ed25519.Verify(invitation.receiptVerificationKey, receiptTranscript, acceptance.receiptSignature) {
+		return errors.New("Invitation Acceptance receipt signature is invalid")
+	}
+	if err := validateInvitationAcceptanceSlots(state, acceptance, event); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateInvitationAcceptanceSlots(state keyEpochReplayState, acceptance invitationAcceptance, event canonical.Event) error {
+	dependencyIDs := make(map[canonical.Identifier]struct{}, len(event.Dependencies))
+	for _, dependency := range event.Dependencies {
+		if dependency.Type != 7 {
+			return errors.New("Invitation Acceptance dependencies must be Key Envelopes")
+		}
+		dependencyIDs[dependency.ID] = struct{}{}
+	}
+	if len(dependencyIDs) != len(acceptance.envelopeSlots) {
+		return errors.New("Invitation Acceptance dependencies do not match Envelope slots")
+	}
+	seen := make(map[string]struct{}, len(acceptance.envelopeSlots))
+	for _, slot := range acceptance.envelopeSlots {
+		if _, established := state.epochs[slot.epochID]; !established {
+			return errors.New("Invitation Acceptance Envelope slot names an unknown Key Epoch")
+		}
+		if _, dependency := dependencyIDs[slot.envelopeID]; !dependency {
+			return errors.New("Invitation Acceptance omits an Envelope dependency")
+		}
+		var target string
+		switch slot.targetKind {
+		case awsmcrypto.RecoveryCredentialTarget:
+			if slot.targetID != acceptance.recoveryCredentialID || slot.targetRevision == nil || *slot.targetRevision != acceptance.recoveryRevision {
+				return errors.New("Invitation Acceptance Recovery Envelope target is invalid")
+			}
+			target = fmt.Sprintf("%d:%x:%d", slot.targetKind, slot.targetID, *slot.targetRevision)
+		case awsmcrypto.ClientCredentialTarget:
+			if slot.targetID != acceptance.clientCredentialID || slot.targetRevision != nil {
+				return errors.New("Invitation Acceptance Client Envelope target is invalid")
+			}
+			target = fmt.Sprintf("%d:%x:null", slot.targetKind, slot.targetID)
+		default:
+			return errors.New("Invitation Acceptance Envelope target kind is invalid")
+		}
+		key := fmt.Sprintf("%s:%x", target, slot.epochID)
+		if _, duplicate := seen[key]; duplicate {
+			return errors.New("Invitation Acceptance repeats an Envelope target")
+		}
+		seen[key] = struct{}{}
+	}
+	expected := len(state.epochs) * 2
+	if len(seen) != expected {
+		return errors.New("Invitation Acceptance Envelope slots are not the complete target set")
+	}
+	for epochID := range state.epochs {
+		for _, target := range []string{
+			fmt.Sprintf("%d:%x:%d:%x", awsmcrypto.RecoveryCredentialTarget, acceptance.recoveryCredentialID, acceptance.recoveryRevision, epochID),
+			fmt.Sprintf("%d:%x:null:%x", awsmcrypto.ClientCredentialTarget, acceptance.clientCredentialID, epochID),
+		} {
+			if _, present := seen[target]; !present {
+				return errors.New("Invitation Acceptance Envelope slots omit a readable Key Epoch")
+			}
+		}
+	}
+	return nil
+}
+
+func sameIdentifierSlice(left, right []canonical.Identifier) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}
+
 func parseInvitationAcceptance(event canonical.Event) (invitationAcceptance, error) {
 	body, ok := replicaMapValue(event.Body)
 	if !ok || !replicaMapHasKeys(body, 3) {
@@ -848,10 +1057,14 @@ func parseInvitationAcceptance(event canonical.Event) (invitationAcceptance, err
 	}
 	recoveryBytes, recoveryOK := replicaMapBytes(recovery, 0, 32)
 	recoveryMemberBytes, recoveryMemberOK := replicaMapBytes(recovery, 1, 32)
-	_, recoveryRevisionOK := replicaMapNumber(recovery, 2)
+	recoveryRevision, recoveryRevisionOK := replicaMapNumber(recovery, 2)
 	recoverySigningKey, recoverySigningOK := replicaMapBytes(recovery, 3, ed25519.PublicKeySize)
 	if !recoveryOK || !recoveryMemberOK || !recoveryRevisionOK || !recoverySigningOK || !bytes.Equal(memberBytes, recoveryMemberBytes) || bytes.Equal(recoveryBytes, make([]byte, 32)) {
 		return invitationAcceptance{}, errors.New("Invitation Acceptance Recovery Credential fields are invalid")
+	}
+	proposalAuthorityIDs, err := parseCanonicalIdentifierSet(replicaMapEntryMust(proposal, 2), "Invitation Acceptance Authority Parents", true)
+	if err != nil {
+		return invitationAcceptance{}, err
 	}
 	slots, err := parseKeyEpochEnvelopeSlots(replicaMapEntryMust(proposal, 7), "Invitation Acceptance Envelope slots")
 	if err != nil {
@@ -860,9 +1073,13 @@ func parseInvitationAcceptance(event canonical.Event) (invitationAcceptance, err
 	clientProof, clientProofOK := replicaMapBytes(join, 5, ed25519.SignatureSize)
 	recoveryProof, recoveryProofOK := replicaMapBytes(join, 6, ed25519.SignatureSize)
 	redemptionProof, redemptionProofOK := replicaMapBytes(join, 7, ed25519.SignatureSize)
+	receiptInvitationBytes, receiptInvitationOK := replicaMapBytes(receipt, 0, 32)
+	receiptOutcome, receiptOutcomeOK := replicaMapNumber(receipt, 1)
+	receiptJoinRequestBytes, receiptJoinRequestOK := replicaMapBytes(receipt, 2, 32)
+	receiptProposalBytes, receiptProposalOK := replicaMapBytes(receipt, 3, 32)
 	receiptIDBytes, receiptIDOK := replicaMapBytes(receipt, 4, 32)
 	receiptSignature, receiptSignatureOK := replicaMapBytes(receipt, 5, ed25519.SignatureSize)
-	if !clientProofOK || !recoveryProofOK || !redemptionProofOK || !receiptIDOK || !receiptSignatureOK || bytes.Equal(receiptIDBytes, make([]byte, 32)) {
+	if !clientProofOK || !recoveryProofOK || !redemptionProofOK || !receiptInvitationOK || !receiptOutcomeOK || !receiptJoinRequestOK || !receiptProposalOK || !receiptIDOK || !receiptSignatureOK || bytes.Equal(receiptInvitationBytes, make([]byte, 32)) || bytes.Equal(receiptJoinRequestBytes, make([]byte, 32)) || bytes.Equal(receiptProposalBytes, make([]byte, 32)) || bytes.Equal(receiptIDBytes, make([]byte, 32)) {
 		return invitationAcceptance{}, errors.New("Invitation Acceptance signatures are invalid")
 	}
 	joinPrefix := canonical.Map{}
@@ -893,23 +1110,86 @@ func parseInvitationAcceptance(event canonical.Event) (invitationAcceptance, err
 	if err != nil {
 		return invitationAcceptance{}, errors.New("Invitation capabilities are not canonical")
 	}
+	proposalBytes, err := canonical.EncodeValue(proposalValue)
+	if err != nil {
+		return invitationAcceptance{}, errors.New("Invitation Acceptance Proposal is not canonical")
+	}
+	joinRequestBytesEncoded, err := canonical.EncodeValue(joinValue)
+	if err != nil {
+		return invitationAcceptance{}, errors.New("Invitation Join Request is not canonical")
+	}
+	capabilityValues, ok := replicaMapArrayValue(replicaMapEntryMust(join, 1))
+	if !ok || len(capabilityValues) == 0 {
+		return invitationAcceptance{}, errors.New("Invitation capabilities are invalid")
+	}
+	administrator := false
+	var previousCapability []byte
+	seenCapabilities := make(map[string]struct{}, len(capabilityValues))
+	for _, capabilityValue := range capabilityValues {
+		encoded, encodeErr := canonical.EncodeValue(capabilityValue)
+		if encodeErr != nil || (previousCapability != nil && bytes.Compare(previousCapability, encoded) >= 0) {
+			return invitationAcceptance{}, errors.New("Invitation capabilities are not a canonical set")
+		}
+		if _, duplicate := seenCapabilities[string(encoded)]; duplicate {
+			return invitationAcceptance{}, errors.New("Invitation capabilities contain a duplicate")
+		}
+		seenCapabilities[string(encoded)] = struct{}{}
+		previousCapability = encoded
+		capability, capabilityOK := replicaMapValue(capabilityValue)
+		if !capabilityOK || !replicaMapHasKeys(capability, 5) {
+			return invitationAcceptance{}, errors.New("Invitation capability descriptor is invalid")
+		}
+		action, actionOK := replicaMapEntry(capability, 3)
+		if !actionOK {
+			return invitationAcceptance{}, errors.New("Invitation capability action is missing")
+		}
+		if actionText, actionOK := action.(string); actionOK && actionText == "awsm.vault.administrator" {
+			administrator = true
+		}
+	}
+	joinRequestIDTranscript, err := canonical.Transcript("awsm:invitation-join-request-id:v1", joinRequestBytesEncoded)
+	if err != nil {
+		return invitationAcceptance{}, errors.New("Invitation Join Request identity is invalid")
+	}
+	derivedJoinRequestID := sha256.Sum256(joinRequestIDTranscript)
+	if !bytes.Equal(derivedJoinRequestID[:], joinRequestBytes) {
+		return invitationAcceptance{}, errors.New("Invitation Join Request identity does not match its bytes")
+	}
+	proposalIDTranscript, err := canonical.Transcript("awsm:invitation-acceptance-proposal-id:v1", proposalBytes)
+	if err != nil {
+		return invitationAcceptance{}, errors.New("Invitation Acceptance Proposal identity is invalid")
+	}
+	derivedProposalID := sha256.Sum256(proposalIDTranscript)
+	if !bytes.Equal(derivedProposalID[:], receiptProposalBytes) {
+		return invitationAcceptance{}, errors.New("Invitation Acceptance Proposal identity does not match its bytes")
+	}
 	return invitationAcceptance{
 		invitationID:            bytesIdentifier(invitationBytes),
 		joinRequestID:           bytesIdentifier(joinRequestBytes),
+		proposalID:              bytesIdentifier(receiptProposalBytes),
 		memberID:                bytesIdentifier(memberBytes),
 		clientCredentialID:      bytesIdentifier(clientBytes),
 		recoveryCredentialID:    bytesIdentifier(recoveryBytes),
+		recoveryRevision:        recoveryRevision,
 		clientSigningKey:        append(ed25519.PublicKey(nil), clientSigningKey...),
 		recoverySigningKey:      append(ed25519.PublicKey(nil), recoverySigningKey...),
 		clientPossessionProof:   append([]byte(nil), clientProof...),
 		recoveryPossessionProof: append([]byte(nil), recoveryProof...),
 		redemptionProof:         append([]byte(nil), redemptionProof...),
 		receiptID:               bytesIdentifier(receiptIDBytes),
+		receiptInvitationID:     bytesIdentifier(receiptInvitationBytes),
+		receiptOutcome:          receiptOutcome,
+		receiptJoinRequestID:    bytesIdentifier(receiptJoinRequestBytes),
+		receiptProposalID:       bytesIdentifier(receiptProposalBytes),
 		receiptSignature:        append([]byte(nil), receiptSignature...),
 		envelopeSlots:           slots,
+		proposalAuthorityIDs:    proposalAuthorityIDs,
 		joinRequestPrefixBytes:  joinPrefixBytes,
+		joinRequestBytes:        joinRequestBytesEncoded,
+		proposalBytes:           proposalBytes,
 		receiptPrefixBytes:      receiptPrefixBytes,
 		capabilitiesBytes:       capabilitiesBytes,
+		administrator:           administrator,
 	}, nil
 }
 
