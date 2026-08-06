@@ -269,7 +269,18 @@ func (r *Runtime) materializeHostedReplica(ctx context.Context, id, remoteID str
 }
 
 func (r *Runtime) materializationTargetsLocked(state *canonicalReplicaState) ([]hostedMaterializationTarget, error) {
+	if state == nil || r.replicas[state.VaultID] == nil {
+		return nil, errors.New("Hosted materialization requires an authenticated Replica")
+	}
+	vaultIdentifier, err := decodeHexIdentifier(state.VaultID)
+	if err != nil {
+		return nil, err
+	}
 	targets := make([]hostedMaterializationTarget, 0, len(state.RecordStorageItemIDs)+len(state.ObjectStorageItemIDs)+2)
+	authority, err := replayReplicaAuthorityState(r.replicas[state.VaultID], nil, nil)
+	if err != nil {
+		return nil, err
+	}
 	appendItem := func(namespace byte, logicalIDText, storageItemID string) error {
 		logicalID, err := decodeHexIdentifier(logicalIDText)
 		if err != nil {
@@ -307,13 +318,96 @@ func (r *Runtime) materializationTargetsLocked(state *canonicalReplicaState) ([]
 		targets = append(targets, hostedMaterializationTarget{namespace: namespace, logicalID: logicalID, payloadType: payloadType, epochID: epochID, encoded: encoded})
 		return nil
 	}
+	appendKeyEnvelope := func(logicalIDText, storageItemID string) error {
+		logicalID, err := decodeHexIdentifier(logicalIDText)
+		if err != nil {
+			return err
+		}
+		reader, err := r.deps.Artifacts.Open(storageItemID)
+		if err != nil {
+			return err
+		}
+		encoded, readErr := io.ReadAll(reader)
+		_ = reader.Close()
+		if readErr != nil {
+			return readErr
+		}
+		envelope, err := storage.DecodeOpaqueEnvelope(encoded)
+		if err != nil || envelope.StorageClass != storage.CompactStorageClass || hexIdentifier(envelope.StorageItemID) != storageItemID {
+			return errors.New("Hosted materialization requires a valid Key Envelope")
+		}
+		epochIDText, ok := state.StorageItemKeyEpochIDs[storageItemID]
+		if !ok || !validDigest(epochIDText) {
+			return errors.New("Hosted materialization requires a Key Envelope Key Epoch binding")
+		}
+		epochID, err := decodeHexIdentifier(epochIDText)
+		if err != nil {
+			return err
+		}
+		var slot keyEpochEnvelopeSlot
+		found := false
+		for candidateEpochID, slots := range authority.epochSlots {
+			for _, candidate := range slots {
+				if candidate.envelopeID == logicalID {
+					slot = candidate
+					if candidateEpochID != epochID {
+						return errors.New("Hosted materialization Key Envelope Epoch binding is invalid")
+					}
+					found = true
+					break
+				}
+			}
+			if found {
+				break
+			}
+		}
+		if !found {
+			return errors.New("Hosted materialization Key Envelope is not named by authenticated Authority")
+		}
+		epochSecretBytes, err := r.deps.Secrets.Get(trustedSecretService, epochSecretAccount(state.VaultID, epochIDText))
+		if err != nil {
+			return err
+		}
+		epochSecret, err := decodeEpochSecret(epochSecretBytes, vaultIdentifier, epochID)
+		if err != nil {
+			return err
+		}
+		defer zeroBytes(epochSecret.key)
+		var wrappingPublicKey []byte
+		switch slot.targetKind {
+		case awsmcrypto.ClientCredentialTarget:
+			descriptor, ok := authority.clientCertificates[slot.targetID]
+			if !ok || slot.targetRevision != nil || len(descriptor.wrappingKey) != 32 {
+				return errors.New("Hosted materialization Client Key Envelope target is unavailable")
+			}
+			wrappingPublicKey = descriptor.wrappingKey
+		case awsmcrypto.RecoveryCredentialTarget:
+			descriptor, ok := authority.recoveryCredentials[slot.targetID]
+			if !ok || slot.targetRevision == nil || descriptor.revision != *slot.targetRevision || len(descriptor.wrappingKey) != 32 {
+				return errors.New("Hosted materialization Recovery Key Envelope target is unavailable")
+			}
+			wrappingPublicKey = descriptor.wrappingKey
+		default:
+			return errors.New("Hosted materialization Key Envelope target kind is invalid")
+		}
+		sealed, err := awsmcrypto.SealKeyEnvelope(awsmcrypto.KeyEnvelopeInput{
+			VaultID: vaultIdentifier, KeyEpochID: epochID, KeyEpochKey: epochSecret.key,
+			TargetKind: slot.targetKind, TargetCredentialID: slot.targetID, TargetRevision: slot.targetRevision,
+			RecipientWrappingPublicKey: wrappingPublicKey,
+		})
+		if err != nil || sealed.ID != logicalID {
+			return errors.New("Hosted materialization Key Envelope logical identity changed")
+		}
+		targets = append(targets, hostedMaterializationTarget{namespace: hostedNamespaceKeyEnvelope, logicalID: logicalID, epochID: epochID, encoded: sealed.Envelope.Bytes})
+		return nil
+	}
 	for logicalID, storageItemID := range state.RecordStorageItemIDs {
 		if err := appendItem(hostedNamespaceRecord, logicalID, storageItemID); err != nil {
 			return nil, commandError("REMOTE_MATERIALIZATION_FAILED", "A local Vault Record could not be opened.")
 		}
 	}
 	for logicalID, storageItemID := range state.KeyEnvelopeStorageItemIDs {
-		if err := appendItem(hostedNamespaceKeyEnvelope, logicalID, storageItemID); err != nil {
+		if err := appendKeyEnvelope(logicalID, storageItemID); err != nil {
 			return nil, commandError("REMOTE_MATERIALIZATION_FAILED", "A local Key Envelope could not be opened.")
 		}
 	}
@@ -409,6 +503,9 @@ func (r *Runtime) pullHostedReplicas(ctx context.Context, id string) (any, error
 				}
 				opened, openErr := r.openOpaqueWithKnownEpochs(id, canonicalState, vaultID, encoded)
 				if openErr != nil {
+					if admitErr := r.AdmitOpaqueKeyEnvelope(ctx, id, encoded); admitErr == nil {
+						continue
+					}
 					if quarantineErr := r.quarantineHostedItem(ctx, id, encoded); quarantineErr != nil {
 						failed = true
 						break
@@ -612,6 +709,12 @@ func (r *Runtime) promoteHostedQuarantine(ctx context.Context, vaultID string) e
 	sort.Strings(storageItemIDs)
 	for _, storageItemID := range storageItemIDs {
 		encoded := quarantine[storageItemID]
+		if admitErr := r.AdmitOpaqueKeyEnvelope(ctx, vaultID, encoded); admitErr == nil {
+			if err := r.removeHostedQuarantine(ctx, vaultID, storageItemID); err != nil {
+				return err
+			}
+			continue
+		}
 		opened, openErr := r.openOpaqueWithKnownEpochs(vaultID, state, vaultIdentifier, encoded)
 		if openErr != nil {
 			continue

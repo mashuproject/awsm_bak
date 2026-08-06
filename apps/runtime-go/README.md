@@ -70,6 +70,10 @@ Lifecycle Events, including active Invitation and Invitation conflict state. The
 Runtime; a paired extension reaches it under the single
 `runtime.vault` grant.
 
+Receiver pull keeps raw Key Envelopes in Quarantine until the local Client Credential can open the
+recipient envelope and match its logical ID to an authenticated Authority slot. A Host locator or
+outer-envelope digest alone never promotes a recipient-only Key Envelope.
+
 The Wails Hosted Replica panel manages the local Remote binding: it can create or attach an
 existing Host Replica, inspect opaque Replica candidates during attachment, rename, pause or
 resume, materialize, pull, and retire a binding. Retirement is local metadata cleanup and does

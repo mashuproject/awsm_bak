@@ -902,7 +902,14 @@ func replayReplicaAuthorityState(replica *Replica, extra *canonical.Event, epoch
 		events = append(events, *extra)
 	}
 	if replica.generationID == genesisRecord.Event.GenerationID {
-		return replayAuthenticatedKeyEpochs(events, *genesisRecord.Event, epochKeys)
+		state, err := replayAuthenticatedKeyEpochs(events, *genesisRecord.Event, epochKeys)
+		if err != nil {
+			return keyEpochReplayState{}, err
+		}
+		if err := seedBaselineAuthoritySlots(replica, &state); err != nil {
+			return keyEpochReplayState{}, err
+		}
+		return state, nil
 	}
 	anchorID, ok := replica.currentGenerationAuthorityAnchor()
 	if !ok {

@@ -89,6 +89,36 @@ func openCompactForTest(t *testing.T, runtime *Runtime, vaultID string, encoded 
 	return opened
 }
 
+func openLocalClientEnvelopeForTest(t *testing.T, runtime *Runtime, vaultID string, encoded []byte) (awsmcrypto.KeyEnvelope, error) {
+	t.Helper()
+	value := runtime.vaults[vaultID]
+	if value == nil || value.Canonical == nil {
+		return awsmcrypto.KeyEnvelope{}, errors.New("test Vault has no canonical state")
+	}
+	vaultIdentifier, err := decodeHexIdentifier(vaultID)
+	if err != nil {
+		return awsmcrypto.KeyEnvelope{}, err
+	}
+	memberID, err := decodeHexIdentifier(value.Canonical.MemberID)
+	if err != nil {
+		return awsmcrypto.KeyEnvelope{}, err
+	}
+	clientID, err := decodeHexIdentifier(value.Canonical.ClientCredentialID)
+	if err != nil {
+		return awsmcrypto.KeyEnvelope{}, err
+	}
+	secretBytes, err := runtime.deps.Secrets.Get(trustedSecretService, clientSecretAccount(vaultID, value.Canonical.ClientCredentialID))
+	if err != nil {
+		return awsmcrypto.KeyEnvelope{}, err
+	}
+	clientSecret, err := decodeClientSecret(secretBytes, vaultIdentifier, memberID, clientID)
+	if err != nil {
+		return awsmcrypto.KeyEnvelope{}, err
+	}
+	defer zeroBytes(clientSecret.wrappingPrivateKey)
+	return awsmcrypto.OpenKeyEnvelope(awsmcrypto.ClientCredentialTarget, clientSecret.wrappingPrivateKey, encoded)
+}
+
 type failingState struct {
 	delegate *store.MemoryState
 	fail     bool
@@ -1928,6 +1958,30 @@ func TestHostedReplicaAttachmentMaterializationAndPull(t *testing.T) {
 	if !rewrapped {
 		t.Fatal("Hosted Replica materialization reused every local Record Storage Item ID")
 	}
+	clientEnvelopeID := mustIdentifier(t, runtime.vaults[vaultID].Canonical.ClientEnvelopeID)
+	clientEnvelopeLocator, err := deriveHostedReplicaLocator(fixture.Salt, hostedNamespaceKeyEnvelope, clientEnvelopeID)
+	if err != nil {
+		t.Fatalf("derive Client Key Envelope locator: %v", err)
+	}
+	localClientStorageID := runtime.vaults[vaultID].Canonical.ClientEnvelopeStorageID
+	clientEnvelopeRewrapped := false
+	for storageItemID, item := range fixture.Items {
+		if item.Locator != clientEnvelopeLocator || hexIdentifier(storageItemID) == localClientStorageID {
+			continue
+		}
+		openedEnvelope, openErr := openLocalClientEnvelopeForTest(t, runtime, vaultID, item.Bytes)
+		if openErr != nil {
+			t.Fatalf("open materialized Client Key Envelope: %v", openErr)
+		}
+		if openedEnvelope.ID != clientEnvelopeID {
+			t.Fatalf("materialized Client Key Envelope ID = %s, want %s", hexIdentifier(openedEnvelope.ID), hexIdentifier(clientEnvelopeID))
+		}
+		clientEnvelopeRewrapped = true
+		break
+	}
+	if !clientEnvelopeRewrapped {
+		t.Fatal("Hosted Replica materialization reused the local Client Key Envelope representation")
+	}
 	attachmentValue, err := runtime.Handle(ctx, mustJSON(map[string]any{
 		"type": "BeginHostedReplicaAttachment", "expectedVaultId": vaultID,
 		"endpoint": fixture.Endpoint, "name": "Existing", "username": "alice", "password": "secret",
@@ -2243,6 +2297,70 @@ func TestHostedReplicaPullQuarantinesUnknownKeyEpochAcrossRestart(t *testing.T) 
 	}
 	if string(restarted.vaults[vaultID].Quarantine[storageItemID]) != string(encoded) {
 		t.Fatal("restart lost the quarantined opaque item")
+	}
+}
+
+func TestHostedReplicaPullAdmitsRecipientKeyEnvelopeAndRetainsAfterRestart(t *testing.T) {
+	ctx := context.Background()
+	fixture := newHostedSyncFixture(t)
+	state := store.NewMemoryState()
+	dependencies := memoryDependencies(t)
+	dependencies.HTTPClient = fixture.Client
+	runtime, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatalf("create Runtime: %v", err)
+	}
+	vaultID := createVaultForTest(t, runtime, "Recipient Key Envelope pull")
+	created, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "CreateHostedReplica", "expectedVaultId": vaultID,
+		"endpoint": fixture.Endpoint, "name": "Archive", "username": "alice", "password": "secret",
+	}))
+	if err != nil {
+		t.Fatalf("create Hosted Replica: %v", err)
+	}
+	remote := created.(RemoteSummary)
+	value := runtime.vaults[vaultID]
+	clientEnvelopeID := mustIdentifier(t, value.Canonical.ClientEnvelopeID)
+	reader, err := dependencies.Artifacts.Open(value.Canonical.ClientEnvelopeStorageID)
+	if err != nil {
+		t.Fatalf("open local Client Key Envelope: %v", err)
+	}
+	encoded, err := io.ReadAll(reader)
+	_ = reader.Close()
+	if err != nil {
+		t.Fatalf("read local Client Key Envelope: %v", err)
+	}
+	storageEnvelope, err := storage.DecodeOpaqueEnvelope(encoded)
+	if err != nil {
+		t.Fatalf("decode local Client Key Envelope: %v", err)
+	}
+	locator, err := deriveHostedReplicaLocator(fixture.Salt, hostedNamespaceKeyEnvelope, clientEnvelopeID)
+	if err != nil {
+		t.Fatalf("derive Key Envelope locator: %v", err)
+	}
+	fixture.addItem(t, locator, encoded)
+
+	result, err := runtime.Handle(ctx, mustJSON(map[string]any{"type": "PullHostedReplicas", "expectedVaultId": vaultID}))
+	if err != nil {
+		t.Fatalf("pull Hosted Replica: %v", err)
+	}
+	status := result.([]map[string]string)
+	if len(status) != 1 || status[0]["remoteId"] != remote.RemoteID || status[0]["status"] != "Completed" {
+		t.Fatalf("pull status = %#v", status)
+	}
+	if len(runtime.vaults[vaultID].Quarantine) != 0 {
+		t.Fatalf("recipient-verifiable Key Envelope remained quarantined: %#v", runtime.vaults[vaultID].Quarantine)
+	}
+	if runtime.vaults[vaultID].Canonical.KeyEnvelopeStorageItemIDs[value.Canonical.ClientEnvelopeID] != hexIdentifier(storageEnvelope.StorageItemID) {
+		t.Fatalf("Client Key Envelope mapping = %#v, want %s", runtime.vaults[vaultID].Canonical.KeyEnvelopeStorageItemIDs, hexIdentifier(storageEnvelope.StorageItemID))
+	}
+
+	restarted, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatalf("restart Runtime: %v", err)
+	}
+	if restarted.vaults[vaultID].Canonical.KeyEnvelopeStorageItemIDs[value.Canonical.ClientEnvelopeID] != hexIdentifier(storageEnvelope.StorageItemID) {
+		t.Fatalf("restart lost Client Key Envelope mapping: %#v", restarted.vaults[vaultID].Canonical.KeyEnvelopeStorageItemIDs)
 	}
 }
 
