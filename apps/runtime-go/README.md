@@ -70,6 +70,10 @@ Lifecycle Events, including active Invitation and Invitation conflict state. The
 Runtime; a paired extension reaches it under the single
 `runtime.vault` grant.
 
+The Wails Hosted Replica panel manages the local Remote binding: it can create, rename, pause or
+resume, materialize, pull, and retire a binding. Retirement is local metadata cleanup and does not
+contact or delete the Hosted Replica.
+
 The `internal/canonical` package provides strict canonical CBOR values, transcript framing,
 authenticated Event and Baseline codecs, Record IDs, Object IDs, and causal DAG validation.
 `internal/crypto` provides browser-compatible BIP39, Credential, Key Epoch, compact encryption,

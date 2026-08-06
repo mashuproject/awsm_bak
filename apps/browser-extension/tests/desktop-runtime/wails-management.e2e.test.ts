@@ -490,7 +490,7 @@ test("Wails Vault surface runs hosted pull, materialization, and Artifact hydrat
           lifecycle: "Active",
         },
       ];
-      const remotes = [
+      let remotes = [
         {
           remoteId: "remote-1",
           name: "Home Host",
@@ -520,7 +520,7 @@ test("Wails Vault surface runs hosted pull, materialization, and Artifact hydrat
             PendingPairings: async () => [],
             ListGrants: async () => [],
             RuntimeAddress: () => "127.0.0.1:37373",
-            VaultCommand: async (request: { type: string }) => {
+            VaultCommand: async (request: { type: string; remoteId?: string; name?: string }) => {
               if (request.type === "GetState") return state;
               if (request.type === "ListLibraryProjection")
                 return {
@@ -534,6 +534,17 @@ test("Wails Vault surface runs hosted pull, materialization, and Artifact hydrat
                 };
               if (request.type === "ListRemotes") return remotes;
               if (request.type === "GetAuthorityState") return authority;
+              if (request.type === "RenameRemote") {
+                const remote = remotes.find((candidate) => candidate.remoteId === request.remoteId);
+                if (remote === undefined || request.name === undefined)
+                  throw new Error("unknown remote");
+                remote.name = request.name;
+                return remote;
+              }
+              if (request.type === "RetireRemote") {
+                remotes = remotes.filter((candidate) => candidate.remoteId !== request.remoteId);
+                return { remoteId: request.remoteId, retired: true };
+              }
               if (request.type === "MaterializeHostedReplica") {
                 (globalThis as unknown as { __awsmCalls?: string[] }).__awsmCalls?.push(
                   request.type,
@@ -571,12 +582,19 @@ test("Wails Vault surface runs hosted pull, materialization, and Artifact hydrat
   await page.goto("/");
   await expect(page.getByText("Home Host", { exact: true })).toBeVisible();
   await expect(page.getByText("Enabled", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Rename Hosted Replica" }).click();
+  await page.getByLabel("New Hosted Replica name").fill("Renamed Host");
+  await page.getByRole("button", { name: "Save Hosted Replica name" }).click();
+  await expect(page.getByText("Renamed Host", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Materialize now" }).click();
   await expect(page.getByText("Hosted Replica materialized.")).toBeVisible();
   await page.getByRole("button", { name: "Check for updates" }).click();
   await expect(page.getByText("Hosted Replica pull completed.")).toBeVisible();
   await page.getByRole("button", { name: "Hydrate Artifact" }).click();
   await expect(page.getByText("Available locally")).toBeVisible();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Remove Hosted Replica" }).click();
+  await expect(page.getByText("No Hosted Replicas are configured on this Client.")).toBeVisible();
   const observed = await page.evaluate(
     () => (globalThis as unknown as { __awsmCalls: string[] }).__awsmCalls,
   );

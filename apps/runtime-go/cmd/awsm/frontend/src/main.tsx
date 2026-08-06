@@ -868,6 +868,8 @@ function HostedReplicas({
   const [name, setName] = React.useState("");
   const [username, setUsername] = React.useState("");
   const [password, setPassword] = React.useState("");
+  const [renamingRemoteId, setRenamingRemoteId] = React.useState<string>();
+  const [renameName, setRenameName] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const save = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -936,6 +938,49 @@ function HostedReplicas({
       setBusy(false);
     }
   };
+  const rename = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (renamingRemoteId === undefined) return;
+    setBusy(true);
+    try {
+      await binding.VaultCommand?.({
+        type: "RenameRemote",
+        expectedVaultId: vaultId,
+        remoteId: renamingRemoteId,
+        name: renameName.trim(),
+      });
+      setRenamingRemoteId(undefined);
+      setRenameName("");
+      onRefresh();
+      onStatus("Hosted Replica renamed locally.");
+    } catch (error) {
+      onError(error);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const retire = async (remote: Remote) => {
+    if (
+      !window.confirm(
+        "Remove this Hosted Replica from this Client? The Replica Host will not be contacted.",
+      )
+    )
+      return;
+    setBusy(true);
+    try {
+      await binding.VaultCommand?.({
+        type: "RetireRemote",
+        expectedVaultId: vaultId,
+        remoteId: remote.remoteId,
+      });
+      onRefresh();
+      onStatus("Hosted Replica removed from this Client. The Replica Host was not contacted.");
+    } catch (error) {
+      onError(error);
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <section className="grid gap-5" aria-labelledby="hosted-replicas-heading">
       <div className="grid gap-2">
@@ -976,19 +1021,62 @@ function HostedReplicas({
               <span className="text-sm font-semibold text-awsm-ink">
                 {remote.enabled ? "Enabled" : "Paused"}
               </span>
-              <ActionRow>
-                <Button
-                  variant="secondary"
-                  busy={busy}
-                  disabled={!remote.enabled}
-                  onClick={() => void materialize(remote)}
-                >
-                  Materialize now
-                </Button>
-                <Button variant="quiet" busy={busy} onClick={() => void toggle(remote)}>
-                  {remote.enabled ? "Pause" : "Resume"}
-                </Button>
-              </ActionRow>
+              {renamingRemoteId === remote.remoteId ? (
+                <form className="grid max-w-xl gap-4" onSubmit={(event) => void rename(event)}>
+                  <Field label="New Hosted Replica name">
+                    <input
+                      className={inputClassName}
+                      value={renameName}
+                      onChange={(event) => setRenameName(event.target.value)}
+                      maxLength={256}
+                      required
+                    />
+                  </Field>
+                  <ActionRow>
+                    <Button type="submit" busy={busy}>
+                      Save Hosted Replica name
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="quiet"
+                      busy={busy}
+                      onClick={() => {
+                        setRenamingRemoteId(undefined);
+                        setRenameName("");
+                      }}
+                    >
+                      Cancel rename
+                    </Button>
+                  </ActionRow>
+                </form>
+              ) : (
+                <ActionRow>
+                  <Button
+                    variant="secondary"
+                    busy={busy}
+                    disabled={!remote.enabled}
+                    onClick={() => void materialize(remote)}
+                  >
+                    Materialize now
+                  </Button>
+                  <Button variant="quiet" busy={busy} onClick={() => void toggle(remote)}>
+                    {remote.enabled ? "Pause" : "Resume"}
+                  </Button>
+                  <Button
+                    variant="quiet"
+                    busy={busy}
+                    onClick={() => {
+                      setRenamingRemoteId(remote.remoteId);
+                      setRenameName(remote.name);
+                    }}
+                  >
+                    Rename Hosted Replica
+                  </Button>
+                  <Button variant="danger" busy={busy} onClick={() => void retire(remote)}>
+                    Remove Hosted Replica
+                  </Button>
+                </ActionRow>
+              )}
             </li>
           ))}
         </ul>
