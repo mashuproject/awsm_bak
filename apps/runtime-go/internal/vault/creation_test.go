@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"testing"
+
+	awsmcrypto "github.com/mashuproject/awsm_bak/apps/runtime-go/internal/crypto"
 )
 
 func TestPrepareCanonicalVaultCreationBuildsAuthenticatedGenesis(t *testing.T) {
@@ -39,6 +41,17 @@ func TestPrepareCanonicalVaultCreationBuildsAuthenticatedGenesis(t *testing.T) {
 	}
 	if prepared.Baseline.RecordID == prepared.Genesis.RecordID || prepared.Baseline.RecordID == ([32]byte{}) {
 		t.Fatal("prepared records have invalid identities")
+	}
+	if len(prepared.BaselineEnvelope.Bytes) == 0 || len(prepared.GenesisEnvelope.Bytes) == 0 {
+		t.Fatal("prepared canonical records do not have opaque storage envelopes")
+	}
+	baselineItem, err := awsmcrypto.OpenCompactItem(prepared.IDs.VaultID, prepared.KeyEpochID, prepared.KeyEpochKey, prepared.BaselineEnvelope.Bytes)
+	if err != nil || baselineItem.PayloadType != 1 || !bytes.Equal(baselineItem.PayloadBytes, prepared.Baseline.Bytes) {
+		t.Fatalf("opened Baseline envelope = %#v, %v", baselineItem, err)
+	}
+	genesisItem, err := awsmcrypto.OpenCompactItem(prepared.IDs.VaultID, prepared.KeyEpochID, prepared.KeyEpochKey, prepared.GenesisEnvelope.Bytes)
+	if err != nil || genesisItem.PayloadType != 1 || !bytes.Equal(genesisItem.PayloadBytes, prepared.Genesis.Bytes) {
+		t.Fatalf("opened Genesis envelope = %#v, %v", genesisItem, err)
 	}
 	baselineDigest := sha256.Sum256(prepared.Baseline.Bytes)
 	if got := hex.EncodeToString(baselineDigest[:]); got != "18d204a59b7d73bfc99e33a9d4b99daa176e964abb4aedd649ec5bb39fb0eb7f" {

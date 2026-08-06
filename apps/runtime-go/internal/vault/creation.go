@@ -13,6 +13,7 @@ import (
 
 	"github.com/mashuproject/awsm_bak/apps/runtime-go/internal/canonical"
 	awsmcrypto "github.com/mashuproject/awsm_bak/apps/runtime-go/internal/crypto"
+	"github.com/mashuproject/awsm_bak/apps/runtime-go/internal/storage"
 )
 
 type CreationIDs struct {
@@ -25,15 +26,17 @@ type CreationIDs struct {
 }
 
 type CreationInput struct {
-	Label                    *string
-	AssertedAt               int64
-	RecoveryPhrase           string
-	IDs                      *CreationIDs
-	ClientSigningSeed        []byte
-	ClientWrappingPrivateKey []byte
-	KeyEpochKey              []byte
-	EnvelopePadding          []byte
-	EnvelopeEphemeralSeed    []byte
+	Label                        *string
+	AssertedAt                   int64
+	RecoveryPhrase               string
+	IDs                          *CreationIDs
+	ClientSigningSeed            []byte
+	ClientWrappingPrivateKey     []byte
+	KeyEpochKey                  []byte
+	EnvelopePadding              []byte
+	EnvelopeEphemeralSeed        []byte
+	BaselineProtectionParameters []byte
+	GenesisProtectionParameters  []byte
 }
 
 type PreparedCanonicalVaultCreation struct {
@@ -48,6 +51,8 @@ type PreparedCanonicalVaultCreation struct {
 	RecoveryCredential   canonical.Value
 	ClientKeyEnvelope    awsmcrypto.KeyEnvelope
 	RecoveryKeyEnvelope  awsmcrypto.KeyEnvelope
+	BaselineEnvelope     storage.OpaqueEnvelope
+	GenesisEnvelope      storage.OpaqueEnvelope
 	Baseline             canonical.Baseline
 	Genesis              canonical.Event
 }
@@ -189,13 +194,40 @@ func PrepareCanonicalVaultCreation(input CreationInput) (PreparedCanonicalVaultC
 	if err != nil {
 		return PreparedCanonicalVaultCreation{}, fmt.Errorf("create Genesis: %w", err)
 	}
+	baselineEnvelope, err := sealInitialRecordEnvelope(ids.VaultID, epochID, epochKey, baselineProtectionParameters(input.BaselineProtectionParameters), baseline.Bytes)
+	if err != nil {
+		return PreparedCanonicalVaultCreation{}, fmt.Errorf("protect Initial Baseline: %w", err)
+	}
+	genesisEnvelope, err := sealInitialRecordEnvelope(ids.VaultID, epochID, epochKey, baselineProtectionParameters(input.GenesisProtectionParameters), genesis.Bytes)
+	if err != nil {
+		return PreparedCanonicalVaultCreation{}, fmt.Errorf("protect Genesis: %w", err)
+	}
 	return PreparedCanonicalVaultCreation{
 		RecoveryPhrase: input.RecoveryPhrase, IDs: ids, RequiredFeatureSetID: requiredFeatureSetID,
 		ClientKeys: clientKeys, RecoveryKeys: recoveryKeys, KeyEpochKey: epochKey, KeyEpochID: epochID,
 		ClientCertificate: clientCertificate, RecoveryCredential: recoveryCredential,
 		ClientKeyEnvelope: clientEnvelope, RecoveryKeyEnvelope: recoveryEnvelope,
+		BaselineEnvelope: baselineEnvelope, GenesisEnvelope: genesisEnvelope,
 		Baseline: baseline, Genesis: genesis,
 	}, nil
+}
+
+func baselineProtectionParameters(value []byte) []byte {
+	if len(value) == 0 {
+		return nil
+	}
+	return append([]byte(nil), value...)
+}
+
+func sealInitialRecordEnvelope(vaultID, epochID [32]byte, epochKey, protection, payload []byte) (storage.OpaqueEnvelope, error) {
+	encoded, err := awsmcrypto.SealCompactItem(awsmcrypto.CompactItemInput{
+		VaultID: vaultID, KeyEpochID: epochID, KeyEpochKey: epochKey,
+		PayloadType: 1, PayloadBytes: payload, ProtectionParameters: protection,
+	})
+	if err != nil {
+		return storage.OpaqueEnvelope{}, err
+	}
+	return storage.DecodeOpaqueEnvelope(encoded)
 }
 
 func VerifyPreparedCreation(prepared PreparedCanonicalVaultCreation) bool {
