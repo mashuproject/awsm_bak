@@ -20,6 +20,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -93,21 +94,24 @@ type remoteState struct {
 }
 
 type canonicalReplicaState struct {
-	VaultID                   string   `json:"vaultId"`
-	BaselineID                string   `json:"baselineId"`
-	GenesisID                 string   `json:"genesisId"`
-	KeyEpochID                string   `json:"keyEpochId"`
-	MemberID                  string   `json:"memberId"`
-	ClientCredentialID        string   `json:"clientCredentialId"`
-	BaselineStorageItemID     string   `json:"baselineStorageItemId"`
-	GenesisStorageItemID      string   `json:"genesisStorageItemId"`
-	RecoveryEnvelopeID        string   `json:"recoveryEnvelopeId"`
-	RecoveryEnvelopeStorageID string   `json:"recoveryEnvelopeStorageItemId"`
-	ClientEnvelopeID          string   `json:"clientEnvelopeId"`
-	ClientEnvelopeStorageID   string   `json:"clientEnvelopeStorageItemId"`
-	CausalFrontier            []string `json:"causalFrontier"`
-	AuthorityFrontier         []string `json:"authorityFrontier"`
-	ContinuityRecordIDs       []string `json:"continuityRecordIds"`
+	VaultID                   string            `json:"vaultId"`
+	GenerationID              string            `json:"generationId"`
+	BaselineID                string            `json:"baselineId"`
+	GenesisID                 string            `json:"genesisId"`
+	KeyEpochID                string            `json:"keyEpochId"`
+	RequiredFeatureSetID      string            `json:"requiredFeatureSetId"`
+	MemberID                  string            `json:"memberId"`
+	ClientCredentialID        string            `json:"clientCredentialId"`
+	BaselineStorageItemID     string            `json:"baselineStorageItemId"`
+	GenesisStorageItemID      string            `json:"genesisStorageItemId"`
+	RecoveryEnvelopeID        string            `json:"recoveryEnvelopeId"`
+	RecoveryEnvelopeStorageID string            `json:"recoveryEnvelopeStorageItemId"`
+	ClientEnvelopeID          string            `json:"clientEnvelopeId"`
+	ClientEnvelopeStorageID   string            `json:"clientEnvelopeStorageItemId"`
+	CausalFrontier            []string          `json:"causalFrontier"`
+	AuthorityFrontier         []string          `json:"authorityFrontier"`
+	ContinuityRecordIDs       []string          `json:"continuityRecordIds"`
+	RecordStorageItemIDs      map[string]string `json:"recordStorageItemIds"`
 }
 
 type persistedVault struct {
@@ -975,17 +979,88 @@ func (r *Runtime) closeVault(ctx context.Context, id string) (any, error) {
 	if value.Lifecycle == "Closed" {
 		return nil, commandError("VAULT_ALREADY_CLOSED", "This Vault is already closed.")
 	}
-	event, err := randomID()
+	if value.Canonical == nil || r.replicas[id] == nil {
+		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The authenticated Vault Replica is unavailable.")
+	}
+	clientSecretBytes, err := r.deps.Secrets.Get(trustedSecretService, clientSecretAccount(id, value.Canonical.ClientCredentialID))
 	if err != nil {
-		return nil, err
+		return nil, commandError("TRUSTED_SECRET_UNAVAILABLE", "The Client Credential could not be opened.")
+	}
+	vaultID, err := decodeHexIdentifier(id)
+	if err != nil {
+		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The Vault identity is invalid.")
+	}
+	memberID, err := decodeHexIdentifier(value.Canonical.MemberID)
+	if err != nil {
+		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The Member identity is invalid.")
+	}
+	credentialID, err := decodeHexIdentifier(value.Canonical.ClientCredentialID)
+	if err != nil {
+		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The Client Credential identity is invalid.")
+	}
+	clientSecret, err := decodeClientSecret(clientSecretBytes, vaultID, memberID, credentialID)
+	if err != nil {
+		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The Client Credential is invalid.")
+	}
+	epochID, err := decodeHexIdentifier(value.Canonical.KeyEpochID)
+	if err != nil {
+		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The Key Epoch identity is invalid.")
+	}
+	epochSecretBytes, err := r.deps.Secrets.Get(trustedSecretService, epochSecretAccount(id, value.Canonical.KeyEpochID))
+	if err != nil {
+		return nil, commandError("TRUSTED_SECRET_UNAVAILABLE", "The Key Epoch could not be opened.")
+	}
+	epochSecret, err := decodeEpochSecret(epochSecretBytes, vaultID, epochID)
+	if err != nil {
+		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The Key Epoch is invalid.")
+	}
+	generationID, err := decodeHexIdentifier(value.GenerationID)
+	if err != nil {
+		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The Generation identity is invalid.")
+	}
+	featureSetID, err := decodeHexIdentifier(value.Canonical.RequiredFeatureSetID)
+	if err != nil {
+		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The Required Feature Set identity is invalid.")
+	}
+	replicaState := r.replicas[id].State()
+	event, err := canonical.SignEvent(canonical.EventInput{
+		VaultID: vaultID, GenerationID: generationID,
+		ParentRecordIDs: cloneIdentifiers(replicaState.CausalFrontier), AuthorityParentIDs: cloneIdentifiers(replicaState.AuthorityFrontier),
+		Dependencies: []canonical.Dependency{}, RequiredFeatureSetID: featureSetID, Extensions: map[string][]byte{},
+		Family: canonical.LifecycleFamily, Type: 2, SignerCredentialID: credentialID, AssertedAt: time.Now().UnixMilli(), Body: canonical.Map{},
+	}, ed25519.PrivateKey(clientSecret.signingSecretKey))
+	if err != nil {
+		return nil, commandError("VAULT_EVENT_INVALID", "The Closure Event could not be authored.")
+	}
+	encoded, err := awsmcrypto.SealCompactItem(awsmcrypto.CompactItemInput{VaultID: vaultID, KeyEpochID: epochID, KeyEpochKey: epochSecret.key, PayloadType: 1, PayloadBytes: event.Bytes})
+	if err != nil {
+		return nil, commandError("VAULT_EVENT_INVALID", "The Closure Event could not be protected.")
+	}
+	envelope, err := storage.DecodeOpaqueEnvelope(encoded)
+	if err != nil {
+		return nil, commandError("VAULT_EVENT_INVALID", "The Closure Event envelope is invalid.")
+	}
+	if err := r.replicas[id].AdmitEvent(event, ed25519.PublicKey(clientSecret.signingPublicKey)); err != nil {
+		return nil, commandError("VAULT_EVENT_INVALID", "The Closure Event could not be admitted.")
+	}
+	if err := storeOpaqueCreationItem(r.deps.Artifacts, envelope.StorageItemID, encoded); err != nil {
+		return nil, commandError("VAULT_CREATION_STORAGE_FAILED", "The Closure Event could not be stored.")
 	}
 	value.Lifecycle = "Closed"
+	value.Canonical.CausalFrontier = []string{hexIdentifier(event.RecordID)}
+	value.Canonical.AuthorityFrontier = []string{hexIdentifier(event.RecordID)}
+	value.Canonical.ContinuityRecordIDs = appendUniqueStrings(value.Canonical.ContinuityRecordIDs, hexIdentifier(event.RecordID))
+	if value.Canonical.RecordStorageItemIDs == nil {
+		value.Canonical.RecordStorageItemIDs = map[string]string{}
+	}
+	value.Canonical.RecordStorageItemIDs[hexIdentifier(event.RecordID)] = hexIdentifier(envelope.StorageItemID)
 	if err := r.persistLocked(ctx); err != nil {
 		r.restoreLocked(before)
+		deleteOpaqueCreationItem(r.deps.Artifacts, envelope.StorageItemID)
 		return nil, err
 	}
 	r.signal()
-	return map[string]string{"eventRecordId": event}, nil
+	return map[string]string{"eventRecordId": hexIdentifier(event.RecordID)}, nil
 }
 
 func (r *Runtime) vacuumVault(ctx context.Context, id string) (any, error) {
@@ -1275,7 +1350,7 @@ func validatePersistedVault(value persistedVault) error {
 	}
 	if value.Canonical != nil {
 		for _, identifier := range []string{
-			value.Canonical.VaultID, value.Canonical.BaselineID, value.Canonical.GenesisID, value.Canonical.KeyEpochID,
+			value.Canonical.VaultID, value.Canonical.GenerationID, value.Canonical.BaselineID, value.Canonical.GenesisID, value.Canonical.KeyEpochID, value.Canonical.RequiredFeatureSetID,
 			value.Canonical.MemberID, value.Canonical.ClientCredentialID,
 			value.Canonical.BaselineStorageItemID, value.Canonical.GenesisStorageItemID,
 			value.Canonical.RecoveryEnvelopeID, value.Canonical.RecoveryEnvelopeStorageID,
@@ -1293,6 +1368,14 @@ func validatePersistedVault(value persistedVault) error {
 				if !validDigest(identifier) {
 					return errors.New("Vault state contains an invalid canonical frontier identity")
 				}
+			}
+		}
+		if len(value.Canonical.RecordStorageItemIDs) == 0 {
+			return errors.New("Vault state contains no canonical Record storage mappings")
+		}
+		for recordID, storageItemID := range value.Canonical.RecordStorageItemIDs {
+			if !validDigest(recordID) || !validDigest(storageItemID) {
+				return errors.New("Vault state contains an invalid canonical Record storage mapping")
 			}
 		}
 	}
@@ -1360,15 +1443,21 @@ func cloneCanonicalState(value *canonicalReplicaState) *canonicalReplicaState {
 	copyValue.CausalFrontier = append([]string(nil), value.CausalFrontier...)
 	copyValue.AuthorityFrontier = append([]string(nil), value.AuthorityFrontier...)
 	copyValue.ContinuityRecordIDs = append([]string(nil), value.ContinuityRecordIDs...)
+	copyValue.RecordStorageItemIDs = make(map[string]string, len(value.RecordStorageItemIDs))
+	for recordID, storageItemID := range value.RecordStorageItemIDs {
+		copyValue.RecordStorageItemIDs[recordID] = storageItemID
+	}
 	return &copyValue
 }
 
 func canonicalReplicaFromCreation(prepared PreparedCanonicalVaultCreation) *canonicalReplicaState {
 	return &canonicalReplicaState{
 		VaultID:                   hexIdentifier(prepared.IDs.VaultID),
+		GenerationID:              hexIdentifier(prepared.IDs.GenerationID),
 		BaselineID:                hexIdentifier(prepared.Baseline.RecordID),
 		GenesisID:                 hexIdentifier(prepared.Genesis.RecordID),
 		KeyEpochID:                hexIdentifier(prepared.KeyEpochID),
+		RequiredFeatureSetID:      hexIdentifier(prepared.RequiredFeatureSetID),
 		MemberID:                  hexIdentifier(prepared.IDs.FirstMemberID),
 		ClientCredentialID:        hexIdentifier(prepared.IDs.ClientCredentialID),
 		BaselineStorageItemID:     hexIdentifier(prepared.BaselineEnvelope.StorageItemID),
@@ -1380,6 +1469,10 @@ func canonicalReplicaFromCreation(prepared PreparedCanonicalVaultCreation) *cano
 		CausalFrontier:            []string{hexIdentifier(prepared.Genesis.RecordID)},
 		AuthorityFrontier:         []string{hexIdentifier(prepared.Genesis.RecordID)},
 		ContinuityRecordIDs:       []string{hexIdentifier(prepared.Genesis.RecordID)},
+		RecordStorageItemIDs: map[string]string{
+			hexIdentifier(prepared.Baseline.RecordID): hexIdentifier(prepared.BaselineEnvelope.StorageItemID),
+			hexIdentifier(prepared.Genesis.RecordID):  hexIdentifier(prepared.GenesisEnvelope.StorageItemID),
+		},
 	}
 }
 
@@ -1402,6 +1495,9 @@ func (r *Runtime) openCanonicalReplica(value persistedVault) (*Replica, error) {
 		return nil, securestore.ErrUnavailable
 	}
 	state := value.Canonical
+	if state.VaultID != value.VaultID || state.GenerationID != value.GenerationID {
+		return nil, errors.New("canonical Replica identity does not match Vault metadata")
+	}
 	vaultID, err := decodeHexIdentifier(state.VaultID)
 	if err != nil {
 		return nil, err
@@ -1464,7 +1560,7 @@ func (r *Runtime) openCanonicalReplica(value persistedVault) (*Replica, error) {
 	if err != nil {
 		return nil, fmt.Errorf("decode Initial Baseline: %w", err)
 	}
-	if baseline.VaultID != vaultID || baseline.GenerationID != generationID || hexIdentifier(baseline.RecordID) != state.BaselineID {
+	if baseline.VaultID != vaultID || baseline.GenerationID != generationID || hexIdentifier(baseline.RecordID) != state.BaselineID || hexIdentifier(baseline.RequiredFeatureSetID) != state.RequiredFeatureSetID {
 		return nil, errors.New("Initial Baseline identity does not match persisted Replica state")
 	}
 	genesisBytes, err := readArtifact(state.GenesisStorageItemID)
@@ -1485,7 +1581,7 @@ func (r *Runtime) openCanonicalReplica(value persistedVault) (*Replica, error) {
 	if err != nil {
 		return nil, fmt.Errorf("decode Genesis: %w", err)
 	}
-	if genesis.VaultID != vaultID || genesis.GenerationID != generationID || hexIdentifier(genesis.RecordID) != state.GenesisID {
+	if genesis.VaultID != vaultID || genesis.GenerationID != generationID || hexIdentifier(genesis.RecordID) != state.GenesisID || hexIdentifier(genesis.RequiredFeatureSetID) != state.RequiredFeatureSetID {
 		return nil, errors.New("Genesis identity does not match persisted Replica state")
 	}
 	clientEnvelopeBytes, err := readArtifact(state.ClientEnvelopeStorageID)
@@ -1517,6 +1613,51 @@ func (r *Runtime) openCanonicalReplica(value persistedVault) (*Replica, error) {
 	if err := replica.AdmitEvent(genesis, ed25519.PublicKey(clientSecret.signingPublicKey)); err != nil {
 		return nil, fmt.Errorf("admit persisted Genesis: %w", err)
 	}
+	if state.RecordStorageItemIDs[state.BaselineID] != state.BaselineStorageItemID || state.RecordStorageItemIDs[state.GenesisID] != state.GenesisStorageItemID {
+		return nil, errors.New("initial Record storage mappings do not match canonical Replica state")
+	}
+	additional := make(map[string]canonical.Event)
+	for recordID, storageItemID := range state.RecordStorageItemIDs {
+		if recordID == state.BaselineID || recordID == state.GenesisID {
+			continue
+		}
+		encoded, err := readArtifact(storageItemID)
+		if err != nil {
+			return nil, fmt.Errorf("read persisted Record %s: %w", recordID, err)
+		}
+		opened, err := awsmcrypto.OpenCompactItem(vaultID, epochID, epochSecret.key, encoded)
+		if err != nil || opened.PayloadType != 1 {
+			if err == nil {
+				err = errors.New("persisted Record payload type is invalid")
+			}
+			return nil, err
+		}
+		event, err := canonical.DecodeEvent(opened.PayloadBytes)
+		if err != nil {
+			return nil, fmt.Errorf("decode persisted Record %s: %w", recordID, err)
+		}
+		if hexIdentifier(event.RecordID) != recordID || hexIdentifier(opened.Envelope.StorageItemID) != storageItemID {
+			return nil, errors.New("persisted Record identity does not match canonical storage mapping")
+		}
+		additional[recordID] = event
+	}
+	for len(additional) > 0 {
+		progress := false
+		for _, recordID := range sortedStringKeys(additional) {
+			event := additional[recordID]
+			if !replicaParentsAdmitted(replica, event) {
+				continue
+			}
+			if err := replica.AdmitEvent(event, ed25519.PublicKey(clientSecret.signingPublicKey)); err != nil {
+				return nil, fmt.Errorf("admit persisted Record %s: %w", recordID, err)
+			}
+			delete(additional, recordID)
+			progress = true
+		}
+		if !progress {
+			return nil, errors.New("persisted Record graph cannot reach its admitted parents")
+		}
+	}
 	actual := replica.State()
 	if !identifierSetEqual(actual.CausalFrontier, state.CausalFrontier) || !identifierSetEqual(actual.AuthorityFrontier, state.AuthorityFrontier) || !identifierSetEqual(actual.ContinuityRecordIDs, state.ContinuityRecordIDs) {
 		return nil, errors.New("persisted Replica frontiers do not match authenticated records")
@@ -1530,6 +1671,7 @@ type decodedEpochSecret struct {
 
 type decodedClientSecret struct {
 	signingPublicKey   []byte
+	signingSecretKey   []byte
 	wrappingPrivateKey []byte
 }
 
@@ -1598,7 +1740,7 @@ func decodeClientSecret(encoded []byte, vaultID, memberID, credentialID canonica
 	if !ok {
 		return decodedClientSecret{}, errors.New("Client Credential wrapping key is invalid")
 	}
-	return decodedClientSecret{signingPublicKey: signingPublicKey, wrappingPrivateKey: wrappingPrivateKey}, nil
+	return decodedClientSecret{signingPublicKey: signingPublicKey, signingSecretKey: signingSecretKey, wrappingPrivateKey: wrappingPrivateKey}, nil
 }
 
 func canonicalMapHasKeys(value canonical.Value, count int) bool {
@@ -1679,6 +1821,41 @@ func identifierSetEqual(left []canonical.Identifier, right []string) bool {
 		}
 	}
 	return true
+}
+
+func appendUniqueStrings(values []string, value string) []string {
+	for _, current := range values {
+		if current == value {
+			return append([]string(nil), values...)
+		}
+	}
+	result := append([]string(nil), values...)
+	result = append(result, value)
+	sortStrings(result)
+	return result
+}
+
+func replicaParentsAdmitted(replica *Replica, event canonical.Event) bool {
+	for _, parent := range event.ParentRecordIDs {
+		if _, ok := replica.Record(parent); !ok {
+			return false
+		}
+	}
+	for _, parent := range event.AuthorityParentIDs {
+		if _, ok := replica.Record(parent); !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func sortedStringKeys[Value any](values map[string]Value) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sortStrings(keys)
+	return keys
 }
 
 func hexIdentifier(value [32]byte) string {

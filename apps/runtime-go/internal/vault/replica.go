@@ -107,7 +107,7 @@ func (r *Replica) AdmitEvent(event canonical.Event, signerPublicKey ed25519.Publ
 		return fmt.Errorf("add Event to causal DAG: %w", err)
 	}
 	r.records[decoded.RecordID] = canonical.Record{Kind: canonical.EventKind, Event: &decoded, Bytes: append([]byte(nil), decoded.Bytes...), RecordID: decoded.RecordID}
-	if decoded.Family == canonical.AuthorityFamily {
+	if decoded.Family == canonical.AuthorityFamily || decoded.Family == canonical.LifecycleFamily {
 		r.continuityRecordIDs = appendUniqueSorted(r.continuityRecordIDs, decoded.RecordID)
 	}
 	if decoded.Family == canonical.AuthorityFamily && decoded.Type == canonical.GenesisEvent {

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/mashuproject/awsm_bak/apps/runtime-go/internal/artifactstore"
+	"github.com/mashuproject/awsm_bak/apps/runtime-go/internal/canonical"
 	awsmcrypto "github.com/mashuproject/awsm_bak/apps/runtime-go/internal/crypto"
 	"github.com/mashuproject/awsm_bak/apps/runtime-go/internal/securestore"
 	"github.com/mashuproject/awsm_bak/apps/runtime-go/internal/storage"
@@ -54,6 +55,35 @@ func memoryDependencies(t *testing.T) Dependencies {
 		t.Fatalf("create test artifacts: %v", err)
 	}
 	return Dependencies{Artifacts: artifacts, Secrets: &testSecretStore{values: map[string][]byte{}}}
+}
+
+func openCompactForTest(t *testing.T, runtime *Runtime, vaultID string, encoded []byte) awsmcrypto.OpenedCompactItem {
+	t.Helper()
+	value := runtime.vaults[vaultID]
+	if value == nil || value.Canonical == nil {
+		t.Fatal("test Vault has no canonical state")
+	}
+	vaultIdentifier, err := decodeHexIdentifier(vaultID)
+	if err != nil {
+		t.Fatalf("decode test Vault ID: %v", err)
+	}
+	epochIdentifier, err := decodeHexIdentifier(value.Canonical.KeyEpochID)
+	if err != nil {
+		t.Fatalf("decode test Key Epoch ID: %v", err)
+	}
+	secret, err := runtime.deps.Secrets.Get(trustedSecretService, epochSecretAccount(vaultID, value.Canonical.KeyEpochID))
+	if err != nil {
+		t.Fatalf("read test Key Epoch Secret: %v", err)
+	}
+	epoch, err := decodeEpochSecret(secret, vaultIdentifier, epochIdentifier)
+	if err != nil {
+		t.Fatalf("decode test Key Epoch Secret: %v", err)
+	}
+	opened, err := awsmcrypto.OpenCompactItem(vaultIdentifier, epochIdentifier, epoch.key, encoded)
+	if err != nil {
+		t.Fatalf("open compact test item: %v", err)
+	}
+	return opened
 }
 
 type failingState struct {
@@ -207,6 +237,53 @@ func TestRestartReopensCanonicalReplicaFromOpaqueRecords(t *testing.T) {
 	replicaState := replica.State()
 	if hexIdentifier(replicaState.VaultID) != vaultID || hexIdentifier(replicaState.BaselineID) != value.Canonical.BaselineID || len(replicaState.CausalFrontier) != 1 || hexIdentifier(replicaState.CausalFrontier[0]) != value.Canonical.GenesisID {
 		t.Fatalf("reopened Replica state = %#v, metadata = %#v", replicaState, value.Canonical)
+	}
+}
+
+func TestCloseVaultCommitsAuthenticatedLifecycleEvent(t *testing.T) {
+	ctx := context.Background()
+	state := store.NewMemoryState()
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatalf("create Runtime: %v", err)
+	}
+	vaultID := createVaultForTest(t, runtime, "Closure")
+	closed, err := runtime.Handle(ctx, mustJSON(map[string]any{"type": "CloseVault", "expectedVaultId": vaultID}))
+	if err != nil {
+		t.Fatalf("close Vault: %v", err)
+	}
+	result, ok := closed.(map[string]string)
+	if !ok || len(result["eventRecordId"]) != 64 {
+		t.Fatalf("close result = %#v", closed)
+	}
+	value := runtime.vaults[vaultID]
+	if value == nil || value.Canonical == nil || len(value.Canonical.CausalFrontier) != 1 || value.Canonical.CausalFrontier[0] != result["eventRecordId"] {
+		t.Fatalf("closed canonical state = %#v", value)
+	}
+	storageItemID, ok := value.Canonical.RecordStorageItemIDs[result["eventRecordId"]]
+	if !ok {
+		t.Fatalf("closed event has no Storage Item mapping: %#v", value.Canonical)
+	}
+	reader, err := dependencies.Artifacts.Open(storageItemID)
+	if err != nil {
+		t.Fatalf("open closed event artifact: %v", err)
+	}
+	encoded, err := io.ReadAll(reader)
+	_ = reader.Close()
+	if err != nil {
+		t.Fatalf("read closed event artifact: %v", err)
+	}
+	opened := openCompactForTest(t, runtime, vaultID, encoded)
+	if opened.PayloadType != 1 {
+		t.Fatalf("closed event payload type = %d, want 1", opened.PayloadType)
+	}
+	event, err := canonical.DecodeEvent(opened.PayloadBytes)
+	if err != nil {
+		t.Fatalf("decode closed event: %v", err)
+	}
+	if event.Family != canonical.LifecycleFamily || event.Type != 2 || hexIdentifier(event.RecordID) != result["eventRecordId"] {
+		t.Fatalf("closed event = %#v", event)
 	}
 }
 
