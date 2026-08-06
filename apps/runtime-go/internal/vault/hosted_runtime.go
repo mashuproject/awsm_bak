@@ -337,6 +337,9 @@ func (r *Runtime) materializationTargetsLocked(state *canonicalReplicaState) ([]
 }
 
 func (r *Runtime) pullHostedReplicas(ctx context.Context, id string) (any, error) {
+	if err := r.promoteHostedQuarantine(ctx, id); err != nil {
+		return nil, err
+	}
 	r.mu.RLock()
 	if err := r.requireExpectedLocked(&id); err != nil {
 		r.mu.RUnlock()
@@ -406,6 +409,10 @@ func (r *Runtime) pullHostedReplicas(ctx context.Context, id string) (any, error
 				}
 				opened, openErr := r.openOpaqueWithKnownEpochs(id, canonicalState, vaultID, encoded)
 				if openErr != nil {
+					if quarantineErr := r.quarantineHostedItem(ctx, id, encoded); quarantineErr != nil {
+						failed = true
+						break
+					}
 					continue
 				}
 				switch opened.PayloadType {
@@ -540,6 +547,138 @@ func (r *Runtime) pullHostedReplicas(ctx context.Context, id string) (any, error
 		results = append(results, result)
 	}
 	return results, nil
+}
+
+// quarantineHostedItem retains a verified opaque envelope when the local
+// Client cannot yet open it with any available Key Epoch. Quarantine is local
+// Execution State: it is not a Vault mapping, does not advance a Frontier, and
+// survives Runtime restart until a later authenticated promotion can consume
+// it.
+func (r *Runtime) quarantineHostedItem(ctx context.Context, vaultID string, encoded []byte) error {
+	envelope, err := storage.DecodeOpaqueEnvelope(encoded)
+	if err != nil {
+		return err
+	}
+	storageItemID := hexIdentifier(envelope.StorageItemID)
+	r.mu.Lock()
+	value, err := r.vaultLocked(vaultID)
+	if err != nil {
+		r.mu.Unlock()
+		return err
+	}
+	if value.Quarantine != nil {
+		if existing, ok := value.Quarantine[storageItemID]; ok && bytes.Equal(existing, encoded) {
+			r.mu.Unlock()
+			return nil
+		}
+	}
+	before := r.snapshotLocked()
+	if value.Quarantine == nil {
+		value.Quarantine = make(map[string][]byte)
+	}
+	value.Quarantine[storageItemID] = append([]byte(nil), encoded...)
+	if err := r.persistLocked(ctx); err != nil {
+		r.restoreLocked(before)
+		r.mu.Unlock()
+		return err
+	}
+	r.mu.Unlock()
+	r.signal()
+	return nil
+}
+
+// promoteHostedQuarantine retries only locally retained opaque items whose
+// Key Epoch is now available. Items that still cannot be opened, or whose
+// authenticated DAG/content dependencies are not ready, remain quarantined.
+// A successful admission removes exactly that local quarantine entry.
+func (r *Runtime) promoteHostedQuarantine(ctx context.Context, vaultID string) error {
+	r.mu.RLock()
+	value, err := r.vaultLockedRead(vaultID)
+	if err != nil {
+		r.mu.RUnlock()
+		return err
+	}
+	state := cloneCanonicalState(value.Canonical)
+	quarantine := cloneQuarantine(value.Quarantine)
+	vaultIdentifier, decodeErr := decodeHexIdentifier(vaultID)
+	r.mu.RUnlock()
+	if decodeErr != nil || state == nil || len(quarantine) == 0 {
+		return nil
+	}
+	storageItemIDs := make([]string, 0, len(quarantine))
+	for storageItemID := range quarantine {
+		storageItemIDs = append(storageItemIDs, storageItemID)
+	}
+	sort.Strings(storageItemIDs)
+	for _, storageItemID := range storageItemIDs {
+		encoded := quarantine[storageItemID]
+		opened, openErr := r.openOpaqueWithKnownEpochs(vaultID, state, vaultIdentifier, encoded)
+		if openErr != nil {
+			continue
+		}
+		var admitErr error
+		switch opened.PayloadType {
+		case 1:
+			event, eventErr := canonical.DecodeEvent(opened.PayloadBytes)
+			if eventErr != nil {
+				continue
+			}
+			r.mu.RLock()
+			known := false
+			if replica := r.replicas[vaultID]; replica != nil {
+				_, known = replica.Record(event.RecordID)
+			}
+			r.mu.RUnlock()
+			if known {
+				admitErr = nil
+			} else if event.Family == canonical.LifecycleFamily && event.Type == 1 {
+				// Vacuum successors require their paired Baseline and
+				// continuity proof; the pull pipeline owns that pairing.
+				continue
+			} else {
+				admitErr = r.AdmitOpaqueEvent(ctx, vaultID, encoded)
+			}
+		case 2:
+			admitErr = r.AdmitOpaqueObject(ctx, vaultID, encoded)
+		case 3:
+			admitErr = r.AdmitOpaqueFeatureManifest(ctx, vaultID, encoded)
+		default:
+			continue
+		}
+		if admitErr != nil {
+			continue
+		}
+		if err := r.removeHostedQuarantine(ctx, vaultID, storageItemID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *Runtime) removeHostedQuarantine(ctx context.Context, vaultID, storageItemID string) error {
+	r.mu.Lock()
+	value, err := r.vaultLocked(vaultID)
+	if err != nil {
+		r.mu.Unlock()
+		return err
+	}
+	if _, ok := value.Quarantine[storageItemID]; !ok {
+		r.mu.Unlock()
+		return nil
+	}
+	before := r.snapshotLocked()
+	delete(value.Quarantine, storageItemID)
+	if len(value.Quarantine) == 0 {
+		value.Quarantine = nil
+	}
+	if err := r.persistLocked(ctx); err != nil {
+		r.restoreLocked(before)
+		r.mu.Unlock()
+		return err
+	}
+	r.mu.Unlock()
+	r.signal()
+	return nil
 }
 
 func (r *Runtime) hydrateArtifact(ctx context.Context, id, artifactIDText string) (any, error) {

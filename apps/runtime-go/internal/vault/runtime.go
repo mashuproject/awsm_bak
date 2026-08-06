@@ -138,6 +138,7 @@ type persistedVault struct {
 	RecoveryHash     string                 `json:"recoveryHash"`
 	GenerationID     string                 `json:"generationId"`
 	Remotes          []remoteState          `json:"remotes"`
+	Quarantine       map[string][]byte      `json:"quarantine,omitempty"`
 	RecoveryRevision int                    `json:"recoveryRevision"`
 	Canonical        *canonicalReplicaState `json:"canonical,omitempty"`
 }
@@ -227,6 +228,7 @@ func New(ctx context.Context, state StateStore, dependencies Dependencies) (*Run
 		}
 		copyValue := value
 		copyValue.Remotes = append([]remoteState(nil), value.Remotes...)
+		copyValue.Quarantine = cloneQuarantine(value.Quarantine)
 		runtime.vaults[value.VaultID] = &copyValue
 		if value.Canonical != nil {
 			replica, err := runtime.openCanonicalReplica(copyValue)
@@ -2716,7 +2718,8 @@ func (r *Runtime) persistLocked(ctx context.Context) error {
 	for _, value := range r.vaults {
 		copyValue := *value
 		copyValue.Canonical = cloneCanonicalState(value.Canonical)
-		copyValue.Remotes = append([]remoteState(nil), value.Remotes...)
+		copyValue.Remotes = cloneRemoteStates(value.Remotes)
+		copyValue.Quarantine = cloneQuarantine(value.Quarantine)
 		snapshot.Vaults = append(snapshot.Vaults, copyValue)
 	}
 	serialized, err := json.Marshal(snapshot)
@@ -2735,7 +2738,8 @@ func (r *Runtime) snapshotLocked() runtimeSnapshot {
 		copyValue := *value
 		copyValue.Label = cloneString(value.Label)
 		copyValue.Canonical = cloneCanonicalState(value.Canonical)
-		copyValue.Remotes = append([]remoteState(nil), value.Remotes...)
+		copyValue.Remotes = cloneRemoteStates(value.Remotes)
+		copyValue.Quarantine = cloneQuarantine(value.Quarantine)
 		snapshot.vaults[id] = &copyValue
 	}
 	for id, replica := range r.replicas {
@@ -2754,7 +2758,8 @@ func (r *Runtime) restoreLocked(snapshot runtimeSnapshot) {
 		copyValue := *value
 		copyValue.Label = cloneString(value.Label)
 		copyValue.Canonical = cloneCanonicalState(value.Canonical)
-		copyValue.Remotes = append([]remoteState(nil), value.Remotes...)
+		copyValue.Remotes = cloneRemoteStates(value.Remotes)
+		copyValue.Quarantine = cloneQuarantine(value.Quarantine)
 		r.vaults[id] = &copyValue
 	}
 	for id, replica := range snapshot.replicas {
@@ -2800,6 +2805,15 @@ func validatePersistedVault(value persistedVault) error {
 		}
 		if uuid.Validate(remote.ReplicaHandle) != nil || !validDigest(remote.LocatorSalt) || remote.InventoryPageSize < 1 || remote.InventoryPageSize > 500 {
 			return errors.New("Vault state contains an invalid Hosted Replica binding")
+		}
+	}
+	for storageItemID, encoded := range value.Quarantine {
+		if !validDigest(storageItemID) || len(encoded) == 0 {
+			return errors.New("Vault state contains an invalid Quarantine item")
+		}
+		envelope, err := storage.DecodeOpaqueEnvelope(encoded)
+		if err != nil || hexIdentifier(envelope.StorageItemID) != storageItemID {
+			return errors.New("Vault state contains an invalid Quarantine envelope")
 		}
 	}
 	if value.Canonical != nil {
@@ -3003,6 +3017,26 @@ func cloneString(value *string) *string {
 	}
 	copyValue := *value
 	return &copyValue
+}
+
+func cloneQuarantine(value map[string][]byte) map[string][]byte {
+	if value == nil {
+		return nil
+	}
+	copyValue := make(map[string][]byte, len(value))
+	for storageItemID, encoded := range value {
+		copyValue[storageItemID] = append([]byte(nil), encoded...)
+	}
+	return copyValue
+}
+
+func cloneRemoteStates(values []remoteState) []remoteState {
+	if values == nil {
+		return nil
+	}
+	copyValues := make([]remoteState, len(values))
+	copy(copyValues, values)
+	return copyValues
 }
 
 func clonePending(value *pendingState) *pendingState {

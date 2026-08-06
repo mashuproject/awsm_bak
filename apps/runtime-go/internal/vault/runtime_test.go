@@ -1721,6 +1721,81 @@ func TestHostedReplicaPullReportsAuthenticatedAdmissionFailure(t *testing.T) {
 	}
 }
 
+func TestHostedReplicaPullQuarantinesUnknownKeyEpochAcrossRestart(t *testing.T) {
+	ctx := context.Background()
+	fixture := newHostedSyncFixture(t)
+	state := store.NewMemoryState()
+	dependencies := memoryDependencies(t)
+	dependencies.HTTPClient = fixture.Client
+	runtime, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatalf("create Runtime: %v", err)
+	}
+	vaultID := createVaultForTest(t, runtime, "Unknown epoch quarantine")
+	created, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "CreateHostedReplica", "expectedVaultId": vaultID,
+		"endpoint": fixture.Endpoint, "name": "Archive", "username": "alice", "password": "secret",
+	}))
+	if err != nil {
+		t.Fatalf("create Hosted Replica: %v", err)
+	}
+	remote := created.(RemoteSummary)
+	vaultIdentifier := mustIdentifier(t, vaultID)
+	featureSetID := mustIdentifier(t, runtime.vaults[vaultID].Canonical.RequiredFeatureSetID)
+	unknownKey := bytes.Repeat([]byte{0x47}, 32)
+	unknownEpochID, err := awsmcrypto.KeyEpochID(vaultIdentifier, unknownKey)
+	if err != nil {
+		t.Fatalf("derive unknown Key Epoch: %v", err)
+	}
+	objectBytes := validTestArtifactObjectBytes(t, vaultIdentifier, featureSetID, "quarantined object")
+	objectID, err := canonical.VaultObjectID(vaultIdentifier, 2, objectBytes)
+	if err != nil {
+		t.Fatalf("derive Object ID: %v", err)
+	}
+	encoded, err := awsmcrypto.SealCompactItem(awsmcrypto.CompactItemInput{
+		VaultID: vaultIdentifier, KeyEpochID: unknownEpochID, KeyEpochKey: unknownKey,
+		PayloadType: 2, PayloadBytes: objectBytes,
+	})
+	if err != nil {
+		t.Fatalf("seal unknown-epoch Object: %v", err)
+	}
+	locator, err := deriveHostedReplicaLocator(fixture.Salt, hostedNamespaceObject, objectID)
+	if err != nil {
+		t.Fatalf("derive Object locator: %v", err)
+	}
+	fixture.addItem(t, locator, encoded)
+	pulledValue, err := runtime.Handle(ctx, mustJSON(map[string]any{"type": "PullHostedReplicas", "expectedVaultId": vaultID}))
+	if err != nil {
+		t.Fatalf("pull Hosted Replica: %v", err)
+	}
+	pulled := pulledValue.([]map[string]string)
+	if len(pulled) != 1 || pulled[0]["remoteId"] != remote.RemoteID || pulled[0]["status"] != "Completed" {
+		t.Fatalf("pull status = %#v", pulled)
+	}
+	quarantine := runtime.vaults[vaultID].Quarantine
+	if len(quarantine) != 1 {
+		t.Fatalf("quarantine item count = %d, want 1", len(quarantine))
+	}
+	envelope, err := storage.DecodeOpaqueEnvelope(encoded)
+	if err != nil {
+		t.Fatalf("decode quarantined envelope: %v", err)
+	}
+	storageItemID := hexIdentifier(envelope.StorageItemID)
+	if string(quarantine[storageItemID]) != string(encoded) {
+		t.Fatalf("quarantine bytes for %s were not retained", storageItemID)
+	}
+	if _, ok := runtime.replicas[vaultID].Object(objectID); ok {
+		t.Fatal("unknown-epoch Object was admitted instead of quarantined")
+	}
+	restarted, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatalf("restart Runtime: %v", err)
+	}
+	if string(restarted.vaults[vaultID].Quarantine[storageItemID]) != string(encoded) {
+		t.Fatal("restart lost the quarantined opaque item")
+	}
+}
+
 func TestHostedReplicaHydratesKnownArtifactStream(t *testing.T) {
 	ctx := context.Background()
 	fixture := newHostedSyncFixture(t)
