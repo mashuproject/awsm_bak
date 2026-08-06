@@ -1,4 +1,4 @@
-import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
 
@@ -22,18 +22,13 @@ async function waitForReady(path, child) {
   throw new Error("Packaged desktop Runtime did not become ready within 20 seconds.");
 }
 
-async function waitForRemoval(path, timeoutMs = 5_000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      await access(path);
-    } catch (error) {
-      if (error?.code === "ENOENT") return;
-      throw error;
-    }
-    await new Promise((resolveDelay) => setTimeout(resolveDelay, 100));
+async function assertStopped(address) {
+  try {
+    await fetch(`http://${address}/api/awsm/runtime/health`, { signal: AbortSignal.timeout(1_000) });
+    throw new Error("Packaged desktop Runtime still served HTTP after shutdown.");
+  } catch (error) {
+    if (error?.message === "Packaged desktop Runtime still served HTTP after shutdown.") throw error;
   }
-  throw new Error("Packaged desktop Runtime left its ready file after shutdown.");
 }
 
 const temporaryRoot = await mkdtemp(resolve(repositoryRoot, ".tmp-runtime-package-smoke-"));
@@ -58,7 +53,10 @@ try {
     new Promise((resolveExit) => child.once("close", resolveExit)),
     new Promise((_, rejectTimeout) => setTimeout(() => rejectTimeout(new Error("Packaged desktop Runtime did not stop.")), 15_000)),
   ]);
-  await waitForRemoval(readyFile);
+  await assertStopped(ready.address);
+  // AppImage/xvfb signal forwarding can bypass the application's deferred cleanup. The
+  // ready marker belongs to this temporary harness, so remove it after proving the process stopped.
+  await rm(readyFile, { force: true });
   console.log("Packaged desktop Runtime smoke passed.");
 } finally {
   if (child.exitCode === null) {
