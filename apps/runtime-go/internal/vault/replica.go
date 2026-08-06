@@ -134,6 +134,20 @@ func (r *Replica) AdmitEvent(event canonical.Event, signerPublicKey ed25519.Publ
 	return nil
 }
 
+// AdmitKnownEvent verifies an Event against the Credential certificate already
+// accepted by Genesis. It is the destination-side admission path for pulled
+// opaque Records; a sender never supplies an out-of-band trust key.
+func (r *Replica) AdmitKnownEvent(event canonical.Event) error {
+	if r == nil {
+		return errors.New("Replica is required")
+	}
+	key, ok := r.credentialKeys[event.SignerCredentialID]
+	if !ok {
+		return errors.New("Event signer Credential is not accepted")
+	}
+	return r.AdmitEvent(event, key)
+}
+
 func (r *Replica) Record(id canonical.Identifier) (canonical.Record, bool) {
 	if r == nil {
 		return canonical.Record{}, false

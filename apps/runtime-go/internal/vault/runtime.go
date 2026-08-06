@@ -289,6 +289,83 @@ func (r *Runtime) ExportTransfer(vaultID string) ([]byte, error) {
 	return payload, nil
 }
 
+// AdmitOpaqueEvent is the local destination boundary used by synchronization
+// transports. It accepts one opaque Compact Vault Record, verifies its
+// authenticated envelope and Event DAG position, then commits the immutable
+// bytes and derived frontiers together with Runtime metadata.
+func (r *Runtime) AdmitOpaqueEvent(ctx context.Context, vaultID string, encoded []byte) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	value, err := r.vaultLocked(vaultID)
+	if err != nil {
+		return err
+	}
+	if value.Canonical == nil || r.replicas[vaultID] == nil || r.deps.Artifacts == nil || r.deps.Secrets == nil {
+		return commandError("VAULT_REPLAY_UNAVAILABLE", "The authenticated Vault Replica is unavailable.")
+	}
+	vaultIdentifier, err := decodeHexIdentifier(vaultID)
+	if err != nil {
+		return commandError("VAULT_EVENT_INVALID", "The Vault identity is invalid.")
+	}
+	epochIdentifier, err := decodeHexIdentifier(value.Canonical.KeyEpochID)
+	if err != nil {
+		return commandError("VAULT_EVENT_INVALID", "The Key Epoch identity is invalid.")
+	}
+	secretBytes, err := r.deps.Secrets.Get(trustedSecretService, epochSecretAccount(vaultID, value.Canonical.KeyEpochID))
+	if err != nil {
+		return commandError("TRUSTED_SECRET_UNAVAILABLE", "The Key Epoch could not be opened.")
+	}
+	epochSecret, err := decodeEpochSecret(secretBytes, vaultIdentifier, epochIdentifier)
+	if err != nil {
+		return commandError("VAULT_EVENT_INVALID", "The Key Epoch is invalid.")
+	}
+	opened, err := awsmcrypto.OpenCompactItem(vaultIdentifier, epochIdentifier, epochSecret.key, encoded)
+	if err != nil || opened.PayloadType != 1 {
+		if err == nil {
+			err = errors.New("opaque item is not a Vault Record")
+		}
+		return commandError("VAULT_EVENT_INVALID", "The opaque Vault Record is invalid.")
+	}
+	event, err := canonical.DecodeEvent(opened.PayloadBytes)
+	if err != nil {
+		return commandError("VAULT_EVENT_INVALID", "The opaque Vault Record is not a valid Event.")
+	}
+	if event.VaultID != vaultIdentifier || hexIdentifier(event.GenerationID) != value.GenerationID || hexIdentifier(event.RequiredFeatureSetID) != value.Canonical.RequiredFeatureSetID {
+		return commandError("VAULT_EVENT_INVALID", "The Event belongs to another accepted context.")
+	}
+	nextReplica := r.replicas[vaultID].Clone()
+	if err := nextReplica.AdmitKnownEvent(event); err != nil {
+		return commandError("VAULT_EVENT_INVALID", "The Event failed authenticated DAG admission.")
+	}
+	envelope, err := storage.DecodeOpaqueEnvelope(encoded)
+	if err != nil {
+		return commandError("VAULT_EVENT_INVALID", "The opaque Vault Record envelope is invalid.")
+	}
+	before := r.snapshotLocked()
+	if err := storeOpaqueCreationItem(r.deps.Artifacts, envelope.StorageItemID, encoded); err != nil {
+		return commandError("VAULT_CREATION_STORAGE_FAILED", "The opaque Vault Record could not be stored.")
+	}
+	state := nextReplica.State()
+	value.Canonical.CausalFrontier = identifiersToHex(state.CausalFrontier)
+	value.Canonical.AuthorityFrontier = identifiersToHex(state.AuthorityFrontier)
+	value.Canonical.ContinuityRecordIDs = identifiersToHex(state.ContinuityRecordIDs)
+	if value.Canonical.RecordStorageItemIDs == nil {
+		value.Canonical.RecordStorageItemIDs = map[string]string{}
+	}
+	value.Canonical.RecordStorageItemIDs[hexIdentifier(event.RecordID)] = hexIdentifier(envelope.StorageItemID)
+	if event.Family == canonical.LifecycleFamily && event.Type == 2 {
+		value.Lifecycle = "Closed"
+	}
+	r.replicas[vaultID] = nextReplica
+	if err := r.persistLocked(ctx); err != nil {
+		r.restoreLocked(before)
+		deleteOpaqueCreationItem(r.deps.Artifacts, envelope.StorageItemID)
+		return err
+	}
+	r.signal()
+	return nil
+}
+
 // TransferPackageVaultID validates and reads the identity carried by the
 // current Runtime-owned transfer snapshot. The Application layer uses it to
 // bind a staged transfer to the Vault ID that was authorized when the transfer
@@ -1821,6 +1898,14 @@ func identifierSetEqual(left []canonical.Identifier, right []string) bool {
 		}
 	}
 	return true
+}
+
+func identifiersToHex(values []canonical.Identifier) []string {
+	result := make([]string, len(values))
+	for index, value := range values {
+		result[index] = hexIdentifier(value)
+	}
+	return result
 }
 
 func appendUniqueStrings(values []string, value string) []string {

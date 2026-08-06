@@ -2,6 +2,7 @@ package vault
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"io"
@@ -284,6 +285,85 @@ func TestCloseVaultCommitsAuthenticatedLifecycleEvent(t *testing.T) {
 	}
 	if event.Family != canonical.LifecycleFamily || event.Type != 2 || hexIdentifier(event.RecordID) != result["eventRecordId"] {
 		t.Fatalf("closed event = %#v", event)
+	}
+}
+
+func TestRuntimeAdmitsAuthenticatedOpaqueEventAndPersistsIt(t *testing.T) {
+	ctx := context.Background()
+	state := store.NewMemoryState()
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatalf("create Runtime: %v", err)
+	}
+	vaultID := createVaultForTest(t, runtime, "Event")
+	value := runtime.vaults[vaultID]
+	vaultIdentifier, err := decodeHexIdentifier(vaultID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generationID, err := decodeHexIdentifier(value.GenerationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	credentialID, err := decodeHexIdentifier(value.Canonical.ClientCredentialID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberID, err := decodeHexIdentifier(value.Canonical.MemberID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientBytes, err := dependencies.Secrets.Get(trustedSecretService, clientSecretAccount(vaultID, value.Canonical.ClientCredentialID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientSecret, err := decodeClientSecret(clientBytes, vaultIdentifier, memberID, credentialID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	featureSetID, err := decodeHexIdentifier(value.Canonical.RequiredFeatureSetID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replicaState := runtime.replicas[vaultID].State()
+	event, err := canonical.SignEvent(canonical.EventInput{
+		VaultID: vaultIdentifier, GenerationID: generationID,
+		ParentRecordIDs: replicaState.CausalFrontier, AuthorityParentIDs: replicaState.AuthorityFrontier,
+		Dependencies: []canonical.Dependency{}, RequiredFeatureSetID: featureSetID, Extensions: map[string][]byte{},
+		Family: canonical.ContentFamily, Type: 1, SignerCredentialID: credentialID, AssertedAt: 11, Body: canonical.Map{0: "Next"},
+	}, ed25519.PrivateKey(clientSecret.signingSecretKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	epochID, err := decodeHexIdentifier(value.Canonical.KeyEpochID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	epochBytes, err := dependencies.Secrets.Get(trustedSecretService, epochSecretAccount(vaultID, value.Canonical.KeyEpochID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	epochSecret, err := decodeEpochSecret(epochBytes, vaultIdentifier, epochID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := awsmcrypto.SealCompactItem(awsmcrypto.CompactItemInput{VaultID: vaultIdentifier, KeyEpochID: epochID, KeyEpochKey: epochSecret.key, PayloadType: 1, PayloadBytes: event.Bytes})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.AdmitOpaqueEvent(ctx, vaultID, encoded); err != nil {
+		t.Fatalf("admit opaque Event: %v", err)
+	}
+	if value.Canonical.RecordStorageItemIDs[hexIdentifier(event.RecordID)] == "" || value.Canonical.CausalFrontier[0] != hexIdentifier(event.RecordID) {
+		t.Fatalf("admitted Event state = %#v", value.Canonical)
+	}
+	restarted, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatalf("restart Runtime: %v", err)
+	}
+	if _, ok := restarted.replicas[vaultID].Record(event.RecordID); !ok {
+		t.Fatal("restart did not retain admitted Event")
 	}
 }
 
