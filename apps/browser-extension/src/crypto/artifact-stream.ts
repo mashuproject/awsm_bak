@@ -100,7 +100,7 @@ function frameAad(input: {
   return concatBytes([
     encoder.encode("awsm:artifact-frame-aad:v1"),
     Uint8Array.of(0),
-    uint32be(8),
+    uint32be(9),
     uint64be(input.vaultId.byteLength),
     input.vaultId,
     uint64be(input.keyEpochId.byteLength),

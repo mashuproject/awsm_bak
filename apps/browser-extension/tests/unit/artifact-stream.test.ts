@@ -84,7 +84,7 @@ describe("bounded Artifact frame encryption", () => {
     expect(result.frameCount).toBe(3);
     expect(concatBytes(openedChunks)).toEqual(payload);
     expect(hex(sealed.ciphertextDigest)).toBe(
-      "ae339c468fadb168b3982039566f8e3ec3b4afaf5da9f9666f80aba1aaea6205",
+      "9625cf00f16ac04f6d0b2dbb437b9b24bd707038cfbefbd4992a22d05fa78d1b",
     );
   }, 20_000);
 
