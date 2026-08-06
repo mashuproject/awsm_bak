@@ -63,6 +63,7 @@ type Remote = {
   readonly name: string;
   readonly endpoint: string;
   readonly enabled: boolean;
+  readonly replicaHandle: string;
 };
 
 type Pairing = {
@@ -504,7 +505,22 @@ function PhrasePanel({
   );
 }
 
-function LibraryList({ items }: { readonly items: readonly LibraryItem[] }): React.ReactElement {
+function LibraryList({
+  items,
+  binding,
+  vaultId,
+  onRefresh,
+  onError,
+  onStatus,
+}: {
+  readonly items: readonly LibraryItem[];
+  readonly binding: DesktopBinding;
+  readonly vaultId: string;
+  readonly onRefresh: () => void;
+  readonly onError: (error: unknown) => void;
+  readonly onStatus: (message: string) => void;
+}): React.ReactElement {
+  const [hydrating, setHydrating] = React.useState<string>();
   const activeItems = items.filter(({ lifecycle }) => lifecycle === "Active");
   if (activeItems.length === 0)
     return (
@@ -527,6 +543,30 @@ function LibraryList({ items }: { readonly items: readonly LibraryItem[] }): Rea
           <span className="text-sm font-semibold text-awsm-ink">
             {item.availableLocally ? "Available locally" : "Needs hydration"}
           </span>
+          {!item.availableLocally ? (
+            <Button
+              variant="secondary"
+              busy={hydrating === item.artifactId}
+              onClick={() => {
+                setHydrating(item.artifactId);
+                void Promise.resolve(
+                  binding.VaultCommand?.({
+                    type: "HydrateArtifact",
+                    expectedVaultId: vaultId,
+                    artifactId: item.artifactId,
+                  }),
+                )
+                  .then(() => {
+                    onRefresh();
+                    onStatus("Artifact hydrated.");
+                  })
+                  .catch(onError)
+                  .finally(() => setHydrating(undefined));
+              }}
+            >
+              Hydrate Artifact
+            </Button>
+          ) : null}
         </li>
       ))}
     </ul>
@@ -539,12 +579,14 @@ function HostedReplicas({
   remotes,
   onRefresh,
   onError,
+  onStatus,
 }: {
   readonly binding: DesktopBinding;
   readonly vaultId: string;
   readonly remotes: readonly Remote[];
   readonly onRefresh: () => void;
   readonly onError: (error: unknown) => void;
+  readonly onStatus: (message: string) => void;
 }): React.ReactElement {
   const [endpoint, setEndpoint] = React.useState("");
   const [name, setName] = React.useState("");
@@ -587,6 +629,37 @@ function HostedReplicas({
       setBusy(false);
     }
   };
+  const materialize = async (remote: Remote) => {
+    setBusy(true);
+    try {
+      await binding.VaultCommand?.({
+        type: "MaterializeHostedReplica",
+        expectedVaultId: vaultId,
+        remoteId: remote.remoteId,
+      });
+      onRefresh();
+      onStatus("Hosted Replica materialized.");
+    } catch (error) {
+      onError(error);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const pull = async () => {
+    setBusy(true);
+    try {
+      await binding.VaultCommand?.({
+        type: "PullHostedReplicas",
+        expectedVaultId: vaultId,
+      });
+      onRefresh();
+      onStatus("Hosted Replica pull completed.");
+    } catch (error) {
+      onError(error);
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <section className="grid gap-5" aria-labelledby="hosted-replicas-heading">
       <div className="grid gap-2">
@@ -601,6 +674,16 @@ function HostedReplicas({
           it is not a special Vault member.
         </p>
       </div>
+      <ActionRow>
+        <Button
+          variant="secondary"
+          busy={busy}
+          disabled={remotes.length === 0}
+          onClick={() => void pull()}
+        >
+          Check for updates
+        </Button>
+      </ActionRow>
       {remotes.length === 0 ? (
         <EmptyState title="No Hosted Replicas">
           <p>No Hosted Replicas are configured on this Client.</p>
@@ -613,12 +696,23 @@ function HostedReplicas({
               className="grid gap-2 border-t-2 border-awsm-border-subtle py-4"
             >
               <strong className="text-base text-awsm-ink">{remote.name}</strong>
-              <span className="break-all text-sm text-awsm-text-muted">
-                {remote.endpoint} · {remote.enabled ? "Enabled" : "Paused"}
+              <span className="break-all text-sm text-awsm-text-muted">{remote.endpoint}</span>
+              <span className="text-sm font-semibold text-awsm-ink">
+                {remote.enabled ? "Enabled" : "Paused"}
               </span>
-              <Button variant="secondary" busy={busy} onClick={() => void toggle(remote)}>
-                {remote.enabled ? "Pause" : "Resume"}
-              </Button>
+              <ActionRow>
+                <Button
+                  variant="secondary"
+                  busy={busy}
+                  disabled={!remote.enabled}
+                  onClick={() => void materialize(remote)}
+                >
+                  Materialize now
+                </Button>
+                <Button variant="quiet" busy={busy} onClick={() => void toggle(remote)}>
+                  {remote.enabled ? "Pause" : "Resume"}
+                </Button>
+              </ActionRow>
             </li>
           ))}
         </ul>
@@ -675,6 +769,7 @@ function VaultsView({
   remotes,
   refresh,
   onError,
+  onStatus,
 }: {
   readonly binding: DesktopBinding;
   readonly state: RuntimeState | undefined;
@@ -682,6 +777,7 @@ function VaultsView({
   readonly remotes: readonly Remote[];
   readonly refresh: () => void;
   readonly onError: (error: unknown) => void;
+  readonly onStatus: (message: string) => void;
 }): React.ReactElement {
   const selected = vaultContext(state);
   const [phraseSetup, setPhraseSetup] = React.useState<PhraseSetup>();
@@ -858,7 +954,14 @@ function VaultsView({
             >
               Library
             </h3>
-            <LibraryList items={library} />
+            <LibraryList
+              items={library}
+              binding={binding}
+              vaultId={selected.vaultId}
+              onRefresh={refresh}
+              onError={onError}
+              onStatus={onStatus}
+            />
           </section>
           <HostedReplicas
             binding={binding}
@@ -866,6 +969,7 @@ function VaultsView({
             remotes={remotes}
             onRefresh={refresh}
             onError={onError}
+            onStatus={onStatus}
           />
         </section>
       )}
@@ -882,11 +986,19 @@ function BadgeLike({ children }: { readonly children: React.ReactNode }): React.
 }
 
 function LibraryView({
+  binding,
   state,
   library,
+  refresh,
+  onError,
+  onStatus,
 }: {
+  readonly binding: DesktopBinding;
   readonly state: RuntimeState | undefined;
   readonly library: readonly LibraryItem[];
+  readonly refresh: () => void;
+  readonly onError: (error: unknown) => void;
+  readonly onStatus: (message: string) => void;
 }): React.ReactElement {
   const vault = vaultContext(state);
   if (vault === undefined)
@@ -907,7 +1019,14 @@ function LibraryView({
           the browser extension.
         </p>
       </div>
-      <LibraryList items={library} />
+      <LibraryList
+        items={library}
+        binding={binding}
+        vaultId={vault.vaultId}
+        onRefresh={refresh}
+        onError={onError}
+        onStatus={onStatus}
+      />
     </section>
   );
 }
@@ -1148,6 +1267,7 @@ function DesktopApp(): React.ReactElement {
   const [version, setVersion] = React.useState<string>();
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string>();
+  const [status, setStatus] = React.useState<string>();
   const [announce, setAnnounce] = React.useState("");
 
   const refresh = React.useCallback(async () => {
@@ -1201,6 +1321,10 @@ function DesktopApp(): React.ReactElement {
   }, [refresh]);
 
   const setErrorFromUnknown = (reason: unknown) => setError(errorMessage(reason));
+  const setStatusMessage = (message: string) => {
+    setStatus(message);
+    setAnnounce(message);
+  };
   const selectVault = (vaultId: string) => {
     if (binding?.VaultCommand === undefined || state?.selectedVaultId === vaultId) return;
     void Promise.resolve(
@@ -1264,6 +1388,11 @@ function DesktopApp(): React.ReactElement {
               {error}
             </Notice>
           ) : null}
+          {status !== undefined ? (
+            <Notice tone="info" title="Runtime action completed">
+              {status}
+            </Notice>
+          ) : null}
           {loading && binding === undefined ? <LoadingNotice /> : null}
           {binding === undefined ? (
             <EmptyState title="Runtime unavailable">
@@ -1277,9 +1406,17 @@ function DesktopApp(): React.ReactElement {
               remotes={remotes}
               refresh={() => void refresh()}
               onError={setErrorFromUnknown}
+              onStatus={setStatusMessage}
             />
           ) : activeSection === "library" && binding.VaultCommand !== undefined ? (
-            <LibraryView state={state} library={library} />
+            <LibraryView
+              binding={binding}
+              state={state}
+              library={library}
+              refresh={() => void refresh()}
+              onError={setErrorFromUnknown}
+              onStatus={setStatusMessage}
+            />
           ) : activeSection === "connections" ? (
             <ConnectionsView
               binding={binding}

@@ -152,3 +152,92 @@ test("Wails Vault creation can recover a pending setup without exposing its phra
   await page.getByRole("button", { name: "Cancel" }).click();
   await expect(page.getByText("Create a Vault on this desktop Client.")).toBeVisible();
 });
+
+test("Wails Vault surface runs hosted pull, materialization, and Artifact hydration actions", async ({
+  page,
+}) => {
+  const vaultId = "c".repeat(64);
+  const artifactId = "d".repeat(64);
+  await page.addInitScript(({ selectedVaultId, artifactId }) => {
+    const state = {
+      selectedVaultId,
+      vaults: [
+        {
+          vaultId: selectedVaultId,
+          label: "Hosted archive",
+          lifecycle: "Open",
+          access: "Authoring",
+          selected: true,
+        },
+      ],
+    };
+    const library = [
+      {
+        bundleId: "bundle-1",
+        artifactId,
+        title: "Remote capture",
+        finalUrl: "https://example.test/remote",
+        availableLocally: false,
+        lifecycle: "Active",
+      },
+    ];
+    const remotes = [
+      {
+        remoteId: "remote-1",
+        name: "Home Host",
+        endpoint: "https://host.example.test",
+        enabled: true,
+        replicaHandle: "11111111-1111-4111-8111-111111111111",
+      },
+    ];
+    const target = globalThis as unknown as { go: unknown };
+    target.go = {
+      main: {
+        desktopBinding: {
+          PendingPairings: async () => [],
+          ListGrants: async () => [],
+          RuntimeAddress: () => "127.0.0.1:37373",
+          VaultCommand: async (request: { type: string }) => {
+            if (request.type === "GetState") return state;
+            if (request.type === "ListLibrary") return library;
+            if (request.type === "ListRemotes") return remotes;
+            if (request.type === "MaterializeHostedReplica") {
+              (globalThis as unknown as { __awsmCalls?: string[] }).__awsmCalls?.push(request.type);
+              return { remoteId: "remote-1", materializedCompactItemCount: 1 };
+            }
+            if (request.type === "PullHostedReplicas") {
+              (globalThis as unknown as { __awsmCalls?: string[] }).__awsmCalls?.push(request.type);
+              return [{ remoteId: "remote-1", status: "Completed" }];
+            }
+            if (request.type === "HydrateArtifact") {
+              (globalThis as unknown as { __awsmCalls?: string[] }).__awsmCalls?.push(request.type);
+              library[0].availableLocally = true;
+              return { artifactId, storageItemId: "e".repeat(64), remoteId: "remote-1" };
+            }
+            throw new Error(`unexpected command: ${request.type}`);
+          },
+          PendingTransfers: async () => [],
+        },
+      },
+    };
+    (globalThis as unknown as { __awsmCalls?: string[] }).__awsmCalls = [];
+  }, { selectedVaultId: vaultId, artifactId });
+
+  await page.goto("/");
+  await expect(page.getByText("Home Host", { exact: true })).toBeVisible();
+  await expect(page.getByText("Enabled", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Materialize now" }).click();
+  await expect(page.getByText("Hosted Replica materialized.")).toBeVisible();
+  await page.getByRole("button", { name: "Check for updates" }).click();
+  await expect(page.getByText("Hosted Replica pull completed.")).toBeVisible();
+  await page.getByRole("button", { name: "Hydrate Artifact" }).click();
+  await expect(page.getByText("Available locally")).toBeVisible();
+  const observed = await page.evaluate(
+    () => (globalThis as unknown as { __awsmCalls: string[] }).__awsmCalls,
+  );
+  expect(observed).toEqual([
+    "MaterializeHostedReplica",
+    "PullHostedReplicas",
+    "HydrateArtifact",
+  ]);
+});
