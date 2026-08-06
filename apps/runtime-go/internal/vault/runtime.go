@@ -1319,9 +1319,6 @@ func (r *Runtime) confirmFork(ctx context.Context, setupID, phrase string) (any,
 	if source == nil || source.Canonical == nil || r.replicas[pending.SourceVaultID] == nil {
 		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The source Vault Replica is unavailable.")
 	}
-	if len(r.replicas[pending.SourceVaultID].Events()) > 1 || len(r.replicas[pending.SourceVaultID].objects) > 0 {
-		return nil, commandError("VAULT_FORK_REQUIRES_EXPORT", "This Fork contains synchronized content; use a verified Complete Export until content re-authoring is available.")
-	}
 	if r.deps.Artifacts == nil || r.deps.Secrets == nil {
 		return nil, commandError("TRUSTED_SECRET_UNAVAILABLE", "This Client cannot Fork a Vault without its secure storage facility.")
 	}
@@ -1339,6 +1336,11 @@ func (r *Runtime) confirmFork(ctx context.Context, setupID, phrase string) (any,
 	cleanup := func() {
 		for _, itemID := range storedItems {
 			deleteOpaqueCreationItem(r.deps.Artifacts, itemID)
+		}
+		for _, itemID := range canonicalState.RecordStorageItemIDs {
+			if decoded, decodeErr := decodeHexIdentifier(itemID); decodeErr == nil {
+				deleteOpaqueCreationItem(r.deps.Artifacts, decoded)
+			}
 		}
 		_ = r.deps.Secrets.Delete(trustedSecretService, clientSecretAccount(canonicalState.VaultID, canonicalState.ClientCredentialID))
 		_ = r.deps.Secrets.Delete(trustedSecretService, epochSecretAccount(canonicalState.VaultID, canonicalState.KeyEpochID))
@@ -1382,6 +1384,10 @@ func (r *Runtime) confirmFork(ctx context.Context, setupID, phrase string) (any,
 	if err != nil {
 		cleanup()
 		return nil, commandError("VAULT_FORK_INVALID", "The authenticated Fork Replica could not be opened.")
+	}
+	if err := reauthorForkContentEvents(r.replicas[pending.SourceVaultID], replica, prepared, canonicalState, r.deps); err != nil {
+		cleanup()
+		return nil, commandError("VAULT_FORK_INVALID", err.Error())
 	}
 	r.vaults[id] = value
 	r.replicas[id] = replica

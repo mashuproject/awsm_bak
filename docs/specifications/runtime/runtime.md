@@ -51,7 +51,7 @@ receiver pull, Artifact hydration, and encrypted Go-to-Go transfer import/export
 browser-derived vectors and restart/Host-boundary proofs. The Go Runtime also exposes browser-compatible
 Complete Export/Import for the supported single-Key-Epoch closure; Complete Import remains
 authoring-free. Multi-Key-Epoch, Feature Manifest, Streamable Artifact, and adopted-Vacuum closure
-semantics, non-empty content Fork re-authoring, broader Authority and Key-Epoch event families,
+semantics, object/dependency-bearing Content Fork re-authoring, broader Authority and Key-Epoch event families,
 conflict/rebase projections, and full Wails workflow coverage remain explicit parity boundaries.
 Unsupported desktop page Capture remains intentional.
 

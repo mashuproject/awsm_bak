@@ -70,8 +70,8 @@ authoring Credential. The extension's backend router merges local and desktop Va
 summaries, then routes Commands by Vault ID; it does not copy desktop Vault bytes into the browser.
 Desktop page acquisition is intentionally unavailable. Capture remains available for extension-owned
 local Vaults; the extension-to-desktop Capture Bundle bridge is not implemented. Multi-Key-Epoch,
-Feature Manifest, Streamable Artifact, and adopted-Vacuum Complete Export semantics, non-empty
-content Fork re-authoring, broader Authority and Key-Epoch event families, conflict/rebase
+Feature Manifest, Streamable Artifact, and adopted-Vacuum Complete Export semantics, object/
+dependency-bearing Content Fork re-authoring, broader Authority and Key-Epoch event families, conflict/rebase
 projections, and complete Wails workflow coverage remain explicit parity boundaries.
 
 The move boundary is an explicit one-use transfer ceremony, not synchronization. The source

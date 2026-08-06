@@ -61,7 +61,7 @@ verification. A Runtime API bearer token never authorizes that surface.
 
 The Go Runtime implements the canonical tagged Command contract for persistent Vault management:
 creation and selection, Recovery Phrase confirmation/replacement and same-member recovery, Fork
-for an empty state, Closure, Vacuum adoption, Library projection, authenticated Event/Object replay,
+for an empty state or dependency-free content labels, Closure, Vacuum adoption, Library projection, authenticated Event/Object replay,
 Storage Relief, Garbage Collection, Hosted Replica creation and attachment, Compact materialization,
 receiver-initiated pull, and explicit Artifact hydration. The Wails surface and loopback API use this
 same Runtime; a paired extension reaches it under the single `runtime.vault` grant.
@@ -80,8 +80,8 @@ its encrypted transfer envelope, so an accepted package reopens the Replica on t
 The Runtime command boundary also produces and accepts the browser-compatible Complete Export
 container for the supported single-Key-Epoch closure. Imported Replicas are readable but have no
 selected authoring Credential or private key. Multi-Key-Epoch, Feature Manifest, Streamable Artifact,
-and adopted-Vacuum Complete Export semantics remain explicit limits, along with non-empty content
-Fork re-authoring, broader Authority/Key-Epoch event families, conflict/rebase projections, and
+and adopted-Vacuum Complete Export semantics remain explicit limits, along with object/dependency-bearing
+Content Fork re-authoring, broader Authority/Key-Epoch event families, conflict/rebase projections, and
 full Wails workflow coverage.
 
 The move boundary is deliberately separate from Vault synchronization. A source Client seals the
@@ -129,5 +129,5 @@ test are `script/package-linux-appimage.sh` and `script/packaged-desktop-smoke.m
 These proofs cover the process boundary, Runtime API grant lifecycle, canonical Vault Command
 envelope, authenticated replay, Hosted Replica sync boundaries, Artifact hydration, and encrypted
 transfer staging. They do not claim desktop page Capture, the extension-to-desktop Capture Bundle
-bridge, browser Complete Export byte-format interoperability, non-empty content Fork re-authoring,
+bridge, browser Complete Export byte-format interoperability, object/dependency-bearing Content Fork re-authoring,
 or user-facing search/AI semantics.
