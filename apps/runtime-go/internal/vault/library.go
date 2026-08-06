@@ -147,6 +147,8 @@ type libraryConflictCheckpoint struct {
 type libraryConflictCandidate struct {
 	headCauseID canonical.Identifier
 	redirects   []collectionRedirectEdge
+	noteID      canonical.Identifier
+	contentID   *canonical.Identifier
 }
 
 // ProjectLibrary reduces Bundle Registered, Capture lifecycle, and placement
@@ -199,7 +201,7 @@ func ProjectLibraryProjection(replica *Replica) (LibraryProjection, error) {
 	if err := seedBaselineNotes(replica, notes); err != nil {
 		return LibraryProjection{}, err
 	}
-	if err := seedBaselineRedirectConflicts(replica, collectionRedirects, tagRedirects); err != nil {
+	if err := seedBaselineRedirectConflicts(replica, collectionRedirects, tagRedirects, notes); err != nil {
 		return LibraryProjection{}, err
 	}
 	orderedEvents, err := orderedContentEvents(replica)
@@ -783,10 +785,6 @@ func ProjectLibraryProjection(replica *Replica) (LibraryProjection, error) {
 	conflicts = append(conflicts, tagConflicts...)
 	folderConflicted, folderConflicts := detectFolderConflicts(folders)
 	conflicts = append(conflicts, folderConflicts...)
-	conflictState, err := projectConflictCheckpointState(conflicts, collectionRedirects, tagRedirects)
-	if err != nil {
-		return LibraryProjection{}, err
-	}
 	for _, capture := range captures {
 		collectionID, err := decodeHexIdentifier(capture.item.CollectionID)
 		if err != nil {
@@ -889,6 +887,14 @@ func ProjectLibraryProjection(replica *Replica) (LibraryProjection, error) {
 		} else if len(headVersions) > 1 {
 			state = "Conflict"
 		}
+		if state == "Conflict" {
+			causes := make([]string, 0, len(headVersions))
+			for _, version := range headVersions {
+				causes = append(causes, hexIdentifier(version.causeID))
+			}
+			sort.Strings(causes)
+			conflicts = append(conflicts, LibraryConflict{Kind: "Note", Reason: "MultipleHeads", SubjectIDs: []string{hexIdentifier(noteID)}, CandidateRecordIDs: causes})
+		}
 		versions := make([]LibraryNoteVersion, 0, len(headVersions))
 		for _, version := range headVersions {
 			projected := LibraryNoteVersion{HeadCauseID: hexIdentifier(version.causeID), Title: version.title, Body: version.body, BodyDialect: version.dialect, AssertedAt: version.assertedAt}
@@ -921,6 +927,26 @@ func ProjectLibraryProjection(replica *Replica) (LibraryProjection, error) {
 	sort.Slice(noteProjection, func(left, right int) bool { return noteProjection[left].NoteID < noteProjection[right].NoteID })
 	sort.Slice(noteState, func(left, right int) bool {
 		return bytes.Compare(noteState[left].noteID[:], noteState[right].noteID[:]) < 0
+	})
+	conflictState, err := projectConflictCheckpointState(conflicts, collectionRedirects, tagRedirects)
+	if err != nil {
+		return LibraryProjection{}, err
+	}
+	for _, note := range noteState {
+		if note.stateCode != 3 {
+			continue
+		}
+		candidates := make([]libraryConflictCandidate, 0, len(note.versions))
+		for _, version := range note.versions {
+			candidates = append(candidates, libraryConflictCandidate{headCauseID: version.causeID, noteID: note.noteID, contentID: cloneIdentifierPointer(version.contentID)})
+		}
+		conflictState = append(conflictState, libraryConflictCheckpoint{kind: 4, subjects: []canonical.Identifier{note.noteID}, candidates: candidates})
+	}
+	sort.Slice(conflictState, func(left, right int) bool {
+		if conflictState[left].kind != conflictState[right].kind {
+			return conflictState[left].kind < conflictState[right].kind
+		}
+		return bytes.Compare(conflictState[left].subjects[0][:], conflictState[right].subjects[0][:]) < 0
 	})
 	collections := make([]LibraryCollection, 0, len(collectionIDs))
 	for collectionID := range collectionIDs {
@@ -1900,7 +1926,7 @@ func buildVacuumContentCheckpoint(replica *Replica, projection LibraryProjection
 	})
 	activeConflictEntries := make([]canonical.Value, 0, len(projection.conflictState))
 	for _, conflict := range projection.conflictState {
-		if conflict.kind != 1 && conflict.kind != 3 {
+		if conflict.kind != 1 && conflict.kind != 3 && conflict.kind != 4 {
 			return nil, errors.New("Vacuum active conflict kind is unsupported")
 		}
 		subjects := make([]canonical.Value, 0, len(conflict.subjects))
@@ -1913,16 +1939,29 @@ func buildVacuumContentCheckpoint(replica *Replica, projection LibraryProjection
 			if causeErr != nil {
 				return nil, causeErr
 			}
-			redirects := make([]canonical.Value, 0, len(candidate.redirects))
-			for _, edge := range candidate.redirects {
-				redirects = append(redirects, canonical.Map{0: edge.sourceID[:], 1: edge.destinationID[:]})
+			var state canonical.Value
+			if conflict.kind == 4 {
+				if candidate.noteID == (canonical.Identifier{}) {
+					return nil, errors.New("Vacuum Note conflict candidate is incomplete")
+				}
+				var contentValue canonical.Value
+				if candidate.contentID != nil {
+					contentValue = append([]byte(nil), candidate.contentID[:]...)
+				}
+				state = canonical.Map{0: candidate.noteID[:], 1: contentValue}
+			} else {
+				redirects := make([]canonical.Value, 0, len(candidate.redirects))
+				for _, edge := range candidate.redirects {
+					redirects = append(redirects, canonical.Map{0: edge.sourceID[:], 1: edge.destinationID[:]})
+				}
+				sort.Slice(redirects, func(left, right int) bool {
+					leftSource, _ := replicaIdentifier(redirects[left], 0)
+					rightSource, _ := replicaIdentifier(redirects[right], 0)
+					return bytes.Compare(leftSource[:], rightSource[:]) < 0
+				})
+				state = canonical.Map{0: redirects}
 			}
-			sort.Slice(redirects, func(left, right int) bool {
-				leftSource, _ := replicaIdentifier(redirects[left], 0)
-				rightSource, _ := replicaIdentifier(redirects[right], 0)
-				return bytes.Compare(leftSource[:], rightSource[:]) < 0
-			})
-			candidates = append(candidates, canonical.Map{0: mappedCause[:], 1: canonical.Map{0: redirects}})
+			candidates = append(candidates, canonical.Map{0: mappedCause[:], 1: state})
 		}
 		sort.Slice(candidates, func(left, right int) bool {
 			leftCause, _ := replicaIdentifier(candidates[left], 0)
@@ -2244,7 +2283,7 @@ func seedBaselineNotes(replica *Replica, notes map[canonical.Identifier]*library
 	return nil
 }
 
-func seedBaselineRedirectConflicts(replica *Replica, collectionRedirects, tagRedirects map[canonical.Identifier]collectionRedirectFact) error {
+func seedBaselineRedirectConflicts(replica *Replica, collectionRedirects, tagRedirects map[canonical.Identifier]collectionRedirectFact, notes map[canonical.Identifier]*libraryNoteState) error {
 	content, err := baselineContentCheckpoint(replica.baseline)
 	if err != nil {
 		return err
@@ -2258,12 +2297,43 @@ func seedBaselineRedirectConflicts(replica *Replica, collectionRedirects, tagRed
 			return fmt.Errorf("Baseline active conflict entry %d is invalid", index)
 		}
 		kind, ok := replicaUnsignedNumber(replicaMapEntryMust(entry, 0))
-		if !ok || (kind != 1 && kind != 3) {
-			continue
+		if !ok || (kind != 1 && kind != 2 && kind != 3 && kind != 4) {
+			return fmt.Errorf("Baseline active conflict entry %d kind is invalid", index)
 		}
 		candidates, ok := replicaMapArray(entry, 2)
 		if !ok || len(candidates) < 2 {
 			return fmt.Errorf("Baseline active conflict entry %d candidates are invalid", index)
+		}
+		if kind == 2 {
+			return errors.New("Baseline Folder conflict replay is not implemented")
+		}
+		if kind == 4 {
+			subjects, subjectErr := parseCanonicalIdentifierSet(replicaMapEntryMust(entry, 1), "Baseline Note conflict subjects", true)
+			if subjectErr != nil || len(subjects) != 1 {
+				return fmt.Errorf("Baseline Note conflict subjects are invalid")
+			}
+			note := notes[subjects[0]]
+			if note == nil {
+				return fmt.Errorf("Baseline Note conflict target %s is unknown", hexIdentifier(subjects[0]))
+			}
+			for candidateIndex, candidate := range candidates {
+				if !replicaMapHasKeys(candidate, 2) {
+					return fmt.Errorf("Baseline Note conflict candidate %d is invalid", candidateIndex)
+				}
+				causeID, causeOK := replicaIdentifier(candidate, 0)
+				state, stateOK := replicaMapValue(replicaMapEntryMust(candidate, 1))
+				if !causeOK || !stateOK || !replicaMapHasKeys(state, 2) {
+					return fmt.Errorf("Baseline Note conflict candidate %d is invalid", candidateIndex)
+				}
+				candidateNoteID, candidateNoteOK := replicaIdentifier(state, 0)
+				if !candidateNoteOK || candidateNoteID != subjects[0] {
+					return fmt.Errorf("Baseline Note conflict candidate %d Note ID is invalid", candidateIndex)
+				}
+				if _, exists := note.versions[causeID]; !exists {
+					return fmt.Errorf("Baseline Note conflict candidate %d cause is unknown", candidateIndex)
+				}
+			}
+			continue
 		}
 		for candidateIndex, candidate := range candidates {
 			if !replicaMapHasKeys(candidate, 2) {

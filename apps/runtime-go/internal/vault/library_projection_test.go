@@ -814,6 +814,21 @@ func TestProjectLibraryProjectionIncludesNoteRevision(t *testing.T) {
 	if len(projection.Notes) != 1 || projection.Notes[0].State != "Conflict" || len(projection.Notes[0].Versions) != 2 {
 		t.Fatalf("Note projection after conflict = %#v", projection.Notes)
 	}
+	checkpoint, err := buildVacuumContentCheckpoint(replica, projection)
+	if err != nil {
+		t.Fatalf("build Vacuum Note conflict checkpoint: %v", err)
+	}
+	activeConflicts, ok := replicaMapArray(checkpoint, 9)
+	if !ok || len(activeConflicts) != 1 {
+		t.Fatalf("Vacuum Note active conflicts = %#v", activeConflicts)
+	}
+	conflictBody, ok := replicaMapValue(activeConflicts[0])
+	if !ok {
+		t.Fatalf("Vacuum Note conflict is not a map: %#v", activeConflicts[0])
+	}
+	if kind, ok := replicaUnsignedNumber(replicaMapEntryMust(conflictBody, 0)); !ok || kind != 4 {
+		t.Fatalf("Vacuum Note conflict kind = %#v, want 4", replicaMapEntryMust(conflictBody, 0))
+	}
 	resolutionParents := sortUniqueIdentifiers([]canonical.Identifier{revised.RecordID, branch.RecordID})
 	resolution, err := canonical.SignEvent(canonical.EventInput{
 		VaultID: prepared.IDs.VaultID, GenerationID: prepared.IDs.GenerationID,
