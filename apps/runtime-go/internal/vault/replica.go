@@ -578,10 +578,17 @@ func genesisCredential(event canonical.Event) (canonical.Identifier, []byte, err
 }
 
 type enrollmentCredential struct {
-	authorizationKind uint64
-	credentialID      canonical.Identifier
-	memberID          canonical.Identifier
-	signingPublicKey  []byte
+	authorizationKind     uint64
+	credentialID          canonical.Identifier
+	memberID              canonical.Identifier
+	signingPublicKey      []byte
+	wrappingPublicKey     []byte
+	proposalBytes         []byte
+	proposalPrefixBytes   []byte
+	possessionSignature   []byte
+	envelopeSlots         []keyEpochEnvelopeSlot
+	recoveryCredentialID  *canonical.Identifier
+	recoveryAuthorization []byte
 }
 
 func parseEnrollmentCredential(event canonical.Event) (enrollmentCredential, error) {
@@ -592,6 +599,13 @@ func parseEnrollmentCredential(event canonical.Event) (enrollmentCredential, err
 	proposal, ok := replicaMapValue(replicaMapEntryMust(body, 0))
 	if !ok || !replicaMapHasKeys(proposal, 6) {
 		return enrollmentCredential{}, errors.New("Client Enrollment proposal is invalid")
+	}
+	proposalVaultBytes, proposalVaultOK := replicaMapBytes(proposal, 0, 32)
+	proposalMemberBytes, proposalMemberOK := replicaMapBytes(proposal, 1, 32)
+	proposalParentsValue, _ := replicaMapEntry(proposal, 2)
+	proposalParents, proposalParentsErr := parseCanonicalIdentifierSet(proposalParentsValue, "Client Enrollment Authority Parents", true)
+	if !proposalVaultOK || !proposalMemberOK || proposalParentsErr != nil || !bytes.Equal(proposalVaultBytes, event.VaultID[:]) || !identifierSlicesEqual(proposalParents, event.AuthorityParentIDs) {
+		return enrollmentCredential{}, errors.New("Client Enrollment proposal context is invalid")
 	}
 	authorizationKind, ok := replicaMapNumber(body, 1)
 	if !ok || (authorizationKind != 1 && authorizationKind != 2) {
@@ -609,39 +623,80 @@ func parseEnrollmentCredential(event canonical.Event) (enrollmentCredential, err
 	if !ok {
 		return enrollmentCredential{}, errors.New("Client Enrollment Member ID is invalid")
 	}
+	if !bytes.Equal(proposalMemberBytes, memberBytes) {
+		return enrollmentCredential{}, errors.New("Client Enrollment proposal Member ID does not match its certificate")
+	}
 	publicKey, ok := replicaMapBytes(certificate, 2, ed25519.PublicKeySize)
 	if !ok {
 		return enrollmentCredential{}, errors.New("Client Enrollment signing public key is invalid")
 	}
-	slots, ok := replicaMapEntry(proposal, 4)
+	wrappingPublicKey, ok := replicaMapBytes(certificate, 3, 32)
+	if !ok {
+		return enrollmentCredential{}, errors.New("Client Enrollment wrapping public key is invalid")
+	}
+	slotsValue, ok := replicaMapEntry(proposal, 4)
 	if !ok {
 		return enrollmentCredential{}, errors.New("Client Enrollment Key Envelope slots are missing")
 	}
-	if values, ok := slots.([]canonical.Value); !ok || len(values) == 0 {
-		return enrollmentCredential{}, errors.New("Client Enrollment Key Envelope slots are invalid")
-	} else {
-		for _, value := range values {
-			slot, slotOK := replicaMapValue(value)
-			if !slotOK || !replicaMapHasKeys(slot, 5) {
-				return enrollmentCredential{}, errors.New("Client Enrollment Key Envelope slot is invalid")
-			}
-			targetKind, targetOK := replicaMapNumber(slot, 1)
-			targetID, targetIDOK := replicaMapBytes(slot, 2, 32)
-			if !targetOK || targetKind != awsmClientCredentialTarget || !targetIDOK || !bytes.Equal(targetID, credentialBytes) {
-				return enrollmentCredential{}, errors.New("Client Enrollment Key Envelope slot target is invalid")
-			}
+	slots, err := parseKeyEpochEnvelopeSlots(slotsValue, "Client Enrollment Key Envelope slots")
+	if err != nil {
+		return enrollmentCredential{}, err
+	}
+	for _, slot := range slots {
+		if slot.targetKind != awsmClientCredentialTarget || slot.targetID != bytesIdentifier(credentialBytes) {
+			return enrollmentCredential{}, errors.New("Client Enrollment Key Envelope slot target is invalid")
 		}
 	}
-	if authorizationKind == 1 {
-		if _, ok := replicaMapEntry(body, 2); !ok {
-			return enrollmentCredential{}, errors.New("Client Enrollment authorization is incomplete")
+	proposalBytes, err := canonical.EncodeValue(replicaMapEntryMust(body, 0))
+	if err != nil {
+		return enrollmentCredential{}, errors.New("Client Enrollment proposal is not canonical")
+	}
+	proposalPrefix := canonical.Map{}
+	for key := uint64(0); key < 5; key++ {
+		value, exists := replicaMapEntry(proposal, key)
+		if !exists {
+			return enrollmentCredential{}, errors.New("Client Enrollment proposal prefix is incomplete")
 		}
+		proposalPrefix[key] = value
+	}
+	proposalPrefixBytes, err := canonical.EncodeValue(proposalPrefix)
+	if err != nil {
+		return enrollmentCredential{}, errors.New("Client Enrollment proposal prefix is not canonical")
+	}
+	possessionSignature, ok := replicaMapBytes(proposal, 5, ed25519.SignatureSize)
+	if !ok {
+		return enrollmentCredential{}, errors.New("Client Enrollment possession signature is invalid")
+	}
+	var recoveryCredentialID *canonical.Identifier
+	var recoveryAuthorization []byte
+	recoveryIDValue, recoveryIDExists := replicaMapEntry(body, 2)
+	recoveryAuthorizationValue, recoveryAuthorizationExists := replicaMapEntry(body, 3)
+	if authorizationKind == 1 {
+		if !recoveryIDExists || !recoveryAuthorizationExists || recoveryIDValue != nil || recoveryAuthorizationValue != nil {
+			return enrollmentCredential{}, errors.New("Client Enrollment recovery authorization fields are invalid")
+		}
+	} else {
+		recoveryBytes, recoveryOK := recoveryIDValue.([]byte)
+		authorizationBytes, authorizationOK := recoveryAuthorizationValue.([]byte)
+		if !recoveryIDExists || !recoveryAuthorizationExists || !recoveryOK || len(recoveryBytes) != 32 || !authorizationOK || len(authorizationBytes) != ed25519.SignatureSize {
+			return enrollmentCredential{}, errors.New("Client Enrollment recovery authorization is invalid")
+		}
+		id := bytesIdentifier(recoveryBytes)
+		recoveryCredentialID = &id
+		recoveryAuthorization = append([]byte(nil), authorizationBytes...)
 	}
 	return enrollmentCredential{
-		authorizationKind: authorizationKind,
-		credentialID:      bytesIdentifier(credentialBytes),
-		memberID:          bytesIdentifier(memberBytes),
-		signingPublicKey:  append([]byte(nil), publicKey...),
+		authorizationKind:     authorizationKind,
+		credentialID:          bytesIdentifier(credentialBytes),
+		memberID:              bytesIdentifier(memberBytes),
+		signingPublicKey:      append([]byte(nil), publicKey...),
+		wrappingPublicKey:     append([]byte(nil), wrappingPublicKey...),
+		proposalBytes:         proposalBytes,
+		proposalPrefixBytes:   proposalPrefixBytes,
+		possessionSignature:   append([]byte(nil), possessionSignature...),
+		envelopeSlots:         slots,
+		recoveryCredentialID:  recoveryCredentialID,
+		recoveryAuthorization: recoveryAuthorization,
 	}, nil
 }
 

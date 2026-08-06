@@ -2,6 +2,8 @@ package vault
 
 import (
 	"bytes"
+	"crypto/ed25519"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"sort"
@@ -24,9 +26,23 @@ type keyEpochReplayState struct {
 	heads                 map[canonical.Identifier]struct{}
 	headSlots             map[canonical.Identifier][]keyEpochEnvelopeSlot
 	recoveryMembers       map[canonical.Identifier]canonical.Identifier
+	recoveryRevisions     map[canonical.Identifier]uint64
+	recoverySigningKeys   map[canonical.Identifier]ed25519.PublicKey
 	recoveryTargets       map[canonical.Identifier]uint64
 	clientTargets         map[canonical.Identifier]struct{}
 	closed                bool
+}
+
+type recoveryReplacement struct {
+	memberID        canonical.Identifier
+	replacedIDs     []canonical.Identifier
+	recoveryID      canonical.Identifier
+	revision        uint64
+	signingKey      ed25519.PublicKey
+	keyEpochSlots   []keyEpochEnvelopeSlot
+	descriptorBytes []byte
+	slotsBytes      []byte
+	possessionProof []byte
 }
 
 type keyEpochTransition struct {
@@ -63,6 +79,8 @@ func replayAuthenticatedKeyEpochs(events []canonical.Event, genesis canonical.Ev
 		heads:                 map[canonical.Identifier]struct{}{initialEpoch: {}},
 		headSlots:             map[canonical.Identifier][]keyEpochEnvelopeSlot{},
 		recoveryMembers:       map[canonical.Identifier]canonical.Identifier{firstRecovery: firstMember},
+		recoveryRevisions:     map[canonical.Identifier]uint64{firstRecovery: 0},
+		recoverySigningKeys:   map[canonical.Identifier]ed25519.PublicKey{firstRecovery: genesisRecoverySigningKey(genesis)},
 		recoveryTargets:       map[canonical.Identifier]uint64{firstRecovery: 0},
 		clientTargets:         map[canonical.Identifier]struct{}{firstClient: {}},
 	}
@@ -223,6 +241,10 @@ func replayAuthenticatedKeyEpochs(events []canonical.Event, genesis canonical.Ev
 				delete(visiting, recordID)
 				return keyEpochReplayState{}, errors.New("Client Enrollment signer does not belong to the target Member")
 			}
+			if err := validateClientEnrollment(current, event, enrollment); err != nil {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, err
+			}
 			if _, exists := current.clientMembers[enrollment.credentialID]; exists {
 				delete(visiting, recordID)
 				return keyEpochReplayState{}, errors.New("Client Enrollment reuses a Client Credential identity")
@@ -253,6 +275,58 @@ func replayAuthenticatedKeyEpochs(events []canonical.Event, genesis canonical.Ev
 				}
 			}
 			delete(current.clientTargets, targetCredential)
+		}
+		if event.Family == canonical.AuthorityFamily && event.Type == 11 {
+			replacement, parseErr := parseRecoveryReplacement(event)
+			if parseErr != nil {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, parseErr
+			}
+			signerMember, signerOK := current.activeClientMember(event.SignerCredentialID)
+			if !signerOK || signerMember != replacement.memberID {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, errors.New("Recovery Replacement signer does not belong to the target Member")
+			}
+			if _, active := current.activeMembers[replacement.memberID]; !active {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, errors.New("Recovery Replacement target Member is not active")
+			}
+			expectedReplaced := make(map[canonical.Identifier]struct{})
+			maximumRevision := uint64(0)
+			for recoveryID, memberID := range current.recoveryMembers {
+				if memberID != replacement.memberID {
+					continue
+				}
+				if revision, effective := current.recoveryTargets[recoveryID]; effective {
+					expectedReplaced[recoveryID] = struct{}{}
+					if revision > maximumRevision {
+						maximumRevision = revision
+					}
+				}
+			}
+			if !sameIdentifierSet(replacement.replacedIDs, expectedReplaced) {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, errors.New("Recovery Replacement does not name every effective Credential")
+			}
+			if replacement.revision != maximumRevision+1 {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, errors.New("Recovery Replacement revision does not follow its effective heads")
+			}
+			if _, exists := current.recoveryRevisions[replacement.recoveryID]; exists {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, errors.New("Recovery Replacement reuses a Recovery Credential identity")
+			}
+			if err := validateRecoveryReplacementSlots(current, event, replacement); err != nil {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, err
+			}
+			for recoveryID := range expectedReplaced {
+				delete(current.recoveryTargets, recoveryID)
+			}
+			current.recoveryMembers[replacement.recoveryID] = replacement.memberID
+			current.recoveryRevisions[replacement.recoveryID] = replacement.revision
+			current.recoverySigningKeys[replacement.recoveryID] = append(ed25519.PublicKey(nil), replacement.signingKey...)
+			current.recoveryTargets[replacement.recoveryID] = replacement.revision
 		}
 		if event.Family == canonical.AuthorityFamily && event.Type == 12 {
 			signerMember, signerOK := current.activeClientMember(event.SignerCredentialID)
@@ -358,6 +432,8 @@ func cloneKeyEpochReplayState(value keyEpochReplayState) keyEpochReplayState {
 		heads:                 make(map[canonical.Identifier]struct{}, len(value.heads)),
 		headSlots:             make(map[canonical.Identifier][]keyEpochEnvelopeSlot, len(value.headSlots)),
 		recoveryMembers:       make(map[canonical.Identifier]canonical.Identifier, len(value.recoveryMembers)),
+		recoveryRevisions:     make(map[canonical.Identifier]uint64, len(value.recoveryRevisions)),
+		recoverySigningKeys:   make(map[canonical.Identifier]ed25519.PublicKey, len(value.recoverySigningKeys)),
 		recoveryTargets:       make(map[canonical.Identifier]uint64, len(value.recoveryTargets)),
 		clientTargets:         make(map[canonical.Identifier]struct{}, len(value.clientTargets)),
 		closed:                value.closed,
@@ -386,6 +462,12 @@ func cloneKeyEpochReplayState(value keyEpochReplayState) keyEpochReplayState {
 	for credentialID, memberID := range value.recoveryMembers {
 		clone.recoveryMembers[credentialID] = memberID
 	}
+	for credentialID, revision := range value.recoveryRevisions {
+		clone.recoveryRevisions[credentialID] = revision
+	}
+	for credentialID, signingKey := range value.recoverySigningKeys {
+		clone.recoverySigningKeys[credentialID] = append(ed25519.PublicKey(nil), signingKey...)
+	}
 	for id := range value.clientTargets {
 		clone.clientTargets[id] = struct{}{}
 	}
@@ -395,15 +477,17 @@ func cloneKeyEpochReplayState(value keyEpochReplayState) keyEpochReplayState {
 func mergeKeyEpochReplayStates(values []keyEpochReplayState) keyEpochReplayState {
 	if len(values) == 0 {
 		return keyEpochReplayState{
-			activeMembers:   make(map[canonical.Identifier]struct{}),
-			administrators:  make(map[canonical.Identifier]struct{}),
-			clientMembers:   make(map[canonical.Identifier]canonical.Identifier),
-			epochs:          make(map[canonical.Identifier]uint64),
-			heads:           make(map[canonical.Identifier]struct{}),
-			headSlots:       make(map[canonical.Identifier][]keyEpochEnvelopeSlot),
-			recoveryMembers: make(map[canonical.Identifier]canonical.Identifier),
-			recoveryTargets: make(map[canonical.Identifier]uint64),
-			clientTargets:   make(map[canonical.Identifier]struct{}),
+			activeMembers:       make(map[canonical.Identifier]struct{}),
+			administrators:      make(map[canonical.Identifier]struct{}),
+			clientMembers:       make(map[canonical.Identifier]canonical.Identifier),
+			epochs:              make(map[canonical.Identifier]uint64),
+			heads:               make(map[canonical.Identifier]struct{}),
+			headSlots:           make(map[canonical.Identifier][]keyEpochEnvelopeSlot),
+			recoveryMembers:     make(map[canonical.Identifier]canonical.Identifier),
+			recoveryRevisions:   make(map[canonical.Identifier]uint64),
+			recoverySigningKeys: make(map[canonical.Identifier]ed25519.PublicKey),
+			recoveryTargets:     make(map[canonical.Identifier]uint64),
+			clientTargets:       make(map[canonical.Identifier]struct{}),
 		}
 	}
 	merged := cloneKeyEpochReplayState(values[0])
@@ -438,6 +522,16 @@ func mergeKeyEpochReplayStates(values []keyEpochReplayState) keyEpochReplayState
 		}
 		for credentialID, memberID := range value.recoveryMembers {
 			merged.recoveryMembers[credentialID] = memberID
+		}
+		for credentialID, revision := range value.recoveryRevisions {
+			if existing, ok := merged.recoveryRevisions[credentialID]; !ok || revision > existing {
+				merged.recoveryRevisions[credentialID] = revision
+			}
+		}
+		for credentialID, signingKey := range value.recoverySigningKeys {
+			if _, exists := merged.recoverySigningKeys[credentialID]; !exists {
+				merged.recoverySigningKeys[credentialID] = append(ed25519.PublicKey(nil), signingKey...)
+			}
 		}
 		for id := range value.clientTargets {
 			merged.clientTargets[id] = struct{}{}
@@ -503,6 +597,22 @@ func parseGenesisEpochIdentity(event canonical.Event) (canonical.Identifier, can
 	return bytesIdentifier(epochBytes), bytesIdentifier(memberBytes), bytesIdentifier(clientBytes), bytesIdentifier(recoveryBytes), nil
 }
 
+func genesisRecoverySigningKey(event canonical.Event) ed25519.PublicKey {
+	body, ok := replicaMapValue(event.Body)
+	if !ok {
+		return nil
+	}
+	recoveryCredential, ok := replicaMapValue(replicaMapEntryMust(body, 3))
+	if !ok {
+		return nil
+	}
+	key, ok := replicaMapBytes(recoveryCredential, 3, ed25519.PublicKeySize)
+	if !ok {
+		return nil
+	}
+	return append(ed25519.PublicKey(nil), key...)
+}
+
 func parseAuthorityTargetMember(event canonical.Event) (canonical.Identifier, error) {
 	body, ok := replicaMapValue(event.Body)
 	if !ok || !replicaMapHasKeys(body, 1) {
@@ -541,6 +651,262 @@ func parseAdministratorRole(event canonical.Event) (canonical.Identifier, []cano
 		return canonical.Identifier{}, nil, err
 	}
 	return bytesIdentifier(memberBytes), resolved, nil
+}
+
+func parseRecoveryReplacement(event canonical.Event) (recoveryReplacement, error) {
+	body, ok := replicaMapValue(event.Body)
+	if !ok || !replicaMapHasKeys(body, 5) {
+		return recoveryReplacement{}, errors.New("Recovery Replacement body is invalid")
+	}
+	memberBytes, ok := replicaMapBytes(body, 0, 32)
+	if !ok || bytes.Equal(memberBytes, make([]byte, 32)) {
+		return recoveryReplacement{}, errors.New("Recovery Replacement Member ID is invalid")
+	}
+	replacedIDs, err := parseCanonicalIdentifierSet(replicaMapEntryMust(body, 1), "replaced Recovery Credential IDs", true)
+	if err != nil {
+		return recoveryReplacement{}, err
+	}
+	descriptorValue := replicaMapEntryMust(body, 2)
+	descriptor, ok := replicaMapValue(descriptorValue)
+	if !ok || !replicaMapHasKeys(descriptor, 5) {
+		return recoveryReplacement{}, errors.New("Recovery Replacement Credential descriptor is invalid")
+	}
+	recoveryBytes, recoveryOK := replicaMapBytes(descriptor, 0, 32)
+	descriptorMemberBytes, descriptorMemberOK := replicaMapBytes(descriptor, 1, 32)
+	revision, revisionOK := replicaMapNumber(descriptor, 2)
+	signingKey, signingKeyOK := replicaMapBytes(descriptor, 3, ed25519.PublicKeySize)
+	if !recoveryOK || !descriptorMemberOK || !revisionOK || !signingKeyOK || bytes.Equal(recoveryBytes, make([]byte, 32)) ||
+		!bytes.Equal(memberBytes, descriptorMemberBytes) {
+		return recoveryReplacement{}, errors.New("Recovery Replacement Credential descriptor fields are invalid")
+	}
+	if _, wrappingKeyOK := replicaMapBytes(descriptor, 4, 32); !wrappingKeyOK {
+		return recoveryReplacement{}, errors.New("Recovery Replacement wrapping public key is invalid")
+	}
+	slotsValue := replicaMapEntryMust(body, 3)
+	slots, err := parseKeyEpochEnvelopeSlots(slotsValue, "Recovery Replacement Key Envelope slots")
+	if err != nil {
+		return recoveryReplacement{}, err
+	}
+	proof, ok := replicaMapBytes(body, 4, ed25519.SignatureSize)
+	if !ok {
+		return recoveryReplacement{}, errors.New("Recovery Replacement possession proof is invalid")
+	}
+	descriptorBytes, err := canonical.EncodeValue(descriptorValue)
+	if err != nil {
+		return recoveryReplacement{}, errors.New("Recovery Replacement descriptor is not canonical")
+	}
+	slotsBytes, err := canonical.EncodeValue(slotsValue)
+	if err != nil {
+		return recoveryReplacement{}, errors.New("Recovery Replacement slots are not canonical")
+	}
+	return recoveryReplacement{
+		memberID:        bytesIdentifier(memberBytes),
+		replacedIDs:     replacedIDs,
+		recoveryID:      bytesIdentifier(recoveryBytes),
+		revision:        revision,
+		signingKey:      append(ed25519.PublicKey(nil), signingKey...),
+		keyEpochSlots:   slots,
+		descriptorBytes: descriptorBytes,
+		slotsBytes:      slotsBytes,
+		possessionProof: append([]byte(nil), proof...),
+	}, nil
+}
+
+func parseKeyEpochEnvelopeSlots(value canonical.Value, field string) ([]keyEpochEnvelopeSlot, error) {
+	values, ok := replicaMapArrayValue(value)
+	if !ok || len(values) == 0 {
+		return nil, fmt.Errorf("%s are invalid", field)
+	}
+	result := make([]keyEpochEnvelopeSlot, 0, len(values))
+	var previous []byte
+	seenTargets := make(map[string]struct{}, len(values))
+	seenEnvelopes := make(map[canonical.Identifier]struct{}, len(values))
+	for _, entry := range values {
+		encoded, err := canonical.EncodeValue(entry)
+		if err != nil {
+			return nil, fmt.Errorf("%s contain a non-canonical slot", field)
+		}
+		if previous != nil && bytes.Compare(previous, encoded) >= 0 {
+			return nil, fmt.Errorf("%s are not a canonical set", field)
+		}
+		previous = encoded
+		slot, ok := replicaMapValue(entry)
+		if !ok || !replicaMapHasKeys(slot, 5) {
+			return nil, fmt.Errorf("%s contain an invalid slot", field)
+		}
+		epochBytes, epochOK := replicaMapBytes(slot, 0, 32)
+		targetKind, kindOK := replicaMapNumber(slot, 1)
+		targetBytes, targetOK := replicaMapBytes(slot, 2, 32)
+		envelopeBytes, envelopeOK := replicaMapBytes(slot, 4, 32)
+		if !epochOK || !kindOK || !targetOK || !envelopeOK || bytes.Equal(epochBytes, make([]byte, 32)) ||
+			bytes.Equal(targetBytes, make([]byte, 32)) || bytes.Equal(envelopeBytes, make([]byte, 32)) {
+			return nil, fmt.Errorf("%s contain an invalid slot identity", field)
+		}
+		if targetKind != awsmcrypto.RecoveryCredentialTarget && targetKind != awsmcrypto.ClientCredentialTarget {
+			return nil, fmt.Errorf("%s contain an invalid target kind", field)
+		}
+		revisionValue, exists := replicaMapEntry(slot, 3)
+		if !exists {
+			return nil, fmt.Errorf("%s omit a target revision", field)
+		}
+		var revision *uint64
+		if targetKind == awsmcrypto.RecoveryCredentialTarget {
+			number, ok := revisionValue.(uint64)
+			if !ok {
+				return nil, fmt.Errorf("%s contain an invalid Recovery target revision", field)
+			}
+			revision = &number
+		} else if revisionValue != nil {
+			return nil, fmt.Errorf("%s contain a non-null Client target revision", field)
+		}
+		target := fmt.Sprintf("%d:%x:%v", targetKind, targetBytes, revision)
+		if _, exists := seenTargets[target]; exists {
+			return nil, fmt.Errorf("%s repeat an Envelope target", field)
+		}
+		seenTargets[target] = struct{}{}
+		envelopeID := bytesIdentifier(envelopeBytes)
+		if _, exists := seenEnvelopes[envelopeID]; exists {
+			return nil, fmt.Errorf("%s repeat an Envelope identity", field)
+		}
+		seenEnvelopes[envelopeID] = struct{}{}
+		result = append(result, keyEpochEnvelopeSlot{
+			epochID: bytesIdentifier(epochBytes), targetKind: targetKind, targetID: bytesIdentifier(targetBytes),
+			targetRevision: revision, envelopeID: envelopeID,
+		})
+	}
+	return result, nil
+}
+
+func validateRecoveryReplacementSlots(state keyEpochReplayState, event canonical.Event, replacement recoveryReplacement) error {
+	if len(replacement.keyEpochSlots) != len(state.epochs) {
+		return errors.New("Recovery Replacement must provide one Envelope slot for every readable Key Epoch")
+	}
+	seenEpochs := make(map[canonical.Identifier]struct{}, len(replacement.keyEpochSlots))
+	dependencyIDs := make(map[canonical.Identifier]struct{}, len(event.Dependencies))
+	for _, dependency := range event.Dependencies {
+		if dependency.Type != 7 {
+			return errors.New("Recovery Replacement dependencies must be Key Envelopes")
+		}
+		dependencyIDs[dependency.ID] = struct{}{}
+	}
+	if len(dependencyIDs) != len(replacement.keyEpochSlots) {
+		return errors.New("Recovery Replacement dependencies do not match Envelope slots")
+	}
+	for _, slot := range replacement.keyEpochSlots {
+		if slot.targetKind != awsmcrypto.RecoveryCredentialTarget || slot.targetID != replacement.recoveryID ||
+			slot.targetRevision == nil || *slot.targetRevision != replacement.revision {
+			return errors.New("Recovery Replacement Envelope slot target is invalid")
+		}
+		if _, established := state.epochs[slot.epochID]; !established {
+			return errors.New("Recovery Replacement Envelope names an unknown Key Epoch")
+		}
+		if _, duplicate := seenEpochs[slot.epochID]; duplicate {
+			return errors.New("Recovery Replacement repeats a Key Epoch slot")
+		}
+		seenEpochs[slot.epochID] = struct{}{}
+		if _, dependency := dependencyIDs[slot.envelopeID]; !dependency {
+			return errors.New("Recovery Replacement omits an Envelope dependency")
+		}
+	}
+	for epochID := range state.epochs {
+		if _, present := seenEpochs[epochID]; !present {
+			return errors.New("Recovery Replacement omits a readable Key Epoch slot")
+		}
+	}
+	authorityParents := canonicalSetValues(identifiersToValues(event.AuthorityParentIDs))
+	authorityParentsBytes, err := canonical.EncodeValue(authorityParents)
+	if err != nil {
+		return errors.New("Recovery Replacement Authority Parents are not canonical")
+	}
+	transcript, err := canonical.Transcript(
+		"awsm:recovery-replacement-possession:v1", event.VaultID[:], replacement.memberID[:],
+		authorityParentsBytes, replacement.descriptorBytes, replacement.slotsBytes,
+	)
+	if err != nil || !ed25519.Verify(replacement.signingKey, transcript, replacement.possessionProof) {
+		return errors.New("Recovery Replacement possession proof is invalid")
+	}
+	return nil
+}
+
+func validateClientEnrollment(state keyEpochReplayState, event canonical.Event, enrollment enrollmentCredential) error {
+	if len(enrollment.envelopeSlots) != len(state.epochs) {
+		return errors.New("Client Enrollment must provide one Envelope slot for every readable Key Epoch")
+	}
+	seenEpochs := make(map[canonical.Identifier]struct{}, len(enrollment.envelopeSlots))
+	dependencyIDs := make(map[canonical.Identifier]struct{}, len(event.Dependencies))
+	for _, dependency := range event.Dependencies {
+		if dependency.Type != 7 {
+			return errors.New("Client Enrollment dependencies must be Key Envelopes")
+		}
+		dependencyIDs[dependency.ID] = struct{}{}
+	}
+	if len(dependencyIDs) != len(enrollment.envelopeSlots) {
+		return errors.New("Client Enrollment dependencies do not match Envelope slots")
+	}
+	for _, slot := range enrollment.envelopeSlots {
+		if slot.targetKind != awsmcrypto.ClientCredentialTarget || slot.targetID != enrollment.credentialID || slot.targetRevision != nil {
+			return errors.New("Client Enrollment Envelope slot target is invalid")
+		}
+		if _, established := state.epochs[slot.epochID]; !established {
+			return errors.New("Client Enrollment Envelope names an unknown Key Epoch")
+		}
+		if _, duplicate := seenEpochs[slot.epochID]; duplicate {
+			return errors.New("Client Enrollment repeats a Key Epoch slot")
+		}
+		seenEpochs[slot.epochID] = struct{}{}
+		if _, dependency := dependencyIDs[slot.envelopeID]; !dependency {
+			return errors.New("Client Enrollment omits an Envelope dependency")
+		}
+	}
+	for epochID := range state.epochs {
+		if _, present := seenEpochs[epochID]; !present {
+			return errors.New("Client Enrollment omits a readable Key Epoch slot")
+		}
+	}
+	proposalTranscript, err := canonical.Transcript("awsm:client-enrollment-proposal:v1", enrollment.proposalPrefixBytes)
+	if err != nil || !ed25519.Verify(enrollment.signingPublicKey, proposalTranscript, enrollment.possessionSignature) {
+		return errors.New("Client Enrollment possession proof is invalid")
+	}
+	if enrollment.authorizationKind != 2 {
+		return nil
+	}
+	if enrollment.recoveryCredentialID == nil || len(enrollment.recoveryAuthorization) != ed25519.SignatureSize {
+		return errors.New("Client Enrollment recovery authorization is invalid")
+	}
+	recoveryID := *enrollment.recoveryCredentialID
+	memberID, memberOK := state.recoveryMembers[recoveryID]
+	if !memberOK || memberID != enrollment.memberID {
+		return errors.New("Client Enrollment recovery Credential is not an effective same-member Credential")
+	}
+	if _, effective := state.recoveryTargets[recoveryID]; !effective {
+		return errors.New("Client Enrollment recovery Credential is not effective")
+	}
+	proposalIDTranscript, err := canonical.Transcript("awsm:client-enrollment-proposal-id:v1", enrollment.proposalBytes)
+	if err != nil {
+		return errors.New("Client Enrollment proposal identity is invalid")
+	}
+	proposalID := sha256.Sum256(proposalIDTranscript)
+	recoveryTranscript, err := canonical.Transcript("awsm:recovery-client-enrollment-authorization:v1", proposalID[:])
+	if err != nil {
+		return errors.New("Client Enrollment recovery authorization transcript is invalid")
+	}
+	recoveryKey := state.recoverySigningKeys[recoveryID]
+	if !ed25519.Verify(recoveryKey, recoveryTranscript, enrollment.recoveryAuthorization) {
+		return errors.New("Client Enrollment recovery authorization is invalid")
+	}
+	return nil
+}
+
+func sameIdentifierSet(values []canonical.Identifier, expected map[canonical.Identifier]struct{}) bool {
+	if len(values) != len(expected) {
+		return false
+	}
+	for _, value := range values {
+		if _, ok := expected[value]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func enrollmentAuthorizationKind(event canonical.Event) uint64 {

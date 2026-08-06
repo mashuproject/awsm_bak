@@ -666,6 +666,81 @@ func TestRecoverMemberEnrollsFreshClientCredentialAndReopens(t *testing.T) {
 	}
 }
 
+func TestReplicaRejectsRecoveryEnrollmentWithInvalidPossessionProof(t *testing.T) {
+	ctx := context.Background()
+	state := store.NewMemoryState()
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vaultID, phrase := createVaultWithPhraseForTest(t, runtime, "Enrollment proof")
+	beforeReplica := runtime.replicas[vaultID].Clone()
+	resultValue, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "RecoverMember", "expectedVaultId": vaultID, "recoveryPhrase": phrase,
+	}))
+	if err != nil {
+		t.Fatalf("RecoverMember: %v", err)
+	}
+	result := resultValue.(map[string]string)
+	record, ok := runtime.replicas[vaultID].Record(mustIdentifier(t, result["eventRecordId"]))
+	if !ok || record.Event == nil {
+		t.Fatal("enrollment Event was not retained")
+	}
+	body, ok := replicaMapValue(record.Event.Body)
+	if !ok {
+		t.Fatalf("enrollment Event body = %#v", record.Event.Body)
+	}
+	proposalValue, ok := replicaMapEntry(body, 0)
+	if !ok {
+		t.Fatal("enrollment Event omitted its proposal")
+	}
+	proposal, ok := replicaMapValue(proposalValue)
+	if !ok {
+		t.Fatalf("enrollment proposal = %#v", proposalValue)
+	}
+	tamperedProposal := make(canonical.Map, 6)
+	for key := uint64(0); key < 6; key++ {
+		value, exists := replicaMapEntry(proposal, key)
+		if !exists {
+			t.Fatalf("enrollment proposal omitted key %d", key)
+		}
+		tamperedProposal[key] = value
+	}
+	tamperedProposal[5] = bytes.Repeat([]byte{0x55}, ed25519.SignatureSize)
+	tamperedBody := make(canonical.Map, 4)
+	for key := uint64(0); key < 4; key++ {
+		value, exists := replicaMapEntry(body, key)
+		if !exists {
+			t.Fatalf("enrollment Event omitted key %d", key)
+		}
+		tamperedBody[key] = value
+	}
+	tamperedBody[0] = tamperedProposal
+	value := runtime.vaults[vaultID]
+	vaultIdentifier := mustIdentifier(t, vaultID)
+	memberID := mustIdentifier(t, value.Canonical.MemberID)
+	clientCredentialID := mustIdentifier(t, value.Canonical.ClientCredentialID)
+	clientBytes, err := dependencies.Secrets.Get(trustedSecretService, clientSecretAccount(vaultID, value.Canonical.ClientCredentialID))
+	if err != nil {
+		t.Fatalf("open enrolled Client Credential: %v", err)
+	}
+	clientSecret, err := decodeClientSecret(clientBytes, vaultIdentifier, memberID, clientCredentialID)
+	if err != nil {
+		t.Fatalf("decode enrolled Client Credential: %v", err)
+	}
+	input := record.Event.EventInput
+	input.Body = tamperedBody
+	input.AssertedAt++
+	tampered, err := canonical.SignEvent(input, ed25519.PrivateKey(clientSecret.signingSecretKey))
+	if err != nil {
+		t.Fatalf("sign tampered enrollment: %v", err)
+	}
+	if err := beforeReplica.AdmitEvent(tampered, ed25519.PublicKey(clientSecret.signingPublicKey)); err == nil {
+		t.Fatal("Replica accepted recovery enrollment with an invalid Client possession proof")
+	}
+}
+
 func TestRecoveryPhraseReplacementAuthorsAuthenticatedAuthorityEvent(t *testing.T) {
 	ctx := context.Background()
 	state := store.NewMemoryState()
@@ -710,6 +785,71 @@ func TestRecoveryPhraseReplacementAuthorsAuthenticatedAuthorityEvent(t *testing.
 	}
 	if restarted.vaults[vaultID].Canonical.RecoveryCredentialID != newRecoveryID {
 		t.Fatalf("restarted recovery Credential = %s, want %s", restarted.vaults[vaultID].Canonical.RecoveryCredentialID, newRecoveryID)
+	}
+}
+
+func TestReplicaRejectsRecoveryReplacementWithInvalidPossessionProof(t *testing.T) {
+	ctx := context.Background()
+	state := store.NewMemoryState()
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vaultID, _ := createVaultWithPhraseForTest(t, runtime, "Replacement proof")
+	beforeReplica := runtime.replicas[vaultID].Clone()
+	before := runtime.vaults[vaultID].Canonical
+	startedValue, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "BeginRecoveryPhraseReplacement", "expectedVaultId": vaultID,
+	}))
+	if err != nil {
+		t.Fatalf("begin replacement: %v", err)
+	}
+	started := startedValue.(map[string]string)
+	confirmedValue, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "ConfirmRecoveryPhraseReplacement", "setupId": started["setupId"], "recoveryPhrase": started["recoveryPhrase"],
+	}))
+	if err != nil {
+		t.Fatalf("confirm replacement: %v", err)
+	}
+	confirmed := confirmedValue.(map[string]any)
+	record, ok := runtime.replicas[vaultID].Record(mustIdentifier(t, confirmed["eventRecordId"].(string)))
+	if !ok || record.Event == nil {
+		t.Fatal("replacement Event was not retained")
+	}
+	body, ok := replicaMapValue(record.Event.Body)
+	if !ok {
+		t.Fatalf("replacement Event body = %#v", record.Event.Body)
+	}
+	tamperedBody := make(canonical.Map, 5)
+	for key := uint64(0); key < 5; key++ {
+		value, exists := replicaMapEntry(body, key)
+		if !exists {
+			t.Fatalf("replacement Event body omitted key %d", key)
+		}
+		tamperedBody[key] = value
+	}
+	tamperedBody[4] = bytes.Repeat([]byte{0x44}, ed25519.SignatureSize)
+	clientCredentialID := mustIdentifier(t, before.ClientCredentialID)
+	memberID := mustIdentifier(t, before.MemberID)
+	vaultIdentifier := mustIdentifier(t, vaultID)
+	clientBytes, err := dependencies.Secrets.Get(trustedSecretService, clientSecretAccount(vaultID, before.ClientCredentialID))
+	if err != nil {
+		t.Fatalf("open Client Credential: %v", err)
+	}
+	clientSecret, err := decodeClientSecret(clientBytes, vaultIdentifier, memberID, clientCredentialID)
+	if err != nil {
+		t.Fatalf("decode Client Credential: %v", err)
+	}
+	input := record.Event.EventInput
+	input.Body = tamperedBody
+	input.AssertedAt++
+	tampered, err := canonical.SignEvent(input, ed25519.PrivateKey(clientSecret.signingSecretKey))
+	if err != nil {
+		t.Fatalf("sign tampered replacement: %v", err)
+	}
+	if err := beforeReplica.AdmitEvent(tampered, ed25519.PublicKey(clientSecret.signingPublicKey)); err == nil {
+		t.Fatal("Replica accepted Recovery Replacement with an invalid possession proof")
 	}
 }
 
