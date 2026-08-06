@@ -972,6 +972,56 @@ func TestVacuumPreservesCollectionTitleInSuccessorCheckpoint(t *testing.T) {
 	}
 }
 
+func TestVacuumPreservesActiveCaptureInSuccessorCheckpoint(t *testing.T) {
+	ctx := context.Background()
+	state := store.NewMemoryState()
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vaultID := createVaultForTest(t, runtime, "Vacuum capture")
+	value := runtime.vaults[vaultID]
+	vaultIdentifier := mustIdentifier(t, vaultID)
+	epochID := mustIdentifier(t, value.Canonical.KeyEpochID)
+	epochBytes, err := dependencies.Secrets.Get(trustedSecretService, epochSecretAccount(vaultID, value.Canonical.KeyEpochID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	epochSecret, err := decodeEpochSecret(epochBytes, vaultIdentifier, epochID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifactBytes := validTestArtifactObjectBytes(t, vaultIdentifier, mustIdentifier(t, value.Canonical.RequiredFeatureSetID), "vacuum capture artifact")
+	artifactID, err := canonical.VaultObjectID(vaultIdentifier, 2, artifactBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifactEnvelope, err := awsmcrypto.SealCompactItem(awsmcrypto.CompactItemInput{VaultID: vaultIdentifier, KeyEpochID: epochID, KeyEpochKey: epochSecret.key, PayloadType: 2, PayloadBytes: artifactBytes})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.AdmitOpaqueObject(ctx, vaultID, artifactEnvelope); err != nil {
+		t.Fatalf("admit Artifact Object: %v", err)
+	}
+	bundleID, collectionID := admitForkBundleRegisteredEvent(t, runtime, dependencies, vaultID, artifactID)
+	resultValue, err := runtime.Handle(ctx, mustJSON(map[string]any{"type": "VacuumVault", "expectedVaultId": vaultID}))
+	if err != nil {
+		t.Fatalf("VacuumVault: %v", err)
+	}
+	result, ok := resultValue.(map[string]string)
+	if !ok || result["successorBaselineId"] == "" {
+		t.Fatalf("Vacuum result = %#v", resultValue)
+	}
+	projection, err := ProjectLibraryProjection(runtime.replicas[vaultID])
+	if err != nil {
+		t.Fatalf("project adopted successor: %v", err)
+	}
+	if len(projection.Captures) != 1 || projection.Captures[0].BundleID != hexIdentifier(bundleID) || projection.Captures[0].CollectionID != hexIdentifier(collectionID) {
+		t.Fatalf("adopted Capture projection = %#v", projection.Captures)
+	}
+}
+
 func mustIdentifier(t *testing.T, value string) canonical.Identifier {
 	t.Helper()
 	identifier, err := decodeHexIdentifier(value)

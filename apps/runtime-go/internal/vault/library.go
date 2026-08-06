@@ -1531,6 +1531,18 @@ func buildVacuumContentCheckpoint(replica *Replica, projection LibraryProjection
 	}
 	captureEntries := make([]canonical.Value, 0, len(projection.captureState))
 	tails := make(map[canonical.Identifier]libraryCaptureCheckpoint)
+	causeRemap := make(map[canonical.Identifier]canonical.Identifier)
+	remapCause := func(source canonical.Identifier) (canonical.Identifier, error) {
+		if mapped, exists := causeRemap[source]; exists {
+			return mapped, nil
+		}
+		mapped, err := freshBaselineCauseID()
+		if err != nil {
+			return canonical.Identifier{}, err
+		}
+		causeRemap[source] = mapped
+		return mapped, nil
+	}
 	for _, capture := range projection.captureState {
 		bundleID, decodeErr := decodeHexIdentifier(capture.bundleID)
 		if decodeErr != nil {
@@ -1542,13 +1554,31 @@ func buildVacuumContentCheckpoint(replica *Replica, projection LibraryProjection
 		if capture.lifecycleCode != 1 || capture.registrationCause == (canonical.Identifier{}) || capture.registrationAttribution == nil {
 			return nil, errors.New("Capture checkpoint state is invalid")
 		}
-		assignmentCauses := identifiersToValues(capture.assignmentCauses)
-		lifecycleCauses := identifiersToValues(capture.lifecycleCauses)
+		assignmentCauses := make([]canonical.Value, 0, len(capture.assignmentCauses))
+		for _, sourceCause := range capture.assignmentCauses {
+			mappedCause, mapErr := remapCause(sourceCause)
+			if mapErr != nil {
+				return nil, mapErr
+			}
+			assignmentCauses = append(assignmentCauses, mappedCause[:])
+		}
+		lifecycleCauses := make([]canonical.Value, 0, len(capture.lifecycleCauses))
+		for _, sourceCause := range capture.lifecycleCauses {
+			mappedCause, mapErr := remapCause(sourceCause)
+			if mapErr != nil {
+				return nil, mapErr
+			}
+			lifecycleCauses = append(lifecycleCauses, mappedCause[:])
+		}
+		registrationCause, mapErr := remapCause(capture.registrationCause)
+		if mapErr != nil {
+			return nil, mapErr
+		}
 		descriptorID := capture.descriptorID
 		collectionID := capture.collectionID
 		captureEntries = append(captureEntries, canonical.Map{
 			0: bundleID[:], 1: descriptorID[:], 2: collectionID[:], 3: canonicalSetValues(assignmentCauses),
-			4: capture.lifecycleCode, 5: canonicalSetValues(lifecycleCauses), 6: capture.registrationCause[:], 7: capture.registrationAttribution,
+			4: capture.lifecycleCode, 5: canonicalSetValues(lifecycleCauses), 6: registrationCause[:], 7: capture.registrationAttribution,
 		})
 		previous, exists := tails[collectionID]
 		if !exists || newerEvent(replica, previous.registrationCause, capture.registrationCause) {
@@ -1596,7 +1626,11 @@ func buildVacuumContentCheckpoint(replica *Replica, projection LibraryProjection
 			if bundleErr != nil {
 				return nil, fmt.Errorf("Collection checkpoint tail identity is invalid: %w", bundleErr)
 			}
-			intrinsicTail = canonical.Map{0: bundleID[:], 1: tail.registrationCause[:]}
+			registrationCause, causeErr := remapCause(tail.registrationCause)
+			if causeErr != nil {
+				return nil, causeErr
+			}
+			intrinsicTail = canonical.Map{0: bundleID[:], 1: registrationCause[:]}
 		}
 		collectionEntries = append(collectionEntries, canonical.Map{
 			0: collectionID[:], 1: title, 2: causes, 3: folderID, 4: folderCauses, 5: nil, 6: intrinsicTail, 7: intrinsicTail,

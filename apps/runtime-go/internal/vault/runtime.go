@@ -20,6 +20,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -2160,9 +2161,6 @@ func (r *Runtime) vacuumVault(ctx context.Context, id string) (any, error) {
 	if err != nil {
 		return nil, commandError("VAULT_VACUUM_REQUIRES_REPLAY", "The authenticated Library projection is unavailable for Vacuum.")
 	}
-	if len(replica.objects) > 0 {
-		return nil, commandError("VAULT_VACUUM_REQUIRES_REPLAY", "This Runtime cannot vacuum a Replica with unsupported Object state.")
-	}
 	for _, accepted := range replica.Events() {
 		if accepted.GenerationID != replica.generationID {
 			continue
@@ -2240,6 +2238,10 @@ func (r *Runtime) vacuumVault(ctx context.Context, id string) (any, error) {
 	if err != nil {
 		return nil, commandError("VAULT_VACUUM_REQUIRES_REPLAY", err.Error())
 	}
+	dependencies, retainedObjects, retainedArtifacts, err := vacuumCaptureObjectClosure(replica, value.Canonical, projection, r.deps.Artifacts)
+	if err != nil {
+		return nil, commandError("VAULT_VACUUM_REQUIRES_REPLAY", err.Error())
+	}
 	predecessorState := canonical.Map{0: oldContent, 1: authorityCheckpoint, 2: lifecycleCheckpoint}
 	successorState := canonical.Map{0: contentCheckpoint, 1: authorityCheckpoint, 2: lifecycleCheckpoint}
 	predecessorStateBytes, err := canonical.EncodeValue(predecessorState)
@@ -2260,7 +2262,18 @@ func (r *Runtime) vacuumVault(ctx context.Context, id string) (any, error) {
 	}
 	predecessorDigest := sha256.Sum256(predecessorTranscript)
 	successorDigest := sha256.Sum256(successorTranscript)
-	omissionCheckpoint := canonical.Map{0: uint64(1), 1: []canonical.Value{}}
+	omissionEntries := make([]canonical.Value, 0)
+	for _, capture := range projection.captureState {
+		if capture.lifecycleCode != 2 {
+			continue
+		}
+		bundleID, decodeErr := decodeHexIdentifier(capture.bundleID)
+		if decodeErr != nil {
+			return nil, commandError("VAULT_VACUUM_INVALID", "The omitted Capture identity is invalid.")
+		}
+		omissionEntries = append(omissionEntries, canonical.Map{0: uint64(1), 1: bundleID[:], 2: uint64(1)})
+	}
+	omissionCheckpoint := canonical.Map{0: uint64(1), 1: canonicalSetValues(omissionEntries)}
 	omissionBytes, err := canonical.EncodeValue(omissionCheckpoint)
 	if err != nil {
 		return nil, commandError("VAULT_VACUUM_INVALID", "The omission checkpoint is invalid.")
@@ -2276,7 +2289,7 @@ func (r *Runtime) vacuumVault(ctx context.Context, id string) (any, error) {
 	baselineBody := canonical.Map{0: uint64(1), 1: uint64(2), 2: contentCheckpoint, 3: authorityCheckpoint, 4: lifecycleCheckpoint, 5: predecessorCommitment}
 	baseline, err := canonical.EncodeBaseline(canonical.BaselineInput{
 		VaultID: vaultID, GenerationID: successorGenerationID,
-		Dependencies:         append([]canonical.Dependency(nil), replica.baseline.Dependencies...),
+		Dependencies:         dependencies,
 		RequiredFeatureSetID: replica.baseline.RequiredFeatureSetID,
 		Extensions:           cloneExtensions(replica.baseline.Extensions), Body: baselineBody,
 	})
@@ -2343,6 +2356,22 @@ func (r *Runtime) vacuumVault(ctx context.Context, id string) (any, error) {
 	value.Canonical.RecordStorageItemIDs[hexIdentifier(event.RecordID)] = eventStorageItemID
 	bindStorageItemKeyEpoch(value.Canonical, baselineStorageItemID, epochID)
 	bindStorageItemKeyEpoch(value.Canonical, eventStorageItemID, epochID)
+	for objectID := range value.Canonical.ObjectStorageItemIDs {
+		if _, retained := retainedObjects[objectID]; retained {
+			continue
+		}
+		storageItemID := value.Canonical.ObjectStorageItemIDs[objectID]
+		delete(value.Canonical.ObjectStorageItemIDs, objectID)
+		delete(value.Canonical.StorageItemKeyEpochIDs, storageItemID)
+	}
+	for artifactID := range value.Canonical.ArtifactStorageItemIDs {
+		if _, retained := retainedArtifacts[artifactID]; retained {
+			continue
+		}
+		storageItemID := value.Canonical.ArtifactStorageItemIDs[artifactID]
+		delete(value.Canonical.ArtifactStorageItemIDs, artifactID)
+		delete(value.Canonical.StorageItemKeyEpochIDs, storageItemID)
+	}
 	r.replicas[id] = nextReplica
 	if err := r.persistLocked(ctx); err != nil {
 		r.restoreLocked(before)
@@ -2352,6 +2381,109 @@ func (r *Runtime) vacuumVault(ctx context.Context, id string) (any, error) {
 	}
 	r.signal()
 	return map[string]string{"predecessorGenerationId": hexIdentifier(predecessorGenerationID), "successorGenerationId": successorGenerationText, "vacuumEventRecordId": hexIdentifier(event.RecordID), "successorBaselineId": hexIdentifier(baseline.RecordID)}, nil
+}
+
+func vacuumCaptureObjectClosure(replica *Replica, state *canonicalReplicaState, projection LibraryProjection, artifacts *artifactstore.Store) ([]canonical.Dependency, map[string]struct{}, map[string]struct{}, error) {
+	if replica == nil || state == nil || artifacts == nil {
+		return nil, nil, nil, errors.New("Vacuum Capture Object closure is unavailable")
+	}
+	activeDependencies := make(map[canonical.Dependency]struct{})
+	retainedObjects := make(map[string]struct{})
+	retainedArtifacts := make(map[string]struct{})
+	for _, capture := range projection.captureState {
+		if capture.lifecycleCode != 1 {
+			continue
+		}
+		bundleID, err := decodeHexIdentifier(capture.bundleID)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("Capture %s identity is invalid", capture.bundleID)
+		}
+		descriptor, ok := replica.Object(capture.descriptorID)
+		if !ok || descriptor.ObjectType != 1 {
+			return nil, nil, nil, fmt.Errorf("Capture %s Descriptor Object is unavailable", capture.bundleID)
+		}
+		metadata, err := parseBundleDescriptorMetadata(descriptor.Body)
+		if err != nil || metadata.bundleID != bundleID {
+			return nil, nil, nil, fmt.Errorf("Capture %s Descriptor Object is invalid", capture.bundleID)
+		}
+		if err := requireVacuumObjectStorage(state, artifacts, capture.descriptorID, true); err != nil {
+			return nil, nil, nil, err
+		}
+		activeDependencies[canonical.Dependency{Type: 4, ID: capture.descriptorID}] = struct{}{}
+		retainedObjects[hexIdentifier(capture.descriptorID)] = struct{}{}
+		body, ok := replicaMapValue(descriptor.Body)
+		if !ok {
+			return nil, nil, nil, fmt.Errorf("Capture %s Descriptor Object body is invalid", capture.bundleID)
+		}
+		references, ok := replicaMapArray(body, 9)
+		if !ok {
+			return nil, nil, nil, fmt.Errorf("Capture %s Descriptor Object references are invalid", capture.bundleID)
+		}
+		for _, reference := range references {
+			artifactID, ok := replicaIdentifier(reference, 0)
+			if !ok {
+				return nil, nil, nil, fmt.Errorf("Capture %s Artifact identity is invalid", capture.bundleID)
+			}
+			artifactObject, ok := replica.Object(artifactID)
+			if !ok || artifactObject.ObjectType != 2 {
+				return nil, nil, nil, fmt.Errorf("Capture %s Artifact Object is unavailable", capture.bundleID)
+			}
+			if err := requireVacuumObjectStorage(state, artifacts, artifactID, true); err != nil {
+				return nil, nil, nil, err
+			}
+			activeDependencies[canonical.Dependency{Type: 5, ID: artifactID}] = struct{}{}
+			retainedObjects[hexIdentifier(artifactID)] = struct{}{}
+			if storageItemID, exists := state.ArtifactStorageItemIDs[hexIdentifier(artifactID)]; exists {
+				if err := requireVacuumStorageItem(artifacts, storageItemID); err != nil {
+					return nil, nil, nil, err
+				}
+				retainedArtifacts[hexIdentifier(artifactID)] = struct{}{}
+			}
+		}
+	}
+	dependencies := make(map[canonical.Dependency]struct{})
+	for _, dependency := range replica.baseline.Dependencies {
+		if dependency.Type == 4 || dependency.Type == 5 {
+			if _, retained := activeDependencies[dependency]; !retained {
+				continue
+			}
+		}
+		dependencies[dependency] = struct{}{}
+	}
+	for dependency := range activeDependencies {
+		dependencies[dependency] = struct{}{}
+	}
+	result := make([]canonical.Dependency, 0, len(dependencies))
+	for dependency := range dependencies {
+		result = append(result, dependency)
+	}
+	sort.Slice(result, func(left, right int) bool {
+		if result[left].Type != result[right].Type {
+			return result[left].Type < result[right].Type
+		}
+		return bytes.Compare(result[left].ID[:], result[right].ID[:]) < 0
+	})
+	return result, retainedObjects, retainedArtifacts, nil
+}
+
+func requireVacuumObjectStorage(state *canonicalReplicaState, artifacts *artifactstore.Store, objectID canonical.Identifier, compact bool) error {
+	storageItemID, ok := state.ObjectStorageItemIDs[hexIdentifier(objectID)]
+	if !ok {
+		return fmt.Errorf("Vacuum Object %s has no local Storage mapping", hexIdentifier(objectID))
+	}
+	return requireVacuumStorageItem(artifacts, storageItemID)
+}
+
+func requireVacuumStorageItem(artifacts *artifactstore.Store, storageItemID string) error {
+	if !validDigest(storageItemID) {
+		return fmt.Errorf("Vacuum Storage Item %s identity is invalid", storageItemID)
+	}
+	reader, err := artifacts.Open(storageItemID)
+	if err != nil {
+		return fmt.Errorf("Vacuum Storage Item %s is unavailable", storageItemID)
+	}
+	_ = reader.Close()
+	return nil
 }
 
 func (r *Runtime) listRemotes(id string) (any, error) {
