@@ -16,5 +16,9 @@ google/uuid 1.6.0
 Source: https://github.com/google/uuid
 License: BSD-3-Clause
 
+fxamacker/cbor 2.7.0
+Source: https://github.com/fxamacker/cbor
+License: MIT
+
 Transitive dependencies retain their upstream notices and license terms as distributed with their
 source modules. No GPL or AGPL dependency is used by this module.

@@ -69,8 +69,14 @@ the loopback API exposes them to the paired extension under the single
 Hosted Replica attachment, materialization, and synchronization commands fail closed
 until the Go Runtime has the authenticated Host and Event/DAG services they require.
 
+The `internal/canonical` package now provides the first interoperable semantic substrate: strict
+canonical CBOR values, transcript framing, and authenticated Vault Event encoding, decoding, and
+Record ID derivation. Its deterministic test vector is generated from the browser Runtime's
+canonical implementation. The Runtime command path does not yet persist or replay these records;
+that integration remains part of semantic parity work.
+
 This slice does not claim full semantic parity with the browser Runtime. The Go
-implementation still needs the authenticated Event/DAG and cryptographic
+implementation still needs Runtime-integrated Event/DAG and cryptographic
 services, authoritative Record/Object replay, Capture and Library projections,
 pull synchronization, hydration, Storage Relief, and complete Export/Import.
 Capture is intentionally unavailable in the desktop window for this release;

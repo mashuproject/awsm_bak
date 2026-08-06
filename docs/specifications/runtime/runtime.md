@@ -44,7 +44,10 @@ selection, Recovery Phrase ceremonies, recovery, Fork, Closure, Vacuum, and Host
 metadata configuration. Attachment, materialization, and synchronization remain explicit
 unavailable Commands. Its desktop window deliberately does not acquire pages. Extension page capture
 continues for extension-owned local Vaults, while the extension-to-desktop Capture Bundle bridge is
-not implemented. Authenticated Event/DAG replay, cryptographic cross-language conformance, Library projections, pull synchronization,
+not implemented. The Go `internal/canonical` package provides strict canonical CBOR values,
+transcript framing, and authenticated Event codec primitives with a browser-generated conformance
+vector, but the Runtime command path does not yet persist or replay those records. Runtime-integrated
+Event/DAG replay, complete cryptographic cross-language conformance, Library projections, pull synchronization,
 hydration, Storage Relief, and complete Export/Import remain future semantic work.
 
 ## 2.1 Desktop Command and move boundary
