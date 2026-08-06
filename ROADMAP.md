@@ -109,13 +109,16 @@ Finish the remaining canonical desktop/headless Vault boundaries behind the exis
 contract. The Go Runtime now covers authenticated Record/Object and Event-DAG replay, browser-derived
 cryptographic primitives, Library projection, Hosted Replica creation/attachment/materialization,
 receiver pull, Artifact hydration, Storage Relief, Garbage Collection, and encrypted Go-to-Go
-transfer closure import/export.
+transfer closure import/export. It also accepts and produces the browser-compatible Complete Export
+container for the supported single-Key-Epoch closure and installs it as an authoring-free readable
+Replica.
 
-Remaining work is deliberately narrower: accept the browser Complete Export stream/container,
-re-author non-empty content Forks with correct object and event dependencies, implement the broader
-Authority and Key-Epoch event families, expose conflict/rebase and sparse-Replica state, and finish
-Wails workflow controls and cross-surface journeys. Capture remains extension-only and the
-extension-to-desktop Capture Bundle bridge is out of scope for this release.
+Remaining work is deliberately narrower: complete multi-Key-Epoch, Feature Manifest, Streamable
+Artifact, and adopted-Vacuum Complete Export reachability/import; re-author non-empty content Forks
+with correct object and event dependencies; implement the broader Authority and Key-Epoch event
+families; expose conflict/rebase and sparse-Replica state; and finish Wails workflow controls and
+cross-surface journeys. Capture remains extension-only and the extension-to-desktop Capture Bundle
+bridge is out of scope for this release.
 
 Promotion requires formal cross-language vectors plus restart/crash, authority, conflict, sparse
 Replica, multi-Remote convergence, sync-proof, Wails, and browser-to-desktop tests. Keep the Command

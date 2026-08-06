@@ -12,6 +12,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -117,6 +118,7 @@ type canonicalReplicaState struct {
 	RecoveryEnvelopeStorageID string            `json:"recoveryEnvelopeStorageItemId"`
 	ClientEnvelopeID          string            `json:"clientEnvelopeId"`
 	ClientEnvelopeStorageID   string            `json:"clientEnvelopeStorageItemId"`
+	AuthoringAvailable        bool              `json:"authoringAvailable"`
 	CausalFrontier            []string          `json:"causalFrontier"`
 	AuthorityFrontier         []string          `json:"authorityFrontier"`
 	ContinuityRecordIDs       []string          `json:"continuityRecordIds"`
@@ -783,7 +785,7 @@ func (r *Runtime) stateLocked() ClientState {
 	for _, id := range ids {
 		value := r.vaults[id]
 		access := "ReadOnly"
-		if value.Lifecycle == "Open" {
+		if value.Lifecycle == "Open" && value.Canonical != nil && value.Canonical.AuthoringAvailable {
 			access = "Authoring"
 		}
 		state.Vaults = append(state.Vaults, VaultSummary{
@@ -936,6 +938,34 @@ func (r *Runtime) Handle(ctx context.Context, raw json.RawMessage) (any, error) 
 			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "VacuumVault contains invalid fields")
 		}
 		return r.vacuumVault(ctx, input.ExpectedVaultID)
+	case "ExportComplete":
+		var input struct {
+			Type            string `json:"type"`
+			ExpectedVaultID string `json:"expectedVaultId"`
+			Passphrase      string `json:"passphrase"`
+		}
+		if err := decode(raw, &input); err != nil {
+			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "ExportComplete contains invalid fields")
+		}
+		encoded, err := r.ExportComplete(input.ExpectedVaultID, input.Passphrase)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]string{"package": base64.RawURLEncoding.EncodeToString(encoded)}, nil
+	case "ImportComplete":
+		var input struct {
+			Type       string `json:"type"`
+			Passphrase string `json:"passphrase"`
+			Package    string `json:"package"`
+		}
+		if err := decode(raw, &input); err != nil {
+			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "ImportComplete contains invalid fields")
+		}
+		encoded, err := base64.RawURLEncoding.DecodeString(input.Package)
+		if err != nil {
+			return nil, commandError("COMPLETE_IMPORT_INVALID", "The Complete Import package encoding is invalid.")
+		}
+		return r.ImportComplete(ctx, input.Passphrase, encoded)
 	case "ListLibrary":
 		var input struct {
 			Type            string `json:"type"`
@@ -1378,7 +1408,7 @@ func (r *Runtime) recoverMember(ctx context.Context, id, phrase string) (any, er
 	if err != nil {
 		return nil, err
 	}
-	if hashPhrase(phrase) != value.RecoveryHash {
+	if value.RecoveryHash != "" && hashPhrase(phrase) != value.RecoveryHash {
 		return nil, commandError("RECOVERY_PHRASE_MISMATCH", "The Recovery Phrase does not match.")
 	}
 	if value.Lifecycle != "Open" {
@@ -1529,6 +1559,7 @@ func (r *Runtime) recoverMember(ctx context.Context, id, phrase string) (any, er
 	value.Canonical.ClientCredentialID = credentialBytes
 	value.Canonical.ClientEnvelopeID = hexIdentifier(clientEnvelope.ID)
 	value.Canonical.ClientEnvelopeStorageID = hexIdentifier(clientEnvelope.Envelope.StorageItemID)
+	value.Canonical.AuthoringAvailable = true
 	nextState := nextReplica.State()
 	value.Canonical.CausalFrontier = identifiersToHex(nextState.CausalFrontier)
 	value.Canonical.AuthorityFrontier = identifiersToHex(nextState.AuthorityFrontier)
@@ -2274,7 +2305,7 @@ func decode(raw json.RawMessage, target any) error {
 }
 
 func validatePersistedVault(value persistedVault) error {
-	if !validDigest(value.VaultID) || !validDigest(value.RecoveryHash) || !validDigest(value.GenerationID) {
+	if !validDigest(value.VaultID) || !validDigest(value.GenerationID) || (value.RecoveryHash != "" && !validDigest(value.RecoveryHash)) {
 		return errors.New("Vault state contains an invalid Vault")
 	}
 	if value.Lifecycle != "Open" && value.Lifecycle != "Closed" {
@@ -2449,6 +2480,7 @@ func canonicalReplicaFromCreation(prepared PreparedCanonicalVaultCreation) *cano
 		RecoveryEnvelopeStorageID: hexIdentifier(prepared.RecoveryKeyEnvelope.Envelope.StorageItemID),
 		ClientEnvelopeID:          hexIdentifier(prepared.ClientKeyEnvelope.ID),
 		ClientEnvelopeStorageID:   hexIdentifier(prepared.ClientKeyEnvelope.Envelope.StorageItemID),
+		AuthoringAvailable:        true,
 		CausalFrontier:            []string{hexIdentifier(prepared.Genesis.RecordID)},
 		AuthorityFrontier:         []string{hexIdentifier(prepared.Genesis.RecordID)},
 		ContinuityRecordIDs:       []string{hexIdentifier(prepared.Genesis.RecordID)},
@@ -2511,13 +2543,16 @@ func (r *Runtime) openCanonicalReplica(value persistedVault) (*Replica, error) {
 	if err != nil {
 		return nil, err
 	}
-	clientSecretBytes, err := r.deps.Secrets.Get(trustedSecretService, clientSecretAccount(state.VaultID, state.ClientCredentialID))
-	if err != nil {
-		return nil, fmt.Errorf("read Client Credential Trusted Secret: %w", err)
-	}
-	clientSecret, err := decodeClientSecret(clientSecretBytes, vaultID, memberID, clientCredentialID)
-	if err != nil {
-		return nil, err
+	var clientSecret decodedClientSecret
+	if state.AuthoringAvailable {
+		clientSecretBytes, secretErr := r.deps.Secrets.Get(trustedSecretService, clientSecretAccount(state.VaultID, state.ClientCredentialID))
+		if secretErr != nil {
+			return nil, fmt.Errorf("read Client Credential Trusted Secret: %w", secretErr)
+		}
+		clientSecret, err = decodeClientSecret(clientSecretBytes, vaultID, memberID, clientCredentialID)
+		if err != nil {
+			return nil, err
+		}
 	}
 	readArtifact := func(id string) ([]byte, error) {
 		reader, err := r.deps.Artifacts.Open(id)
@@ -2573,12 +2608,18 @@ func (r *Runtime) openCanonicalReplica(value persistedVault) (*Replica, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read Client Key Envelope: %w", err)
 	}
-	clientEnvelope, err := awsmcrypto.OpenKeyEnvelope(awsmcrypto.ClientCredentialTarget, clientSecret.wrappingPrivateKey, clientEnvelopeBytes)
-	if err != nil {
-		return nil, fmt.Errorf("open Client Key Envelope: %w", err)
+	clientEnvelope, envelopeErr := storage.DecodeOpaqueEnvelope(clientEnvelopeBytes)
+	if envelopeErr != nil || hexIdentifier(clientEnvelope.StorageItemID) != state.ClientEnvelopeStorageID {
+		return nil, errors.New("Client Key Envelope storage identity does not match persisted Replica state")
 	}
-	if hexIdentifier(clientEnvelope.ID) != state.ClientEnvelopeID || clientEnvelope.VaultID != vaultID || clientEnvelope.KeyEpochID != epochID || clientEnvelope.TargetCredentialID != clientCredentialID {
-		return nil, errors.New("Client Key Envelope identity does not match persisted Replica state")
+	if state.AuthoringAvailable {
+		openedClient, openErr := awsmcrypto.OpenKeyEnvelope(awsmcrypto.ClientCredentialTarget, clientSecret.wrappingPrivateKey, clientEnvelopeBytes)
+		if openErr != nil {
+			return nil, fmt.Errorf("open Client Key Envelope: %w", openErr)
+		}
+		if hexIdentifier(openedClient.ID) != state.ClientEnvelopeID || openedClient.VaultID != vaultID || openedClient.KeyEpochID != epochID || openedClient.TargetCredentialID != clientCredentialID {
+			return nil, errors.New("Client Key Envelope identity does not match persisted Replica state")
+		}
 	}
 	recoveryEnvelopeBytes, err := readArtifact(state.RecoveryEnvelopeStorageID)
 	if err != nil {

@@ -44,6 +44,20 @@ extension-only surface; the extension-to-desktop Capture Bundle bridge is not im
 Unsupported desktop capabilities return a canonical application error rather than pretending that
 the operation succeeded. Desktop page acquisition is intentionally unsupported.
 
+The same boundary exposes these portability Commands:
+
+```json
+{"type":"ExportComplete","expectedVaultId":"...","passphrase":"..."}
+{"type":"ImportComplete","passphrase":"...","package":"<unpadded-base64url>"}
+```
+
+`ExportComplete` returns `{ "package": "<unpadded-base64url>" }`. `ImportComplete` atomically
+installs a readable Replica without importing a Client Credential private key. The current Go
+implementation accepts the browser Complete Export container for a single-Key-Epoch closure and
+fails closed for unsupported multi-Epoch, Feature Manifest, Streamable Artifact, or adopted-Vacuum
+semantic closures until those mappings are implemented. Commands never log passphrases, package
+bytes, keys, or bearer tokens.
+
 Successful responses use:
 
 ```json
@@ -111,9 +125,9 @@ action creates a Vault Event, and transfer artifacts are not synchronized or inc
 Vault Export or Backup.
 
 The Go acceptance path validates and activates an authenticated opaque-closure package, including
-canonical Replica state, referenced opaque items, and trusted local secrets. Browser Complete Export
-stream/container interoperability remains a separate parity boundary; this move path is currently
-complete for Go-to-Go Runtime packages.
+canonical Replica state, referenced opaque items, and trusted local secrets. This move path remains
+separate from the Complete Export Commands: move packages retain local authoring secrets, while
+Complete Import deliberately produces an authoring-free readable Replica.
 
 An unsubmitted transfer is discarded on desktop process restart. A staged transfer survives restart
 until acceptance or rejection, subject to local storage integrity checks. A secret, plaintext

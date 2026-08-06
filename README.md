@@ -66,8 +66,10 @@ The browser extension currently supports:
 The reference Go Runtime also provides a desktop/headless Client mode behind the same tagged
 Command boundary. It can create, select, recover, Fork an empty state, close, Vacuum, replay
 authenticated Records/Objects, project its Library, perform Storage Relief/GC, attach and
-materialize Hosted Replicas, pull opaque Compact items, hydrate a known Artifact, and accept an
-encrypted Go-to-Go transfer closure. A paired extension can operate those Vaults through the
+materialize Hosted Replicas, pull opaque Compact items, hydrate a known Artifact, accept an
+encrypted Go-to-Go transfer closure, and export/import the browser-compatible Complete Export
+container for the supported single-Key-Epoch closure. Complete Import is readable but authoring-free.
+A paired extension can operate those Vaults through the
 loopback Runtime API. The desktop window does not capture pages. Extension page capture remains
 available for extension-owned local Vaults; a Capture Bundle bridge for desktop-owned Vaults is not
 implemented.
@@ -87,9 +89,10 @@ Host permission leaves local Vault work available and prevents that Host channel
 Current limits are intentional: direct peer transports, complete Authority-branch synchronization,
 global freshness claims, automatic redundancy tracking, and user-facing AI features are not shipped
 in this release. Desktop page capture and the extension-to-desktop Capture Bundle bridge are not
-available. Browser Complete Export byte-format interoperability, non-empty content Fork
-re-authoring, broader Authority/Key-Epoch event families, conflict/rebase projections, and complete
-Wails workflow coverage remain explicit parity work; see the living specifications and roadmap.
+available. Multi-Key-Epoch, Feature Manifest, Streamable Artifact, and adopted-Vacuum Complete
+Export semantics, non-empty content Fork re-authoring, broader Authority/Key-Epoch event families,
+conflict/rebase projections, and complete Wails workflow coverage remain explicit parity work; see
+the living specifications and roadmap.
 
 The Coordination Server root is the public AWSM product and installation guide on hosted and
 self-hosted deployments. Its privacy, security, setup, Account, and comparison pages are evergreen

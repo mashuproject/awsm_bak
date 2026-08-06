@@ -144,12 +144,12 @@ func EntryIdentity(kind, byteLength uint64, body []byte) [32]byte {
 		framing := append([]byte("awsm:storage-item-id:v1\x00"), uint32Bytes(1)...)
 		length := make([]byte, 8)
 		binary.BigEndian.PutUint64(length, byteLength)
-		return sha256.Sum256(append(append(append(framing, length...), body...)))
+		return sha256.Sum256(append(append(framing, length...), body...))
 	}
 	framing := append([]byte(label+"\x00"), uint32Bytes(1)...)
 	length := make([]byte, 8)
 	binary.BigEndian.PutUint64(length, byteLength)
-	return sha256.Sum256(append(append(append(framing, length...), body...)))
+	return sha256.Sum256(append(append(framing, length...), body...))
 }
 
 func SortEntriesByOpaqueID(entries []Entry) {

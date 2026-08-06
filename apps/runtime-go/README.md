@@ -77,16 +77,20 @@ The desktop window does not acquire pages; Capture remains an extension-only sur
 extension-to-desktop Capture Bundle bridge is intentionally out of scope for this release. The
 one-use move boundary now carries the authenticated opaque closure and trusted local secrets inside
 its encrypted transfer envelope, so an accepted package reopens the Replica on the destination.
-The remaining parity limits are browser-format Complete Export interoperability, non-empty content
+The Runtime command boundary also produces and accepts the browser-compatible Complete Export
+container for the supported single-Key-Epoch closure. Imported Replicas are readable but have no
+selected authoring Credential or private key. Multi-Key-Epoch, Feature Manifest, Streamable Artifact,
+and adopted-Vacuum Complete Export semantics remain explicit limits, along with non-empty content
 Fork re-authoring, broader Authority/Key-Epoch event families, conflict/rebase projections, and
-full Wails workflow coverage; they remain explicit roadmap work rather than fabricated success.
+full Wails workflow coverage.
 
 The move boundary is deliberately separate from Vault synchronization. A source Client seals the
 canonical opaque closure and trusted local secrets with a one-use secret, stages it in the desktop
 process, and verifies the returned digest and byte length. The destination UI must explicitly accept
 the staged package before the source retires its Vault; the transfer is never a Vault Event. The Go
-path is complete for Go-to-Go closures. Direct browser Complete Export stream/container import
-remains a documented parity boundary.
+path is complete for Go-to-Go closures. Direct browser Complete Export stream/container
+export/import is implemented for the currently supported closure and fails closed for unsupported
+historical or feature-rich closures.
 
 ## Process and browser proofs
 

@@ -64,13 +64,15 @@ until explicit revocation.
 The current process implements the canonical tagged Command contract for persistent Vault management,
 authenticated Event/Object replay, Library projection, Storage Relief, Garbage Collection, Hosted
 Replica creation/attachment/materialization, receiver pull, Artifact hydration, and encrypted
-Go-to-Go transfer import/export. The extension's backend router merges local and desktop Vault
+Go-to-Go transfer import/export. It also exposes browser-compatible Complete Export/Import for the
+supported single-Key-Epoch closure; Complete Import creates a readable Replica without a local
+authoring Credential. The extension's backend router merges local and desktop Vault
 summaries, then routes Commands by Vault ID; it does not copy desktop Vault bytes into the browser.
 Desktop page acquisition is intentionally unavailable. Capture remains available for extension-owned
-local Vaults; the extension-to-desktop Capture Bundle bridge is not implemented. Browser Complete
-Export byte-format interoperability, non-empty content Fork re-authoring, broader Authority and
-Key-Epoch event families, conflict/rebase projections, and complete Wails workflow coverage remain
-explicit parity boundaries.
+local Vaults; the extension-to-desktop Capture Bundle bridge is not implemented. Multi-Key-Epoch,
+Feature Manifest, Streamable Artifact, and adopted-Vacuum Complete Export semantics, non-empty
+content Fork re-authoring, broader Authority and Key-Epoch event families, conflict/rebase
+projections, and complete Wails workflow coverage remain explicit parity boundaries.
 
 The move boundary is an explicit one-use transfer ceremony, not synchronization. The source
 Client seals a transfer package with the transfer secret, the desktop process authenticates and
