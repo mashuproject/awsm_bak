@@ -45,6 +45,10 @@ type recoveryReplacement struct {
 	possessionProof []byte
 }
 
+type keyDelivery struct {
+	slots []keyEpochEnvelopeSlot
+}
+
 type keyEpochTransition struct {
 	parentEpochIDs []canonical.Identifier
 	newEpochID     canonical.Identifier
@@ -353,6 +357,17 @@ func replayAuthenticatedKeyEpochs(events []canonical.Event, genesis canonical.Ev
 			current.heads[transition.newEpochID] = struct{}{}
 			current.epochs[transition.newEpochID] = transition.displayNumber
 			current.headSlots[transition.newEpochID] = cloneKeyEpochEnvelopeSlots(transition.slots)
+		}
+		if event.Family == canonical.AuthorityFamily && event.Type == 13 {
+			delivery, parseErr := parseKeyDelivery(event)
+			if parseErr != nil {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, parseErr
+			}
+			if err := validateKeyDelivery(current, event, delivery); err != nil {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, err
+			}
 		}
 		if event.Family == canonical.LifecycleFamily && event.Type == 2 {
 			body, ok := replicaMapValue(event.Body)
@@ -712,6 +727,18 @@ func parseRecoveryReplacement(event canonical.Event) (recoveryReplacement, error
 	}, nil
 }
 
+func parseKeyDelivery(event canonical.Event) (keyDelivery, error) {
+	body, ok := replicaMapValue(event.Body)
+	if !ok || !replicaMapHasKeys(body, 1) {
+		return keyDelivery{}, errors.New("Key Delivery body is invalid")
+	}
+	slots, err := parseKeyEpochEnvelopeSlots(replicaMapEntryMust(body, 0), "Key Delivery Envelope slots")
+	if err != nil {
+		return keyDelivery{}, err
+	}
+	return keyDelivery{slots: slots}, nil
+}
+
 func parseKeyEpochEnvelopeSlots(value canonical.Value, field string) ([]keyEpochEnvelopeSlot, error) {
 	values, ok := replicaMapArrayValue(value)
 	if !ok || len(values) == 0 {
@@ -824,6 +851,55 @@ func validateRecoveryReplacementSlots(state keyEpochReplayState, event canonical
 	)
 	if err != nil || !ed25519.Verify(replacement.signingKey, transcript, replacement.possessionProof) {
 		return errors.New("Recovery Replacement possession proof is invalid")
+	}
+	return nil
+}
+
+func validateKeyDelivery(state keyEpochReplayState, event canonical.Event, delivery keyDelivery) error {
+	dependencyIDs := make(map[canonical.Identifier]struct{}, len(event.Dependencies))
+	for _, dependency := range event.Dependencies {
+		if dependency.Type != 7 {
+			return errors.New("Key Delivery dependencies must be Key Envelopes")
+		}
+		dependencyIDs[dependency.ID] = struct{}{}
+	}
+	if len(dependencyIDs) != len(delivery.slots) {
+		return errors.New("Key Delivery dependencies do not match Envelope slots")
+	}
+	seenTargets := make(map[string]struct{}, len(delivery.slots))
+	for _, slot := range delivery.slots {
+		if _, established := state.epochs[slot.epochID]; !established {
+			return errors.New("Key Delivery names an unknown Key Epoch")
+		}
+		if _, dependency := dependencyIDs[slot.envelopeID]; !dependency {
+			return errors.New("Key Delivery omits an Envelope dependency")
+		}
+		var target string
+		if slot.targetKind == awsmcrypto.RecoveryCredentialTarget {
+			if slot.targetRevision == nil {
+				return errors.New("Key Delivery Recovery slot omits its revision")
+			}
+			revision, effective := state.recoveryTargets[slot.targetID]
+			if !effective || revision != *slot.targetRevision {
+				return errors.New("Key Delivery Recovery target is not an effective Credential")
+			}
+			target = fmt.Sprintf("%d:%x:%d", slot.targetKind, slot.targetID, *slot.targetRevision)
+		} else if slot.targetKind == awsmcrypto.ClientCredentialTarget {
+			if slot.targetRevision != nil {
+				return errors.New("Key Delivery Client slot has a target revision")
+			}
+			if _, active := state.activeClientMember(slot.targetID); !active {
+				return errors.New("Key Delivery Client target is not active")
+			}
+			target = fmt.Sprintf("%d:%x:null", slot.targetKind, slot.targetID)
+		} else {
+			return errors.New("Key Delivery target kind is invalid")
+		}
+		key := fmt.Sprintf("%s:%x", target, slot.epochID)
+		if _, duplicate := seenTargets[key]; duplicate {
+			return errors.New("Key Delivery repeats a target and Key Epoch")
+		}
+		seenTargets[key] = struct{}{}
 	}
 	return nil
 }

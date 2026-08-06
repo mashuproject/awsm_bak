@@ -155,6 +155,33 @@ func TestReplicaExposesDerivedAuthorityState(t *testing.T) {
 	}
 }
 
+func TestReplicaRejectsKeyDeliveryForUnknownKeyEpoch(t *testing.T) {
+	prepared := deterministicCreation(t)
+	replica, err := NewReplica(prepared.Baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := replica.AdmitEvent(prepared.Genesis, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit Genesis: %v", err)
+	}
+	envelopeID := filledCreationID(220)
+	unknownEpochID := filledCreationID(221)
+	slot := canonical.Map{0: unknownEpochID[:], 1: uint64(1), 2: prepared.IDs.RecoveryCredentialID[:], 3: uint64(0), 4: envelopeID[:]}
+	event, err := canonical.SignEvent(canonical.EventInput{
+		VaultID: prepared.IDs.VaultID, GenerationID: prepared.IDs.GenerationID,
+		ParentRecordIDs: []canonical.Identifier{prepared.Genesis.RecordID}, AuthorityParentIDs: []canonical.Identifier{prepared.Genesis.RecordID},
+		Dependencies: []canonical.Dependency{{Type: 7, ID: envelopeID}}, RequiredFeatureSetID: prepared.RequiredFeatureSetID,
+		Extensions: map[string][]byte{}, Family: canonical.AuthorityFamily, Type: 13, SignerCredentialID: prepared.IDs.ClientCredentialID,
+		AssertedAt: 203, Body: canonical.Map{0: []canonical.Value{slot}},
+	}, ed25519.PrivateKey(prepared.ClientKeys.SigningSecretKey))
+	if err != nil {
+		t.Fatalf("sign Key Delivery: %v", err)
+	}
+	if err := replica.AdmitEvent(event, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err == nil {
+		t.Fatal("Replica accepted Key Delivery for an unknown Key Epoch")
+	}
+}
+
 func TestReplicaAdmitsContentAddressedObject(t *testing.T) {
 	prepared := deterministicCreation(t)
 	replica, err := NewReplica(prepared.Baseline)
