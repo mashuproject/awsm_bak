@@ -3,6 +3,7 @@ package vault
 import (
 	"bytes"
 	"crypto/ed25519"
+	"sort"
 	"testing"
 
 	"github.com/mashuproject/awsm_bak/apps/runtime-go/internal/canonical"
@@ -229,6 +230,56 @@ func TestReplicaRejectsMalformedInvitationAcceptance(t *testing.T) {
 	}
 	if err := replica.AdmitEvent(event, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err == nil {
 		t.Fatal("Replica accepted a malformed Invitation Acceptance")
+	}
+}
+
+func TestReplicaRejectsInvitationAcceptanceForUnknownInvitation(t *testing.T) {
+	prepared := deterministicCreation(t)
+	replica, err := NewReplica(prepared.Baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := replica.AdmitEvent(prepared.Genesis, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit Genesis: %v", err)
+	}
+	invitationID := filledCreationID(240)
+	memberID := filledCreationID(241)
+	clientID := filledCreationID(242)
+	recoveryID := filledCreationID(243)
+	clientEnvelopeID := filledCreationID(244)
+	recoveryEnvelopeID := filledCreationID(245)
+	joinRequestID := filledCreationID(247)
+	proposalID := filledCreationID(248)
+	acceptanceReceiptID := filledCreationID(249)
+	clientSeed := bytes.Repeat([]byte{0x61}, ed25519.SeedSize)
+	recoverySeed := bytes.Repeat([]byte{0x62}, ed25519.SeedSize)
+	clientKey := ed25519.NewKeyFromSeed(clientSeed)
+	recoveryKey := ed25519.NewKeyFromSeed(recoverySeed)
+	capability := canonical.Map{0: "awsm.vault", 1: prepared.IDs.FirstMemberID[:], 2: prepared.IDs.VaultID[:], 3: "awsm.vault.join", 4: []byte{}}
+	clientCertificate := canonical.Map{0: clientID[:], 1: memberID[:], 2: []byte(clientKey.Public().(ed25519.PublicKey)), 3: bytes.Repeat([]byte{0x63}, 32)}
+	recoveryDescriptor := canonical.Map{0: recoveryID[:], 1: memberID[:], 2: uint64(0), 3: []byte(recoveryKey.Public().(ed25519.PublicKey)), 4: bytes.Repeat([]byte{0x64}, 32)}
+	recoverySlot := canonical.Map{0: prepared.KeyEpochID[:], 1: uint64(1), 2: recoveryID[:], 3: uint64(0), 4: recoveryEnvelopeID[:]}
+	clientSlot := canonical.Map{0: prepared.KeyEpochID[:], 1: uint64(2), 2: clientID[:], 3: nil, 4: clientEnvelopeID[:]}
+	join := canonical.Map{0: invitationID[:], 1: canonicalSetValues([]canonical.Value{capability}), 2: memberID[:], 3: clientCertificate, 4: recoveryDescriptor,
+		5: bytes.Repeat([]byte{0x65}, ed25519.SignatureSize), 6: bytes.Repeat([]byte{0x66}, ed25519.SignatureSize), 7: bytes.Repeat([]byte{0x67}, ed25519.SignatureSize)}
+	proposal := canonical.Map{0: invitationID[:], 1: joinRequestID[:], 2: canonicalSetValues([]canonical.Value{prepared.Genesis.RecordID[:]}), 3: memberID[:], 4: clientCertificate, 5: recoveryDescriptor,
+		6: canonicalSetValues([]canonical.Value{capability}), 7: canonicalSetValues([]canonical.Value{recoverySlot, clientSlot})}
+	receipt := canonical.Map{0: invitationID[:], 1: uint64(1), 2: joinRequestID[:], 3: proposalID[:], 4: acceptanceReceiptID[:], 5: bytes.Repeat([]byte{0x68}, ed25519.SignatureSize)}
+	dependencies := []canonical.Dependency{{Type: 7, ID: recoveryEnvelopeID}, {Type: 7, ID: clientEnvelopeID}}
+	sort.Slice(dependencies, func(left, right int) bool {
+		return bytes.Compare(dependencies[left].ID[:], dependencies[right].ID[:]) < 0
+	})
+	event, err := canonical.SignEvent(canonical.EventInput{
+		VaultID: prepared.IDs.VaultID, GenerationID: prepared.IDs.GenerationID,
+		ParentRecordIDs: []canonical.Identifier{prepared.Genesis.RecordID}, AuthorityParentIDs: []canonical.Identifier{prepared.Genesis.RecordID},
+		Dependencies: dependencies, RequiredFeatureSetID: prepared.RequiredFeatureSetID, Extensions: map[string][]byte{}, Family: canonical.AuthorityFamily, Type: 6,
+		SignerCredentialID: prepared.IDs.ClientCredentialID, AssertedAt: 206, Body: canonical.Map{0: join, 1: proposal, 2: receipt},
+	}, ed25519.PrivateKey(prepared.ClientKeys.SigningSecretKey))
+	if err != nil {
+		t.Fatalf("sign Invitation Acceptance: %v", err)
+	}
+	if err := replica.AdmitEvent(event, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err == nil {
+		t.Fatal("Replica accepted Invitation Acceptance for an unknown Invitation")
 	}
 }
 

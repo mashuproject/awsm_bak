@@ -30,6 +30,7 @@ type keyEpochReplayState struct {
 	recoverySigningKeys   map[canonical.Identifier]ed25519.PublicKey
 	recoveryTargets       map[canonical.Identifier]uint64
 	clientTargets         map[canonical.Identifier]struct{}
+	invitations           map[canonical.Identifier]struct{}
 	closed                bool
 }
 
@@ -106,6 +107,7 @@ func replayAuthenticatedKeyEpochs(events []canonical.Event, genesis canonical.Ev
 		recoverySigningKeys:   map[canonical.Identifier]ed25519.PublicKey{firstRecovery: genesisRecoverySigningKey(genesis)},
 		recoveryTargets:       map[canonical.Identifier]uint64{firstRecovery: 0},
 		clientTargets:         map[canonical.Identifier]struct{}{firstClient: {}},
+		invitations:           map[canonical.Identifier]struct{}{},
 	}
 	byID := make(map[canonical.Identifier]canonical.Event, len(events))
 	for _, event := range events {
@@ -222,11 +224,26 @@ func replayAuthenticatedKeyEpochs(events []canonical.Event, genesis canonical.Ev
 				delete(visiting, recordID)
 				return keyEpochReplayState{}, err
 			}
+			invitationID, invitationErr := parseInvitationCreationID(event)
+			if invitationErr != nil {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, invitationErr
+			}
+			if _, exists := current.invitations[invitationID]; exists {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, errors.New("Invitation Creation reuses an Invitation identity")
+			}
+			current.invitations[invitationID] = struct{}{}
 		}
 		if event.Family == canonical.AuthorityFamily && event.Type == 6 {
-			if _, parseErr := parseInvitationAcceptance(event); parseErr != nil {
+			acceptance, parseErr := parseInvitationAcceptance(event)
+			if parseErr != nil {
 				delete(visiting, recordID)
 				return keyEpochReplayState{}, parseErr
+			}
+			if _, exists := current.invitations[acceptance.invitationID]; !exists {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, errors.New("Invitation Acceptance references an unknown Invitation")
 			}
 		}
 		if event.Family == canonical.AuthorityFamily && (event.Type == 3 || event.Type == 4) {
@@ -491,6 +508,7 @@ func cloneKeyEpochReplayState(value keyEpochReplayState) keyEpochReplayState {
 		recoverySigningKeys:   make(map[canonical.Identifier]ed25519.PublicKey, len(value.recoverySigningKeys)),
 		recoveryTargets:       make(map[canonical.Identifier]uint64, len(value.recoveryTargets)),
 		clientTargets:         make(map[canonical.Identifier]struct{}, len(value.clientTargets)),
+		invitations:           make(map[canonical.Identifier]struct{}, len(value.invitations)),
 		closed:                value.closed,
 	}
 	for id := range value.activeMembers {
@@ -526,6 +544,9 @@ func cloneKeyEpochReplayState(value keyEpochReplayState) keyEpochReplayState {
 	for id := range value.clientTargets {
 		clone.clientTargets[id] = struct{}{}
 	}
+	for id := range value.invitations {
+		clone.invitations[id] = struct{}{}
+	}
 	return clone
 }
 
@@ -543,6 +564,7 @@ func mergeKeyEpochReplayStates(values []keyEpochReplayState) keyEpochReplayState
 			recoverySigningKeys: make(map[canonical.Identifier]ed25519.PublicKey),
 			recoveryTargets:     make(map[canonical.Identifier]uint64),
 			clientTargets:       make(map[canonical.Identifier]struct{}),
+			invitations:         make(map[canonical.Identifier]struct{}),
 		}
 	}
 	merged := cloneKeyEpochReplayState(values[0])
@@ -590,6 +612,9 @@ func mergeKeyEpochReplayStates(values []keyEpochReplayState) keyEpochReplayState
 		}
 		for id := range value.clientTargets {
 			merged.clientTargets[id] = struct{}{}
+		}
+		for id := range value.invitations {
+			merged.invitations[id] = struct{}{}
 		}
 		merged.closed = merged.closed || value.closed
 	}
@@ -767,6 +792,18 @@ func validateInvitationCreation(event canonical.Event, signerMember canonical.Id
 		}
 	}
 	return nil
+}
+
+func parseInvitationCreationID(event canonical.Event) (canonical.Identifier, error) {
+	body, ok := replicaMapValue(event.Body)
+	if !ok || !replicaMapHasKeys(body, 6) {
+		return canonical.Identifier{}, errors.New("Invitation Creation body is invalid")
+	}
+	invitationBytes, ok := replicaMapBytes(body, 0, 32)
+	if !ok || bytes.Equal(invitationBytes, make([]byte, 32)) {
+		return canonical.Identifier{}, errors.New("Invitation Creation identity fields are invalid")
+	}
+	return bytesIdentifier(invitationBytes), nil
 }
 
 func parseInvitationAcceptance(event canonical.Event) (invitationAcceptance, error) {
