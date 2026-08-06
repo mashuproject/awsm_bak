@@ -1119,27 +1119,84 @@ func (r *Runtime) confirmFork(ctx context.Context, setupID, phrase string) (any,
 	if hashPhrase(phrase) != pending.PhraseHash {
 		return nil, commandError("RECOVERY_PHRASE_MISMATCH", "The Recovery Phrase does not match.")
 	}
-	id, err := randomID()
-	if err != nil {
-		return nil, err
+	source := r.vaults[pending.SourceVaultID]
+	if source == nil || source.Canonical == nil || r.replicas[pending.SourceVaultID] == nil {
+		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The source Vault Replica is unavailable.")
 	}
-	generation, err := randomID()
-	if err != nil {
-		return nil, err
+	if len(r.replicas[pending.SourceVaultID].Events()) > 1 || len(r.replicas[pending.SourceVaultID].objects) > 0 {
+		return nil, commandError("VAULT_FORK_REQUIRES_EXPORT", "This Fork contains synchronized content; use a verified Complete Export until content re-authoring is available.")
+	}
+	if r.deps.Artifacts == nil || r.deps.Secrets == nil {
+		return nil, commandError("TRUSTED_SECRET_UNAVAILABLE", "This Client cannot Fork a Vault without its secure storage facility.")
 	}
 	label := cloneString(pending.Label)
 	if label != nil {
 		forkLabel := *label + " (Fork)"
 		label = &forkLabel
 	}
-	source := r.vaults[pending.SourceVaultID]
-	r.vaults[id] = &persistedVault{VaultID: id, Label: label, Lifecycle: "Open", RecoveryHash: pending.PhraseHash, GenerationID: generation, Remotes: append([]remoteState(nil), source.Remotes...), RecoveryRevision: 1}
+	prepared, err := PrepareCanonicalVaultCreation(CreationInput{Label: label, RecoveryPhrase: phrase})
+	if err != nil {
+		return nil, commandError("VAULT_FORK_INVALID", "The canonical Fork ceremony could not be prepared.")
+	}
+	canonicalState := canonicalReplicaFromCreation(prepared)
+	storedItems := [][32]byte{prepared.BaselineEnvelope.StorageItemID, prepared.GenesisEnvelope.StorageItemID, prepared.RecoveryKeyEnvelope.Envelope.StorageItemID, prepared.ClientKeyEnvelope.Envelope.StorageItemID}
+	cleanup := func() {
+		for _, itemID := range storedItems {
+			deleteOpaqueCreationItem(r.deps.Artifacts, itemID)
+		}
+		_ = r.deps.Secrets.Delete(trustedSecretService, clientSecretAccount(canonicalState.VaultID, canonicalState.ClientCredentialID))
+		_ = r.deps.Secrets.Delete(trustedSecretService, epochSecretAccount(canonicalState.VaultID, canonicalState.KeyEpochID))
+		wipeCreationSecrets(&prepared)
+	}
+	for index, item := range []struct {
+		id   [32]byte
+		data []byte
+	}{
+		{prepared.BaselineEnvelope.StorageItemID, prepared.BaselineEnvelope.Bytes},
+		{prepared.GenesisEnvelope.StorageItemID, prepared.GenesisEnvelope.Bytes},
+		{prepared.RecoveryKeyEnvelope.Envelope.StorageItemID, prepared.RecoveryKeyEnvelope.Envelope.Bytes},
+		{prepared.ClientKeyEnvelope.Envelope.StorageItemID, prepared.ClientKeyEnvelope.Envelope.Bytes},
+	} {
+		if err := storeOpaqueCreationItem(r.deps.Artifacts, item.id, item.data); err != nil {
+			cleanup()
+			return nil, commandError("VAULT_FORK_STORAGE_FAILED", fmt.Sprintf("The Fork item %d could not be stored.", index))
+		}
+	}
+	clientSecret, err := encodeClientSecret(prepared)
+	if err != nil {
+		cleanup()
+		return nil, commandError("VAULT_FORK_STORAGE_FAILED", "The Fork Client Credential could not be protected.")
+	}
+	if err := r.deps.Secrets.Put(trustedSecretService, clientSecretAccount(canonicalState.VaultID, canonicalState.ClientCredentialID), clientSecret); err != nil {
+		cleanup()
+		return nil, commandError("TRUSTED_SECRET_UNAVAILABLE", "The Fork Client Credential could not be stored.")
+	}
+	epochSecret, err := encodeEpochSecret(prepared)
+	if err != nil {
+		cleanup()
+		return nil, commandError("VAULT_FORK_STORAGE_FAILED", "The Fork Key Epoch could not be protected.")
+	}
+	if err := r.deps.Secrets.Put(trustedSecretService, epochSecretAccount(canonicalState.VaultID, canonicalState.KeyEpochID), epochSecret); err != nil {
+		cleanup()
+		return nil, commandError("TRUSTED_SECRET_UNAVAILABLE", "The Fork Key Epoch could not be stored.")
+	}
+	id := canonicalState.VaultID
+	value := &persistedVault{VaultID: id, Label: label, Lifecycle: "Open", RecoveryHash: pending.PhraseHash, GenerationID: canonicalState.GenerationID, Remotes: append([]remoteState(nil), source.Remotes...), RecoveryRevision: 1, Canonical: canonicalState}
+	replica, err := newReplicaFromPreparedCreation(prepared)
+	if err != nil {
+		cleanup()
+		return nil, commandError("VAULT_FORK_INVALID", "The authenticated Fork Replica could not be opened.")
+	}
+	r.vaults[id] = value
+	r.replicas[id] = replica
 	r.selected = id
 	r.pending = nil
 	if err := r.persistLocked(ctx); err != nil {
 		r.restoreLocked(before)
+		cleanup()
 		return nil, err
 	}
+	wipeCreationSecrets(&prepared)
 	r.signal()
 	return map[string]string{"vaultId": id}, nil
 }

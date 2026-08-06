@@ -514,6 +514,33 @@ func TestGarbageCollectionDeletesOnlyUnreferencedOpaqueItems(t *testing.T) {
 	}
 }
 
+func TestForkCreatesFreshCanonicalReplicaForEmptyVault(t *testing.T) {
+	ctx := context.Background()
+	state := store.NewMemoryState()
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceID := createVaultForTest(t, runtime, "Fork")
+	started, err := runtime.Handle(ctx, mustJSON(map[string]any{"type": "BeginVaultFork", "expectedVaultId": sourceID}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	setup := started.(map[string]string)
+	confirmed, err := runtime.Handle(ctx, mustJSON(map[string]any{"type": "ConfirmVaultFork", "setupId": setup["setupId"], "recoveryPhrase": setup["recoveryPhrase"]}))
+	if err != nil {
+		t.Fatalf("confirm Fork: %v", err)
+	}
+	forkID := confirmed.(map[string]string)["vaultId"]
+	if forkID == sourceID || runtime.vaults[forkID] == nil || runtime.vaults[forkID].Canonical == nil || runtime.replicas[forkID] == nil {
+		t.Fatalf("Fork state = %#v", runtime.vaults[forkID])
+	}
+	if runtime.vaults[forkID].Canonical.BaselineID == runtime.vaults[sourceID].Canonical.BaselineID || runtime.vaults[forkID].Canonical.GenesisID == runtime.vaults[sourceID].Canonical.GenesisID {
+		t.Fatal("Fork reused source canonical identities")
+	}
+}
+
 func mustIdentifier(t *testing.T, value string) canonical.Identifier {
 	t.Helper()
 	identifier, err := decodeHexIdentifier(value)
