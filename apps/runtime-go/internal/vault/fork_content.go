@@ -7,17 +7,18 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/mashuproject/awsm_bak/apps/runtime-go/internal/canonical"
 	awsmcrypto "github.com/mashuproject/awsm_bak/apps/runtime-go/internal/crypto"
 	"github.com/mashuproject/awsm_bak/apps/runtime-go/internal/storage"
 )
 
-// reauthorForkContentEvents carries the deliberately small first Fork slice:
-// a content label has no object or authority dependencies, so it can be
-// signed again against the destination Genesis without importing source
-// history. More involved content closures fail closed until their identity and
-// heavy-wrapper mappings are implemented.
+// reauthorForkContentEvents re-authors the source's supported content closure
+// against the destination Genesis. It deliberately does not copy Authority or
+// Lifecycle history; every retained content identity and Object is rebuilt for
+// the destination Vault.
 func reauthorForkContentEvents(
 	source *Replica,
 	destination *Replica,
@@ -38,15 +39,19 @@ func reauthorForkContentEvents(
 		}
 		objectMappings := make(map[canonical.Identifier]canonical.Identifier)
 		bundleMappings := make(map[canonical.Identifier]canonical.Identifier)
+		noteMappings := make(map[canonical.Identifier]canonical.Identifier)
 		if err := reauthorForkArtifactObjects(source, destination, creation, state, sourceState, sourceVaultID, sourceEpochID, sourceEpochKey, objectMappings, artifacts); err != nil {
+			return err
+		}
+		if err := reauthorForkNoteObjects(source, destination, creation, state, sourceState, sourceVaultID, sourceEpochID, sourceEpochKey, objectMappings, artifacts); err != nil {
 			return err
 		}
 		if err := reauthorForkBundleObjects(source, destination, creation, state, sourceState, sourceVaultID, sourceEpochID, sourceEpochKey, objectMappings, bundleMappings, artifacts); err != nil {
 			return err
 		}
-		return reauthorForkContentEventsWithMappings(source, destination, creation, state, objectMappings, bundleMappings, artifacts)
+		return reauthorForkContentEventsWithMappings(source, destination, creation, state, objectMappings, bundleMappings, noteMappings, artifacts)
 	}
-	return reauthorForkContentEventsWithMappings(source, destination, creation, state, nil, nil, artifacts)
+	return reauthorForkContentEventsWithMappings(source, destination, creation, state, nil, nil, nil, artifacts)
 }
 
 func reauthorForkContentEventsWithMappings(
@@ -56,16 +61,20 @@ func reauthorForkContentEventsWithMappings(
 	state *canonicalReplicaState,
 	objectMappings map[canonical.Identifier]canonical.Identifier,
 	bundleMappings map[canonical.Identifier]canonical.Identifier,
+	noteMappings map[canonical.Identifier]canonical.Identifier,
 	artifacts Dependencies,
 ) error {
 	content := make([]canonical.Event, 0)
 	for _, event := range source.Events() {
 		if event.Family == canonical.ContentFamily {
-			if event.Type != 1 && event.Type != 3 {
+			if event.Type != 1 && event.Type != 3 && (event.Type < 27 || event.Type > 31) {
 				return fmt.Errorf("Fork Content Event type %d re-authoring is not implemented by this Runtime", event.Type)
 			}
 			if event.Type == 1 && len(event.Dependencies) != 0 {
 				return fmt.Errorf("Fork Content Event type %d re-authoring is not implemented by this Runtime", event.Type)
+			}
+			if event.Type >= 27 && event.Type <= 31 && (objectMappings == nil || noteMappings == nil) {
+				return errors.New("Fork Note dependencies are unavailable")
 			}
 			content = append(content, event)
 		}
@@ -129,6 +138,18 @@ func reauthorForkContentEventsWithMappings(
 				body = mappedBody
 				dependencies = mappedDependencies
 			}
+			if sourceEvent.Type >= 27 && sourceEvent.Type <= 31 {
+				if objectMappings == nil || bundleMappings == nil || noteMappings == nil {
+					return errors.New("Fork Note dependencies are unavailable")
+				}
+				mappedBody, mappedDependencies, err := reauthorForkNoteEvent(sourceEvent, translated, objectMappings, bundleMappings, noteMappings, collectionMappings)
+				if err != nil {
+					cleanup()
+					return err
+				}
+				body = mappedBody
+				dependencies = mappedDependencies
+			}
 			event, err := canonical.SignEvent(canonical.EventInput{
 				VaultID: creation.IDs.VaultID, GenerationID: creation.IDs.GenerationID,
 				ParentRecordIDs: parents, AuthorityParentIDs: authorityParents,
@@ -180,6 +201,285 @@ func reauthorForkContentEventsWithMappings(
 	state.AuthorityFrontier = identifiersToHex(next.AuthorityFrontier)
 	state.ContinuityRecordIDs = identifiersToHex(next.ContinuityRecordIDs)
 	return nil
+}
+
+func reauthorForkNoteEvent(
+	event canonical.Event,
+	translated map[canonical.Identifier]canonical.Identifier,
+	objectMappings map[canonical.Identifier]canonical.Identifier,
+	bundleMappings map[canonical.Identifier]canonical.Identifier,
+	noteMappings map[canonical.Identifier]canonical.Identifier,
+	collectionMappings map[canonical.Identifier]canonical.Identifier,
+) (canonical.Value, []canonical.Dependency, error) {
+	body, ok := replicaMapValue(event.Body)
+	if !ok {
+		return nil, nil, fmt.Errorf("Fork Note Event type %d body is invalid", event.Type)
+	}
+	fresh := func() (canonical.Identifier, error) {
+		textID, err := randomID()
+		if err != nil {
+			return canonical.Identifier{}, err
+		}
+		return decodeHexIdentifier(textID)
+	}
+	mapNote := func(source canonical.Identifier) (canonical.Identifier, error) {
+		if mapped, exists := noteMappings[source]; exists {
+			return mapped, nil
+		}
+		mapped, err := fresh()
+		if err != nil {
+			return canonical.Identifier{}, err
+		}
+		if mapped == source {
+			return canonical.Identifier{}, errors.New("Fork Note identity was not fresh")
+		}
+		noteMappings[source] = mapped
+		return mapped, nil
+	}
+	mapCollection := func(source canonical.Identifier) (canonical.Identifier, error) {
+		if mapped, exists := collectionMappings[source]; exists {
+			return mapped, nil
+		}
+		mapped, err := fresh()
+		if err != nil {
+			return canonical.Identifier{}, err
+		}
+		collectionMappings[source] = mapped
+		return mapped, nil
+	}
+	mapBundle := func(source canonical.Identifier) (canonical.Identifier, error) {
+		if mapped, exists := bundleMappings[source]; exists {
+			return mapped, nil
+		}
+		mapped, err := fresh()
+		if err != nil {
+			return canonical.Identifier{}, err
+		}
+		bundleMappings[source] = mapped
+		return mapped, nil
+	}
+	mapCause := func(source canonical.Identifier) (canonical.Identifier, error) {
+		mapped, exists := translated[source]
+		if !exists {
+			return canonical.Identifier{}, fmt.Errorf("Fork Note Cause %s is unavailable", hexIdentifier(source))
+		}
+		return mapped, nil
+	}
+	mapCauseSet := func(value canonical.Value, field string) ([]canonical.Value, error) {
+		values, ok := replicaMapArrayValue(value)
+		if !ok || len(values) == 0 {
+			return nil, fmt.Errorf("%s is invalid", field)
+		}
+		mapped := make([]canonical.Value, len(values))
+		for index, value := range values {
+			source, ok := replicaIdentifierValue(value)
+			if !ok {
+				return nil, fmt.Errorf("%s contains an invalid Cause ID", field)
+			}
+			destination, err := mapCause(source)
+			if err != nil {
+				return nil, err
+			}
+			mapped[index] = destination[:]
+		}
+		sort.Slice(mapped, func(left, right int) bool {
+			leftID, _ := replicaIdentifierValue(mapped[left])
+			rightID, _ := replicaIdentifierValue(mapped[right])
+			return bytes.Compare(leftID[:], rightID[:]) < 0
+		})
+		return mapped, nil
+	}
+	mapObjectDependencies := func(dependencies []canonical.Dependency) ([]canonical.Dependency, error) {
+		mapped := make([]canonical.Dependency, len(dependencies))
+		for index, dependency := range dependencies {
+			if dependency.Type != 6 {
+				return nil, fmt.Errorf("Fork Note dependency type %d is not supported", dependency.Type)
+			}
+			destination, ok := objectMappings[dependency.ID]
+			if !ok {
+				return nil, fmt.Errorf("Fork Note Content Object %s is unavailable", hexIdentifier(dependency.ID))
+			}
+			mapped[index] = canonical.Dependency{Type: dependency.Type, ID: destination}
+		}
+		sort.Slice(mapped, func(left, right int) bool { return bytes.Compare(mapped[left].ID[:], mapped[right].ID[:]) < 0 })
+		return mapped, nil
+	}
+	mapTarget := func(value canonical.Value) (canonical.Value, error) {
+		target, ok := replicaMapValue(value)
+		if !ok || !replicaMapHasKeys(target, 2) {
+			return nil, errors.New("Fork Note target is invalid")
+		}
+		kind, ok := replicaMapNumber(target, 0)
+		if !ok || (kind != 1 && kind != 2) {
+			return nil, errors.New("Fork Note target kind is invalid")
+		}
+		source, ok := replicaIdentifier(target, 1)
+		if !ok {
+			return nil, errors.New("Fork Note target identity is invalid")
+		}
+		var destination canonical.Identifier
+		var err error
+		if kind == 1 {
+			destination, err = mapCollection(source)
+		} else {
+			destination, err = mapBundle(source)
+		}
+		if err != nil {
+			return nil, err
+		}
+		return canonical.Map{0: kind, 1: destination[:]}, nil
+	}
+	noteID, ok := replicaIdentifier(body, 0)
+	if !ok {
+		return nil, nil, fmt.Errorf("Fork Note Event type %d Note ID is invalid", event.Type)
+	}
+	destinationNoteID, err := mapNote(noteID)
+	if err != nil {
+		return nil, nil, err
+	}
+	switch event.Type {
+	case 27:
+		if !replicaMapHasKeys(body, 3) {
+			return nil, nil, errors.New("Fork Note Created body is invalid")
+		}
+		target, err := mapTarget(replicaMapEntryMust(body, 1))
+		if err != nil {
+			return nil, nil, err
+		}
+		contentObjectID, ok := replicaIdentifier(body, 2)
+		if !ok {
+			return nil, nil, errors.New("Fork Note Created Content Object ID is invalid")
+		}
+		destinationObjectID, ok := objectMappings[contentObjectID]
+		if !ok {
+			return nil, nil, errors.New("Fork Note Created Content Object mapping is unavailable")
+		}
+		if len(event.Dependencies) != 1 || event.Dependencies[0].Type != 6 || event.Dependencies[0].ID != contentObjectID {
+			return nil, nil, errors.New("Fork Note Created dependencies do not match its Content Object")
+		}
+		dependencies, err := mapObjectDependencies(event.Dependencies)
+		if err != nil {
+			return nil, nil, err
+		}
+		return canonical.Map{0: destinationNoteID[:], 1: target, 2: destinationObjectID[:]}, dependencies, nil
+	case 28:
+		if !replicaMapHasKeys(body, 3) {
+			return nil, nil, errors.New("Fork Note Revised body is invalid")
+		}
+		heads, err := mapCauseSet(replicaMapEntryMust(body, 1), "Fork Note Revised Cause IDs")
+		if err != nil {
+			return nil, nil, err
+		}
+		contentObjectID, ok := replicaIdentifier(body, 2)
+		if !ok {
+			return nil, nil, errors.New("Fork Note Revised Content Object ID is invalid")
+		}
+		destinationObjectID, ok := objectMappings[contentObjectID]
+		if !ok {
+			return nil, nil, errors.New("Fork Note Revised Content Object mapping is unavailable")
+		}
+		if len(event.Dependencies) != 1 || event.Dependencies[0].Type != 6 || event.Dependencies[0].ID != contentObjectID {
+			return nil, nil, errors.New("Fork Note Revised dependencies do not match its Content Object")
+		}
+		dependencies, err := mapObjectDependencies(event.Dependencies)
+		if err != nil {
+			return nil, nil, err
+		}
+		return canonical.Map{0: destinationNoteID[:], 1: heads, 2: destinationObjectID[:]}, dependencies, nil
+	case 29, 30:
+		if !replicaMapHasKeys(body, 2) {
+			return nil, nil, fmt.Errorf("Fork Note Event type %d body is invalid", event.Type)
+		}
+		heads, err := mapCauseSet(replicaMapEntryMust(body, 1), "Fork Note Cause IDs")
+		if err != nil {
+			return nil, nil, err
+		}
+		if len(event.Dependencies) != 0 {
+			return nil, nil, fmt.Errorf("Fork Note Event type %d must not have dependencies", event.Type)
+		}
+		return canonical.Map{0: destinationNoteID[:], 1: heads}, nil, nil
+	case 31:
+		if !replicaMapHasKeys(body, 4) {
+			return nil, nil, errors.New("Fork Note Conflict Resolution body is invalid")
+		}
+		heads, err := mapCauseSet(replicaMapEntryMust(body, 1), "Fork Note Conflict Cause IDs")
+		if err != nil {
+			return nil, nil, err
+		}
+		var retained canonical.Value
+		if raw := replicaMapEntryMust(body, 2); raw != nil {
+			contentObjectID, ok := replicaIdentifierValue(raw)
+			if !ok {
+				return nil, nil, errors.New("Fork Note retained Content Object ID is invalid")
+			}
+			destinationObjectID, ok := objectMappings[contentObjectID]
+			if !ok {
+				return nil, nil, errors.New("Fork Note retained Content Object mapping is unavailable")
+			}
+			retained = destinationObjectID[:]
+		}
+		splits, ok := replicaMapArray(body, 3)
+		if !ok {
+			return nil, nil, errors.New("Fork Note split Notes are invalid")
+		}
+		mappedSplits := make([]canonical.Value, len(splits))
+		for index, value := range splits {
+			split, ok := replicaMapValue(value)
+			if !ok || !replicaMapHasKeys(split, 2) {
+				return nil, nil, fmt.Errorf("Fork Note split Note %d is invalid", index)
+			}
+			sourceSplitID, ok := replicaIdentifier(split, 0)
+			if !ok {
+				return nil, nil, fmt.Errorf("Fork Note split Note %d ID is invalid", index)
+			}
+			destinationSplitID, err := mapNote(sourceSplitID)
+			if err != nil {
+				return nil, nil, err
+			}
+			contentObjectID, ok := replicaIdentifier(split, 1)
+			if !ok {
+				return nil, nil, fmt.Errorf("Fork Note split Note %d Content Object ID is invalid", index)
+			}
+			destinationObjectID, ok := objectMappings[contentObjectID]
+			if !ok {
+				return nil, nil, fmt.Errorf("Fork Note split Note %d Content Object mapping is unavailable", index)
+			}
+			mappedSplits[index] = canonical.Map{0: destinationSplitID[:], 1: destinationObjectID[:]}
+		}
+		sort.Slice(mappedSplits, func(left, right int) bool {
+			leftID, _ := replicaIdentifier(mappedSplits[left], 0)
+			rightID, _ := replicaIdentifier(mappedSplits[right], 0)
+			return bytes.Compare(leftID[:], rightID[:]) < 0
+		})
+		expectedObjectIDs := make(map[canonical.Identifier]struct{})
+		if raw := replicaMapEntryMust(body, 2); raw != nil {
+			retainedID, _ := replicaIdentifierValue(raw)
+			expectedObjectIDs[retainedID] = struct{}{}
+		}
+		for _, value := range splits {
+			split, _ := replicaMapValue(value)
+			contentID, _ := replicaIdentifier(split, 1)
+			expectedObjectIDs[contentID] = struct{}{}
+		}
+		if len(event.Dependencies) != len(expectedObjectIDs) {
+			return nil, nil, errors.New("Fork Note Conflict Resolution dependencies do not match its Content Objects")
+		}
+		for _, dependency := range event.Dependencies {
+			if dependency.Type != 6 {
+				return nil, nil, fmt.Errorf("Fork Note dependency type %d is not supported", dependency.Type)
+			}
+			if _, expected := expectedObjectIDs[dependency.ID]; !expected {
+				return nil, nil, errors.New("Fork Note Conflict Resolution has an unexpected Content Object dependency")
+			}
+		}
+		dependencies, err := mapObjectDependencies(event.Dependencies)
+		if err != nil {
+			return nil, nil, err
+		}
+		return canonical.Map{0: destinationNoteID[:], 1: heads, 2: retained, 3: mappedSplits}, dependencies, nil
+	default:
+		return nil, nil, fmt.Errorf("Fork Content Event type %d is not a Note Event", event.Type)
+	}
 }
 
 func reauthorForkBundleRegistered(body canonical.Value, dependencies []canonical.Dependency, objectMappings map[canonical.Identifier]canonical.Identifier, bundleMappings map[canonical.Identifier]canonical.Identifier, collectionMappings map[canonical.Identifier]canonical.Identifier) (canonical.Value, []canonical.Dependency, error) {
@@ -380,6 +680,97 @@ func reauthorForkArtifactObjects(
 	return nil
 }
 
+func reauthorForkNoteObjects(
+	source *Replica,
+	destination *Replica,
+	creation PreparedCanonicalVaultCreation,
+	state *canonicalReplicaState,
+	sourceState *canonicalReplicaState,
+	sourceVaultID canonical.Identifier,
+	sourceEpochID canonical.Identifier,
+	sourceEpochKey []byte,
+	objectMappings map[canonical.Identifier]canonical.Identifier,
+	artifacts Dependencies,
+) error {
+	if state.ObjectStorageItemIDs == nil {
+		state.ObjectStorageItemIDs = map[string]string{}
+	}
+	stored := make([]string, 0)
+	cleanup := func() {
+		for _, storageItemID := range stored {
+			_ = artifacts.Artifacts.Delete(storageItemID)
+		}
+	}
+	for _, sourceObjectIDText := range sortedStringKeys(sourceState.ObjectStorageItemIDs) {
+		sourceObjectID, err := decodeHexIdentifier(sourceObjectIDText)
+		if err != nil {
+			cleanup()
+			return errors.New("Fork source Object identity is invalid")
+		}
+		sourceObject, ok := source.Object(sourceObjectID)
+		if !ok {
+			cleanup()
+			return fmt.Errorf("Fork source Object %s is unavailable", sourceObjectIDText)
+		}
+		if sourceObject.ObjectType != 3 {
+			continue
+		}
+		if err := validateForkNoteContentBody(sourceObject.Body); err != nil {
+			cleanup()
+			return fmt.Errorf("Fork source Note Content Object %s is invalid: %w", sourceObjectIDText, err)
+		}
+		sourceObjectEnvelopeBytes, _, err := readForkOpaque(artifacts, sourceState.ObjectStorageItemIDs[sourceObjectIDText])
+		if err != nil {
+			cleanup()
+			return err
+		}
+		openedObject, err := awsmcrypto.OpenCompactItem(sourceVaultID, sourceEpochID, sourceEpochKey, sourceObjectEnvelopeBytes)
+		if err != nil || openedObject.PayloadType != 2 || !bytes.Equal(openedObject.PayloadBytes, sourceObject.Bytes) {
+			cleanup()
+			return fmt.Errorf("Fork source Note Content Object %s is not authenticated", sourceObjectIDText)
+		}
+		destinationObjectBytes, err := rebuildForkNoteObject(sourceObject, creation.IDs.VaultID, creation.RequiredFeatureSetID)
+		if err != nil {
+			cleanup()
+			return fmt.Errorf("rebuild Fork Note Content Object %s: %w", sourceObjectIDText, err)
+		}
+		destinationObjectID, err := canonical.VaultObjectID(creation.IDs.VaultID, 3, destinationObjectBytes)
+		if err != nil {
+			cleanup()
+			return fmt.Errorf("derive Fork Note Content Object identity: %w", err)
+		}
+		if destinationObjectID == sourceObjectID {
+			cleanup()
+			return errors.New("Fork Note Content Object identity was not fresh")
+		}
+		destinationEnvelopeBytes, err := awsmcrypto.SealCompactItem(awsmcrypto.CompactItemInput{
+			VaultID: creation.IDs.VaultID, KeyEpochID: creation.KeyEpochID, KeyEpochKey: creation.KeyEpochKey,
+			PayloadType: 2, PayloadBytes: destinationObjectBytes,
+		})
+		if err != nil {
+			cleanup()
+			return fmt.Errorf("protect Fork Note Content Object %s: %w", sourceObjectIDText, err)
+		}
+		destinationEnvelope, err := storage.DecodeOpaqueEnvelope(destinationEnvelopeBytes)
+		if err != nil {
+			cleanup()
+			return fmt.Errorf("decode Fork Note Content Object envelope: %w", err)
+		}
+		if err := storeOpaqueCreationItem(artifacts.Artifacts, destinationEnvelope.StorageItemID, destinationEnvelopeBytes); err != nil {
+			cleanup()
+			return fmt.Errorf("store Fork Note Content Object: %w", err)
+		}
+		stored = append(stored, hexIdentifier(destinationEnvelope.StorageItemID))
+		if err := destination.AdmitObject(destinationObjectID, destinationObjectBytes); err != nil {
+			cleanup()
+			return fmt.Errorf("admit Fork Note Content Object: %w", err)
+		}
+		state.ObjectStorageItemIDs[hexIdentifier(destinationObjectID)] = hexIdentifier(destinationEnvelope.StorageItemID)
+		objectMappings[sourceObjectID] = destinationObjectID
+	}
+	return nil
+}
+
 func reauthorForkBundleObjects(
 	source *Replica,
 	destination *Replica,
@@ -402,7 +793,7 @@ func reauthorForkBundleObjects(
 		if !ok {
 			return fmt.Errorf("Fork source Object %s is unavailable", sourceObjectIDText)
 		}
-		if sourceObject.ObjectType == 2 {
+		if sourceObject.ObjectType == 2 || sourceObject.ObjectType == 3 {
 			continue
 		}
 		if sourceObject.ObjectType != 1 {
@@ -533,6 +924,56 @@ func rebuildForkArtifactObject(source ReplicaObject, destinationVaultID, require
 	return canonical.EncodeValue(canonical.Map{
 		0: uint64(1), 1: destinationVaultID[:], 2: source.ObjectType, 3: requiredFeatureSetID[:], 4: source.Body, 5: extensions,
 	})
+}
+
+func rebuildForkNoteObject(source ReplicaObject, destinationVaultID, requiredFeatureSetID canonical.Identifier) ([]byte, error) {
+	if source.ObjectType != 3 {
+		return nil, errors.New("source Object is not a Note Content Object")
+	}
+	if err := validateForkNoteContentBody(source.Body); err != nil {
+		return nil, err
+	}
+	value, err := canonical.DecodeValue(source.Bytes)
+	if err != nil {
+		return nil, err
+	}
+	root, ok := replicaMapValue(value)
+	if !ok || !replicaMapHasKeys(root, 6) {
+		return nil, errors.New("source Note Content Object envelope is invalid")
+	}
+	extensions, ok := replicaMapEntry(root, 5)
+	if !ok {
+		return nil, errors.New("source Note Content Object extensions are unavailable")
+	}
+	return canonical.EncodeValue(canonical.Map{
+		0: uint64(1), 1: destinationVaultID[:], 2: uint64(3), 3: requiredFeatureSetID[:], 4: replicaMapEntryMust(root, 4), 5: extensions,
+	})
+}
+
+func validateForkNoteContentBody(value canonical.Value) error {
+	body, ok := replicaMapValue(value)
+	if !ok || !replicaMapHasKeys(body, 4) {
+		return errors.New("Note Content body is invalid")
+	}
+	format, ok := replicaMapNumber(body, 0)
+	if !ok || format != 1 {
+		return errors.New("Note Content format is invalid")
+	}
+	if title := replicaMapEntryMust(body, 1); title != nil {
+		text, ok := title.(string)
+		if !ok || !utf8.ValidString(text) || len([]byte(text)) > 1024 {
+			return errors.New("Note title is invalid")
+		}
+	}
+	noteBody, ok := replicaMapEntryMust(body, 2).(string)
+	if !ok || !utf8.ValidString(noteBody) || strings.Contains(noteBody, "\r") || strings.Contains(noteBody, "data:") || strings.Contains(noteBody, "<") {
+		return errors.New("Note body is invalid")
+	}
+	dialect, ok := replicaMapEntryMust(body, 3).(string)
+	if !ok || dialect != "awsm.note.commonmark" {
+		return errors.New("Note body dialect is invalid")
+	}
+	return nil
 }
 
 func readForkOpaque(artifacts Dependencies, storageItemID string) ([]byte, storage.OpaqueEnvelope, error) {
