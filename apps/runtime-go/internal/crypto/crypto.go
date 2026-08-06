@@ -121,7 +121,7 @@ func credentialFromSeeds(signingSeed, wrappingPrivateKey []byte) (CredentialKeys
 }
 
 func expand(prk []byte, label string) ([]byte, error) {
-	info, err := canonical.Transcript(label, nil)
+	info, err := canonical.Transcript(label)
 	if err != nil {
 		return nil, err
 	}

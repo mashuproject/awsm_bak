@@ -71,10 +71,13 @@ until the Go Runtime has the authenticated Host and Event/DAG services they requ
 
 The `internal/canonical` package now provides the first interoperable semantic substrate: strict
 canonical CBOR values, transcript framing, authenticated Event and Baseline Record encoding and
-decoding, Record ID derivation, and causal DAG validation. `internal/crypto` adds the BIP39
-Recovery Phrase, credential, and Key Epoch derivations. Deterministic vectors are generated from
-the browser Runtime's canonical implementation. The Runtime command path does not yet persist or
-replay these records; that integration remains part of semantic parity work.
+decoding, Record ID derivation, and causal DAG validation. `internal/crypto` adds the browser-
+compatible BIP39 Recovery Phrase, credential, Key Epoch, compact XChaCha20-Poly1305, HPKE, and
+Key Envelope services. `internal/storage` adds the opaque compact/streamable envelope codec, and
+`internal/vault` can prepare and verify the authenticated initial Baseline and Genesis ceremony.
+Deterministic vectors are generated from the browser Runtime's canonical implementation, including
+exact Baseline and Genesis byte digests. The Runtime command path does not yet persist or replay
+these records; that integration remains part of semantic parity work.
 
 This slice does not claim full semantic parity with the browser Runtime. The Go
 implementation still needs Runtime-integrated Event/DAG and cryptographic

@@ -66,3 +66,26 @@ func TestRecoveryCredentialDerivationIsDeterministic(t *testing.T) {
 		t.Fatalf("unexpected Recovery Credential key sizes: %#v", first)
 	}
 }
+
+func TestRecoveryCredentialDerivationMatchesBrowserVector(t *testing.T) {
+	entropy := make([]byte, 16)
+	for index := range entropy {
+		entropy[index] = byte(index)
+	}
+	keys, err := DeriveRecoveryCredential(entropy)
+	if err != nil {
+		t.Fatalf("DeriveRecoveryCredential: %v", err)
+	}
+	if got := hex.EncodeToString(keys.SigningSeed); got != "60df687a9add9358eb45b3f1802c4c9172e59bf26b233e6bf1d1ea68f7990c79" {
+		t.Fatalf("Recovery signing seed = %s", got)
+	}
+	if got := hex.EncodeToString(keys.WrappingPrivateKey); got != "307e4c384feb75dfb41076a195fb6767d2c46bb79e2a1bf22bfa9bbfb1d6abdc" {
+		t.Fatalf("Recovery wrapping private key = %s", got)
+	}
+	if got := hex.EncodeToString(keys.SigningPublicKey); got != "a5fa558d0d54bb880374c53598d9fa016ecdcfbd17e9b7afaa4d94ceea0b9ffb" {
+		t.Fatalf("Recovery signing public key = %s", got)
+	}
+	if got := hex.EncodeToString(keys.WrappingPublicKey); got != "8b095d7032c4f620293e229d5651b78e4ff8f470fe394f0b554f04c664140452" {
+		t.Fatalf("Recovery wrapping public key = %s", got)
+	}
+}

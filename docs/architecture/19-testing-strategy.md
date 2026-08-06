@@ -63,9 +63,11 @@ anchors, exact authority reduction with unrelated Content parents absent, and re
 self-asserted successor Baseline.
 
 The Go Runtime's current canonical substrate includes cross-language Event signature, Baseline
-shape, Record ID, Recovery Phrase, and Key Epoch vectors generated from the browser implementation,
-plus pure causal-DAG collision and cycle tests. This is an initial conformance proof, not a claim
-that the Go command path has integrated replay or the complete vector suite.
+shape, Record ID, Recovery Phrase, Credential, Key Epoch, compact encryption, HPKE, Key Envelope,
+opaque storage, and initial-creation vectors generated from the browser implementation, plus pure
+causal-DAG collision and cycle tests. The creation test asserts stable browser-derived Baseline
+and Genesis byte digests. This is an initial conformance proof, not a claim that the Go command
+path has integrated replay or the complete vector suite.
 
 # Reducer model tests
 
