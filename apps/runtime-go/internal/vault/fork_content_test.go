@@ -113,6 +113,62 @@ func TestForkReauthorsArtifactObjectAndWrapper(t *testing.T) {
 	}
 }
 
+func TestForkReauthorsBundleDescriptorAndRegisteredEvent(t *testing.T) {
+	ctx := context.Background()
+	state := store.NewMemoryState()
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatalf("create Runtime: %v", err)
+	}
+	sourceID, _ := createVaultWithPhraseForTest(t, runtime, "Bundle Fork source")
+	artifactID := admitCompleteExportArtifact(t, runtime, dependencies, sourceID)
+	bundleID, collectionID := admitForkBundleRegisteredEvent(t, runtime, dependencies, sourceID, artifactID)
+	started, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "BeginVaultFork", "expectedVaultId": sourceID,
+	}))
+	if err != nil {
+		t.Fatalf("begin Fork: %v", err)
+	}
+	setup := started.(map[string]string)
+	confirmed, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "ConfirmVaultFork", "setupId": setup["setupId"], "recoveryPhrase": setup["recoveryPhrase"],
+	}))
+	if err != nil {
+		t.Fatalf("confirm Bundle Fork: %v", err)
+	}
+	forkID := confirmed.(map[string]string)["vaultId"]
+	items, err := ProjectLibrary(runtime.replicas[forkID])
+	if err != nil {
+		t.Fatalf("project Fork Library: %v", err)
+	}
+	if len(items) != 1 || items[0].BundleID == hexIdentifier(bundleID) || items[0].CollectionID == hexIdentifier(collectionID) || items[0].ArtifactID == hexIdentifier(artifactID) {
+		t.Fatalf("Fork Library items = %#v", items)
+	}
+	if _, err := runtime.ExportComplete(forkID, setup["recoveryPhrase"]); err != nil {
+		t.Fatalf("export re-authored Bundle closure: %v", err)
+	}
+	forkEvents := runtime.replicas[forkID].Events()
+	var registered *canonical.Event
+	for index := range forkEvents {
+		if forkEvents[index].Family == canonical.ContentFamily && forkEvents[index].Type == 3 {
+			registered = &forkEvents[index]
+			break
+		}
+	}
+	if registered == nil {
+		t.Fatal("Fork omitted Bundle Registered Event")
+	}
+	if len(registered.Dependencies) != 2 {
+		t.Fatalf("Fork Bundle Registered dependencies = %#v", registered.Dependencies)
+	}
+	for _, dependency := range registered.Dependencies {
+		if dependency.ID == artifactID {
+			t.Fatal("Fork Bundle Registered Event reused a source dependency identity")
+		}
+	}
+}
+
 func admitForkLabelEvent(t *testing.T, runtime *Runtime, dependencies Dependencies, vaultID, label string) {
 	t.Helper()
 	value := runtime.vaults[vaultID]
@@ -156,4 +212,76 @@ func admitForkLabelEvent(t *testing.T, runtime *Runtime, dependencies Dependenci
 	if err := runtime.AdmitOpaqueEvent(context.Background(), vaultID, encoded); err != nil {
 		t.Fatalf("admit source label Event: %v", err)
 	}
+}
+
+func admitForkBundleRegisteredEvent(t *testing.T, runtime *Runtime, dependencies Dependencies, vaultID string, artifactID canonical.Identifier) (canonical.Identifier, canonical.Identifier) {
+	t.Helper()
+	value := runtime.vaults[vaultID]
+	vaultIdentifier := mustIdentifier(t, vaultID)
+	featureSetID := mustIdentifier(t, value.Canonical.RequiredFeatureSetID)
+	bundleID := filledCreationID(241)
+	collectionID := filledCreationID(242)
+	descriptorBody := canonical.Map{
+		0: uint64(1), 1: bundleID[:], 2: int64(1234), 3: "https://example.test/a", 4: "https://example.test/b",
+		5: "awsm.capture.web-page-snapshot", 6: "awsm.adapter.browser-web-page", 7: uint64(1), 8: "Example",
+		9: []canonical.Value{canonical.Map{0: artifactID[:], 1: "awsm.artifact.primary"}}, 10: []canonical.Value{}, 11: canonical.Map{0: uint64(1), 1: []byte{1}},
+	}
+	descriptorBytes, err := canonical.EncodeValue(canonical.Map{
+		0: uint64(1), 1: vaultIdentifier[:], 2: uint64(1), 3: featureSetID[:], 4: descriptorBody, 5: map[string][]byte{},
+	})
+	if err != nil {
+		t.Fatalf("encode Bundle Descriptor: %v", err)
+	}
+	descriptorID, err := canonical.VaultObjectID(vaultIdentifier, 1, descriptorBytes)
+	if err != nil {
+		t.Fatalf("derive Bundle Descriptor ID: %v", err)
+	}
+	epochID := mustIdentifier(t, value.Canonical.KeyEpochID)
+	epochBytes, err := dependencies.Secrets.Get(trustedSecretService, epochSecretAccount(vaultID, value.Canonical.KeyEpochID))
+	if err != nil {
+		t.Fatalf("read source Key Epoch: %v", err)
+	}
+	epochSecret, err := decodeEpochSecret(epochBytes, vaultIdentifier, epochID)
+	if err != nil {
+		t.Fatalf("decode source Key Epoch: %v", err)
+	}
+	descriptorEnvelope, err := awsmcrypto.SealCompactItem(awsmcrypto.CompactItemInput{
+		VaultID: vaultIdentifier, KeyEpochID: epochID, KeyEpochKey: epochSecret.key, PayloadType: 2, PayloadBytes: descriptorBytes,
+	})
+	if err != nil {
+		t.Fatalf("seal Bundle Descriptor: %v", err)
+	}
+	if err := runtime.AdmitOpaqueObject(context.Background(), vaultID, descriptorEnvelope); err != nil {
+		t.Fatalf("admit Bundle Descriptor: %v", err)
+	}
+	memberID := mustIdentifier(t, value.Canonical.MemberID)
+	credentialID := mustIdentifier(t, value.Canonical.ClientCredentialID)
+	clientBytes, err := dependencies.Secrets.Get(trustedSecretService, clientSecretAccount(vaultID, value.Canonical.ClientCredentialID))
+	if err != nil {
+		t.Fatalf("read source Client Credential: %v", err)
+	}
+	clientSecret, err := decodeClientSecret(clientBytes, vaultIdentifier, memberID, credentialID)
+	if err != nil {
+		t.Fatalf("decode source Client Credential: %v", err)
+	}
+	event, err := canonical.SignEvent(canonical.EventInput{
+		VaultID: vaultIdentifier, GenerationID: mustIdentifier(t, value.GenerationID),
+		ParentRecordIDs: runtime.replicas[vaultID].State().CausalFrontier, AuthorityParentIDs: runtime.replicas[vaultID].State().AuthorityFrontier,
+		Dependencies: []canonical.Dependency{{Type: 3, ID: descriptorID}, {Type: 5, ID: artifactID}}, RequiredFeatureSetID: featureSetID,
+		Extensions: map[string][]byte{}, Family: canonical.ContentFamily, Type: 3, SignerCredentialID: credentialID, AssertedAt: 1234,
+		Body: canonical.Map{0: bundleID[:], 1: descriptorID[:], 2: collectionID[:]},
+	}, ed25519.PrivateKey(clientSecret.signingSecretKey))
+	if err != nil {
+		t.Fatalf("sign Bundle Registered Event: %v", err)
+	}
+	eventEnvelope, err := awsmcrypto.SealCompactItem(awsmcrypto.CompactItemInput{
+		VaultID: vaultIdentifier, KeyEpochID: epochID, KeyEpochKey: epochSecret.key, PayloadType: 1, PayloadBytes: event.Bytes,
+	})
+	if err != nil {
+		t.Fatalf("seal Bundle Registered Event: %v", err)
+	}
+	if err := runtime.AdmitOpaqueEvent(context.Background(), vaultID, eventEnvelope); err != nil {
+		t.Fatalf("admit Bundle Registered Event: %v", err)
+	}
+	return bundleID, collectionID
 }

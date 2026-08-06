@@ -100,7 +100,7 @@ release:
 - page capture from the desktop window;
 - the extension-to-desktop Capture Bundle bridge;
 - multi-Key-Epoch, Feature Manifest, and adopted-Vacuum Complete Export closures;
-- Bundle Descriptor, Note, and other dependency-bearing Content Fork re-authoring and broader Authority/Key-Epoch events;
+- Note and other dependency-bearing Content Fork re-authoring and broader Authority/Key-Epoch events;
 - conflict/rebase and sparse-Replica projections; and
 - complete Wails workflow coverage.
 

@@ -71,7 +71,7 @@ summaries, then routes Commands by Vault ID; it does not copy desktop Vault byte
 Desktop page acquisition is intentionally unavailable. Capture remains available for extension-owned
 local Vaults; the extension-to-desktop Capture Bundle bridge is not implemented. Multi-Key-Epoch,
 Feature Manifest, and adopted-Vacuum Complete Export semantics, object/
-Bundle Descriptor, Note, and other dependency-bearing Content Fork re-authoring, broader Authority and Key-Epoch event families, conflict/rebase
+Note and other dependency-bearing Content Fork re-authoring, broader Authority and Key-Epoch event families, conflict/rebase
 projections, and complete Wails workflow coverage remain explicit parity boundaries.
 
 The move boundary is an explicit one-use transfer ceremony, not synchronization. The source
