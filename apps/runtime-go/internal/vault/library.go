@@ -61,6 +61,23 @@ type LibraryTagAssignment struct {
 	Active       bool   `json:"active"`
 }
 
+type LibraryNoteVersion struct {
+	HeadCauseID     string  `json:"headCauseId"`
+	ContentObjectID *string `json:"contentObjectId"`
+	Title           *string `json:"title"`
+	Body            *string `json:"body"`
+	BodyDialect     *string `json:"bodyDialect"`
+	AssertedAt      int64   `json:"assertedAt"`
+}
+
+type LibraryNote struct {
+	NoteID     string               `json:"noteId"`
+	TargetKind uint64               `json:"targetKind"`
+	TargetID   string               `json:"targetId"`
+	State      string               `json:"state"`
+	Versions   []LibraryNoteVersion `json:"versions"`
+}
+
 // LibraryProjection is a rebuildable user-facing view. It is derived solely
 // from the authenticated Replica and is never an authority source.
 type LibraryProjection struct {
@@ -69,6 +86,7 @@ type LibraryProjection struct {
 	Folders        []LibraryFolder        `json:"folders"`
 	Tags           []LibraryTag           `json:"tags"`
 	TagAssignments []LibraryTagAssignment `json:"tagAssignments"`
+	Notes          []LibraryNote          `json:"notes"`
 }
 
 type libraryCapture struct {
@@ -107,6 +125,7 @@ func ProjectLibraryProjection(replica *Replica) (LibraryProjection, error) {
 	tags := make(map[canonical.Identifier]*libraryTagState)
 	assignments := make(map[canonical.Identifier]libraryTagAssignmentState)
 	removedAssignmentCauses := make(map[canonical.Identifier]struct{})
+	notes := make(map[canonical.Identifier]*libraryNoteState)
 	orderedEvents, err := orderedContentEvents(replica)
 	if err != nil {
 		return LibraryProjection{}, err
@@ -382,6 +401,157 @@ func ProjectLibraryProjection(replica *Replica) (LibraryProjection, error) {
 					tag.lifecycle = "Active"
 				}
 			}
+		case 27:
+			body, ok := replicaMapValue(event.Body)
+			if !ok || !replicaMapHasKeys(body, 3) {
+				return LibraryProjection{}, errors.New("Note Created body is invalid")
+			}
+			noteID, ok := replicaIdentifier(body, 0)
+			if !ok {
+				return LibraryProjection{}, errors.New("Note Created Note ID is invalid")
+			}
+			targetKind, targetID, err := decodeLibraryNoteTarget(replicaMapEntryMust(body, 1))
+			if err != nil {
+				return LibraryProjection{}, err
+			}
+			contentID, ok := replicaIdentifier(body, 2)
+			if !ok {
+				return LibraryProjection{}, errors.New("Note Created Content Object ID is invalid")
+			}
+			if _, exists := notes[noteID]; exists {
+				return LibraryProjection{}, fmt.Errorf("Note identity conflict for %s", hexIdentifier(noteID))
+			}
+			version, err := projectNoteVersion(replica, event, event.RecordID, &contentID)
+			if err != nil {
+				return LibraryProjection{}, err
+			}
+			notes[noteID] = &libraryNoteState{noteID: noteID, targetKind: targetKind, targetID: targetID, versions: map[canonical.Identifier]libraryNoteVersionState{event.RecordID: version}}
+		case 28:
+			body, ok := replicaMapValue(event.Body)
+			if !ok || !replicaMapHasKeys(body, 3) {
+				return LibraryProjection{}, errors.New("Note Revised body is invalid")
+			}
+			noteID, ok := replicaIdentifier(body, 0)
+			if !ok {
+				return LibraryProjection{}, errors.New("Note Revised Note ID is invalid")
+			}
+			note := notes[noteID]
+			if note == nil {
+				return LibraryProjection{}, errors.New("Note Revised target is unknown")
+			}
+			causes, err := parseCanonicalIdentifierSet(replicaMapEntryMust(body, 1), "Superseded Note revision Cause IDs", true)
+			if err != nil {
+				return LibraryProjection{}, err
+			}
+			for _, cause := range causes {
+				if _, exists := note.versions[cause]; !exists {
+					return LibraryProjection{}, errors.New("Note Revised names an unknown revision")
+				}
+			}
+			contentID, ok := replicaIdentifier(body, 2)
+			if !ok {
+				return LibraryProjection{}, errors.New("Note Revised Content Object ID is invalid")
+			}
+			version, err := projectNoteVersion(replica, event, event.RecordID, &contentID)
+			if err != nil {
+				return LibraryProjection{}, err
+			}
+			note.versions[event.RecordID] = version
+		case 29, 30:
+			body, ok := replicaMapValue(event.Body)
+			if !ok || !replicaMapHasKeys(body, 2) {
+				return LibraryProjection{}, fmt.Errorf("Note lifecycle type %d body is invalid", event.Type)
+			}
+			noteID, ok := replicaIdentifier(body, 0)
+			if !ok {
+				return LibraryProjection{}, fmt.Errorf("Note lifecycle type %d Note ID is invalid", event.Type)
+			}
+			note := notes[noteID]
+			if note == nil {
+				return LibraryProjection{}, errors.New("Note lifecycle target is unknown")
+			}
+			causes, err := parseCanonicalIdentifierSet(replicaMapEntryMust(body, 1), "Observed Note head Cause IDs", true)
+			if err != nil {
+				return LibraryProjection{}, err
+			}
+			var contentID *canonical.Identifier
+			if event.Type == 30 {
+				for _, cause := range causes {
+					if version, exists := note.versions[cause]; exists && version.contentID != nil {
+						candidate := *version.contentID
+						contentID = &candidate
+						break
+					}
+				}
+				if contentID == nil {
+					return LibraryProjection{}, errors.New("Note Restored has no retained content")
+				}
+			}
+			version, err := projectNoteVersion(replica, event, event.RecordID, contentID)
+			if err != nil {
+				return LibraryProjection{}, err
+			}
+			note.versions[event.RecordID] = version
+		case 31:
+			body, ok := replicaMapValue(event.Body)
+			if !ok || !replicaMapHasKeys(body, 4) {
+				return LibraryProjection{}, errors.New("Note Conflict Resolution body is invalid")
+			}
+			noteID, ok := replicaIdentifier(body, 0)
+			if !ok {
+				return LibraryProjection{}, errors.New("Note Conflict Resolution Note ID is invalid")
+			}
+			note := notes[noteID]
+			if note == nil {
+				return LibraryProjection{}, errors.New("Note Conflict Resolution target is unknown")
+			}
+			causes, err := parseCanonicalIdentifierSet(replicaMapEntryMust(body, 1), "Conflicting Note head Cause IDs", true)
+			if err != nil {
+				return LibraryProjection{}, err
+			}
+			current := currentNoteHeadCauses(replica, note)
+			if !sameNoteIdentifierSet(current, causes) {
+				return LibraryProjection{}, errors.New("Note Conflict Resolution does not name the exact current heads")
+			}
+			var retained *canonical.Identifier
+			if value := replicaMapEntryMust(body, 2); value != nil {
+				contentID, ok := replicaIdentifierValue(value)
+				if !ok {
+					return LibraryProjection{}, errors.New("Retained Note Content Object ID is invalid")
+				}
+				retained = &contentID
+			}
+			version, err := projectNoteVersion(replica, event, event.RecordID, retained)
+			if err != nil {
+				return LibraryProjection{}, err
+			}
+			note.versions = map[canonical.Identifier]libraryNoteVersionState{event.RecordID: version}
+			splits, ok := replicaMapArrayValue(replicaMapEntryMust(body, 3))
+			if !ok {
+				return LibraryProjection{}, errors.New("Split Notes are invalid")
+			}
+			for index, splitValue := range splits {
+				splitBody, ok := replicaMapValue(splitValue)
+				if !ok || !replicaMapHasKeys(splitBody, 2) {
+					return LibraryProjection{}, fmt.Errorf("Split Note %d is invalid", index)
+				}
+				splitID, ok := replicaIdentifier(splitBody, 0)
+				if !ok {
+					return LibraryProjection{}, fmt.Errorf("Split Note %d ID is invalid", index)
+				}
+				if _, exists := notes[splitID]; exists {
+					return LibraryProjection{}, fmt.Errorf("Split Note %s already exists", hexIdentifier(splitID))
+				}
+				splitContentID, ok := replicaIdentifier(splitBody, 1)
+				if !ok {
+					return LibraryProjection{}, fmt.Errorf("Split Note %d Content Object ID is invalid", index)
+				}
+				splitVersion, err := projectNoteVersion(replica, event, event.RecordID, &splitContentID)
+				if err != nil {
+					return LibraryProjection{}, err
+				}
+				notes[splitID] = &libraryNoteState{noteID: splitID, targetKind: note.targetKind, targetID: note.targetID, versions: map[canonical.Identifier]libraryNoteVersionState{event.RecordID: splitVersion}}
+			}
 		}
 	}
 	activeRedirects := make([]collectionRedirectEdge, 0)
@@ -469,6 +639,41 @@ func ProjectLibraryProjection(replica *Replica) (LibraryProjection, error) {
 	sort.Slice(assignmentProjection, func(left, right int) bool {
 		return assignmentProjection[left].AssignmentID < assignmentProjection[right].AssignmentID
 	})
+	noteProjection := make([]LibraryNote, 0, len(notes))
+	for noteID, note := range notes {
+		headVersions := make([]libraryNoteVersionState, 0, len(note.versions))
+		for cause, version := range note.versions {
+			superseded := false
+			for otherCause := range note.versions {
+				if cause != otherCause && replica.IsAncestor(cause, otherCause) {
+					superseded = true
+					break
+				}
+			}
+			if !superseded {
+				headVersions = append(headVersions, version)
+			}
+		}
+		sort.Slice(headVersions, func(left, right int) bool {
+			return bytes.Compare(headVersions[left].causeID[:], headVersions[right].causeID[:]) < 0
+		})
+		state := "Active"
+		if len(headVersions) > 1 {
+			state = "Conflict"
+		} else if len(headVersions) == 1 && headVersions[0].contentID == nil {
+			state = "Deleted"
+		}
+		versions := make([]LibraryNoteVersion, 0, len(headVersions))
+		for _, version := range headVersions {
+			projected := LibraryNoteVersion{HeadCauseID: hexIdentifier(version.causeID), Title: version.title, Body: version.body, BodyDialect: version.dialect, AssertedAt: version.assertedAt}
+			if version.contentID != nil {
+				projected.ContentObjectID = pointerString(hexIdentifier(*version.contentID))
+			}
+			versions = append(versions, projected)
+		}
+		noteProjection = append(noteProjection, LibraryNote{NoteID: hexIdentifier(noteID), TargetKind: note.targetKind, TargetID: hexIdentifier(note.targetID), State: state, Versions: versions})
+	}
+	sort.Slice(noteProjection, func(left, right int) bool { return noteProjection[left].NoteID < noteProjection[right].NoteID })
 	collections := make([]LibraryCollection, 0, len(collectionIDs))
 	for collectionID := range collectionIDs {
 		active := make([]*libraryCapture, 0)
@@ -509,7 +714,7 @@ func ProjectLibraryProjection(replica *Replica) (LibraryProjection, error) {
 		collections = append(collections, collection)
 	}
 	sort.Slice(collections, func(left, right int) bool { return collections[left].CollectionID < collections[right].CollectionID })
-	return LibraryProjection{Captures: items, Collections: collections, Folders: folderProjection, Tags: tagProjection, TagAssignments: assignmentProjection}, nil
+	return LibraryProjection{Captures: items, Collections: collections, Folders: folderProjection, Tags: tagProjection, TagAssignments: assignmentProjection, Notes: noteProjection}, nil
 }
 
 func orderedContentEvents(replica *Replica) ([]canonical.Event, error) {
@@ -611,6 +816,55 @@ type libraryTagAssignmentState struct {
 	targetID     canonical.Identifier
 }
 
+type libraryNoteState struct {
+	noteID     canonical.Identifier
+	targetKind uint64
+	targetID   canonical.Identifier
+	versions   map[canonical.Identifier]libraryNoteVersionState
+}
+
+type libraryNoteVersionState struct {
+	causeID    canonical.Identifier
+	contentID  *canonical.Identifier
+	title      *string
+	body       *string
+	dialect    *string
+	assertedAt int64
+}
+
+func currentNoteHeadCauses(replica *Replica, note *libraryNoteState) []canonical.Identifier {
+	causes := make([]canonical.Identifier, 0, len(note.versions))
+	for cause := range note.versions {
+		superseded := false
+		for other := range note.versions {
+			if cause != other && replica.IsAncestor(cause, other) {
+				superseded = true
+				break
+			}
+		}
+		if !superseded {
+			causes = append(causes, cause)
+		}
+	}
+	return sortUniqueIdentifiers(causes)
+}
+
+func sameNoteIdentifierSet(left, right []canonical.Identifier) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	seen := make(map[canonical.Identifier]struct{}, len(left))
+	for _, value := range left {
+		seen[value] = struct{}{}
+	}
+	for _, value := range right {
+		if _, ok := seen[value]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 func decodeLibraryTagTarget(value canonical.Value) (uint64, canonical.Identifier, error) {
 	body, ok := replicaMapValue(value)
 	if !ok || !replicaMapHasKeys(body, 2) {
@@ -625,6 +879,56 @@ func decodeLibraryTagTarget(value canonical.Value) (uint64, canonical.Identifier
 		return 0, canonical.Identifier{}, errors.New("Tag target ID is invalid")
 	}
 	return kind, target, nil
+}
+
+func decodeLibraryNoteTarget(value canonical.Value) (uint64, canonical.Identifier, error) {
+	body, ok := replicaMapValue(value)
+	if !ok || !replicaMapHasKeys(body, 2) {
+		return 0, canonical.Identifier{}, errors.New("Note target is invalid")
+	}
+	kind, ok := replicaUnsignedNumber(replicaMapEntryMust(body, 0))
+	if !ok || (kind != 1 && kind != 2) {
+		return 0, canonical.Identifier{}, errors.New("Note target kind is invalid")
+	}
+	targetID, ok := replicaIdentifier(body, 1)
+	if !ok {
+		return 0, canonical.Identifier{}, errors.New("Note target ID is invalid")
+	}
+	return kind, targetID, nil
+}
+
+func projectNoteVersion(replica *Replica, event canonical.Event, causeID canonical.Identifier, contentID *canonical.Identifier) (libraryNoteVersionState, error) {
+	version := libraryNoteVersionState{causeID: causeID, assertedAt: event.AssertedAt}
+	if contentID == nil {
+		return version, nil
+	}
+	object, ok := replica.Object(*contentID)
+	if !ok || object.ObjectType != 3 {
+		return libraryNoteVersionState{}, errors.New("Note Content Object is unavailable")
+	}
+	body, ok := replicaMapValue(object.Body)
+	if !ok || !replicaMapHasKeys(body, 4) {
+		return libraryNoteVersionState{}, errors.New("Note Content Object body is invalid")
+	}
+	title, ok := replicaMapNullableText(body, 1)
+	if !ok {
+		return libraryNoteVersionState{}, errors.New("Note Content title is invalid")
+	}
+	text, ok := replicaMapText(body, 2)
+	if !ok {
+		return libraryNoteVersionState{}, errors.New("Note Content body is invalid")
+	}
+	dialect, ok := replicaMapText(body, 3)
+	if !ok || dialect != "awsm.note.commonmark" {
+		return libraryNoteVersionState{}, errors.New("Note Content dialect is invalid")
+	}
+	dialectCopy := dialect
+	textCopy := text
+	version.contentID = contentID
+	version.title = title
+	version.body = &textCopy
+	version.dialect = &dialectCopy
+	return version, nil
 }
 
 func nullableIdentifier(value canonical.Value, field string) (*canonical.Identifier, error) {

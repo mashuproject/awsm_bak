@@ -202,3 +202,113 @@ func TestProjectLibraryProjectionIncludesObservedTagAssignment(t *testing.T) {
 		t.Fatalf("Tag assignments after removal = %#v, want empty", projection.TagAssignments)
 	}
 }
+
+func TestProjectLibraryProjectionIncludesNoteRevision(t *testing.T) {
+	prepared := deterministicCreation(t)
+	replica, err := NewReplica(prepared.Baseline)
+	if err != nil {
+		t.Fatalf("NewReplica: %v", err)
+	}
+	if err := replica.AdmitEvent(prepared.Genesis, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit Genesis: %v", err)
+	}
+	noteID := filledCreationID(197)
+	collectionID := filledCreationID(198)
+	contentBody := canonical.Map{0: uint64(1), 1: "Research", 2: "First body", 3: "awsm.note.commonmark"}
+	objectBytes, err := canonical.EncodeValue(canonical.Map{0: uint64(1), 1: prepared.IDs.VaultID[:], 2: uint64(3), 3: prepared.RequiredFeatureSetID[:], 4: contentBody, 5: map[string][]byte{}})
+	if err != nil {
+		t.Fatalf("Encode Note Content Object: %v", err)
+	}
+	objectID, err := canonical.VaultObjectID(prepared.IDs.VaultID, 3, objectBytes)
+	if err != nil {
+		t.Fatalf("Note Content Object ID: %v", err)
+	}
+	if err := replica.AdmitObject(objectID, objectBytes); err != nil {
+		t.Fatalf("Admit Note Content Object: %v", err)
+	}
+	event, err := canonical.SignEvent(canonical.EventInput{
+		VaultID: prepared.IDs.VaultID, GenerationID: prepared.IDs.GenerationID,
+		ParentRecordIDs: []canonical.Identifier{prepared.Genesis.RecordID}, AuthorityParentIDs: []canonical.Identifier{prepared.Genesis.RecordID},
+		Dependencies: []canonical.Dependency{{Type: 6, ID: objectID}}, RequiredFeatureSetID: prepared.RequiredFeatureSetID,
+		Extensions: map[string][]byte{}, Family: canonical.ContentFamily, Type: 27, SignerCredentialID: prepared.IDs.ClientCredentialID,
+		AssertedAt: 207, Body: canonical.Map{0: noteID[:], 1: canonical.Map{0: uint64(1), 1: collectionID[:]}, 2: objectID[:]},
+	}, ed25519.PrivateKey(prepared.ClientKeys.SigningSecretKey))
+	if err != nil {
+		t.Fatalf("Sign Note Created: %v", err)
+	}
+	if err := replica.AdmitEvent(event, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit Note Created: %v", err)
+	}
+	projection, err := ProjectLibraryProjection(replica)
+	if err != nil {
+		t.Fatalf("ProjectLibraryProjection: %v", err)
+	}
+	if len(projection.Notes) != 1 {
+		t.Fatalf("Notes = %#v, want one note", projection.Notes)
+	}
+	note := projection.Notes[0]
+	if note.NoteID != hexIdentifier(noteID) || note.State != "Active" || len(note.Versions) != 1 || note.Versions[0].Title == nil || *note.Versions[0].Title != "Research" || note.Versions[0].Body == nil || *note.Versions[0].Body != "First body" {
+		t.Fatalf("Note projection = %#v", note)
+	}
+	revised, err := canonical.SignEvent(canonical.EventInput{
+		VaultID: prepared.IDs.VaultID, GenerationID: prepared.IDs.GenerationID,
+		ParentRecordIDs: []canonical.Identifier{event.RecordID}, AuthorityParentIDs: []canonical.Identifier{event.RecordID},
+		Dependencies: []canonical.Dependency{{Type: 6, ID: objectID}}, RequiredFeatureSetID: prepared.RequiredFeatureSetID,
+		Extensions: map[string][]byte{}, Family: canonical.ContentFamily, Type: 28, SignerCredentialID: prepared.IDs.ClientCredentialID,
+		AssertedAt: 208, Body: canonical.Map{0: noteID[:], 1: canonicalSetValues([]canonical.Value{event.RecordID[:]}), 2: objectID[:]},
+	}, ed25519.PrivateKey(prepared.ClientKeys.SigningSecretKey))
+	if err != nil {
+		t.Fatalf("Sign Note Revised: %v", err)
+	}
+	if err := replica.AdmitEvent(revised, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit Note Revised: %v", err)
+	}
+	projection, err = ProjectLibraryProjection(replica)
+	if err != nil {
+		t.Fatalf("ProjectLibraryProjection after revision: %v", err)
+	}
+	if len(projection.Notes) != 1 || projection.Notes[0].State != "Active" || len(projection.Notes[0].Versions) != 1 || projection.Notes[0].Versions[0].HeadCauseID != hexIdentifier(revised.RecordID) {
+		t.Fatalf("Note projection after revision = %#v", projection.Notes)
+	}
+	branch, err := canonical.SignEvent(canonical.EventInput{
+		VaultID: prepared.IDs.VaultID, GenerationID: prepared.IDs.GenerationID,
+		ParentRecordIDs: []canonical.Identifier{event.RecordID}, AuthorityParentIDs: []canonical.Identifier{event.RecordID},
+		Dependencies: []canonical.Dependency{{Type: 6, ID: objectID}}, RequiredFeatureSetID: prepared.RequiredFeatureSetID,
+		Extensions: map[string][]byte{}, Family: canonical.ContentFamily, Type: 28, SignerCredentialID: prepared.IDs.ClientCredentialID,
+		AssertedAt: 209, Body: canonical.Map{0: noteID[:], 1: canonicalSetValues([]canonical.Value{event.RecordID[:]}), 2: objectID[:]},
+	}, ed25519.PrivateKey(prepared.ClientKeys.SigningSecretKey))
+	if err != nil {
+		t.Fatalf("Sign concurrent Note Revised: %v", err)
+	}
+	if err := replica.AdmitEvent(branch, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit concurrent Note Revised: %v", err)
+	}
+	projection, err = ProjectLibraryProjection(replica)
+	if err != nil {
+		t.Fatalf("ProjectLibraryProjection after conflict: %v", err)
+	}
+	if len(projection.Notes) != 1 || projection.Notes[0].State != "Conflict" || len(projection.Notes[0].Versions) != 2 {
+		t.Fatalf("Note projection after conflict = %#v", projection.Notes)
+	}
+	resolutionParents := sortUniqueIdentifiers([]canonical.Identifier{revised.RecordID, branch.RecordID})
+	resolution, err := canonical.SignEvent(canonical.EventInput{
+		VaultID: prepared.IDs.VaultID, GenerationID: prepared.IDs.GenerationID,
+		ParentRecordIDs: resolutionParents, AuthorityParentIDs: resolutionParents,
+		Dependencies: []canonical.Dependency{{Type: 6, ID: objectID}}, RequiredFeatureSetID: prepared.RequiredFeatureSetID,
+		Extensions: map[string][]byte{}, Family: canonical.ContentFamily, Type: 31, SignerCredentialID: prepared.IDs.ClientCredentialID,
+		AssertedAt: 210, Body: canonical.Map{0: noteID[:], 1: canonicalSetValues([]canonical.Value{revised.RecordID[:], branch.RecordID[:]}), 2: objectID[:], 3: []canonical.Value{}},
+	}, ed25519.PrivateKey(prepared.ClientKeys.SigningSecretKey))
+	if err != nil {
+		t.Fatalf("Sign Note Conflict Resolution: %v", err)
+	}
+	if err := replica.AdmitEvent(resolution, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit Note Conflict Resolution: %v", err)
+	}
+	projection, err = ProjectLibraryProjection(replica)
+	if err != nil {
+		t.Fatalf("ProjectLibraryProjection after resolution: %v", err)
+	}
+	if len(projection.Notes) != 1 || projection.Notes[0].State != "Active" || len(projection.Notes[0].Versions) != 1 || projection.Notes[0].Versions[0].HeadCauseID != hexIdentifier(resolution.RecordID) {
+		t.Fatalf("Note projection after resolution = %#v", projection.Notes)
+	}
+}
