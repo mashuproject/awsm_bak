@@ -424,6 +424,63 @@ func TestRuntimeAdmitsAuthenticatedOpaqueObjectAndReloadsIt(t *testing.T) {
 	}
 }
 
+func TestStorageReliefEvictsOnlyLocalObjectBytesWithWarning(t *testing.T) {
+	ctx := context.Background()
+	state := store.NewMemoryState()
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatalf("create Runtime: %v", err)
+	}
+	vaultID := createVaultForTest(t, runtime, "Relief")
+	value := runtime.vaults[vaultID]
+	vaultIdentifier, err := decodeHexIdentifier(vaultID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	epochIdentifier, err := decodeHexIdentifier(value.Canonical.KeyEpochID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	epochBytes, err := dependencies.Secrets.Get(trustedSecretService, epochSecretAccount(vaultID, value.Canonical.KeyEpochID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	epochSecret, err := decodeEpochSecret(epochBytes, vaultIdentifier, epochIdentifier)
+	if err != nil {
+		t.Fatal(err)
+	}
+	featureIdentifier := mustIdentifier(t, value.Canonical.RequiredFeatureSetID)
+	objectBytes, err := canonical.EncodeValue(canonical.Map{0: uint64(1), 1: vaultIdentifier[:], 2: uint64(2), 3: featureIdentifier[:], 4: canonical.Map{}, 5: map[string][]byte{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	objectID, err := canonical.VaultObjectID(vaultIdentifier, 2, objectBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := awsmcrypto.SealCompactItem(awsmcrypto.CompactItemInput{VaultID: vaultIdentifier, KeyEpochID: epochIdentifier, KeyEpochKey: epochSecret.key, PayloadType: 2, PayloadBytes: objectBytes})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.AdmitOpaqueObject(ctx, vaultID, encoded); err != nil {
+		t.Fatalf("admit object: %v", err)
+	}
+	result, err := runtime.StorageRelief(ctx, vaultID, []string{hexIdentifier(objectID)})
+	if err != nil {
+		t.Fatalf("Storage Relief: %v", err)
+	}
+	if len(result.ReleasedObjectIDs) != 1 || result.ReleasedObjectIDs[0] != hexIdentifier(objectID) || result.Warning == "" {
+		t.Fatalf("Storage Relief result = %#v", result)
+	}
+	if _, ok := runtime.replicas[vaultID].Object(objectID); ok {
+		t.Fatal("Storage Relief retained the evicted Object")
+	}
+	if _, ok := value.Canonical.ObjectStorageItemIDs[hexIdentifier(objectID)]; ok {
+		t.Fatal("Storage Relief retained the evicted Storage mapping")
+	}
+}
+
 func mustIdentifier(t *testing.T, value string) canonical.Identifier {
 	t.Helper()
 	identifier, err := decodeHexIdentifier(value)

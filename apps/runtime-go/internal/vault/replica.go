@@ -195,6 +195,17 @@ func (r *Replica) Object(objectID canonical.Identifier) (ReplicaObject, bool) {
 	return object, true
 }
 
+func (r *Replica) ReleaseObject(objectID canonical.Identifier) bool {
+	if r == nil {
+		return false
+	}
+	if _, ok := r.objects[objectID]; !ok {
+		return false
+	}
+	delete(r.objects, objectID)
+	return true
+}
+
 func decodeReplicaObject(objectID canonical.Identifier, encoded []byte) (ReplicaObject, error) {
 	value, err := canonical.DecodeValue(encoded)
 	if err != nil {

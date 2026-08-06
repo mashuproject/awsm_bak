@@ -427,6 +427,88 @@ func (r *Runtime) AdmitOpaqueObject(ctx context.Context, vaultID string, encoded
 	return nil
 }
 
+type StorageReliefSummary struct {
+	ReleasedObjectIDs []string `json:"releasedObjectIds"`
+	Warning           string   `json:"warning"`
+}
+
+// StorageRelief removes only selected local Object materializations. It never
+// edits Vault Records, asks a Remote for redundancy proof, or blocks when no
+// Remote exists; the warning is deliberately returned every time.
+func (r *Runtime) StorageRelief(ctx context.Context, vaultID string, objectIDs []string) (StorageReliefSummary, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	value, err := r.vaultLocked(vaultID)
+	if err != nil {
+		return StorageReliefSummary{}, err
+	}
+	if value.Canonical == nil || r.replicas[vaultID] == nil || r.deps.Artifacts == nil {
+		return StorageReliefSummary{}, commandError("VAULT_REPLAY_UNAVAILABLE", "The authenticated Vault Replica is unavailable.")
+	}
+	ids := append([]string(nil), objectIDs...)
+	sortStrings(ids)
+	unique := ids[:0]
+	for _, id := range ids {
+		if id == "" || !validDigest(id) {
+			return StorageReliefSummary{}, commandError("OBJECT_ID_INVALID", "Storage Relief received an invalid Object ID.")
+		}
+		if len(unique) == 0 || unique[len(unique)-1] != id {
+			unique = append(unique, id)
+		}
+	}
+	if len(unique) == 0 {
+		return StorageReliefSummary{}, commandError("OBJECT_ID_INVALID", "Storage Relief requires at least one Object ID.")
+	}
+	before := r.snapshotLocked()
+	type removedItem struct {
+		id   string
+		data []byte
+	}
+	removed := make([]removedItem, 0, len(unique))
+	nextReplica := r.replicas[vaultID].Clone()
+	for _, objectID := range unique {
+		storageItemID, ok := value.Canonical.ObjectStorageItemIDs[objectID]
+		if !ok {
+			return StorageReliefSummary{}, commandError("OBJECT_NOT_FOUND", "The selected Object is not locally materialized.")
+		}
+		objectIdentifier, err := decodeHexIdentifier(objectID)
+		if err != nil {
+			return StorageReliefSummary{}, commandError("OBJECT_ID_INVALID", "Storage Relief received an invalid Object ID.")
+		}
+		if _, ok := nextReplica.Object(objectIdentifier); !ok {
+			return StorageReliefSummary{}, commandError("OBJECT_NOT_FOUND", "The selected Object is not locally materialized.")
+		}
+		reader, err := r.deps.Artifacts.Open(storageItemID)
+		if err != nil {
+			return StorageReliefSummary{}, commandError("OBJECT_NOT_FOUND", "The selected Object bytes are unavailable locally.")
+		}
+		data, err := io.ReadAll(reader)
+		_ = reader.Close()
+		if err != nil {
+			return StorageReliefSummary{}, commandError("OBJECT_NOT_FOUND", "The selected Object bytes are unavailable locally.")
+		}
+		if err := r.deps.Artifacts.Delete(storageItemID); err != nil {
+			for _, prior := range removed {
+				_ = r.deps.Artifacts.Put(prior.id, bytes.NewReader(prior.data))
+			}
+			return StorageReliefSummary{}, commandError("OBJECT_RELIEF_FAILED", "Storage Relief could not remove the local Object.")
+		}
+		removed = append(removed, removedItem{id: storageItemID, data: data})
+		delete(value.Canonical.ObjectStorageItemIDs, objectID)
+		nextReplica.ReleaseObject(objectIdentifier)
+	}
+	r.replicas[vaultID] = nextReplica
+	if err := r.persistLocked(ctx); err != nil {
+		r.restoreLocked(before)
+		for _, item := range removed {
+			_ = r.deps.Artifacts.Put(item.id, bytes.NewReader(item.data))
+		}
+		return StorageReliefSummary{}, err
+	}
+	r.signal()
+	return StorageReliefSummary{ReleasedObjectIDs: unique, Warning: "Storage Relief removed local Object bytes. Without another retained Replica or export, this data may be unrecoverable."}, nil
+}
+
 func objectIDFromBytes(vaultID canonical.Identifier, encoded []byte) (canonical.Identifier, error) {
 	value, err := canonical.DecodeValue(encoded)
 	if err != nil {
