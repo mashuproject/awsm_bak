@@ -59,17 +59,24 @@ including authenticated Streamable Artifact wrappers, and fails closed for unsup
 Feature Manifest, or adopted-Vacuum semantic closures until those mappings are implemented. Commands never log passphrases, package
 bytes, keys, or bearer tokens.
 
+The Wails Vault view exposes these same Commands through its Complete Export and Import panel. The
+panel keeps the package encrypted, requires an explicit passphrase for each operation, and refreshes
+the live Vault projection after a successful Import.
+
 Successful responses use:
 
 ```json
-{"ok":true,"value":{}}
+{ "ok": true, "value": {} }
 ```
 
 Command failures use an HTTP-success application envelope so the Client can distinguish them from
 transport and authorization failures:
 
 ```json
-{"ok":false,"error":{"id":"ERROR_ID","message":"Plain-language explanation."}}
+{
+  "ok": false,
+  "error": { "id": "ERROR_ID", "message": "Plain-language explanation." }
+}
 ```
 
 The endpoint rejects malformed JSON, unknown fields on decoded command forms, and trailing JSON

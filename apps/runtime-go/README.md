@@ -82,7 +82,7 @@ container for the supported single-Key-Epoch closure, including authenticated St
 wrappers. Imported Replicas are readable but have no selected authoring Credential or private key.
 Multi-Key-Epoch, Feature Manifest, and adopted-Vacuum Complete Export semantics remain explicit limits, along with
 remaining organization and other dependency-bearing Content Fork re-authoring, broader Authority/Key-Epoch event families, conflict/rebase projections, and
-full Wails workflow coverage.
+the remaining Wails workflow controls and cross-surface journeys.
 
 The move boundary is deliberately separate from Vault synchronization. A source Client seals the
 canonical opaque closure and trusted local secrets with a one-use secret, stages it in the desktop

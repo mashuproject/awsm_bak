@@ -72,7 +72,8 @@ Desktop page acquisition is intentionally unavailable. Capture remains available
 local Vaults; the extension-to-desktop Capture Bundle bridge is not implemented. Multi-Key-Epoch,
 Feature Manifest, and adopted-Vacuum Complete Export semantics, remaining organization and other
 dependency-bearing Content Fork re-authoring, broader Authority and Key-Epoch event families,
-conflict/rebase projections, and complete Wails workflow coverage remain explicit parity boundaries.
+conflict/rebase projections, and the remaining Wails workflow controls and cross-surface journeys
+remain explicit parity boundaries.
 The Go Runtime re-authors Note Content Objects and Note Created/Revised/Deleted/Restored/Conflict
 Resolution Events with fresh destination identities and authenticated object/cause dependencies.
 

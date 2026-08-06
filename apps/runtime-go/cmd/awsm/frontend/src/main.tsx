@@ -762,6 +762,144 @@ function HostedReplicas({
   );
 }
 
+function CompleteExportPanel({
+  binding,
+  vaultId,
+  refresh,
+  onError,
+  onStatus,
+}: {
+  readonly binding: DesktopBinding;
+  readonly vaultId: string;
+  readonly refresh: () => void;
+  readonly onError: (error: unknown) => void;
+  readonly onStatus: (message: string) => void;
+}): React.ReactElement {
+  const [exportPassphrase, setExportPassphrase] = React.useState("");
+  const [exportedPackage, setExportedPackage] = React.useState("");
+  const [importPassphrase, setImportPassphrase] = React.useState("");
+  const [importPackage, setImportPackage] = React.useState("");
+  const [busy, setBusy] = React.useState<"export" | "import">();
+
+  const exportComplete = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (binding.VaultCommand === undefined)
+      return onError(new Error("Vault commands are unavailable."));
+    setBusy("export");
+    try {
+      const result = (await binding.VaultCommand({
+        type: "ExportComplete",
+        expectedVaultId: vaultId,
+        passphrase: exportPassphrase,
+      })) as { package?: string } | undefined;
+      if (result?.package === undefined || result.package.length === 0) {
+        throw new Error("The Complete Export did not return a package.");
+      }
+      setExportedPackage(result.package);
+      onStatus("Complete Export created.");
+    } catch (error) {
+      onError(error);
+    } finally {
+      setBusy(undefined);
+    }
+  };
+
+  const importComplete = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (binding.VaultCommand === undefined)
+      return onError(new Error("Vault commands are unavailable."));
+    setBusy("import");
+    try {
+      await binding.VaultCommand({
+        type: "ImportComplete",
+        passphrase: importPassphrase,
+        package: importPackage,
+      });
+      setImportPassphrase("");
+      setImportPackage("");
+      refresh();
+      onStatus("Complete Import completed.");
+    } catch (error) {
+      onError(error);
+    } finally {
+      setBusy(undefined);
+    }
+  };
+
+  return (
+    <section className="grid gap-5" aria-labelledby="complete-export-heading">
+      <div className="grid gap-2">
+        <h3
+          id="complete-export-heading"
+          className="font-display text-2xl font-bold leading-tight text-awsm-ink"
+        >
+          Complete Export and Import
+        </h3>
+        <p className="max-w-[65ch] text-base leading-relaxed text-awsm-text-muted">
+          A Complete Export is an encrypted package for one Vault state. It does not include this
+          Client&apos;s login, local credentials, or Hosted Replica sessions.
+        </p>
+      </div>
+      <div className="grid gap-6 lg:grid-cols-2">
+        <form className="grid gap-5" onSubmit={(event) => void exportComplete(event)}>
+          <Field
+            label="Export passphrase"
+            description="Use the same passphrase when importing this package on another Client."
+          >
+            <input
+              className={inputClassName}
+              type="password"
+              value={exportPassphrase}
+              onChange={(event) => setExportPassphrase(event.target.value)}
+              autoComplete="new-password"
+              required
+            />
+          </Field>
+          <Button type="submit" busy={busy === "export"} disabled={busy !== undefined}>
+            Create Complete Export
+          </Button>
+          {exportedPackage !== "" ? (
+            <Field label="Complete Export package">
+              <textarea
+                className={`${inputClassName} min-h-32 resize-y font-mono text-xs`}
+                value={exportedPackage}
+                readOnly
+                spellCheck={false}
+                aria-label="Complete Export package"
+              />
+            </Field>
+          ) : null}
+        </form>
+        <form className="grid gap-5" onSubmit={(event) => void importComplete(event)}>
+          <Field label="Import passphrase">
+            <input
+              className={inputClassName}
+              type="password"
+              value={importPassphrase}
+              onChange={(event) => setImportPassphrase(event.target.value)}
+              autoComplete="new-password"
+              required
+            />
+          </Field>
+          <Field label="Complete Export package to import">
+            <textarea
+              className={`${inputClassName} min-h-32 resize-y font-mono text-xs`}
+              value={importPackage}
+              onChange={(event) => setImportPackage(event.target.value)}
+              spellCheck={false}
+              aria-label="Complete Export package to import"
+              required
+            />
+          </Field>
+          <Button type="submit" busy={busy === "import"} disabled={busy !== undefined}>
+            Import Complete Export
+          </Button>
+        </form>
+      </div>
+    </section>
+  );
+}
+
 function VaultsView({
   binding,
   state,
@@ -811,7 +949,8 @@ function VaultsView({
     }
   };
   const garbageCollect = async () => {
-    if (selected === undefined || !window.confirm("Remove unreferenced local opaque items?")) return;
+    if (selected === undefined || !window.confirm("Remove unreferenced local opaque items?"))
+      return;
     setBusy(true);
     try {
       const result = (await binding.VaultCommand?.({
@@ -820,7 +959,9 @@ function VaultsView({
       })) as { deletedStorageItemIds?: readonly string[] } | undefined;
       const count = result?.deletedStorageItemIds?.length ?? 0;
       refresh();
-      onStatus(`Garbage Collection completed. ${count} unreferenced item${count === 1 ? "" : "s"} removed.`);
+      onStatus(
+        `Garbage Collection completed. ${count} unreferenced item${count === 1 ? "" : "s"} removed.`,
+      );
     } catch (error) {
       onError(error);
     } finally {
@@ -949,11 +1090,7 @@ function VaultsView({
                 >
                   Vacuum this Vault
                 </Button>
-                <Button
-                  variant="secondary"
-                  busy={busy}
-                  onClick={() => void garbageCollect()}
-                >
+                <Button variant="secondary" busy={busy} onClick={() => void garbageCollect()}>
                   Run Garbage Collection
                 </Button>
                 <Button
@@ -992,6 +1129,13 @@ function VaultsView({
             vaultId={selected.vaultId}
             remotes={remotes}
             onRefresh={refresh}
+            onError={onError}
+            onStatus={onStatus}
+          />
+          <CompleteExportPanel
+            binding={binding}
+            vaultId={selected.vaultId}
+            refresh={refresh}
             onError={onError}
             onStatus={onStatus}
           />

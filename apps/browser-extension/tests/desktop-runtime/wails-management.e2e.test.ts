@@ -158,75 +158,163 @@ test("Wails Vault creation can recover a pending setup without exposing its phra
   await expect(page.getByText("Create a Vault on this desktop Client.")).toBeVisible();
 });
 
-test("Wails Vault surface runs hosted pull, materialization, and Artifact hydration actions", async ({
+test("Wails Vault surface exports and imports a Complete Export package", async ({
   page,
-}) => {
-  const vaultId = "c".repeat(64);
-  const artifactId = "d".repeat(64);
-  await page.addInitScript(({ selectedVaultId, artifactId }) => {
+}, testInfo) => {
+  const vaultId = "f".repeat(64);
+  await page.addInitScript((selectedVaultId) => {
     const state = {
       selectedVaultId,
       vaults: [
         {
           vaultId: selectedVaultId,
-          label: "Hosted archive",
+          label: "Portable archive",
           lifecycle: "Open",
           access: "Authoring",
           selected: true,
         },
       ],
     };
-    const library = [
-      {
-        bundleId: "bundle-1",
-        artifactId,
-        title: "Remote capture",
-        finalUrl: "https://example.test/remote",
-        availableLocally: false,
-        lifecycle: "Active",
-      },
-    ];
-    const remotes = [
-      {
-        remoteId: "remote-1",
-        name: "Home Host",
-        endpoint: "https://host.example.test",
-        enabled: true,
-        replicaHandle: "11111111-1111-4111-8111-111111111111",
-      },
-    ];
-    const target = globalThis as unknown as { go: unknown };
-    target.go = {
+    const calls: string[] = [];
+    (globalThis as unknown as { go: unknown }).go = {
       main: {
         desktopBinding: {
           PendingPairings: async () => [],
           ListGrants: async () => [],
           RuntimeAddress: () => "127.0.0.1:37373",
           VaultCommand: async (request: { type: string }) => {
+            calls.push(request.type);
             if (request.type === "GetState") return state;
-            if (request.type === "ListLibrary") return library;
-            if (request.type === "ListRemotes") return remotes;
-            if (request.type === "MaterializeHostedReplica") {
-              (globalThis as unknown as { __awsmCalls?: string[] }).__awsmCalls?.push(request.type);
-              return { remoteId: "remote-1", materializedCompactItemCount: 1 };
-            }
-            if (request.type === "PullHostedReplicas") {
-              (globalThis as unknown as { __awsmCalls?: string[] }).__awsmCalls?.push(request.type);
-              return [{ remoteId: "remote-1", status: "Completed" }];
-            }
-            if (request.type === "HydrateArtifact") {
-              (globalThis as unknown as { __awsmCalls?: string[] }).__awsmCalls?.push(request.type);
-              library[0].availableLocally = true;
-              return { artifactId, storageItemId: "e".repeat(64), remoteId: "remote-1" };
-            }
+            if (request.type === "ListLibrary" || request.type === "ListRemotes") return [];
+            if (request.type === "ExportComplete") return { package: "encrypted-complete-export" };
+            if (request.type === "ImportComplete") return state;
             throw new Error(`unexpected command: ${request.type}`);
           },
           PendingTransfers: async () => [],
         },
       },
     };
-    (globalThis as unknown as { __awsmCalls?: string[] }).__awsmCalls = [];
-  }, { selectedVaultId: vaultId, artifactId });
+    (globalThis as unknown as { __awsmCalls?: string[] }).__awsmCalls = calls;
+  }, vaultId);
+
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Complete Export and Import" })).toBeVisible();
+  await page.getByLabel("Export passphrase").fill("correct horse battery staple");
+  await page.getByRole("button", { name: "Create Complete Export" }).click();
+  await expect(page.getByLabel("Complete Export package", { exact: true })).toHaveValue(
+    "encrypted-complete-export",
+  );
+  await page.getByLabel("Import passphrase").fill("correct horse battery staple");
+  await page
+    .getByLabel("Complete Export package to import", { exact: true })
+    .fill("encrypted-complete-export");
+  await page.getByRole("button", { name: "Import Complete Export" }).click();
+  await expect(page.getByText("Complete Import completed.")).toBeVisible();
+  await page.screenshot({
+    path: testInfo.outputPath("desktop-vaults-export-import.png"),
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("heading", { name: "Complete Export and Import" }).scrollIntoViewIfNeeded();
+  await expect(page.locator("body")).not.toHaveCSS("overflow-x", "scroll");
+  await page.screenshot({ path: testInfo.outputPath("desktop-vaults-export-import-narrow.png") });
+  await page.getByRole("button", { name: "Import Complete Export" }).scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: testInfo.outputPath("desktop-vaults-export-import-narrow-controls.png"),
+  });
+  const observed = await page.evaluate(
+    () => (globalThis as unknown as { __awsmCalls: string[] }).__awsmCalls,
+  );
+  expect(observed).toEqual([
+    "GetState",
+    "ListLibrary",
+    "ListRemotes",
+    "ExportComplete",
+    "ImportComplete",
+    "GetState",
+    "ListLibrary",
+    "ListRemotes",
+  ]);
+});
+
+test("Wails Vault surface runs hosted pull, materialization, and Artifact hydration actions", async ({
+  page,
+}) => {
+  const vaultId = "c".repeat(64);
+  const artifactId = "d".repeat(64);
+  await page.addInitScript(
+    ({ selectedVaultId, artifactId }) => {
+      const state = {
+        selectedVaultId,
+        vaults: [
+          {
+            vaultId: selectedVaultId,
+            label: "Hosted archive",
+            lifecycle: "Open",
+            access: "Authoring",
+            selected: true,
+          },
+        ],
+      };
+      const library = [
+        {
+          bundleId: "bundle-1",
+          artifactId,
+          title: "Remote capture",
+          finalUrl: "https://example.test/remote",
+          availableLocally: false,
+          lifecycle: "Active",
+        },
+      ];
+      const remotes = [
+        {
+          remoteId: "remote-1",
+          name: "Home Host",
+          endpoint: "https://host.example.test",
+          enabled: true,
+          replicaHandle: "11111111-1111-4111-8111-111111111111",
+        },
+      ];
+      const target = globalThis as unknown as { go: unknown };
+      target.go = {
+        main: {
+          desktopBinding: {
+            PendingPairings: async () => [],
+            ListGrants: async () => [],
+            RuntimeAddress: () => "127.0.0.1:37373",
+            VaultCommand: async (request: { type: string }) => {
+              if (request.type === "GetState") return state;
+              if (request.type === "ListLibrary") return library;
+              if (request.type === "ListRemotes") return remotes;
+              if (request.type === "MaterializeHostedReplica") {
+                (globalThis as unknown as { __awsmCalls?: string[] }).__awsmCalls?.push(
+                  request.type,
+                );
+                return { remoteId: "remote-1", materializedCompactItemCount: 1 };
+              }
+              if (request.type === "PullHostedReplicas") {
+                (globalThis as unknown as { __awsmCalls?: string[] }).__awsmCalls?.push(
+                  request.type,
+                );
+                return [{ remoteId: "remote-1", status: "Completed" }];
+              }
+              if (request.type === "HydrateArtifact") {
+                (globalThis as unknown as { __awsmCalls?: string[] }).__awsmCalls?.push(
+                  request.type,
+                );
+                library[0].availableLocally = true;
+                return { artifactId, storageItemId: "e".repeat(64), remoteId: "remote-1" };
+              }
+              throw new Error(`unexpected command: ${request.type}`);
+            },
+            PendingTransfers: async () => [],
+          },
+        },
+      };
+      (globalThis as unknown as { __awsmCalls?: string[] }).__awsmCalls = [];
+    },
+    { selectedVaultId: vaultId, artifactId },
+  );
 
   await page.goto("/");
   await expect(page.getByText("Home Host", { exact: true })).toBeVisible();
@@ -240,9 +328,5 @@ test("Wails Vault surface runs hosted pull, materialization, and Artifact hydrat
   const observed = await page.evaluate(
     () => (globalThis as unknown as { __awsmCalls: string[] }).__awsmCalls,
   );
-  expect(observed).toEqual([
-    "MaterializeHostedReplica",
-    "PullHostedReplicas",
-    "HydrateArtifact",
-  ]);
+  expect(observed).toEqual(["MaterializeHostedReplica", "PullHostedReplicas", "HydrateArtifact"]);
 });
