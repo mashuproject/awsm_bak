@@ -401,6 +401,99 @@ func TestReplicaRejectsInvitationCancellationForUnknownInvitation(t *testing.T) 
 	}
 }
 
+func TestReplicaSurfacesConcurrentInvitationAcceptanceAndCancellationConflict(t *testing.T) {
+	prepared := deterministicCreation(t)
+	replica, err := NewReplica(prepared.Baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := replica.AdmitEvent(prepared.Genesis, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit Genesis: %v", err)
+	}
+	capabilities := []canonical.Value{canonical.Map{
+		0: "awsm.vault", 1: prepared.IDs.FirstMemberID[:], 2: prepared.IDs.VaultID[:], 3: "awsm.vault.join", 4: []byte{},
+	}}
+	creation, acceptance, _ := signInvitationAcceptanceFixture(t, prepared, capabilities, capabilities)
+	if err := replica.AdmitEvent(creation, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit Invitation Creation: %v", err)
+	}
+	if err := replica.AdmitEvent(acceptance, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit Invitation Acceptance: %v", err)
+	}
+	cancellation := signInvitationCancellationFixture(t, prepared, creation)
+	if err := replica.AdmitEvent(cancellation, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit concurrent Invitation Cancellation: %v", err)
+	}
+	state, err := replayAuthenticatedKeyEpochs(replica.Events(), prepared.Genesis, nil)
+	if err != nil {
+		t.Fatalf("replay concurrent Invitation terminal facts: %v", err)
+	}
+	if _, conflict := state.invitationConflicts[filledCreationID(250)]; !conflict {
+		t.Fatalf("Authority state did not surface Invitation conflict: %#v", state.invitationConflicts)
+	}
+	if len(state.activeMembers) != 1 || len(state.clientTargets) != 1 || len(state.recoveryTargets) != 1 {
+		t.Fatalf("conflicted Invitation activated authority: members %#v clients %#v recovery %#v", state.activeMembers, state.clientTargets, state.recoveryTargets)
+	}
+}
+
+func TestReplicaResolvesConcurrentInvitationConflictByCancellingAll(t *testing.T) {
+	prepared := deterministicCreation(t)
+	replica, err := NewReplica(prepared.Baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := replica.AdmitEvent(prepared.Genesis, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit Genesis: %v", err)
+	}
+	capabilities := []canonical.Value{canonical.Map{
+		0: "awsm.vault", 1: prepared.IDs.FirstMemberID[:], 2: prepared.IDs.VaultID[:], 3: "awsm.vault.join", 4: []byte{},
+	}}
+	creation, acceptance, _ := signInvitationAcceptanceFixture(t, prepared, capabilities, capabilities)
+	if err := replica.AdmitEvent(creation, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit Invitation Creation: %v", err)
+	}
+	if err := replica.AdmitEvent(acceptance, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit Invitation Acceptance: %v", err)
+	}
+	cancellation := signInvitationCancellationFixture(t, prepared, creation)
+	if err := replica.AdmitEvent(cancellation, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit concurrent Invitation Cancellation: %v", err)
+	}
+	accepted, err := parseInvitationAcceptance(acceptance)
+	if err != nil {
+		t.Fatalf("parse Invitation Acceptance: %v", err)
+	}
+	cancelled, err := parseInvitationCancellation(cancellation)
+	if err != nil {
+		t.Fatalf("parse Invitation Cancellation: %v", err)
+	}
+	recordIDs := canonicalSetValues([]canonical.Value{acceptance.RecordID[:], cancellation.RecordID[:]})
+	receiptIDs := canonicalSetValues([]canonical.Value{accepted.receiptID[:], cancelled.receiptID[:]})
+	invitationID := filledCreationID(250)
+	parents := []canonical.Identifier{acceptance.RecordID, cancellation.RecordID}
+	sort.Slice(parents, func(left, right int) bool { return bytes.Compare(parents[left][:], parents[right][:]) < 0 })
+	resolution, err := canonical.SignEvent(canonical.EventInput{
+		VaultID: prepared.IDs.VaultID, GenerationID: prepared.IDs.GenerationID,
+		ParentRecordIDs: parents, AuthorityParentIDs: parents,
+		RequiredFeatureSetID: prepared.RequiredFeatureSetID, Extensions: map[string][]byte{}, Family: canonical.AuthorityFamily, Type: 8,
+		SignerCredentialID: prepared.IDs.ClientCredentialID, AssertedAt: 211,
+		Body: canonical.Map{0: invitationID[:], 1: receiptIDs, 2: recordIDs, 3: uint64(2), 4: nil},
+	}, ed25519.PrivateKey(prepared.ClientKeys.SigningSecretKey))
+	if err != nil {
+		t.Fatalf("sign Invitation Conflict Resolution: %v", err)
+	}
+	if err := replica.AdmitEvent(resolution, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit Invitation Conflict Resolution: %v", err)
+	}
+	state, err := replayAuthenticatedKeyEpochs(replica.Events(), prepared.Genesis, nil)
+	if err != nil {
+		t.Fatalf("replay Invitation Conflict Resolution: %v", err)
+	}
+	if _, conflict := state.invitationConflicts[filledCreationID(250)]; conflict || len(state.activeMembers) != 1 {
+		t.Fatalf("Invitation Conflict Resolution did not cancel all candidates: conflicts %#v members %#v", state.invitationConflicts, state.activeMembers)
+	}
+}
+
 func signInvitationAcceptanceFixture(t *testing.T, prepared PreparedCanonicalVaultCreation, invitationCapabilities, acceptedCapabilities []canonical.Value) (canonical.Event, canonical.Event, ed25519.PublicKey) {
 	t.Helper()
 	invitationID := filledCreationID(250)

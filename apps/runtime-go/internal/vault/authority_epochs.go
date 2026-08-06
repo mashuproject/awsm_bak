@@ -33,6 +33,9 @@ type keyEpochReplayState struct {
 	members               map[canonical.Identifier]struct{}
 	invitations           map[canonical.Identifier]invitationCreation
 	invitationTerminals   map[canonical.Identifier]struct{}
+	invitationCandidates  map[canonical.Identifier]map[canonical.Identifier]invitationTerminalCandidate
+	invitationConflicts   map[canonical.Identifier]struct{}
+	invitationResolutions map[canonical.Identifier]struct{}
 	closed                bool
 }
 
@@ -102,6 +105,25 @@ type invitationCancellation struct {
 	requestBytes          []byte
 }
 
+type invitationResolution struct {
+	invitationID       canonical.Identifier
+	conflictingReceipt []canonical.Identifier
+	conflictingRecords []canonical.Identifier
+	outcome            uint64
+	selectedJoin       *canonical.Identifier
+}
+
+type invitationTerminalCandidate struct {
+	recordID             canonical.Identifier
+	outcome              uint64
+	receiptID            canonical.Identifier
+	joinRequestID        canonical.Identifier
+	memberID             canonical.Identifier
+	clientCredentialID   canonical.Identifier
+	recoveryCredentialID canonical.Identifier
+	administrator        bool
+}
+
 type keyEpochTransition struct {
 	parentEpochIDs []canonical.Identifier
 	newEpochID     canonical.Identifier
@@ -143,6 +165,9 @@ func replayAuthenticatedKeyEpochs(events []canonical.Event, genesis canonical.Ev
 		clientTargets:         map[canonical.Identifier]struct{}{firstClient: {}},
 		invitations:           map[canonical.Identifier]invitationCreation{},
 		invitationTerminals:   map[canonical.Identifier]struct{}{},
+		invitationCandidates:  map[canonical.Identifier]map[canonical.Identifier]invitationTerminalCandidate{},
+		invitationConflicts:   map[canonical.Identifier]struct{}{},
+		invitationResolutions: map[canonical.Identifier]struct{}{},
 	}
 	byID := make(map[canonical.Identifier]canonical.Event, len(events))
 	for _, event := range events {
@@ -315,6 +340,16 @@ func replayAuthenticatedKeyEpochs(events []canonical.Event, genesis canonical.Ev
 			}
 			delete(current.invitations, acceptance.invitationID)
 			current.invitationTerminals[acceptance.invitationID] = struct{}{}
+			candidates := current.invitationCandidates[acceptance.invitationID]
+			if candidates == nil {
+				candidates = make(map[canonical.Identifier]invitationTerminalCandidate)
+				current.invitationCandidates[acceptance.invitationID] = candidates
+			}
+			candidates[event.RecordID] = invitationTerminalCandidate{
+				recordID: event.RecordID, outcome: 1, receiptID: acceptance.receiptID, joinRequestID: acceptance.joinRequestID, memberID: acceptance.memberID,
+				clientCredentialID: acceptance.clientCredentialID, recoveryCredentialID: acceptance.recoveryCredentialID,
+				administrator: acceptance.administrator,
+			}
 		}
 		if event.Family == canonical.AuthorityFamily && event.Type == 7 {
 			cancellation, parseErr := parseInvitationCancellation(event)
@@ -333,6 +368,52 @@ func replayAuthenticatedKeyEpochs(events []canonical.Event, genesis canonical.Ev
 			}
 			delete(current.invitations, cancellation.invitationID)
 			current.invitationTerminals[cancellation.invitationID] = struct{}{}
+			candidates := current.invitationCandidates[cancellation.invitationID]
+			if candidates == nil {
+				candidates = make(map[canonical.Identifier]invitationTerminalCandidate)
+				current.invitationCandidates[cancellation.invitationID] = candidates
+			}
+			candidates[event.RecordID] = invitationTerminalCandidate{recordID: event.RecordID, outcome: 2, receiptID: cancellation.receiptID}
+		}
+		if event.Family == canonical.AuthorityFamily && event.Type == 8 {
+			signerMember, signerOK := current.activeClientMember(event.SignerCredentialID)
+			if !signerOK {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, errors.New("Invitation Conflict Resolution signer is not an active Client Credential")
+			}
+			if _, administrator := current.administrators[signerMember]; !administrator {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, errors.New("Invitation Conflict Resolution signer is not an Administrator")
+			}
+			resolution, parseErr := parseInvitationResolution(event)
+			if parseErr != nil {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, parseErr
+			}
+			selected, validateErr := validateInvitationResolution(current, resolution)
+			if validateErr != nil {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, validateErr
+			}
+			for _, candidate := range current.invitationCandidates[resolution.invitationID] {
+				if candidate.outcome != 1 {
+					continue
+				}
+				delete(current.activeMembers, candidate.memberID)
+				delete(current.administrators, candidate.memberID)
+				delete(current.clientTargets, candidate.clientCredentialID)
+				delete(current.recoveryTargets, candidate.recoveryCredentialID)
+			}
+			if resolution.outcome == 1 {
+				current.activeMembers[selected.memberID] = struct{}{}
+				current.clientTargets[selected.clientCredentialID] = struct{}{}
+				current.recoveryTargets[selected.recoveryCredentialID] = current.recoveryRevisions[selected.recoveryCredentialID]
+				if selected.administrator {
+					current.administrators[selected.memberID] = struct{}{}
+				}
+			}
+			delete(current.invitationConflicts, resolution.invitationID)
+			current.invitationResolutions[resolution.invitationID] = struct{}{}
 		}
 		if event.Family == canonical.AuthorityFamily && (event.Type == 3 || event.Type == 4) {
 			targetMember, resolved, parseErr := parseAdministratorRole(event)
@@ -548,6 +629,11 @@ func replayAuthenticatedKeyEpochs(events []canonical.Event, genesis canonical.Ev
 		}
 		statesByID[event.RecordID] = candidate
 		frontierIDs[event.RecordID] = struct{}{}
+	}
+	for _, event := range events {
+		if event.RecordID == genesisID {
+			continue
+		}
 		for _, parentID := range event.AuthorityParentIDs {
 			delete(frontierIDs, parentID)
 		}
@@ -599,6 +685,9 @@ func cloneKeyEpochReplayState(value keyEpochReplayState) keyEpochReplayState {
 		clientTargets:         make(map[canonical.Identifier]struct{}, len(value.clientTargets)),
 		invitations:           make(map[canonical.Identifier]invitationCreation, len(value.invitations)),
 		invitationTerminals:   make(map[canonical.Identifier]struct{}, len(value.invitationTerminals)),
+		invitationCandidates:  make(map[canonical.Identifier]map[canonical.Identifier]invitationTerminalCandidate, len(value.invitationCandidates)),
+		invitationConflicts:   make(map[canonical.Identifier]struct{}, len(value.invitationConflicts)),
+		invitationResolutions: make(map[canonical.Identifier]struct{}, len(value.invitationResolutions)),
 		closed:                value.closed,
 	}
 	for id := range value.activeMembers {
@@ -643,26 +732,41 @@ func cloneKeyEpochReplayState(value keyEpochReplayState) keyEpochReplayState {
 	for id := range value.invitationTerminals {
 		clone.invitationTerminals[id] = struct{}{}
 	}
+	for invitationID, candidates := range value.invitationCandidates {
+		clone.invitationCandidates[invitationID] = make(map[canonical.Identifier]invitationTerminalCandidate, len(candidates))
+		for recordID, candidate := range candidates {
+			clone.invitationCandidates[invitationID][recordID] = candidate
+		}
+	}
+	for invitationID := range value.invitationConflicts {
+		clone.invitationConflicts[invitationID] = struct{}{}
+	}
+	for invitationID := range value.invitationResolutions {
+		clone.invitationResolutions[invitationID] = struct{}{}
+	}
 	return clone
 }
 
 func mergeKeyEpochReplayStates(values []keyEpochReplayState) keyEpochReplayState {
 	if len(values) == 0 {
 		return keyEpochReplayState{
-			activeMembers:       make(map[canonical.Identifier]struct{}),
-			members:             make(map[canonical.Identifier]struct{}),
-			administrators:      make(map[canonical.Identifier]struct{}),
-			clientMembers:       make(map[canonical.Identifier]canonical.Identifier),
-			epochs:              make(map[canonical.Identifier]uint64),
-			heads:               make(map[canonical.Identifier]struct{}),
-			headSlots:           make(map[canonical.Identifier][]keyEpochEnvelopeSlot),
-			recoveryMembers:     make(map[canonical.Identifier]canonical.Identifier),
-			recoveryRevisions:   make(map[canonical.Identifier]uint64),
-			recoverySigningKeys: make(map[canonical.Identifier]ed25519.PublicKey),
-			recoveryTargets:     make(map[canonical.Identifier]uint64),
-			clientTargets:       make(map[canonical.Identifier]struct{}),
-			invitations:         make(map[canonical.Identifier]invitationCreation),
-			invitationTerminals: make(map[canonical.Identifier]struct{}),
+			activeMembers:         make(map[canonical.Identifier]struct{}),
+			members:               make(map[canonical.Identifier]struct{}),
+			administrators:        make(map[canonical.Identifier]struct{}),
+			clientMembers:         make(map[canonical.Identifier]canonical.Identifier),
+			epochs:                make(map[canonical.Identifier]uint64),
+			heads:                 make(map[canonical.Identifier]struct{}),
+			headSlots:             make(map[canonical.Identifier][]keyEpochEnvelopeSlot),
+			recoveryMembers:       make(map[canonical.Identifier]canonical.Identifier),
+			recoveryRevisions:     make(map[canonical.Identifier]uint64),
+			recoverySigningKeys:   make(map[canonical.Identifier]ed25519.PublicKey),
+			recoveryTargets:       make(map[canonical.Identifier]uint64),
+			clientTargets:         make(map[canonical.Identifier]struct{}),
+			invitations:           make(map[canonical.Identifier]invitationCreation),
+			invitationTerminals:   make(map[canonical.Identifier]struct{}),
+			invitationCandidates:  make(map[canonical.Identifier]map[canonical.Identifier]invitationTerminalCandidate),
+			invitationConflicts:   make(map[canonical.Identifier]struct{}),
+			invitationResolutions: make(map[canonical.Identifier]struct{}),
 		}
 	}
 	merged := cloneKeyEpochReplayState(values[0])
@@ -726,9 +830,59 @@ func mergeKeyEpochReplayStates(values []keyEpochReplayState) keyEpochReplayState
 			delete(merged.invitations, id)
 			merged.invitationTerminals[id] = struct{}{}
 		}
+		for invitationID, candidates := range value.invitationCandidates {
+			mergedCandidates := merged.invitationCandidates[invitationID]
+			if mergedCandidates == nil {
+				mergedCandidates = make(map[canonical.Identifier]invitationTerminalCandidate, len(candidates))
+				merged.invitationCandidates[invitationID] = mergedCandidates
+			}
+			for recordID, candidate := range candidates {
+				mergedCandidates[recordID] = candidate
+			}
+		}
+		for invitationID := range value.invitationConflicts {
+			merged.invitationConflicts[invitationID] = struct{}{}
+		}
+		for invitationID := range value.invitationResolutions {
+			merged.invitationResolutions[invitationID] = struct{}{}
+		}
 		merged.closed = merged.closed || value.closed
 	}
+	reduceInvitationConflicts(&merged)
 	return merged
+}
+
+func reduceInvitationConflicts(state *keyEpochReplayState) {
+	if state == nil {
+		return
+	}
+	for invitationID, candidates := range state.invitationCandidates {
+		if _, resolved := state.invitationResolutions[invitationID]; resolved {
+			delete(state.invitationConflicts, invitationID)
+			continue
+		}
+		outcomes := make(map[string]struct{}, len(candidates))
+		for _, candidate := range candidates {
+			if candidate.outcome == 1 {
+				outcomes[fmt.Sprintf("1:%x:%x", candidate.joinRequestID, candidate.memberID)] = struct{}{}
+			} else {
+				outcomes["2"] = struct{}{}
+			}
+		}
+		if len(outcomes) <= 1 {
+			continue
+		}
+		state.invitationConflicts[invitationID] = struct{}{}
+		for _, candidate := range candidates {
+			if candidate.outcome != 1 {
+				continue
+			}
+			delete(state.activeMembers, candidate.memberID)
+			delete(state.administrators, candidate.memberID)
+			delete(state.clientTargets, candidate.clientCredentialID)
+			delete(state.recoveryTargets, candidate.recoveryCredentialID)
+		}
+	}
 }
 
 func (value keyEpochReplayState) activeClientMember(credentialID canonical.Identifier) (canonical.Identifier, bool) {
@@ -1121,6 +1275,81 @@ func validateInvitationCancellation(cancellation invitationCancellation, invitat
 		return errors.New("Invitation Cancellation receipt signature is invalid")
 	}
 	return nil
+}
+
+func parseInvitationResolution(event canonical.Event) (invitationResolution, error) {
+	body, ok := replicaMapValue(event.Body)
+	if !ok || !replicaMapHasKeys(body, 5) {
+		return invitationResolution{}, errors.New("Invitation Conflict Resolution body is invalid")
+	}
+	invitationBytes, invitationOK := replicaMapBytes(body, 0, 32)
+	if !invitationOK || bytes.Equal(invitationBytes, make([]byte, 32)) {
+		return invitationResolution{}, errors.New("Invitation Conflict Resolution Invitation ID is invalid")
+	}
+	receiptIDs, err := parseCanonicalIdentifierSet(replicaMapEntryMust(body, 1), "Invitation Conflict Resolution receipt IDs", true)
+	if err != nil {
+		return invitationResolution{}, err
+	}
+	recordIDs, err := parseCanonicalIdentifierSet(replicaMapEntryMust(body, 2), "Invitation Conflict Resolution record IDs", true)
+	if err != nil {
+		return invitationResolution{}, err
+	}
+	outcome, outcomeOK := replicaMapNumber(body, 3)
+	if !outcomeOK || (outcome != 1 && outcome != 2) {
+		return invitationResolution{}, errors.New("Invitation Conflict Resolution outcome is invalid")
+	}
+	selectedValue, selectedExists := replicaMapEntry(body, 4)
+	if !selectedExists {
+		return invitationResolution{}, errors.New("Invitation Conflict Resolution selection is missing")
+	}
+	var selected *canonical.Identifier
+	if selectedValue != nil {
+		selectedBytes, ok := selectedValue.([]byte)
+		if !ok || len(selectedBytes) != 32 || bytes.Equal(selectedBytes, make([]byte, 32)) {
+			return invitationResolution{}, errors.New("Invitation Conflict Resolution selected Join Request ID is invalid")
+		}
+		id := bytesIdentifier(selectedBytes)
+		selected = &id
+	}
+	if (outcome == 1) != (selected != nil) {
+		return invitationResolution{}, errors.New("Invitation Conflict Resolution outcome does not match its selection")
+	}
+	return invitationResolution{
+		invitationID:       bytesIdentifier(invitationBytes),
+		conflictingReceipt: receiptIDs,
+		conflictingRecords: recordIDs,
+		outcome:            outcome,
+		selectedJoin:       selected,
+	}, nil
+}
+
+func validateInvitationResolution(state keyEpochReplayState, resolution invitationResolution) (invitationTerminalCandidate, error) {
+	if _, resolved := state.invitationResolutions[resolution.invitationID]; resolved {
+		return invitationTerminalCandidate{}, errors.New("Invitation Conflict Resolution is already terminal")
+	}
+	if _, conflict := state.invitationConflicts[resolution.invitationID]; !conflict {
+		return invitationTerminalCandidate{}, errors.New("Invitation Conflict Resolution has no current conflict")
+	}
+	candidates := state.invitationCandidates[resolution.invitationID]
+	expectedReceiptIDs := make(map[canonical.Identifier]struct{}, len(candidates))
+	expectedRecordIDs := make(map[canonical.Identifier]struct{}, len(candidates))
+	var selected invitationTerminalCandidate
+	selectedFound := false
+	for _, candidate := range candidates {
+		expectedReceiptIDs[candidate.receiptID] = struct{}{}
+		expectedRecordIDs[candidate.recordID] = struct{}{}
+		if resolution.selectedJoin != nil && candidate.outcome == 1 && candidate.joinRequestID == *resolution.selectedJoin {
+			selected = candidate
+			selectedFound = true
+		}
+	}
+	if !sameIdentifierSet(resolution.conflictingReceipt, expectedReceiptIDs) || !sameIdentifierSet(resolution.conflictingRecords, expectedRecordIDs) {
+		return invitationTerminalCandidate{}, errors.New("Invitation Conflict Resolution does not name every candidate")
+	}
+	if resolution.outcome == 1 && !selectedFound {
+		return invitationTerminalCandidate{}, errors.New("Invitation Conflict Resolution selected candidate is unavailable")
+	}
+	return selected, nil
 }
 
 func sameIdentifierSlice(left, right []canonical.Identifier) bool {
