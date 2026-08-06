@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -85,6 +86,29 @@ func (s *Store) Delete(id string) error {
 		return err
 	}
 	return nil
+}
+
+// ListIDs returns the opaque Storage Item IDs currently materialized in this
+// store. It exposes filenames only; callers still authenticate each retained
+// mapping before deciding what may be collected.
+func (s *Store) ListIDs() ([]string, error) {
+	entries, err := os.ReadDir(s.root)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".bin") || strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		id := strings.TrimSuffix(entry.Name(), ".bin")
+		if _, err := s.path(id); err != nil {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids, nil
 }
 
 func (s *Store) path(id string) (string, error) {

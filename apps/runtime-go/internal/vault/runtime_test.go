@@ -1,6 +1,7 @@
 package vault
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
@@ -478,6 +479,38 @@ func TestStorageReliefEvictsOnlyLocalObjectBytesWithWarning(t *testing.T) {
 	}
 	if _, ok := value.Canonical.ObjectStorageItemIDs[hexIdentifier(objectID)]; ok {
 		t.Fatal("Storage Relief retained the evicted Storage mapping")
+	}
+}
+
+func TestGarbageCollectionDeletesOnlyUnreferencedOpaqueItems(t *testing.T) {
+	ctx := context.Background()
+	state := store.NewMemoryState()
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vaultID := createVaultForTest(t, runtime, "GC")
+	strayID := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	if err := dependencies.Artifacts.Put(strayID, bytes.NewReader([]byte("orphan"))); err != nil {
+		t.Fatal(err)
+	}
+	result, err := runtime.GarbageCollect(ctx, vaultID)
+	if err != nil {
+		t.Fatalf("GarbageCollect: %v", err)
+	}
+	if len(result.DeletedStorageItemIDs) != 1 || result.DeletedStorageItemIDs[0] != strayID {
+		t.Fatalf("GarbageCollect result = %#v", result)
+	}
+	if _, err := dependencies.Artifacts.Open(strayID); err == nil {
+		t.Fatal("Garbage Collection retained an unreferenced item")
+	}
+	for _, id := range []string{runtime.vaults[vaultID].Canonical.BaselineStorageItemID, runtime.vaults[vaultID].Canonical.GenesisStorageItemID} {
+		reader, err := dependencies.Artifacts.Open(id)
+		if err != nil {
+			t.Fatalf("Garbage Collection removed retained item %s: %v", id, err)
+		}
+		_ = reader.Close()
 	}
 }
 

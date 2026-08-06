@@ -432,6 +432,10 @@ type StorageReliefSummary struct {
 	Warning           string   `json:"warning"`
 }
 
+type GarbageCollectionSummary struct {
+	DeletedStorageItemIDs []string `json:"deletedStorageItemIds"`
+}
+
 // StorageRelief removes only selected local Object materializations. It never
 // edits Vault Records, asks a Remote for redundancy proof, or blocks when no
 // Remote exists; the warning is deliberately returned every time.
@@ -507,6 +511,54 @@ func (r *Runtime) StorageRelief(ctx context.Context, vaultID string, objectIDs [
 	}
 	r.signal()
 	return StorageReliefSummary{ReleasedObjectIDs: unique, Warning: "Storage Relief removed local Object bytes. Without another retained Replica or export, this data may be unrecoverable."}, nil
+}
+
+// GarbageCollect authenticates the selected Runtime state and removes only
+// artifact-store files that no accepted Vault currently references. It does
+// not infer age, Remote durability, or semantic reachability from filenames.
+func (r *Runtime) GarbageCollect(ctx context.Context, vaultID string) (GarbageCollectionSummary, error) {
+	_ = ctx
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, err := r.vaultLocked(vaultID); err != nil {
+		return GarbageCollectionSummary{}, err
+	}
+	if r.replicas[vaultID] == nil || r.deps.Artifacts == nil {
+		return GarbageCollectionSummary{}, commandError("VAULT_REPLAY_UNAVAILABLE", "The authenticated Vault Replica is unavailable.")
+	}
+	retained := make(map[string]struct{})
+	for _, value := range r.vaults {
+		if value.Canonical == nil {
+			continue
+		}
+		for _, storageItemID := range []string{
+			value.Canonical.BaselineStorageItemID, value.Canonical.GenesisStorageItemID,
+			value.Canonical.RecoveryEnvelopeStorageID, value.Canonical.ClientEnvelopeStorageID,
+		} {
+			retained[storageItemID] = struct{}{}
+		}
+		for _, storageItemID := range value.Canonical.RecordStorageItemIDs {
+			retained[storageItemID] = struct{}{}
+		}
+		for _, storageItemID := range value.Canonical.ObjectStorageItemIDs {
+			retained[storageItemID] = struct{}{}
+		}
+	}
+	ids, err := r.deps.Artifacts.ListIDs()
+	if err != nil {
+		return GarbageCollectionSummary{}, commandError("GARBAGE_COLLECTION_FAILED", "The local artifact inventory could not be read.")
+	}
+	deleted := make([]string, 0)
+	for _, storageItemID := range ids {
+		if _, ok := retained[storageItemID]; ok {
+			continue
+		}
+		if err := r.deps.Artifacts.Delete(storageItemID); err != nil {
+			return GarbageCollectionSummary{DeletedStorageItemIDs: deleted}, commandError("GARBAGE_COLLECTION_FAILED", "Garbage Collection could not remove an unreferenced local item.")
+		}
+		deleted = append(deleted, storageItemID)
+	}
+	return GarbageCollectionSummary{DeletedStorageItemIDs: deleted}, nil
 }
 
 func objectIDFromBytes(vaultID canonical.Identifier, encoded []byte) (canonical.Identifier, error) {

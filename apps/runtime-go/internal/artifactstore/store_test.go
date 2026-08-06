@@ -3,6 +3,8 @@ package artifactstore
 import (
 	"bytes"
 	"io"
+	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -29,5 +31,25 @@ func TestStoreStreamsOpaqueBytesAndRejectsPathTraversal(t *testing.T) {
 	}
 	if _, err := store.Open("../outside"); err != ErrInvalidArtifactID {
 		t.Fatalf("path traversal error = %v, want %v", err, ErrInvalidArtifactID)
+	}
+}
+
+func TestStoreListsOpaqueBytes(t *testing.T) {
+	store, err := New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Put("artifact-a", strings.NewReader("one")); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Put("artifact-b", strings.NewReader("two")); err != nil {
+		t.Fatal(err)
+	}
+	ids, err := store.ListIDs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(ids, []string{"artifact-a", "artifact-b"}) {
+		t.Fatalf("ListIDs = %#v", ids)
 	}
 }
