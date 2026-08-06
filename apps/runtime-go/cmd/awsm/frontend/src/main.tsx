@@ -35,6 +35,7 @@ type VaultSummary = {
   readonly label: string | null;
   readonly lifecycle: string;
   readonly access: string;
+  readonly clientCredentialId?: string;
   readonly selected: boolean;
 };
 
@@ -1587,6 +1588,28 @@ function VaultsView({
       setBusy(false);
     }
   };
+  const endCurrentClientCredential = async () => {
+    if (
+      selected === undefined ||
+      selected.clientCredentialId === undefined ||
+      !window.confirm("End this Client Credential? This Client will become read-only.")
+    )
+      return;
+    setBusy(true);
+    try {
+      await binding.VaultCommand?.({
+        type: "EndClientCredential",
+        expectedVaultId: selected.vaultId,
+        targetClientCredentialId: selected.clientCredentialId,
+      });
+      refresh();
+      onStatus("This Client Credential has ended; the Vault is now read-only here.");
+    } catch (error) {
+      onError(error);
+    } finally {
+      setBusy(false);
+    }
+  };
   if (state?.pendingVaultCreation !== undefined)
     return (
       <PendingCreationPanel
@@ -1691,42 +1714,57 @@ function VaultsView({
             </p>
           </div>
           <ActionRow>
-            <Button
-              variant="secondary"
-              busy={busy}
-              onClick={() => void beginPhraseAction("replace")}
-            >
-              Change Recovery Phrase
-            </Button>
+            {selected.access === "Authoring" ? (
+              <Button
+                variant="secondary"
+                busy={busy}
+                onClick={() => void beginPhraseAction("replace")}
+              >
+                Change Recovery Phrase
+              </Button>
+            ) : null}
             {selected.lifecycle === "Open" ? (
               <>
-                <Button
-                  variant="secondary"
-                  busy={busy}
-                  onClick={() =>
-                    void destructive("VacuumVault", "Vacuum creates a new baseline. Continue?")
-                  }
-                >
-                  Vacuum this Vault
-                </Button>
                 <Button variant="secondary" busy={busy} onClick={() => void garbageCollect()}>
                   Run Garbage Collection
                 </Button>
-                <Button variant="secondary" busy={busy} onClick={() => void rotateKeyEpoch()}>
-                  Rotate Key Epoch
-                </Button>
-                <Button
-                  variant="danger"
-                  busy={busy}
-                  onClick={() =>
-                    void destructive(
-                      "CloseVault",
-                      "Closing stops new Events in this Vault. Continue?",
-                    )
-                  }
-                >
-                  Close Vault
-                </Button>
+                {selected.access === "Authoring" ? (
+                  <>
+                    <Button
+                      variant="secondary"
+                      busy={busy}
+                      onClick={() =>
+                        void destructive("VacuumVault", "Vacuum creates a new baseline. Continue?")
+                      }
+                    >
+                      Vacuum this Vault
+                    </Button>
+                    <Button variant="secondary" busy={busy} onClick={() => void rotateKeyEpoch()}>
+                      Rotate Key Epoch
+                    </Button>
+                    {selected.clientCredentialId !== undefined ? (
+                      <Button
+                        variant="danger"
+                        busy={busy}
+                        onClick={() => void endCurrentClientCredential()}
+                      >
+                        End this Client Credential
+                      </Button>
+                    ) : null}
+                    <Button
+                      variant="danger"
+                      busy={busy}
+                      onClick={() =>
+                        void destructive(
+                          "CloseVault",
+                          "Closing stops new Events in this Vault. Continue?",
+                        )
+                      }
+                    >
+                      Close Vault
+                    </Button>
+                  </>
+                ) : null}
               </>
             ) : null}
           </ActionRow>

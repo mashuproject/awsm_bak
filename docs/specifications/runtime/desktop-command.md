@@ -38,7 +38,7 @@ Content-Type: application/json
 
 The body is one tagged `CanonicalApplicationRequest`. The Go Runtime implements `GetState`, Vault
 creation and selection, Recovery Phrase ceremonies, `RecoverMember`, state-only Fork from the
-authenticated Library checkpoint, `CloseVault`, authenticated Administrator `RotateKeyEpoch`, `VacuumVault`, `ListLibrary`, Storage Relief/GC
+authenticated Library checkpoint, `CloseVault`, authenticated `EndClientCredential`, Administrator `RotateKeyEpoch`, `VacuumVault`, `ListLibrary`, Storage Relief/GC
 through the Runtime API, the read-only `GetAuthorityState` projection, Hosted Replica
 creation/attachment/materialization, receiver pull, and Artifact hydration. Capture remains an
 extension-only surface; the extension-to-desktop Capture Bundle bridge is not implemented.
@@ -59,7 +59,9 @@ and adopted-Vacuum closures, including Feature Manifest and Streamable Artifact 
 never log passphrases, package bytes, keys, or bearer tokens.
 
 The Wails Vault view exposes these same Commands through its Authority, Complete Export and Import
-panels and its Library list. An Open Vault with an unambiguous active Administrator exposes an
+panels and its Library list. An authoring Client may explicitly end its current Client Credential;
+the Runtime records the type-10 Authority Event and the local view becomes read-only. An Open Vault
+with an unambiguous active Administrator exposes an
 explicitly confirmed `RotateKeyEpoch` action; the Runtime authors the type-12 Authority Event,
 stores recipient Key Envelopes, advances the current Key Epoch, and refreshes the projection.
 `GetAuthorityState` is derived from authenticated Authority and

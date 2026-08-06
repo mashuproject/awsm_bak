@@ -65,11 +65,12 @@ func commandError(id, message string) *CommandError {
 }
 
 type VaultSummary struct {
-	VaultID   string  `json:"vaultId"`
-	Label     *string `json:"label"`
-	Lifecycle string  `json:"lifecycle"`
-	Access    string  `json:"access"`
-	Selected  bool    `json:"selected"`
+	VaultID            string  `json:"vaultId"`
+	Label              *string `json:"label"`
+	Lifecycle          string  `json:"lifecycle"`
+	Access             string  `json:"access"`
+	ClientCredentialID string  `json:"clientCredentialId,omitempty"`
+	Selected           bool    `json:"selected"`
 }
 
 type PendingCreationState struct {
@@ -537,6 +538,19 @@ func (r *Runtime) AdmitOpaqueEvent(ctx context.Context, vaultID string, encoded 
 	if err := nextReplica.AdmitKnownEvent(event); err != nil {
 		return commandError("VAULT_EVENT_INVALID", "The Event failed authenticated DAG admission.")
 	}
+	localCredentialID, localCredentialErr := decodeHexIdentifier(value.Canonical.ClientCredentialID)
+	if localCredentialErr != nil {
+		return commandError("VAULT_REPLAY_UNAVAILABLE", "The local Client Credential identity is invalid.")
+	}
+	if value.Canonical.AuthoringAvailable {
+		authority, authorityErr := replayReplicaAuthorityState(nextReplica, nil, nil)
+		if authorityErr != nil {
+			return commandError("VAULT_REPLAY_UNAVAILABLE", "The authenticated Authority State could not be replayed.")
+		}
+		if _, active := authority.activeClientMember(localCredentialID); !active {
+			value.Canonical.AuthoringAvailable = false
+		}
+	}
 	envelope, err := storage.DecodeOpaqueEnvelope(encoded)
 	if err != nil {
 		return commandError("VAULT_EVENT_INVALID", "The opaque Vault Record envelope is invalid.")
@@ -610,6 +624,19 @@ func (r *Runtime) admitOpaqueVacuum(ctx context.Context, vaultID string, baselin
 	nextReplica, err := r.replicas[vaultID].AdoptVacuum(baseline, event)
 	if err != nil {
 		return commandError("VAULT_VACUUM_INVALID", "The Vacuum Event could not be adopted.")
+	}
+	localCredentialID, localCredentialErr := decodeHexIdentifier(value.Canonical.ClientCredentialID)
+	if localCredentialErr != nil {
+		return commandError("VAULT_REPLAY_UNAVAILABLE", "The local Client Credential identity is invalid.")
+	}
+	if value.Canonical.AuthoringAvailable {
+		authority, authorityErr := replayReplicaAuthorityState(nextReplica, nil, nil)
+		if authorityErr != nil {
+			return commandError("VAULT_VACUUM_INVALID", "The successor Authority State could not be replayed.")
+		}
+		if _, active := authority.activeClientMember(localCredentialID); !active {
+			value.Canonical.AuthoringAvailable = false
+		}
 	}
 	baselineEnvelope, err := storage.DecodeOpaqueEnvelope(baselineEncoded)
 	if err != nil {
@@ -1026,12 +1053,17 @@ func (r *Runtime) stateLocked() ClientState {
 		if value.Lifecycle == "Open" && value.Canonical != nil && value.Canonical.AuthoringAvailable {
 			access = "Authoring"
 		}
+		clientCredentialID := ""
+		if value.Canonical != nil {
+			clientCredentialID = value.Canonical.ClientCredentialID
+		}
 		state.Vaults = append(state.Vaults, VaultSummary{
-			VaultID:   value.VaultID,
-			Label:     cloneString(value.Label),
-			Lifecycle: value.Lifecycle,
-			Access:    access,
-			Selected:  value.VaultID == r.selected,
+			VaultID:            value.VaultID,
+			Label:              cloneString(value.Label),
+			Lifecycle:          value.Lifecycle,
+			Access:             access,
+			ClientCredentialID: clientCredentialID,
+			Selected:           value.VaultID == r.selected,
 		})
 	}
 	return state
@@ -1185,6 +1217,16 @@ func (r *Runtime) Handle(ctx context.Context, raw json.RawMessage) (any, error) 
 			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "RotateKeyEpoch contains invalid fields")
 		}
 		return r.rotateKeyEpoch(ctx, input.ExpectedVaultID)
+	case "EndClientCredential":
+		var input struct {
+			Type                     string `json:"type"`
+			ExpectedVaultID          string `json:"expectedVaultId"`
+			TargetClientCredentialID string `json:"targetClientCredentialId"`
+		}
+		if err := decode(raw, &input); err != nil {
+			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "EndClientCredential contains invalid fields")
+		}
+		return r.endClientCredential(ctx, input.ExpectedVaultID, input.TargetClientCredentialID)
 	case "ExportComplete":
 		var input struct {
 			Type            string `json:"type"`

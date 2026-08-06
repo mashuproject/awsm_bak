@@ -61,6 +61,7 @@ test("Wails Vault surface renders the selected Vault management slice", async ({
           label: "Personal archive",
           lifecycle: "Open",
           access: "Authoring",
+          clientCredentialId: "2".repeat(64),
           selected: true,
         },
       ],
@@ -106,6 +107,16 @@ test("Wails Vault surface renders the selected Vault management slice", async ({
                 displayNumber: 1,
                 eventRecordId: "6".repeat(64),
               };
+            if (request.type === "EndClientCredential") {
+              const selected = state.vaults[0];
+              if (selected === undefined) throw new Error("selected Vault fixture missing");
+              selected.access = "ReadOnly";
+              authority.activeClientCredentialIds = [];
+              return {
+                targetClientCredentialId: "2".repeat(64),
+                eventRecordId: "7".repeat(64),
+              };
+            }
             throw new Error(`unexpected command: ${request.type}`);
           },
           PendingTransfers: async () => [],
@@ -135,6 +146,13 @@ test("Wails Vault surface renders the selected Vault management slice", async ({
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Rotate Key Epoch" }).click();
   await expect(page.getByText("Vault Key Epoch 1 is now current.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "End this Client Credential" })).toBeVisible();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "End this Client Credential" }).click();
+  await expect(page.getByText("This Client Credential has ended; the Vault is now read-only here.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Change Recovery Phrase" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Rotate Key Epoch" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Run Garbage Collection" })).toBeVisible();
   await expect(page.getByText("No captures are stored in this Vault yet.")).toBeVisible();
   await expect(page.getByText("No Hosted Replicas are configured on this Client.")).toBeVisible();
   await expect(page.locator("body")).not.toHaveCSS("overflow-x", "scroll");

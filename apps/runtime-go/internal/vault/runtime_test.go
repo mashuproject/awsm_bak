@@ -932,6 +932,110 @@ func TestRotateKeyEpochAuthorsAuthenticatedTransitionAndReopens(t *testing.T) {
 	}
 }
 
+func TestEndClientCredentialAuthorsAuthenticatedEventAndReopensReadOnly(t *testing.T) {
+	ctx := context.Background()
+	state := store.NewMemoryState()
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vaultID, _ := createVaultWithPhraseForTest(t, runtime, "Client Credential end")
+	targetCredentialID := runtime.vaults[vaultID].Canonical.ClientCredentialID
+	result, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "EndClientCredential", "expectedVaultId": vaultID, "targetClientCredentialId": targetCredentialID,
+	}))
+	if err != nil {
+		t.Fatalf("EndClientCredential: %v", err)
+	}
+	ended, ok := result.(map[string]string)
+	if !ok {
+		t.Fatalf("EndClientCredential result = %#v", result)
+	}
+	recordID := ended["eventRecordId"]
+	if !validDigest(recordID) {
+		t.Fatalf("EndClientCredential event record = %#v", ended["eventRecordId"])
+	}
+	record, ok := runtime.replicas[vaultID].Record(mustIdentifier(t, recordID))
+	if !ok || record.Event == nil || record.Event.Family != canonical.AuthorityFamily || record.Event.Type != 10 {
+		t.Fatalf("EndClientCredential record = %#v", record)
+	}
+	if runtime.vaults[vaultID].Canonical.AuthoringAvailable {
+		t.Fatal("ended local Client Credential remains available for authoring")
+	}
+	authority, err := runtime.replicas[vaultID].AuthorityState()
+	if err != nil {
+		t.Fatalf("AuthorityState after Client Credential end: %v", err)
+	}
+	if len(authority.ActiveClientCredentialIDs) != 0 {
+		t.Fatalf("active Client Credentials after end = %#v, want none", authority.ActiveClientCredentialIDs)
+	}
+	restarted, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatalf("restart after Client Credential end: %v", err)
+	}
+	if restarted.vaults[vaultID].Canonical.AuthoringAvailable {
+		t.Fatal("restarted ended Client Credential remains available for authoring")
+	}
+}
+
+func TestAdmitOpaqueClientCredentialEndRevokesLocalAuthoring(t *testing.T) {
+	ctx := context.Background()
+	sourceDependencies := memoryDependencies(t)
+	source, err := New(ctx, store.NewMemoryState(), sourceDependencies)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vaultID, _ := createVaultWithPhraseForTest(t, source, "Remote Client Credential end")
+	payload, err := source.ExportTransfer(vaultID)
+	if err != nil {
+		t.Fatalf("ExportTransfer: %v", err)
+	}
+	destinationState := store.NewMemoryState()
+	destinationDependencies := memoryDependencies(t)
+	destination, err := New(ctx, destinationState, destinationDependencies)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := destination.ImportTransfer(ctx, payload); err != nil {
+		t.Fatalf("ImportTransfer: %v", err)
+	}
+	if !destination.vaults[vaultID].Canonical.AuthoringAvailable {
+		t.Fatal("transfer destination did not retain local authoring before remote Event")
+	}
+	result, err := source.Handle(ctx, mustJSON(map[string]any{
+		"type": "EndClientCredential", "expectedVaultId": vaultID,
+		"targetClientCredentialId": source.vaults[vaultID].Canonical.ClientCredentialID,
+	}))
+	if err != nil {
+		t.Fatalf("source EndClientCredential: %v", err)
+	}
+	ended := result.(map[string]string)
+	storageItemID := source.vaults[vaultID].Canonical.RecordStorageItemIDs[ended["eventRecordId"]]
+	reader, err := sourceDependencies.Artifacts.Open(storageItemID)
+	if err != nil {
+		t.Fatalf("open source End event: %v", err)
+	}
+	encoded, err := io.ReadAll(reader)
+	_ = reader.Close()
+	if err != nil {
+		t.Fatalf("read source End event: %v", err)
+	}
+	if err := destination.AdmitOpaqueEvent(ctx, vaultID, encoded); err != nil {
+		t.Fatalf("destination AdmitOpaqueEvent: %v", err)
+	}
+	if destination.vaults[vaultID].Canonical.AuthoringAvailable {
+		t.Fatal("remote Client Credential End left local authoring available")
+	}
+	restarted, err := New(ctx, destinationState, destinationDependencies)
+	if err != nil {
+		t.Fatalf("restart destination: %v", err)
+	}
+	if restarted.vaults[vaultID].Canonical.AuthoringAvailable {
+		t.Fatal("restarted destination restored ended local authoring")
+	}
+}
+
 func TestReplicaRejectsRecoveryReplacementWithInvalidPossessionProof(t *testing.T) {
 	ctx := context.Background()
 	state := store.NewMemoryState()
