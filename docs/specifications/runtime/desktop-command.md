@@ -36,11 +36,11 @@ Authorization: Bearer <Runtime API Grant>
 Content-Type: application/json
 ```
 
-The body is one tagged `CanonicalApplicationRequest`. The Vault-management commands currently
-implemented by the Go slice are `GetState`, Vault creation and selection, Recovery Phrase
-ceremonies, `RecoverMember`, Fork, `CloseVault`, `VacuumVault`, and Hosted Replica metadata
-configuration. Capture remains available for extension-owned local Vaults, but the
-extension-to-desktop Capture Bundle bridge is not implemented.
+The body is one tagged `CanonicalApplicationRequest`. The Go Runtime implements `GetState`, Vault
+creation and selection, Recovery Phrase ceremonies, `RecoverMember`, empty-state Fork, `CloseVault`,
+`VacuumVault`, `ListLibrary`, Storage Relief/GC through the Runtime API, Hosted Replica
+creation/attachment/materialization, receiver pull, and Artifact hydration. Capture remains an
+extension-only surface; the extension-to-desktop Capture Bundle bridge is not implemented.
 Unsupported desktop capabilities return a canonical application error rather than pretending that
 the operation succeeded. Desktop page acquisition is intentionally unsupported.
 
@@ -60,9 +60,9 @@ transport and authorization failures:
 The endpoint rejects malformed JSON, unknown fields on decoded command forms, and trailing JSON
 values. It never logs request bodies, Recovery Phrases, keys, or bearer tokens.
 
-The current Go slice supports Hosted Replica metadata configuration only. Attachment, materialization,
-and synchronization Commands return explicit unavailable errors until their authenticated Host and
-Event/DAG services are implemented; they never report a fabricated successful sync.
+Hosted Replica Commands authenticate the Host channel, validate capabilities and opaque responses,
+and never treat Host state as Vault authority. An unavailable or malformed Remote returns a failed
+status without advancing local state.
 
 ## 3. Backend selection
 
@@ -110,10 +110,10 @@ separate source action retires the source Vault; rejection deletes the staged ar
 action creates a Vault Event, and transfer artifacts are not synchronized or included in ordinary
 Vault Export or Backup.
 
-The current Go slice stages arbitrary Runtime-owned bytes but its acceptance path understands only
-its small internal Vault transfer snapshot; it does not yet parse or activate the browser Complete
-Export format. Until that integration is implemented and tested, this is a verified staging
-ceremony rather than a claim of complete cross-runtime Vault move parity.
+The Go acceptance path validates and activates an authenticated opaque-closure package, including
+canonical Replica state, referenced opaque items, and trusted local secrets. Browser Complete Export
+stream/container interoperability remains a separate parity boundary; this move path is currently
+complete for Go-to-Go Runtime packages.
 
 An unsubmitted transfer is discarded on desktop process restart. A staged transfer survives restart
 until acceptance or rejection, subject to local storage integrity checks. A secret, plaintext

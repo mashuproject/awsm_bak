@@ -59,43 +59,34 @@ The reserved `/api/awsm/host/` route group is fail-closed until the opaque Host
 adapter supplies its own Channel Authenticator and Replica Access Grant
 verification. A Runtime API bearer token never authorizes that surface.
 
-The current Go Runtime implements a persistent Vault-management slice behind the
-canonical tagged Command contract: Vault creation and selection, Recovery Phrase
-confirmation and replacement, same-member recovery, Fork, Closure, Vacuum, and
-Hosted Replica metadata configuration. The Wails surface presents those operations and
-the loopback API exposes them to the paired extension under the single
-`runtime.vault` grant.
+The Go Runtime implements the canonical tagged Command contract for persistent Vault management:
+creation and selection, Recovery Phrase confirmation/replacement and same-member recovery, Fork
+for an empty state, Closure, Vacuum adoption, Library projection, authenticated Event/Object replay,
+Storage Relief, Garbage Collection, Hosted Replica creation and attachment, Compact materialization,
+receiver-initiated pull, and explicit Artifact hydration. The Wails surface and loopback API use this
+same Runtime; a paired extension reaches it under the single `runtime.vault` grant.
 
-Hosted Replica attachment, materialization, and synchronization commands fail closed
-until the Go Runtime has the authenticated Host and Event/DAG services they require.
+The `internal/canonical` package provides strict canonical CBOR values, transcript framing,
+authenticated Event and Baseline codecs, Record IDs, Object IDs, and causal DAG validation.
+`internal/crypto` provides browser-compatible BIP39, Credential, Key Epoch, compact encryption,
+HPKE, and Key Envelope services. `internal/storage` provides the opaque Compact/Streamable envelope
+codec. Focused vectors are generated from the browser implementation, and Runtime integration tests
+prove restartable authenticated replay, remote sync boundaries, and destination rewrapping.
 
-The `internal/canonical` package now provides the first interoperable semantic substrate: strict
-canonical CBOR values, transcript framing, authenticated Event and Baseline Record encoding and
-decoding, Record ID derivation, and causal DAG validation. `internal/crypto` adds the browser-
-compatible BIP39 Recovery Phrase, credential, Key Epoch, compact XChaCha20-Poly1305, HPKE, and
-Key Envelope services. `internal/storage` adds the opaque compact/streamable envelope codec, and
-`internal/vault` can prepare and verify the authenticated initial Baseline and Genesis ceremony.
-Deterministic vectors are generated from the browser Runtime's canonical implementation, including
-exact Baseline and Genesis byte digests. The Runtime command path does not yet persist or replay
-these records; that integration remains part of semantic parity work.
+The desktop window does not acquire pages; Capture remains an extension-only surface and the
+extension-to-desktop Capture Bundle bridge is intentionally out of scope for this release. The
+one-use move boundary now carries the authenticated opaque closure and trusted local secrets inside
+its encrypted transfer envelope, so an accepted package reopens the Replica on the destination.
+The remaining parity limits are browser-format Complete Export interoperability, non-empty content
+Fork re-authoring, broader Authority/Key-Epoch event families, conflict/rebase projections, and
+full Wails workflow coverage; they remain explicit roadmap work rather than fabricated success.
 
-This slice does not claim full semantic parity with the browser Runtime. The Go
-implementation still needs Runtime-integrated Event/DAG and cryptographic
-services, authoritative Record/Object replay, Capture and Library projections,
-pull synchronization, hydration, Storage Relief, and complete Export/Import.
-Capture is intentionally unavailable in the desktop window for this release;
-extension page acquisition remains available for extension-owned local Vaults, but
-the extension-to-desktop Capture Bundle bridge is not implemented. Remaining work is tracked in
-`ROADMAP.md` and owned by the living Runtime specifications.
-
-The move boundary is deliberately separate from Vault synchronization. A source
-Client seals a transfer package with a one-use secret, stages it in the desktop
-process, and verifies the returned digest and byte length. The destination UI
-must explicitly accept the staged package before the source retires its Vault;
-the transfer is never a Vault Event. The current acceptance path understands the
-Go Runtime's internal transfer snapshot; wiring the browser Complete Export
-format and sealed local credential into this ceremony remains semantic parity
-work, so this boundary is not advertised as a complete cross-runtime move yet.
+The move boundary is deliberately separate from Vault synchronization. A source Client seals the
+canonical opaque closure and trusted local secrets with a one-use secret, stages it in the desktop
+process, and verifies the returned digest and byte length. The destination UI must explicitly accept
+the staged package before the source retires its Vault; the transfer is never a Vault Event. The Go
+path is complete for Go-to-Go closures. Direct browser Complete Export stream/container import
+remains a documented parity boundary.
 
 ## Process and browser proofs
 
@@ -131,7 +122,8 @@ universal macOS DMG. Only the Linux package is natively started and smoke-tested
 macOS are explicitly build-only for the current release. The AppImage helper and packaged smoke
 test are `script/package-linux-appimage.sh` and `script/packaged-desktop-smoke.mjs`.
 
-These proofs cover the process boundary, Runtime API grant lifecycle, canonical
-Vault Command envelope, and transfer staging. They do not claim that the Go
-process yet implements Vault Capture, authenticated replay, search,
-synchronization, hydration, or Storage Relief semantics.
+These proofs cover the process boundary, Runtime API grant lifecycle, canonical Vault Command
+envelope, authenticated replay, Hosted Replica sync boundaries, Artifact hydration, and encrypted
+transfer staging. They do not claim desktop page Capture, the extension-to-desktop Capture Bundle
+bridge, browser Complete Export byte-format interoperability, non-empty content Fork re-authoring,
+or user-facing search/AI semantics.

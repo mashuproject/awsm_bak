@@ -105,19 +105,22 @@ not co-own one Replica namespace; that becomes ordinary Replica synchronization.
 
 **Status:** Candidate
 
-Complete the Go Runtime's semantic Vault services behind the existing desktop/headless process
-boundary. The current slice covers persistent Vault-management Commands and one-use move staging;
-this entry is only for the unresolved work: authenticated Record/Object and Event-DAG replay,
-cross-language cryptographic vectors, real Client Credentials and Key Epoch handling, Library
-projections, pull synchronization, hydration, Storage Relief, Garbage Collection, and complete
-Export/Import. Capture remains an extension surface, but the Runtime still needs a narrow
-extension-created Capture Bundle bridge if desktop-owned Vaults are to receive captures without
-duplicating Vault data.
+Finish the remaining canonical desktop/headless Vault boundaries behind the existing process
+contract. The Go Runtime now covers authenticated Record/Object and Event-DAG replay, browser-derived
+cryptographic primitives, Library projection, Hosted Replica creation/attachment/materialization,
+receiver pull, Artifact hydration, Storage Relief, Garbage Collection, and encrypted Go-to-Go
+transfer closure import/export.
 
-Promotion requires the formal Runtime vectors and restart/crash, conflict, authority, sparse
-Replica, and cross-surface tests to pass against both implementations. Keep the current Command
-contract and move ceremony owned by the living Runtime documents; do not duplicate those contracts
-here.
+Remaining work is deliberately narrower: accept the browser Complete Export stream/container,
+re-author non-empty content Forks with correct object and event dependencies, implement the broader
+Authority and Key-Epoch event families, expose conflict/rebase and sparse-Replica state, and finish
+Wails workflow controls and cross-surface journeys. Capture remains extension-only and the
+extension-to-desktop Capture Bundle bridge is out of scope for this release.
+
+Promotion requires formal cross-language vectors plus restart/crash, authority, conflict, sparse
+Replica, multi-Remote convergence, sync-proof, Wails, and browser-to-desktop tests. Keep the Command
+contract and move semantics in the living Runtime documents; this entry records only unresolved
+work.
 
 ## Zero-knowledge web Client
 

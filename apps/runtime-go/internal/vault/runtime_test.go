@@ -814,7 +814,16 @@ func TestTransferPackageRoundTripsWithoutCreatingAnEvent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("export transfer: %v", err)
 	}
-	destination, err := New(ctx, store.NewMemoryState(), memoryDependencies(t))
+	var exported TransferPackage
+	if err := decode(json.RawMessage(payload), &exported); err != nil {
+		t.Fatalf("decode complete transfer package: %v", err)
+	}
+	if exported.Canonical == nil || len(exported.Artifacts) < 4 || len(exported.TrustedSecrets) != 2 {
+		t.Fatalf("transfer package omitted canonical closure: %#v", exported)
+	}
+	destinationState := store.NewMemoryState()
+	destinationDependencies := memoryDependencies(t)
+	destination, err := New(ctx, destinationState, destinationDependencies)
 	if err != nil {
 		t.Fatalf("create destination Runtime: %v", err)
 	}
@@ -823,6 +832,16 @@ func TestTransferPackageRoundTripsWithoutCreatingAnEvent(t *testing.T) {
 	}
 	if len(destination.State().Vaults) != 1 || destination.State().Vaults[0].VaultID != vaultID {
 		t.Fatalf("destination state = %#v", destination.State())
+	}
+	if destination.replicas[vaultID] == nil {
+		t.Fatal("destination did not reopen the authenticated Replica from the transfer package")
+	}
+	restarted, err := New(ctx, destinationState, destinationDependencies)
+	if err != nil {
+		t.Fatalf("restart imported destination: %v", err)
+	}
+	if restarted.replicas[vaultID] == nil {
+		t.Fatal("restarted destination lost the authenticated Replica")
 	}
 	if _, err := destination.ImportTransfer(ctx, payload); err == nil {
 		t.Fatal("duplicate transfer unexpectedly replaced the destination Vault")

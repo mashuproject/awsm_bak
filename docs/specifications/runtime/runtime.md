@@ -38,22 +38,20 @@ plaintext Runtime API by default.
 The browser extension requests loopback permission from the explicit Connect action, then sends a
 pairing request over `http://127.0.0.1:37373`. The Wails management surface approves pending requests
 and revokes grants. The persisted grant token is installation-wrapped Trusted Secret state and is
-never rendered in the extension or management summary. The Go process currently implements a
-persistent Vault-management slice behind the same tagged Command names as the extension: creation,
-selection, Recovery Phrase ceremonies, recovery, Fork, Closure, Vacuum, and Hosted Replica
-metadata configuration. Attachment, materialization, and synchronization remain explicit
-unavailable Commands. Its desktop window deliberately does not acquire pages. Extension page capture
+never rendered in the extension or management summary. The Go process implements the same tagged
+Command names as the extension for persistent Vault management and authenticated synchronization.
+Its desktop window deliberately does not acquire pages. Extension page capture
 continues for extension-owned local Vaults, while the extension-to-desktop Capture Bundle bridge is
 not implemented. The Go `internal/canonical` package provides strict canonical CBOR values,
 transcript framing, authenticated Event/Baseline codecs, Record IDs, and causal DAG primitives.
-`internal/crypto` provides browser-compatible BIP39, Credential, Key Epoch, compact-encryption,
-HPKE, and Key Envelope services; `internal/storage` provides the opaque compact/streamable envelope
-codec; and `internal/vault` prepares and verifies the authenticated initial Baseline and Genesis
-ceremony. Focused Go tests include exact browser-derived Key Envelope, Baseline, and Genesis
-vectors. The Runtime command path does not yet persist or replay these records. Runtime-integrated
-Event/DAG replay, complete cryptographic cross-language conformance, Library projections, pull
-synchronization, hydration, Storage Relief, and complete Export/Import remain future semantic
-work.
+The Go Runtime now provides browser-compatible BIP39, Credential, Key Epoch, compact-encryption,
+HPKE, Key Envelope, opaque Compact/Streamable envelopes, authenticated Event/DAG replay, Library
+projection, Storage Relief, Garbage Collection, Hosted Replica creation/attachment/materialization,
+receiver pull, Artifact hydration, and encrypted Go-to-Go transfer import/export. Focused tests use
+browser-derived vectors and restart/Host-boundary proofs. Browser Complete Export byte-format
+interoperability, non-empty content Fork re-authoring, broader Authority and Key-Epoch event
+families, conflict/rebase projections, and full Wails workflow coverage remain explicit parity
+boundaries. Unsupported desktop page Capture remains intentional.
 
 ## 2.1 Desktop Command and move boundary
 

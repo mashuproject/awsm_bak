@@ -181,16 +181,22 @@ type runtimeSnapshot struct {
 	hostedAttachment *pendingHostedAttachment
 }
 
-// TransferPackage is the destination-side handoff representation. It is
-// expected to arrive inside the authenticated transfer envelope; it is not a
-// Vault Event and is never synchronized.
+// TransferPackage is the destination-side Complete Export closure carried by
+// the one-use transfer envelope. It is not a Vault Event and is never
+// synchronized. The outer transfer envelope supplies confidentiality; this
+// package contains only already-encrypted opaque Vault items plus the local
+// trusted secrets required to reopen the Replica.
 type TransferPackage struct {
-	VaultID      string        `json:"vaultId"`
-	Label        *string       `json:"label"`
-	Lifecycle    string        `json:"lifecycle"`
-	RecoveryHash string        `json:"recoveryHash"`
-	GenerationID string        `json:"generationId"`
-	Remotes      []remoteState `json:"remotes"`
+	VaultID          string                 `json:"vaultId"`
+	Label            *string                `json:"label"`
+	Lifecycle        string                 `json:"lifecycle"`
+	RecoveryHash     string                 `json:"recoveryHash"`
+	GenerationID     string                 `json:"generationId"`
+	RecoveryRevision int                    `json:"recoveryRevision"`
+	Remotes          []remoteState          `json:"remotes"`
+	Canonical        *canonicalReplicaState `json:"canonical"`
+	Artifacts        map[string][]byte      `json:"artifacts"`
+	TrustedSecrets   map[string][]byte      `json:"trustedSecrets"`
 }
 
 func New(ctx context.Context, state StateStore, dependencies Dependencies) (*Runtime, error) {
@@ -264,29 +270,76 @@ func (r *Runtime) ImportTransfer(ctx context.Context, payload []byte) (ClientSta
 	if err := decode(json.RawMessage(payload), &packageValue); err != nil {
 		return ClientState{}, commandError("TRANSFER_PACKAGE_INVALID", "The transfer package is invalid.")
 	}
-	candidate := persistedVault{
-		VaultID: packageValue.VaultID, Label: packageValue.Label, Lifecycle: packageValue.Lifecycle,
-		RecoveryHash: packageValue.RecoveryHash, GenerationID: packageValue.GenerationID,
-		Remotes: append([]remoteState(nil), packageValue.Remotes...),
-	}
-	if err := validatePersistedVault(candidate); err != nil {
+	candidate, err := transferCandidate(packageValue)
+	if err != nil {
 		return ClientState{}, commandError("TRANSFER_PACKAGE_INVALID", "The transfer package is invalid.")
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.deps.Artifacts == nil || r.deps.Secrets == nil {
+		return ClientState{}, commandError("TRANSFER_PACKAGE_UNAVAILABLE", "This Client cannot import a Vault without secure local storage.")
+	}
 	before := r.snapshotLocked()
 	if _, exists := r.vaults[packageValue.VaultID]; exists {
 		return ClientState{}, commandError("VAULT_IDENTITY_COLLISION", "The destination already contains this Vault.")
 	}
-	value := &persistedVault{
-		VaultID: packageValue.VaultID, Label: cloneString(packageValue.Label), Lifecycle: packageValue.Lifecycle,
-		RecoveryHash: packageValue.RecoveryHash, GenerationID: packageValue.GenerationID,
-		Remotes: append([]remoteState(nil), packageValue.Remotes...), RecoveryRevision: 0,
+	value := &candidate
+	stored := make([]string, 0, len(packageValue.Artifacts))
+	storedSecrets := make([]string, 0, len(packageValue.TrustedSecrets))
+	for storageItemID, encoded := range packageValue.Artifacts {
+		decoded, decodeErr := decodeDigest(storageItemID)
+		envelope, envelopeErr := storage.DecodeOpaqueEnvelope(encoded)
+		if decodeErr != nil || envelopeErr != nil || envelope.StorageItemID != decoded {
+			r.restoreLocked(before)
+			return ClientState{}, commandError("TRANSFER_PACKAGE_INVALID", "The transfer package contains an invalid opaque item.")
+		}
+		if err := r.deps.Artifacts.Put(storageItemID, bytes.NewReader(encoded)); err != nil {
+			r.restoreLocked(before)
+			for _, storedID := range stored {
+				_ = r.deps.Artifacts.Delete(storedID)
+			}
+			for _, account := range storedSecrets {
+				_ = r.deps.Secrets.Delete(trustedSecretService, account)
+			}
+			return ClientState{}, commandError("TRANSFER_PACKAGE_STORAGE_FAILED", "The transfer package could not be stored locally.")
+		}
+		stored = append(stored, hexIdentifier(decoded))
+	}
+	for account, secret := range packageValue.TrustedSecrets {
+		if err := r.deps.Secrets.Put(trustedSecretService, account, secret); err != nil {
+			r.restoreLocked(before)
+			for _, storedID := range stored {
+				_ = r.deps.Artifacts.Delete(storedID)
+			}
+			for _, storedAccount := range storedSecrets {
+				_ = r.deps.Secrets.Delete(trustedSecretService, storedAccount)
+			}
+			return ClientState{}, commandError("TRUSTED_SECRET_UNAVAILABLE", "The transfer trusted secret could not be stored.")
+		}
+		storedSecrets = append(storedSecrets, account)
 	}
 	r.vaults[value.VaultID] = value
+	replica, err := r.openCanonicalReplica(*value)
+	if err != nil {
+		r.restoreLocked(before)
+		for _, storedID := range stored {
+			_ = r.deps.Artifacts.Delete(storedID)
+		}
+		for _, account := range storedSecrets {
+			_ = r.deps.Secrets.Delete(trustedSecretService, account)
+		}
+		return ClientState{}, commandError("TRANSFER_PACKAGE_INVALID", "The transfer package Replica could not be authenticated.")
+	}
+	r.replicas[value.VaultID] = replica
 	r.selected = value.VaultID
 	if err := r.persistLocked(ctx); err != nil {
 		r.restoreLocked(before)
+		for _, storedID := range stored {
+			_ = r.deps.Artifacts.Delete(storedID)
+		}
+		for _, account := range storedSecrets {
+			_ = r.deps.Secrets.Delete(trustedSecretService, account)
+		}
 		return ClientState{}, err
 	}
 	r.signal()
@@ -300,10 +353,67 @@ func (r *Runtime) ExportTransfer(vaultID string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	if value.Canonical == nil || r.deps.Artifacts == nil || r.deps.Secrets == nil {
+		return nil, commandError("TRANSFER_PACKAGE_UNAVAILABLE", "The authenticated Vault closure is unavailable for export.")
+	}
+	artifacts := make(map[string][]byte)
+	addArtifact := func(storageItemID string) error {
+		if _, ok := artifacts[storageItemID]; ok {
+			return nil
+		}
+		reader, openErr := r.deps.Artifacts.Open(storageItemID)
+		if openErr != nil {
+			return openErr
+		}
+		encoded, readErr := io.ReadAll(reader)
+		_ = reader.Close()
+		if readErr != nil {
+			return readErr
+		}
+		if _, decodeErr := storage.DecodeOpaqueEnvelope(encoded); decodeErr != nil {
+			return decodeErr
+		}
+		artifacts[storageItemID] = encoded
+		return nil
+	}
+	for _, storageItemID := range []string{value.Canonical.BaselineStorageItemID, value.Canonical.GenesisStorageItemID, value.Canonical.RecoveryEnvelopeStorageID, value.Canonical.ClientEnvelopeStorageID} {
+		if err := addArtifact(storageItemID); err != nil {
+			return nil, commandError("TRANSFER_PACKAGE_UNAVAILABLE", "A required Vault closure item is unavailable.")
+		}
+	}
+	for _, storageItemID := range value.Canonical.RecordStorageItemIDs {
+		if err := addArtifact(storageItemID); err != nil {
+			return nil, commandError("TRANSFER_PACKAGE_UNAVAILABLE", "A required Vault Record is unavailable.")
+		}
+	}
+	for _, storageItemID := range value.Canonical.ObjectStorageItemIDs {
+		if err := addArtifact(storageItemID); err != nil {
+			return nil, commandError("TRANSFER_PACKAGE_UNAVAILABLE", "A required Vault Object is unavailable.")
+		}
+	}
+	for _, storageItemID := range value.Canonical.ArtifactStorageItemIDs {
+		if err := addArtifact(storageItemID); err != nil {
+			return nil, commandError("TRANSFER_PACKAGE_UNAVAILABLE", "A required Artifact wrapper is unavailable.")
+		}
+	}
+	trustedSecrets := make(map[string][]byte)
+	for _, account := range []string{clientSecretAccount(vaultID, value.Canonical.ClientCredentialID), epochSecretAccount(vaultID, value.Canonical.KeyEpochID)} {
+		secret, secretErr := r.deps.Secrets.Get(trustedSecretService, account)
+		if secretErr != nil {
+			return nil, commandError("TRANSFER_PACKAGE_UNAVAILABLE", "A required trusted Vault secret is unavailable.")
+		}
+		trustedSecrets[account] = secret
+	}
+	for _, remote := range value.Remotes {
+		if secret, secretErr := r.deps.Secrets.Get(trustedSecretService, remoteSessionAccount(remote.RemoteID)); secretErr == nil {
+			trustedSecrets[remoteSessionAccount(remote.RemoteID)] = secret
+		}
+	}
 	payload, err := json.Marshal(TransferPackage{
 		VaultID: value.VaultID, Label: cloneString(value.Label), Lifecycle: value.Lifecycle,
-		RecoveryHash: value.RecoveryHash, GenerationID: value.GenerationID,
-		Remotes: append([]remoteState(nil), value.Remotes...),
+		RecoveryHash: value.RecoveryHash, GenerationID: value.GenerationID, RecoveryRevision: value.RecoveryRevision,
+		Remotes: append([]remoteState(nil), value.Remotes...), Canonical: cloneCanonicalState(value.Canonical),
+		Artifacts: artifacts, TrustedSecrets: trustedSecrets,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("encode transfer package: %w", err)
@@ -607,15 +717,47 @@ func TransferPackageVaultID(payload []byte) (string, error) {
 	if err := decode(json.RawMessage(payload), &packageValue); err != nil {
 		return "", commandError("TRANSFER_PACKAGE_INVALID", "The transfer package is invalid.")
 	}
-	candidate := persistedVault{
-		VaultID: packageValue.VaultID, Label: packageValue.Label, Lifecycle: packageValue.Lifecycle,
-		RecoveryHash: packageValue.RecoveryHash, GenerationID: packageValue.GenerationID,
-		Remotes: append([]remoteState(nil), packageValue.Remotes...),
-	}
-	if err := validatePersistedVault(candidate); err != nil {
+	if _, err := transferCandidate(packageValue); err != nil {
 		return "", commandError("TRANSFER_PACKAGE_INVALID", "The transfer package is invalid.")
 	}
 	return packageValue.VaultID, nil
+}
+
+func transferCandidate(packageValue TransferPackage) (persistedVault, error) {
+	if packageValue.Canonical == nil || len(packageValue.Artifacts) == 0 || len(packageValue.TrustedSecrets) < 2 {
+		return persistedVault{}, errors.New("Complete transfer package closure is incomplete")
+	}
+	candidate := persistedVault{
+		VaultID: packageValue.VaultID, Label: cloneString(packageValue.Label), Lifecycle: packageValue.Lifecycle,
+		RecoveryHash: packageValue.RecoveryHash, GenerationID: packageValue.GenerationID,
+		Remotes: append([]remoteState(nil), packageValue.Remotes...), RecoveryRevision: packageValue.RecoveryRevision,
+		Canonical: cloneCanonicalState(packageValue.Canonical),
+	}
+	if candidate.Canonical.VaultID != candidate.VaultID || candidate.Canonical.GenerationID != candidate.GenerationID {
+		return persistedVault{}, errors.New("Complete transfer package identity does not match")
+	}
+	if err := validatePersistedVault(candidate); err != nil {
+		return persistedVault{}, err
+	}
+	for storageItemID, encoded := range packageValue.Artifacts {
+		id, err := decodeDigest(storageItemID)
+		if err != nil {
+			return persistedVault{}, err
+		}
+		envelope, err := storage.DecodeOpaqueEnvelope(encoded)
+		if err != nil || envelope.StorageItemID != id {
+			return persistedVault{}, errors.New("Complete transfer package opaque identity is invalid")
+		}
+	}
+	clientAccount := clientSecretAccount(candidate.VaultID, candidate.Canonical.ClientCredentialID)
+	epochAccount := epochSecretAccount(candidate.VaultID, candidate.Canonical.KeyEpochID)
+	if _, ok := packageValue.TrustedSecrets[clientAccount]; !ok {
+		return persistedVault{}, errors.New("Complete transfer package Client Credential secret is missing")
+	}
+	if _, ok := packageValue.TrustedSecrets[epochAccount]; !ok {
+		return persistedVault{}, errors.New("Complete transfer package Key Epoch secret is missing")
+	}
+	return candidate, nil
 }
 
 func (r *Runtime) stateLocked() ClientState {

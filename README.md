@@ -63,13 +63,14 @@ The browser extension currently supports:
 - explicit hydration of an available large Capture Artifact after a configured Hosted Replica
   supplies and the Client verifies it.
 
-The reference Go Runtime also provides a desktop/headless Client mode for Vault management. It
-can create, select, recover, Fork, close, Vacuum, and save Hosted Replica metadata for its own
-Vaults, and a paired extension can operate those Vaults through the loopback Runtime API. Hosted
-Replica attachment, materialization, and synchronization are fail-closed until their semantic
-services are implemented. The desktop window does not capture pages. Extension page capture
-remains available for extension-owned local Vaults; a Capture Bundle bridge for desktop-owned Vaults
-is not implemented.
+The reference Go Runtime also provides a desktop/headless Client mode behind the same tagged
+Command boundary. It can create, select, recover, Fork an empty state, close, Vacuum, replay
+authenticated Records/Objects, project its Library, perform Storage Relief/GC, attach and
+materialize Hosted Replicas, pull opaque Compact items, hydrate a known Artifact, and accept an
+encrypted Go-to-Go transfer closure. A paired extension can operate those Vaults through the
+loopback Runtime API. The desktop window does not capture pages. Extension page capture remains
+available for extension-owned local Vaults; a Capture Bundle bridge for desktop-owned Vaults is not
+implemented.
 
 The trusted extension validates all Vault semantics locally. A Replica Host stores opaque encrypted
 bytes and Host-local Account, Grant, quota, and operational data; it does not receive Vault IDs,
@@ -85,11 +86,10 @@ Host permission leaves local Vault work available and prevents that Host channel
 
 Current limits are intentional: direct peer transports, complete Authority-branch synchronization,
 global freshness claims, automatic redundancy tracking, and user-facing AI features are not shipped
-in this release. The Go Runtime's desktop/headless mode is a supported Vault-management surface,
-but its semantic Event/DAG replay, cryptographic conformance, Library projection, synchronization,
-hydration, Storage Relief, and complete Export/Import remain incomplete. Desktop page capture and
-the extension-to-desktop Capture Bundle bridge are not available. See the living specifications and
-the forward-looking roadmap for the remaining branches.
+in this release. Desktop page capture and the extension-to-desktop Capture Bundle bridge are not
+available. Browser Complete Export byte-format interoperability, non-empty content Fork
+re-authoring, broader Authority/Key-Epoch event families, conflict/rebase projections, and complete
+Wails workflow coverage remain explicit parity work; see the living specifications and roadmap.
 
 The Coordination Server root is the public AWSM product and installation guide on hosted and
 self-hosted deployments. Its privacy, security, setup, Account, and comparison pages are evergreen
