@@ -95,13 +95,30 @@ type LibraryProjection struct {
 	TagAssignments []LibraryTagAssignment `json:"tagAssignments"`
 	Notes          []LibraryNote          `json:"notes"`
 	Conflicts      []LibraryConflict      `json:"conflicts"`
+	captureState   []libraryCaptureCheckpoint
 }
 
 type libraryCapture struct {
-	item           LibraryItem
-	registrationID canonical.Identifier
-	lifecycleID    canonical.Identifier
-	collectionID   canonical.Identifier
+	item                    LibraryItem
+	registrationID          canonical.Identifier
+	lifecycleID             canonical.Identifier
+	collectionID            canonical.Identifier
+	assignedCollectionID    canonical.Identifier
+	descriptorID            canonical.Identifier
+	assignmentCauses        []canonical.Identifier
+	lifecycleCauses         []canonical.Identifier
+	registrationAttribution canonical.Value
+}
+
+type libraryCaptureCheckpoint struct {
+	bundleID                string
+	descriptorID            canonical.Identifier
+	collectionID            canonical.Identifier
+	assignmentCauses        []canonical.Identifier
+	lifecycleCode           uint64
+	lifecycleCauses         []canonical.Identifier
+	registrationCause       canonical.Identifier
+	registrationAttribution canonical.Value
 }
 
 // ProjectLibrary reduces Bundle Registered, Capture lifecycle, and placement
@@ -136,6 +153,9 @@ func ProjectLibraryProjection(replica *Replica) (LibraryProjection, error) {
 	assignments := make(map[canonical.Identifier]libraryTagAssignmentState)
 	removedAssignmentCauses := make(map[canonical.Identifier]struct{})
 	notes := make(map[canonical.Identifier]*libraryNoteState)
+	if err := seedBaselineCaptures(replica, captures); err != nil {
+		return LibraryProjection{}, err
+	}
 	if err := seedBaselineCollections(replica, collectionTitles, collectionFolders); err != nil {
 		return LibraryProjection{}, err
 	}
@@ -181,6 +201,7 @@ func ProjectLibraryProjection(replica *Replica) (LibraryProjection, error) {
 					continue
 				}
 				capture.lifecycleID = event.RecordID
+				capture.lifecycleCauses = []canonical.Identifier{event.RecordID}
 				if event.Type == 4 {
 					capture.item.Lifecycle = "Deleted"
 				} else {
@@ -198,6 +219,8 @@ func ProjectLibraryProjection(replica *Replica) (LibraryProjection, error) {
 					continue
 				}
 				capture.collectionID = event.RecordID
+				capture.assignedCollectionID = move.destinationID
+				capture.assignmentCauses = []canonical.Identifier{event.RecordID}
 				capture.item.CollectionID = hexIdentifier(move.destinationID)
 			}
 		case 7:
@@ -884,7 +907,24 @@ func ProjectLibraryProjection(replica *Replica) (LibraryProjection, error) {
 		}
 		return firstString(conflicts[left].SubjectIDs) < firstString(conflicts[right].SubjectIDs)
 	})
-	return LibraryProjection{Captures: items, Collections: collections, Folders: folderProjection, Tags: tagProjection, TagAssignments: assignmentProjection, Notes: noteProjection, Conflicts: conflicts}, nil
+	captureState := make([]libraryCaptureCheckpoint, 0, len(captures))
+	for _, capture := range captures {
+		if capture.registrationAttribution == nil || capture.descriptorID == (canonical.Identifier{}) || capture.assignedCollectionID == (canonical.Identifier{}) || len(capture.assignmentCauses) == 0 || len(capture.lifecycleCauses) == 0 {
+			return LibraryProjection{}, errors.New("Capture checkpoint state is incomplete")
+		}
+		lifecycleCode, ok := vacuumLifecycleCode(capture.item.Lifecycle)
+		if !ok {
+			return LibraryProjection{}, errors.New("Capture checkpoint lifecycle is invalid")
+		}
+		captureState = append(captureState, libraryCaptureCheckpoint{
+			bundleID: capture.item.BundleID, descriptorID: capture.descriptorID, collectionID: capture.assignedCollectionID,
+			assignmentCauses: append([]canonical.Identifier(nil), capture.assignmentCauses...), lifecycleCode: lifecycleCode,
+			lifecycleCauses: append([]canonical.Identifier(nil), capture.lifecycleCauses...), registrationCause: capture.registrationID,
+			registrationAttribution: capture.registrationAttribution,
+		})
+	}
+	sort.Slice(captureState, func(left, right int) bool { return captureState[left].bundleID < captureState[right].bundleID })
+	return LibraryProjection{Captures: items, Collections: collections, Folders: folderProjection, Tags: tagProjection, TagAssignments: assignmentProjection, Notes: noteProjection, Conflicts: conflicts, captureState: captureState}, nil
 }
 
 func orderedContentEvents(replica *Replica) ([]canonical.Event, error) {
@@ -1159,6 +1199,95 @@ func seedBaselineCollections(replica *Replica, collectionTitles map[canonical.Id
 	return nil
 }
 
+func seedBaselineCaptures(replica *Replica, captures map[string]*libraryCapture) error {
+	content, err := baselineContentCheckpoint(replica.baseline)
+	if err != nil {
+		return err
+	}
+	entries, ok := replicaMapArray(content, 3)
+	if !ok {
+		return errors.New("Baseline Capture checkpoint is invalid")
+	}
+	for index, entry := range entries {
+		if !replicaMapHasKeys(entry, 8) {
+			return fmt.Errorf("Baseline Capture entry %d is invalid", index)
+		}
+		bundleID, ok := replicaIdentifier(entry, 0)
+		if !ok {
+			return fmt.Errorf("Baseline Capture entry %d Bundle ID is invalid", index)
+		}
+		descriptorID, ok := replicaIdentifier(entry, 1)
+		if !ok {
+			return fmt.Errorf("Baseline Capture entry %d Descriptor ID is invalid", index)
+		}
+		collectionID, ok := replicaIdentifier(entry, 2)
+		if !ok {
+			return fmt.Errorf("Baseline Capture entry %d Collection ID is invalid", index)
+		}
+		assignmentCauses, err := parseCanonicalIdentifierSet(replicaMapEntryMust(entry, 3), "Baseline Capture assignment causes", false)
+		if err != nil {
+			return err
+		}
+		if len(assignmentCauses) == 0 {
+			return fmt.Errorf("Baseline Capture entry %d assignment has no cause", index)
+		}
+		lifecycleCode, ok := replicaUnsignedNumber(replicaMapEntryMust(entry, 4))
+		if !ok || (lifecycleCode != 1 && lifecycleCode != 2) {
+			return fmt.Errorf("Baseline Capture entry %d lifecycle is invalid", index)
+		}
+		lifecycleCauses, err := parseCanonicalIdentifierSet(replicaMapEntryMust(entry, 5), "Baseline Capture lifecycle causes", false)
+		if err != nil {
+			return err
+		}
+		if len(lifecycleCauses) == 0 {
+			return fmt.Errorf("Baseline Capture entry %d lifecycle has no cause", index)
+		}
+		registrationCause, ok := replicaIdentifier(entry, 6)
+		if !ok {
+			return fmt.Errorf("Baseline Capture entry %d registration cause is invalid", index)
+		}
+		attribution, err := validateBaselineAttribution(replicaMapEntryMust(entry, 7), fmt.Sprintf("Baseline Capture entry %d attribution", index))
+		if err != nil {
+			return err
+		}
+		synthetic := canonical.Event{EventInput: canonical.EventInput{Body: canonical.Map{0: bundleID[:], 1: descriptorID[:], 2: collectionID[:]}}, RecordID: registrationCause}
+		capture, err := registeredCapture(replica, synthetic)
+		if err != nil {
+			return fmt.Errorf("Baseline Capture entry %d: %w", index, err)
+		}
+		capture.item.Lifecycle = baselineLifecycleName(lifecycleCode)
+		capture.lifecycleID = lifecycleCauses[0]
+		capture.collectionID = assignmentCauses[0]
+		capture.assignedCollectionID = collectionID
+		capture.descriptorID = descriptorID
+		capture.assignmentCauses = append([]canonical.Identifier(nil), assignmentCauses...)
+		capture.lifecycleCauses = append([]canonical.Identifier(nil), lifecycleCauses...)
+		capture.registrationAttribution = attribution
+		bundleKey := capture.item.BundleID
+		if _, exists := captures[bundleKey]; exists {
+			return fmt.Errorf("Baseline Capture %s is repeated", bundleKey)
+		}
+		captures[bundleKey] = capture
+	}
+	return nil
+}
+
+func validateBaselineAttribution(value canonical.Value, field string) (canonical.Value, error) {
+	attribution, ok := replicaMapValue(value)
+	if !ok || !replicaMapHasKeys(attribution, 4) {
+		return nil, fmt.Errorf("%s is invalid", field)
+	}
+	for _, key := range []uint64{0, 1, 2} {
+		if _, valid := replicaIdentifier(attribution, key); !valid {
+			return nil, fmt.Errorf("%s identity is invalid", field)
+		}
+	}
+	if _, valid := replicaMapSignedNumber(attribution, 3); !valid {
+		return nil, fmt.Errorf("%s timestamp is invalid", field)
+	}
+	return attribution, nil
+}
+
 func seedBaselineFolders(replica *Replica, folders map[canonical.Identifier]*libraryFolderState) error {
 	content, err := baselineContentCheckpoint(replica.baseline)
 	if err != nil {
@@ -1351,12 +1480,15 @@ func buildVacuumContentCheckpoint(replica *Replica, projection LibraryProjection
 	if replica == nil {
 		return nil, errors.New("Replica is required")
 	}
-	if len(projection.Captures) != 0 || len(projection.Notes) != 0 || len(projection.Conflicts) != 0 {
-		return nil, errors.New("Vacuum content checkpoint cannot yet represent captures, Notes, or active conflicts")
+	if len(projection.Notes) != 0 || len(projection.Conflicts) != 0 {
+		return nil, errors.New("Vacuum content checkpoint cannot yet represent Notes or active conflicts")
+	}
+	if len(projection.Captures) != len(projection.captureState) {
+		return nil, errors.New("Vacuum Capture checkpoint state is incomplete")
 	}
 	for _, collection := range projection.Collections {
-		if collection.RedirectedTo != nil || collection.TailBundleID != nil || collection.ActiveCaptureCount != 0 {
-			return nil, errors.New("Vacuum Collection checkpoint cannot represent redirects or captures")
+		if collection.RedirectedTo != nil {
+			return nil, errors.New("Vacuum Collection checkpoint cannot represent redirects")
 		}
 	}
 	for _, tag := range projection.Tags {
@@ -1372,7 +1504,7 @@ func buildVacuumContentCheckpoint(replica *Replica, projection LibraryProjection
 	if !ok {
 		return nil, errors.New("Baseline Vault label checkpoint is missing")
 	}
-	for _, key := range []uint64{2, 3, 8, 9} {
+	for _, key := range []uint64{2, 8, 9} {
 		entries, entriesOK := replicaMapArray(oldContent, key)
 		if !entriesOK {
 			return nil, fmt.Errorf("Baseline content checkpoint field %d is invalid", key)
@@ -1397,6 +1529,37 @@ func buildVacuumContentCheckpoint(replica *Replica, projection LibraryProjection
 			labelCheckpoint = canonical.Map{0: *label, 1: canonicalSetValues([]canonical.Value{causeID[:]})}
 		}
 	}
+	captureEntries := make([]canonical.Value, 0, len(projection.captureState))
+	tails := make(map[canonical.Identifier]libraryCaptureCheckpoint)
+	for _, capture := range projection.captureState {
+		bundleID, decodeErr := decodeHexIdentifier(capture.bundleID)
+		if decodeErr != nil {
+			return nil, fmt.Errorf("Capture checkpoint identity is invalid: %w", decodeErr)
+		}
+		if capture.lifecycleCode == 2 {
+			continue
+		}
+		if capture.lifecycleCode != 1 || capture.registrationCause == (canonical.Identifier{}) || capture.registrationAttribution == nil {
+			return nil, errors.New("Capture checkpoint state is invalid")
+		}
+		assignmentCauses := identifiersToValues(capture.assignmentCauses)
+		lifecycleCauses := identifiersToValues(capture.lifecycleCauses)
+		descriptorID := capture.descriptorID
+		collectionID := capture.collectionID
+		captureEntries = append(captureEntries, canonical.Map{
+			0: bundleID[:], 1: descriptorID[:], 2: collectionID[:], 3: canonicalSetValues(assignmentCauses),
+			4: capture.lifecycleCode, 5: canonicalSetValues(lifecycleCauses), 6: capture.registrationCause[:], 7: capture.registrationAttribution,
+		})
+		previous, exists := tails[collectionID]
+		if !exists || newerEvent(replica, previous.registrationCause, capture.registrationCause) {
+			tails[collectionID] = capture
+		}
+	}
+	sort.Slice(captureEntries, func(left, right int) bool {
+		leftID, _ := replicaIdentifier(captureEntries[left], 0)
+		rightID, _ := replicaIdentifier(captureEntries[right], 0)
+		return bytes.Compare(leftID[:], rightID[:]) < 0
+	})
 	collectionEntries := make([]canonical.Value, 0, len(projection.Collections))
 	for _, collection := range projection.Collections {
 		var title canonical.Value
@@ -1427,8 +1590,16 @@ func buildVacuumContentCheckpoint(replica *Replica, projection LibraryProjection
 			}
 			folderCauses = causeSet
 		}
+		var intrinsicTail canonical.Value
+		if tail, exists := tails[collectionID]; exists {
+			bundleID, bundleErr := decodeHexIdentifier(tail.bundleID)
+			if bundleErr != nil {
+				return nil, fmt.Errorf("Collection checkpoint tail identity is invalid: %w", bundleErr)
+			}
+			intrinsicTail = canonical.Map{0: bundleID[:], 1: tail.registrationCause[:]}
+		}
 		collectionEntries = append(collectionEntries, canonical.Map{
-			0: collectionID[:], 1: title, 2: causes, 3: folderID, 4: folderCauses, 5: nil, 6: nil, 7: nil,
+			0: collectionID[:], 1: title, 2: causes, 3: folderID, 4: folderCauses, 5: nil, 6: intrinsicTail, 7: intrinsicTail,
 		})
 	}
 	sort.Slice(collectionEntries, func(left, right int) bool {
@@ -1531,7 +1702,7 @@ func buildVacuumContentCheckpoint(replica *Replica, projection LibraryProjection
 		return bytes.Compare(leftID[:], rightID[:]) < 0
 	})
 	return canonical.Map{
-		0: uint64(1), 1: labelCheckpoint, 2: []canonical.Value{}, 3: []canonical.Value{},
+		0: uint64(1), 1: labelCheckpoint, 2: []canonical.Value{}, 3: captureEntries,
 		4: collectionEntries, 5: folderEntries, 6: tagEntries, 7: assignmentEntries,
 		8: []canonical.Value{}, 9: []canonical.Value{},
 	}, nil
@@ -2134,6 +2305,13 @@ func registeredCapture(replica *Replica, event canonical.Event) (*libraryCapture
 		return nil, err
 	}
 	primary, ok := replica.Object(metadata.primaryObjectID)
+	var attribution canonical.Value
+	if event.SignerCredentialID != (canonical.Identifier{}) {
+		attribution, err = captureEventAttribution(replica, event)
+		if err != nil {
+			return nil, err
+		}
+	}
 	item := LibraryItem{
 		BundleID:         hexIdentifier(bundleID),
 		CollectionID:     hexIdentifier(collectionID),
@@ -2145,7 +2323,30 @@ func registeredCapture(replica *Replica, event canonical.Event) (*libraryCapture
 		AvailableLocally: ok && primary.ObjectType == 2,
 		Lifecycle:        "Active",
 	}
-	return &libraryCapture{item: item, registrationID: event.RecordID, lifecycleID: event.RecordID, collectionID: event.RecordID}, nil
+	return &libraryCapture{
+		item: item, registrationID: event.RecordID, lifecycleID: event.RecordID, collectionID: event.RecordID,
+		assignedCollectionID: collectionID, descriptorID: descriptorID, assignmentCauses: []canonical.Identifier{event.RecordID}, lifecycleCauses: []canonical.Identifier{event.RecordID},
+		registrationAttribution: attribution,
+	}, nil
+}
+
+func captureEventAttribution(replica *Replica, event canonical.Event) (canonical.Value, error) {
+	if replica == nil {
+		return nil, errors.New("Replica is required")
+	}
+	genesisRecord, ok := replica.records[replica.genesisID]
+	if !ok || genesisRecord.Event == nil {
+		return nil, errors.New("Capture attribution requires authenticated Genesis")
+	}
+	replayed, err := replayAuthenticatedKeyEpochs(replica.Events(), *genesisRecord.Event, nil)
+	if err != nil {
+		return nil, fmt.Errorf("replay Capture attribution: %w", err)
+	}
+	memberID, ok := replayed.clientMembers[event.SignerCredentialID]
+	if !ok {
+		return nil, errors.New("Capture attribution Credential is unknown")
+	}
+	return canonical.Map{0: event.VaultID[:], 1: memberID[:], 2: event.SignerCredentialID[:], 3: event.AssertedAt}, nil
 }
 
 type descriptorMetadata struct {

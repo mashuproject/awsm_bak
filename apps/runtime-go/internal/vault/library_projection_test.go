@@ -300,6 +300,91 @@ func TestProjectLibraryProjectionSeedsNoteFromBaselineCheckpoint(t *testing.T) {
 	}
 }
 
+func TestProjectLibraryProjectionSeedsCaptureFromBaselineCheckpoint(t *testing.T) {
+	prepared := deterministicCreation(t)
+	bundleID := filledCreationID(160)
+	descriptorID := filledCreationID(161)
+	artifactID := filledCreationID(162)
+	collectionID := filledCreationID(163)
+	assignmentCauseID := filledCreationID(164)
+	lifecycleCauseID := filledCreationID(165)
+	registrationCauseID := filledCreationID(166)
+	descriptorBody := canonical.Map{
+		0: uint64(1), 1: bundleID[:], 2: int64(1234), 3: "https://example.test/a", 4: "https://example.test/b",
+		5: "awsm.capture.web-page-snapshot", 6: "awsm.adapter.browser-web-page", 7: uint64(1), 8: "Example",
+		9: []canonical.Value{canonical.Map{0: artifactID[:], 1: "awsm.artifact.primary"}}, 10: []canonical.Value{}, 11: canonical.Map{0: uint64(1), 1: []byte{0xa1, 0x00, 0x01}},
+	}
+	descriptorBytes, err := canonical.EncodeValue(canonical.Map{0: uint64(1), 1: prepared.Baseline.VaultID[:], 2: uint64(1), 3: prepared.Baseline.RequiredFeatureSetID[:], 4: descriptorBody, 5: map[string][]byte{}})
+	if err != nil {
+		t.Fatalf("encode Bundle Descriptor: %v", err)
+	}
+	derivedDescriptorID, err := canonical.VaultObjectID(prepared.Baseline.VaultID, 1, descriptorBytes)
+	if err != nil {
+		t.Fatalf("derive Bundle Descriptor ID: %v", err)
+	}
+	if derivedDescriptorID != descriptorID {
+		descriptorID = derivedDescriptorID
+	}
+	body, ok := replicaMapValue(prepared.Baseline.Body)
+	if !ok {
+		t.Fatal("creation Baseline body is not a map")
+	}
+	contentValue := replicaMapEntryMust(body, 2)
+	contentCheckpoint, ok := contentValue.(map[any]any)
+	if !ok {
+		t.Fatalf("creation content checkpoint is not a canonical map: %T %#v", contentValue, contentValue)
+	}
+	contentCheckpoint[uint64(3)] = []canonical.Value{canonical.Map{
+		0: bundleID[:], 1: descriptorID[:], 2: collectionID[:],
+		3: canonicalSetValues([]canonical.Value{assignmentCauseID[:]}), 4: uint64(1),
+		5: canonicalSetValues([]canonical.Value{lifecycleCauseID[:]}), 6: registrationCauseID[:],
+		7: canonical.Map{0: prepared.Baseline.VaultID[:], 1: prepared.IDs.FirstMemberID[:], 2: prepared.IDs.ClientCredentialID[:], 3: int64(1234)},
+	}}
+	dependencies := append(append([]canonical.Dependency(nil), prepared.Baseline.Dependencies...), canonical.Dependency{Type: 4, ID: descriptorID}, canonical.Dependency{Type: 5, ID: artifactID})
+	sort.Slice(dependencies, func(left, right int) bool {
+		if dependencies[left].Type != dependencies[right].Type {
+			return dependencies[left].Type < dependencies[right].Type
+		}
+		return bytes.Compare(dependencies[left].ID[:], dependencies[right].ID[:]) < 0
+	})
+	checkpointedBaseline, err := canonical.EncodeBaseline(canonical.BaselineInput{
+		VaultID: prepared.Baseline.VaultID, GenerationID: prepared.Baseline.GenerationID, Dependencies: dependencies,
+		RequiredFeatureSetID: prepared.Baseline.RequiredFeatureSetID, Extensions: prepared.Baseline.Extensions, Body: body,
+	})
+	if err != nil {
+		t.Fatalf("encode checkpointed Baseline: %v", err)
+	}
+	replica, err := NewReplica(checkpointedBaseline)
+	if err != nil {
+		t.Fatalf("NewReplica: %v", err)
+	}
+	if err := replica.AdmitObject(descriptorID, descriptorBytes); err != nil {
+		t.Fatalf("Admit Bundle Descriptor: %v", err)
+	}
+	projection, err := ProjectLibraryProjection(replica)
+	if err != nil {
+		t.Fatalf("ProjectLibraryProjection: %v", err)
+	}
+	if len(projection.Captures) != 1 {
+		t.Fatalf("Captures = %#v, want one checkpointed Capture", projection.Captures)
+	}
+	capture := projection.Captures[0]
+	if capture.BundleID != hexIdentifier(bundleID) || capture.CollectionID != hexIdentifier(collectionID) || capture.ArtifactID != hexIdentifier(artifactID) || capture.CapturedAt != 1234 || capture.OriginalURL != "https://example.test/a" || capture.FinalURL != "https://example.test/b" || capture.Title == nil || *capture.Title != "Example" || capture.Lifecycle != "Active" {
+		t.Fatalf("checkpointed Capture projection = %#v", capture)
+	}
+	checkpoint, err := buildVacuumContentCheckpoint(replica, projection)
+	if err != nil {
+		t.Fatalf("buildVacuumContentCheckpoint: %v", err)
+	}
+	captures, ok := replicaMapArray(checkpoint, 3)
+	if !ok || len(captures) != 1 {
+		t.Fatalf("Capture checkpoint = %#v", captures)
+	}
+	if id, idOK := replicaIdentifier(captures[0], 0); !idOK || id != bundleID {
+		t.Fatalf("Capture checkpoint identity = %#v", captures[0])
+	}
+}
+
 func TestProjectLibraryProjectionIncludesCollectionRedirect(t *testing.T) {
 	prepared := deterministicCreation(t)
 	replica, err := NewReplica(prepared.Baseline)
