@@ -159,12 +159,15 @@ func TestForkReauthorsBundleDescriptorAndRegisteredEvent(t *testing.T) {
 	if registered == nil {
 		t.Fatal("Fork omitted Bundle Registered Event")
 	}
-	if len(registered.Dependencies) != 2 {
+	if len(registered.Dependencies) != 1 {
 		t.Fatalf("Fork Bundle Registered dependencies = %#v", registered.Dependencies)
 	}
 	for _, dependency := range registered.Dependencies {
+		if dependency.Type != 4 {
+			t.Fatalf("Fork Bundle Registered dependency type = %d", dependency.Type)
+		}
 		if dependency.ID == artifactID {
-			t.Fatal("Fork Bundle Registered Event reused a source dependency identity")
+			t.Fatal("Fork Bundle Registered Event reused the source Artifact identity")
 		}
 	}
 }
@@ -495,7 +498,7 @@ func admitForkBundleRegisteredEvent(t *testing.T, runtime *Runtime, dependencies
 	event, err := canonical.SignEvent(canonical.EventInput{
 		VaultID: vaultIdentifier, GenerationID: mustIdentifier(t, value.GenerationID),
 		ParentRecordIDs: runtime.replicas[vaultID].State().CausalFrontier, AuthorityParentIDs: runtime.replicas[vaultID].State().AuthorityFrontier,
-		Dependencies: []canonical.Dependency{{Type: 3, ID: descriptorID}, {Type: 5, ID: artifactID}}, RequiredFeatureSetID: featureSetID,
+		Dependencies: []canonical.Dependency{{Type: 4, ID: descriptorID}}, RequiredFeatureSetID: featureSetID,
 		Extensions: map[string][]byte{}, Family: canonical.ContentFamily, Type: 3, SignerCredentialID: credentialID, AssertedAt: 1234,
 		Body: canonical.Map{0: bundleID[:], 1: descriptorID[:], 2: collectionID[:]},
 	}, ed25519.PrivateKey(clientSecret.signingSecretKey))

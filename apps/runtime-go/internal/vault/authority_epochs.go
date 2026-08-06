@@ -271,6 +271,12 @@ func replayAuthenticatedKeyEpochs(events []canonical.Event, genesis canonical.Ev
 			delete(visiting, recordID)
 			return keyEpochReplayState{}, errors.New("Event Required Feature Set does not match its Authority Parents")
 		}
+		if event.Family == canonical.ContentFamily {
+			if err := validateContentEvent(event); err != nil {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, err
+			}
+		}
 		if event.Family == canonical.AuthorityFamily && event.Type != canonical.GenesisEvent {
 			if event.Type != 9 || enrollmentAuthorizationKind(event) != 2 {
 				if _, ok := current.activeClientMember(event.SignerCredentialID); !ok {

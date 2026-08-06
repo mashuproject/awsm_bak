@@ -520,17 +520,10 @@ func reauthorForkBundleRegistered(body canonical.Value, dependencies []canonical
 		}
 		collectionMappings[sourceCollectionID] = destinationCollectionID
 	}
-	mappedDependencies := make([]canonical.Dependency, 0, len(dependencies))
-	for _, dependency := range dependencies {
-		if dependency.Type != 3 && dependency.Type != 5 {
-			return nil, nil, fmt.Errorf("Fork Bundle Registered dependency type %d is not supported", dependency.Type)
-		}
-		mapped, ok := objectMappings[dependency.ID]
-		if !ok {
-			return nil, nil, fmt.Errorf("Fork Bundle Registered dependency %s is unavailable", hexIdentifier(dependency.ID))
-		}
-		mappedDependencies = append(mappedDependencies, canonical.Dependency{Type: dependency.Type, ID: mapped})
+	if len(dependencies) != 1 || dependencies[0].Type != 4 || dependencies[0].ID != sourceDescriptorID {
+		return nil, nil, errors.New("Fork Bundle Registered dependencies are not the canonical Descriptor dependency")
 	}
+	mappedDependencies := []canonical.Dependency{{Type: 4, ID: destinationDescriptorID}}
 	return canonical.Map{0: destinationBundleID[:], 1: destinationDescriptorID[:], 2: destinationCollectionID[:]}, mappedDependencies, nil
 }
 

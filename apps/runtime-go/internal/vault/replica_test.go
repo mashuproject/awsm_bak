@@ -1219,7 +1219,7 @@ func TestProjectLibraryReducesBundleRegistrationAndDescriptor(t *testing.T) {
 	event, err := canonical.SignEvent(canonical.EventInput{
 		VaultID: prepared.IDs.VaultID, GenerationID: prepared.IDs.GenerationID,
 		ParentRecordIDs: []canonical.Identifier{prepared.Genesis.RecordID}, AuthorityParentIDs: []canonical.Identifier{prepared.Genesis.RecordID},
-		RequiredFeatureSetID: prepared.RequiredFeatureSetID, Extensions: map[string][]byte{}, Family: canonical.ContentFamily, Type: 3,
+		Dependencies: []canonical.Dependency{{Type: 4, ID: descriptorID}}, RequiredFeatureSetID: prepared.RequiredFeatureSetID, Extensions: map[string][]byte{}, Family: canonical.ContentFamily, Type: 3,
 		SignerCredentialID: prepared.IDs.ClientCredentialID, AssertedAt: 1234, Body: canonical.Map{0: bundleID[:], 1: descriptorID[:], 2: collectionID[:]},
 	}, ed25519.PrivateKey(prepared.ClientKeys.SigningSecretKey))
 	if err != nil {
@@ -1234,6 +1234,33 @@ func TestProjectLibraryReducesBundleRegistrationAndDescriptor(t *testing.T) {
 	}
 	if len(items) != 1 || items[0].BundleID != hexIdentifier(bundleID) || items[0].CollectionID != hexIdentifier(collectionID) || items[0].ArtifactID != hexIdentifier(artifactObjectID) || !items[0].AvailableLocally || items[0].Title == nil || *items[0].Title != "Example" {
 		t.Fatalf("Library items = %#v", items)
+	}
+}
+
+func TestReplicaRejectsBundleRegistrationWithoutDescriptorDependency(t *testing.T) {
+	prepared := deterministicCreation(t)
+	replica, err := NewReplica(prepared.Baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := replica.AdmitEvent(prepared.Genesis, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatal(err)
+	}
+	bundleID := filledCreationID(235)
+	descriptorID := filledCreationID(236)
+	collectionID := filledCreationID(237)
+	event, err := canonical.SignEvent(canonical.EventInput{
+		VaultID: prepared.IDs.VaultID, GenerationID: prepared.IDs.GenerationID,
+		ParentRecordIDs: []canonical.Identifier{prepared.Genesis.RecordID}, AuthorityParentIDs: []canonical.Identifier{prepared.Genesis.RecordID},
+		RequiredFeatureSetID: prepared.RequiredFeatureSetID, Extensions: map[string][]byte{}, Family: canonical.ContentFamily, Type: 3,
+		SignerCredentialID: prepared.IDs.ClientCredentialID, AssertedAt: 1235,
+		Body: canonical.Map{0: bundleID[:], 1: descriptorID[:], 2: collectionID[:]},
+	}, ed25519.PrivateKey(prepared.ClientKeys.SigningSecretKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := replica.AdmitEvent(event, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err == nil {
+		t.Fatal("Replica accepted Bundle Registered without its descriptor dependency")
 	}
 }
 
