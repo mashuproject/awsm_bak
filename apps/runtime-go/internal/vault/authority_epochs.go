@@ -19,6 +19,9 @@ import (
 // are still being ported.
 type keyEpochReplayState struct {
 	firstClientCredential canonical.Identifier
+	featureSetID          canonical.Identifier
+	featureManifests      map[canonical.Identifier]canonical.FeatureManifest
+	featureSetConflict    bool
 	activeMembers         map[canonical.Identifier]struct{}
 	administrators        map[canonical.Identifier]struct{}
 	clientMembers         map[canonical.Identifier]canonical.Identifier
@@ -114,6 +117,12 @@ type invitationResolution struct {
 	selectedJoin       *canonical.Identifier
 }
 
+type featureActivation struct {
+	previousFeatureSetID  canonical.Identifier
+	addedManifests        []canonical.FeatureManifest
+	resultingFeatureSetID canonical.Identifier
+}
+
 type invitationTerminalCandidate struct {
 	recordID             canonical.Identifier
 	outcome              uint64
@@ -152,6 +161,8 @@ func replayAuthenticatedKeyEpochs(events []canonical.Event, genesis canonical.Ev
 	}
 	state := keyEpochReplayState{
 		firstClientCredential: firstClient,
+		featureSetID:          genesis.RequiredFeatureSetID,
+		featureManifests:      map[canonical.Identifier]canonical.FeatureManifest{},
 		activeMembers:         map[canonical.Identifier]struct{}{firstMember: {}},
 		members:               map[canonical.Identifier]struct{}{firstMember: {}},
 		administrators:        map[canonical.Identifier]struct{}{firstMember: {}},
@@ -220,6 +231,14 @@ func replayAuthenticatedKeyEpochs(events []canonical.Event, genesis canonical.Ev
 		if current.closed {
 			delete(visiting, recordID)
 			return keyEpochReplayState{}, errors.New("Event descends from Closed Authority State")
+		}
+		if current.featureSetConflict {
+			delete(visiting, recordID)
+			return keyEpochReplayState{}, errors.New("Event descends from a Required Feature Set conflict")
+		}
+		if event.RequiredFeatureSetID != current.featureSetID {
+			delete(visiting, recordID)
+			return keyEpochReplayState{}, errors.New("Event Required Feature Set does not match its Authority Parents")
 		}
 		if event.Family == canonical.AuthorityFamily && event.Type != canonical.GenesisEvent {
 			if event.Type != 9 || enrollmentAuthorizationKind(event) != 2 {
@@ -600,6 +619,30 @@ func replayAuthenticatedKeyEpochs(events []canonical.Event, genesis canonical.Ev
 				current.deliveredSlots[keyDeliverySlotKey(slot)] = struct{}{}
 			}
 		}
+		if event.Family == canonical.AuthorityFamily && event.Type == 14 {
+			signerMember, signerOK := current.activeClientMember(event.SignerCredentialID)
+			if !signerOK {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, errors.New("Feature Activation signer is not an active Client Credential")
+			}
+			if _, administrator := current.administrators[signerMember]; !administrator {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, errors.New("Feature Activation signer is not an Administrator")
+			}
+			activation, parseErr := parseFeatureActivation(event)
+			if parseErr != nil {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, parseErr
+			}
+			if err := validateFeatureActivation(current, event, activation); err != nil {
+				delete(visiting, recordID)
+				return keyEpochReplayState{}, err
+			}
+			for _, manifest := range activation.addedManifests {
+				current.featureManifests[manifest.ID] = cloneFeatureManifest(manifest)
+			}
+			current.featureSetID = activation.resultingFeatureSetID
+		}
 		if event.Family == canonical.LifecycleFamily && event.Type == 2 {
 			body, ok := replicaMapValue(event.Body)
 			if !ok || lenReplicaMapEntries(body) != 0 {
@@ -676,6 +719,9 @@ func replayAuthenticatedKeyEpochs(events []canonical.Event, genesis canonical.Ev
 func cloneKeyEpochReplayState(value keyEpochReplayState) keyEpochReplayState {
 	clone := keyEpochReplayState{
 		firstClientCredential: value.firstClientCredential,
+		featureSetID:          value.featureSetID,
+		featureManifests:      make(map[canonical.Identifier]canonical.FeatureManifest, len(value.featureManifests)),
+		featureSetConflict:    value.featureSetConflict,
 		activeMembers:         make(map[canonical.Identifier]struct{}, len(value.activeMembers)),
 		members:               make(map[canonical.Identifier]struct{}, len(value.members)),
 		administrators:        make(map[canonical.Identifier]struct{}, len(value.administrators)),
@@ -695,6 +741,9 @@ func cloneKeyEpochReplayState(value keyEpochReplayState) keyEpochReplayState {
 		invitationConflicts:   make(map[canonical.Identifier]struct{}, len(value.invitationConflicts)),
 		invitationResolutions: make(map[canonical.Identifier]struct{}, len(value.invitationResolutions)),
 		closed:                value.closed,
+	}
+	for id, manifest := range value.featureManifests {
+		clone.featureManifests[id] = cloneFeatureManifest(manifest)
 	}
 	for id := range value.activeMembers {
 		clone.activeMembers[id] = struct{}{}
@@ -759,6 +808,7 @@ func cloneKeyEpochReplayState(value keyEpochReplayState) keyEpochReplayState {
 func mergeKeyEpochReplayStates(values []keyEpochReplayState) keyEpochReplayState {
 	if len(values) == 0 {
 		return keyEpochReplayState{
+			featureManifests:      make(map[canonical.Identifier]canonical.FeatureManifest),
 			activeMembers:         make(map[canonical.Identifier]struct{}),
 			members:               make(map[canonical.Identifier]struct{}),
 			administrators:        make(map[canonical.Identifier]struct{}),
@@ -783,6 +833,16 @@ func mergeKeyEpochReplayStates(values []keyEpochReplayState) keyEpochReplayState
 	for _, value := range values[1:] {
 		for id := range value.activeMembers {
 			merged.activeMembers[id] = struct{}{}
+		}
+		if merged.featureSetID != value.featureSetID {
+			merged.featureSetConflict = true
+		}
+		for id, manifest := range value.featureManifests {
+			if existing, exists := merged.featureManifests[id]; !exists {
+				merged.featureManifests[id] = cloneFeatureManifest(manifest)
+			} else if !bytes.Equal(existing.Bytes, manifest.Bytes) {
+				merged.featureSetConflict = true
+			}
 		}
 		for id := range value.members {
 			merged.members[id] = struct{}{}
@@ -1802,6 +1862,93 @@ func keyDeliverySlotKey(slot keyEpochEnvelopeSlot) string {
 		target = fmt.Sprintf("%d:%x:null", slot.targetKind, slot.targetID)
 	}
 	return fmt.Sprintf("%s:%x", target, slot.epochID)
+}
+
+func parseFeatureActivation(event canonical.Event) (featureActivation, error) {
+	body, ok := replicaMapValue(event.Body)
+	if !ok || !replicaMapHasKeys(body, 3) {
+		return featureActivation{}, errors.New("Feature Activation body is invalid")
+	}
+	previousBytes, previousOK := replicaMapBytes(body, 0, 32)
+	resultingBytes, resultingOK := replicaMapBytes(body, 2, 32)
+	if !previousOK || !resultingOK || bytes.Equal(previousBytes, make([]byte, 32)) || bytes.Equal(resultingBytes, make([]byte, 32)) {
+		return featureActivation{}, errors.New("Feature Activation Required Feature Set IDs are invalid")
+	}
+	values, ok := replicaMapArrayValue(replicaMapEntryMust(body, 1))
+	if !ok || len(values) == 0 {
+		return featureActivation{}, errors.New("Feature Activation Manifest set is invalid")
+	}
+	manifests := make([]canonical.FeatureManifest, 0, len(values))
+	seenIDs := make(map[canonical.Identifier]struct{}, len(values))
+	seenKeys := make(map[string]struct{}, len(values))
+	var previous []byte
+	for _, value := range values {
+		encoded, err := canonical.EncodeValue(value)
+		if err != nil || (previous != nil && bytes.Compare(previous, encoded) >= 0) {
+			return featureActivation{}, errors.New("Feature Activation Manifests are not a canonical set")
+		}
+		previous = encoded
+		manifestBytes, ok := value.([]byte)
+		if !ok {
+			return featureActivation{}, errors.New("Feature Activation Manifest is not complete bytes")
+		}
+		manifest, err := canonical.DecodeFeatureManifest(manifestBytes)
+		if err != nil {
+			return featureActivation{}, fmt.Errorf("decode Feature Activation Manifest: %w", err)
+		}
+		if _, exists := seenIDs[manifest.ID]; exists {
+			return featureActivation{}, errors.New("Feature Activation repeats a Manifest identity")
+		}
+		if _, exists := seenKeys[manifest.FeatureKey]; exists {
+			return featureActivation{}, errors.New("Feature Activation repeats a feature key")
+		}
+		seenIDs[manifest.ID] = struct{}{}
+		seenKeys[manifest.FeatureKey] = struct{}{}
+		manifests = append(manifests, manifest)
+	}
+	return featureActivation{
+		previousFeatureSetID:  bytesIdentifier(previousBytes),
+		addedManifests:        manifests,
+		resultingFeatureSetID: bytesIdentifier(resultingBytes),
+	}, nil
+}
+
+func validateFeatureActivation(state keyEpochReplayState, event canonical.Event, activation featureActivation) error {
+	if activation.previousFeatureSetID != state.featureSetID {
+		return errors.New("Feature Activation previous Required Feature Set does not match its Authority Parents")
+	}
+	dependencyIDs := make(map[canonical.Identifier]struct{}, len(event.Dependencies))
+	for _, dependency := range event.Dependencies {
+		if dependency.Type != 8 {
+			return errors.New("Feature Activation dependencies must be Feature Manifests")
+		}
+		dependencyIDs[dependency.ID] = struct{}{}
+	}
+	if len(dependencyIDs) != len(activation.addedManifests) {
+		return errors.New("Feature Activation dependencies do not match added Manifests")
+	}
+	for _, manifest := range activation.addedManifests {
+		if _, exists := dependencyIDs[manifest.ID]; !exists {
+			return errors.New("Feature Activation omits a Manifest dependency")
+		}
+	}
+	if state.featureSetID == canonical.EmptyRequiredFeatureSetID() || len(state.featureManifests) > 0 {
+		inputs := make([]canonical.FeatureManifestInput, 0, len(state.featureManifests)+len(activation.addedManifests))
+		for _, manifest := range state.featureManifests {
+			inputs = append(inputs, manifest.FeatureManifestInput)
+		}
+		for _, manifest := range activation.addedManifests {
+			inputs = append(inputs, manifest.FeatureManifestInput)
+		}
+		resulting, err := canonical.RequiredFeatureSetID(inputs)
+		if err != nil {
+			return fmt.Errorf("derive Feature Activation Required Feature Set: %w", err)
+		}
+		if resulting != activation.resultingFeatureSetID {
+			return errors.New("Feature Activation resulting Required Feature Set is invalid")
+		}
+	}
+	return nil
 }
 
 func validateClientEnrollment(state keyEpochReplayState, event canonical.Event, enrollment enrollmentCredential) error {

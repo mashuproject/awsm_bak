@@ -223,6 +223,104 @@ func TestReplicaRejectsDuplicateKeyDeliveryForExistingTargetEpoch(t *testing.T) 
 	}
 }
 
+func TestReplicaRejectsFeatureActivationWithMismatchedPreviousSet(t *testing.T) {
+	prepared := deterministicCreation(t)
+	replica, err := NewReplica(prepared.Baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := replica.AdmitEvent(prepared.Genesis, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit Genesis: %v", err)
+	}
+	manifestBytes, err := canonical.EncodeFeatureManifest(canonical.FeatureManifestInput{
+		FeatureKey: "awsm.test.feature", Revision: 1, Parameters: []byte{1}, RequiredManifestIDs: []canonical.Identifier{}, IncompatibleKeys: []string{},
+	})
+	if err != nil {
+		t.Fatalf("encode Feature Manifest: %v", err)
+	}
+	manifest, err := canonical.DecodeFeatureManifest(manifestBytes)
+	if err != nil {
+		t.Fatalf("decode Feature Manifest: %v", err)
+	}
+	wrongPrevious := filledCreationID(230)
+	resulting := filledCreationID(231)
+	event, err := canonical.SignEvent(canonical.EventInput{
+		VaultID: prepared.IDs.VaultID, GenerationID: prepared.IDs.GenerationID,
+		ParentRecordIDs: []canonical.Identifier{prepared.Genesis.RecordID}, AuthorityParentIDs: []canonical.Identifier{prepared.Genesis.RecordID},
+		Dependencies: []canonical.Dependency{{Type: 8, ID: manifest.ID}}, RequiredFeatureSetID: prepared.RequiredFeatureSetID,
+		Extensions: map[string][]byte{}, Family: canonical.AuthorityFamily, Type: 14, SignerCredentialID: prepared.IDs.ClientCredentialID,
+		AssertedAt: 214, Body: canonical.Map{0: wrongPrevious[:], 1: []canonical.Value{manifestBytes}, 2: resulting[:]},
+	}, ed25519.PrivateKey(prepared.ClientKeys.SigningSecretKey))
+	if err != nil {
+		t.Fatalf("sign Feature Activation: %v", err)
+	}
+	if err := replica.AdmitEvent(event, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err == nil {
+		t.Fatal("Replica accepted Feature Activation with a mismatched previous Required Feature Set")
+	}
+}
+
+func TestReplicaAdvancesFeatureSetAfterAuthenticatedActivation(t *testing.T) {
+	prepared := deterministicCreation(t)
+	replica, err := NewReplica(prepared.Baseline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := replica.AdmitEvent(prepared.Genesis, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit Genesis: %v", err)
+	}
+	manifestBytes, err := canonical.EncodeFeatureManifest(canonical.FeatureManifestInput{
+		FeatureKey: "awsm.test.feature", Revision: 1, Parameters: []byte{1}, RequiredManifestIDs: []canonical.Identifier{}, IncompatibleKeys: []string{},
+	})
+	if err != nil {
+		t.Fatalf("encode Feature Manifest: %v", err)
+	}
+	manifest, err := canonical.DecodeFeatureManifest(manifestBytes)
+	if err != nil {
+		t.Fatalf("decode Feature Manifest: %v", err)
+	}
+	resulting, err := canonical.RequiredFeatureSetID([]canonical.FeatureManifestInput{manifest.FeatureManifestInput})
+	if err != nil {
+		t.Fatalf("derive resulting Feature Set: %v", err)
+	}
+	activation, err := canonical.SignEvent(canonical.EventInput{
+		VaultID: prepared.IDs.VaultID, GenerationID: prepared.IDs.GenerationID,
+		ParentRecordIDs: []canonical.Identifier{prepared.Genesis.RecordID}, AuthorityParentIDs: []canonical.Identifier{prepared.Genesis.RecordID},
+		Dependencies: []canonical.Dependency{{Type: 8, ID: manifest.ID}}, RequiredFeatureSetID: prepared.RequiredFeatureSetID,
+		Extensions: map[string][]byte{}, Family: canonical.AuthorityFamily, Type: 14, SignerCredentialID: prepared.IDs.ClientCredentialID,
+		AssertedAt: 215, Body: canonical.Map{0: prepared.RequiredFeatureSetID[:], 1: []canonical.Value{manifestBytes}, 2: resulting[:]},
+	}, ed25519.PrivateKey(prepared.ClientKeys.SigningSecretKey))
+	if err != nil {
+		t.Fatalf("sign Feature Activation: %v", err)
+	}
+	if err := replica.AdmitEvent(activation, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit Feature Activation: %v", err)
+	}
+	child, err := canonical.SignEvent(canonical.EventInput{
+		VaultID: prepared.IDs.VaultID, GenerationID: prepared.IDs.GenerationID,
+		ParentRecordIDs: []canonical.Identifier{activation.RecordID}, AuthorityParentIDs: []canonical.Identifier{activation.RecordID},
+		RequiredFeatureSetID: resulting, Extensions: map[string][]byte{}, Family: canonical.ContentFamily, Type: 21,
+		SignerCredentialID: prepared.IDs.ClientCredentialID, AssertedAt: 216, Body: canonical.Map{},
+	}, ed25519.PrivateKey(prepared.ClientKeys.SigningSecretKey))
+	if err != nil {
+		t.Fatalf("sign post-activation Event: %v", err)
+	}
+	if err := replica.AdmitEvent(child, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+		t.Fatalf("Admit post-activation Event: %v", err)
+	}
+	wrongChild, err := canonical.SignEvent(canonical.EventInput{
+		VaultID: prepared.IDs.VaultID, GenerationID: prepared.IDs.GenerationID,
+		ParentRecordIDs: []canonical.Identifier{activation.RecordID}, AuthorityParentIDs: []canonical.Identifier{activation.RecordID},
+		RequiredFeatureSetID: prepared.RequiredFeatureSetID, Extensions: map[string][]byte{}, Family: canonical.ContentFamily, Type: 22,
+		SignerCredentialID: prepared.IDs.ClientCredentialID, AssertedAt: 217, Body: canonical.Map{},
+	}, ed25519.PrivateKey(prepared.ClientKeys.SigningSecretKey))
+	if err != nil {
+		t.Fatalf("sign stale-feature Event: %v", err)
+	}
+	if err := replica.AdmitEvent(wrongChild, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err == nil {
+		t.Fatal("Replica accepted an Event with a stale Required Feature Set")
+	}
+}
+
 func TestReplicaRejectsInvitationWithMismatchedCapabilityIssuer(t *testing.T) {
 	prepared := deterministicCreation(t)
 	replica, err := NewReplica(prepared.Baseline)
