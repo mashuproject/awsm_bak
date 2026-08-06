@@ -2065,8 +2065,24 @@ func (r *Runtime) vacuumVault(ctx context.Context, id string) (any, error) {
 	if value.Canonical == nil || r.replicas[id] == nil || r.deps.Artifacts == nil || r.deps.Secrets == nil {
 		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The authenticated Vault Replica is unavailable.")
 	}
-	if len(r.replicas[id].Events()) > 1 || len(r.replicas[id].objects) > 0 {
-		return nil, commandError("VAULT_VACUUM_REQUIRES_REPLAY", "This Runtime cannot vacuum synchronized content until its complete projection is available.")
+	replica := r.replicas[id]
+	projection, err := ProjectLibraryProjection(replica)
+	if err != nil {
+		return nil, commandError("VAULT_VACUUM_REQUIRES_REPLAY", "The authenticated Library projection is unavailable for Vacuum.")
+	}
+	if len(replica.objects) > 0 {
+		return nil, commandError("VAULT_VACUUM_REQUIRES_REPLAY", "This Runtime cannot vacuum a Replica with unsupported Object state.")
+	}
+	for _, accepted := range replica.Events() {
+		if accepted.GenerationID != replica.generationID {
+			continue
+		}
+		if accepted.Family == canonical.AuthorityFamily && accepted.Type != canonical.GenesisEvent {
+			return nil, commandError("VAULT_VACUUM_REQUIRES_REPLAY", "This Runtime cannot vacuum unsupported Authority state.")
+		}
+		if accepted.Family == canonical.LifecycleFamily {
+			return nil, commandError("VAULT_VACUUM_REQUIRES_REPLAY", "This Runtime cannot vacuum unsupported Lifecycle state.")
+		}
 	}
 	vaultID, err := decodeHexIdentifier(id)
 	if err != nil {
@@ -2113,11 +2129,66 @@ func (r *Runtime) vacuumVault(ctx context.Context, id string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	frontier := replica.State()
+	oldBody, ok := replicaMapValue(replica.baseline.Body)
+	if !ok {
+		return nil, commandError("VAULT_VACUUM_INVALID", "The predecessor Baseline state is invalid.")
+	}
+	oldContent, err := baselineContentCheckpoint(replica.baseline)
+	if err != nil {
+		return nil, commandError("VAULT_VACUUM_INVALID", "The predecessor content checkpoint is invalid.")
+	}
+	authorityCheckpoint, ok := replicaMapEntry(oldBody, 3)
+	if !ok {
+		return nil, commandError("VAULT_VACUUM_INVALID", "The predecessor Authority checkpoint is missing.")
+	}
+	lifecycleCheckpoint, ok := replicaMapEntry(oldBody, 4)
+	if !ok {
+		return nil, commandError("VAULT_VACUUM_INVALID", "The predecessor Lifecycle checkpoint is missing.")
+	}
+	contentCheckpoint, err := buildVacuumContentCheckpoint(replica, projection)
+	if err != nil {
+		return nil, commandError("VAULT_VACUUM_REQUIRES_REPLAY", err.Error())
+	}
+	predecessorState := canonical.Map{0: oldContent, 1: authorityCheckpoint, 2: lifecycleCheckpoint}
+	successorState := canonical.Map{0: contentCheckpoint, 1: authorityCheckpoint, 2: lifecycleCheckpoint}
+	predecessorStateBytes, err := canonical.EncodeValue(predecessorState)
+	if err != nil {
+		return nil, commandError("VAULT_VACUUM_INVALID", "The predecessor state checkpoint is invalid.")
+	}
+	successorStateBytes, err := canonical.EncodeValue(successorState)
+	if err != nil {
+		return nil, commandError("VAULT_VACUUM_INVALID", "The successor state checkpoint is invalid.")
+	}
+	predecessorTranscript, err := canonical.Transcript("awsm:vacuum-predecessor-state:v1", predecessorStateBytes)
+	if err != nil {
+		return nil, commandError("VAULT_VACUUM_INVALID", "The predecessor state digest could not be computed.")
+	}
+	successorTranscript, err := canonical.Transcript("awsm:vacuum-successor-state:v1", successorStateBytes)
+	if err != nil {
+		return nil, commandError("VAULT_VACUUM_INVALID", "The successor state digest could not be computed.")
+	}
+	predecessorDigest := sha256.Sum256(predecessorTranscript)
+	successorDigest := sha256.Sum256(successorTranscript)
+	omissionCheckpoint := canonical.Map{0: uint64(1), 1: []canonical.Value{}}
+	omissionBytes, err := canonical.EncodeValue(omissionCheckpoint)
+	if err != nil {
+		return nil, commandError("VAULT_VACUUM_INVALID", "The omission checkpoint is invalid.")
+	}
+	omissionTranscript, err := canonical.Transcript("awsm:vacuum-omission:v1", omissionBytes)
+	if err != nil {
+		return nil, commandError("VAULT_VACUUM_INVALID", "The omission digest could not be computed.")
+	}
+	omissionDigest := sha256.Sum256(omissionTranscript)
+	predecessorCommitment := canonical.Map{
+		0: predecessorGenerationID[:], 1: canonicalSetValues(identifiersToValues(frontier.CausalFrontier)), 2: predecessorDigest[:],
+	}
+	baselineBody := canonical.Map{0: uint64(1), 1: uint64(2), 2: contentCheckpoint, 3: authorityCheckpoint, 4: lifecycleCheckpoint, 5: predecessorCommitment}
 	baseline, err := canonical.EncodeBaseline(canonical.BaselineInput{
 		VaultID: vaultID, GenerationID: successorGenerationID,
-		Dependencies:         append([]canonical.Dependency(nil), r.replicas[id].baseline.Dependencies...),
-		RequiredFeatureSetID: r.replicas[id].baseline.RequiredFeatureSetID,
-		Extensions:           cloneExtensions(r.replicas[id].baseline.Extensions), Body: r.replicas[id].baseline.Body,
+		Dependencies:         append([]canonical.Dependency(nil), replica.baseline.Dependencies...),
+		RequiredFeatureSetID: replica.baseline.RequiredFeatureSetID,
+		Extensions:           cloneExtensions(replica.baseline.Extensions), Body: baselineBody,
 	})
 	if err != nil {
 		return nil, commandError("VAULT_VACUUM_INVALID", "The successor Baseline could not be created.")
@@ -2130,17 +2201,6 @@ func (r *Runtime) vacuumVault(ctx context.Context, id string) (any, error) {
 	if err != nil {
 		return nil, commandError("VAULT_VACUUM_INVALID", "The successor Baseline envelope is invalid.")
 	}
-	frontier := r.replicas[id].State()
-	predecessorBodyBytes, err := canonical.EncodeValue(r.replicas[id].baseline.Body)
-	if err != nil {
-		return nil, commandError("VAULT_VACUUM_INVALID", "The predecessor Baseline state is invalid.")
-	}
-	predecessorDigestTranscript, _ := canonical.Transcript("awsm:vacuum-predecessor-state:v1", predecessorBodyBytes, mustCanonical(canonicalSetValues(identifiersToValues(frontier.CausalFrontier))))
-	predecessorDigest := sha256.Sum256(predecessorDigestTranscript)
-	successorDigestTranscript, _ := canonical.Transcript("awsm:vacuum-successor-state:v1", predecessorBodyBytes, mustCanonical(canonicalSetValues(identifiersToValues(frontier.AuthorityFrontier))))
-	successorDigest := sha256.Sum256(successorDigestTranscript)
-	omissionTranscript, _ := canonical.Transcript("awsm:vacuum-omission:v1", []byte{})
-	omissionDigest := sha256.Sum256(omissionTranscript)
 	featureSetID, err := decodeHexIdentifier(value.Canonical.RequiredFeatureSetID)
 	if err != nil {
 		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The Required Feature Set identity is invalid.")

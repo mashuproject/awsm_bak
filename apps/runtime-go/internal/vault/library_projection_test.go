@@ -42,6 +42,57 @@ func TestProjectLibraryProjectionIncludesCollectionTitle(t *testing.T) {
 	}
 }
 
+func TestProjectLibraryProjectionSeedsCollectionTitleFromBaselineCheckpoint(t *testing.T) {
+	prepared := deterministicCreation(t)
+	collectionID := filledCreationID(220)
+	causeID := filledCreationID(221)
+	body, ok := replicaMapValue(prepared.Baseline.Body)
+	if !ok {
+		t.Fatal("creation Baseline body is not a map")
+	}
+	contentValue := replicaMapEntryMust(body, 2)
+	contentCheckpoint, ok := contentValue.(map[any]any)
+	if !ok {
+		t.Fatalf("creation content checkpoint is not a canonical map: %T %#v", contentValue, contentValue)
+	}
+	contentCheckpoint[uint64(4)] = []canonical.Value{canonical.Map{
+		0: collectionID[:],
+		1: "Saved pages",
+		2: canonicalSetValues([]canonical.Value{causeID[:]}),
+		3: nil,
+		4: []canonical.Value{},
+		5: nil,
+		6: nil,
+		7: nil,
+	}}
+	checkpointedBaseline, err := canonical.EncodeBaseline(canonical.BaselineInput{
+		VaultID:              prepared.Baseline.VaultID,
+		GenerationID:         prepared.Baseline.GenerationID,
+		Dependencies:         prepared.Baseline.Dependencies,
+		RequiredFeatureSetID: prepared.Baseline.RequiredFeatureSetID,
+		Extensions:           prepared.Baseline.Extensions,
+		Body:                 body,
+	})
+	if err != nil {
+		t.Fatalf("encode checkpointed Baseline: %v", err)
+	}
+	replica, err := NewReplica(checkpointedBaseline)
+	if err != nil {
+		t.Fatalf("NewReplica: %v", err)
+	}
+	projection, err := ProjectLibraryProjection(replica)
+	if err != nil {
+		t.Fatalf("ProjectLibraryProjection: %v", err)
+	}
+	if len(projection.Collections) != 1 {
+		t.Fatalf("Collections = %#v, want one checkpointed collection", projection.Collections)
+	}
+	collection := projection.Collections[0]
+	if collection.CollectionID != hexIdentifier(collectionID) || collection.Title != "Saved pages" || collection.ExplicitTitle == nil || *collection.ExplicitTitle != "Saved pages" {
+		t.Fatalf("checkpointed Collection projection = %#v", collection)
+	}
+}
+
 func TestProjectLibraryProjectionIncludesCollectionRedirect(t *testing.T) {
 	prepared := deterministicCreation(t)
 	replica, err := NewReplica(prepared.Baseline)

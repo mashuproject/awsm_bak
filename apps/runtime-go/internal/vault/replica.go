@@ -110,7 +110,11 @@ func NewReplica(baseline canonical.Baseline) (*Replica, error) {
 		return nil, errors.New("Replica Baseline identity changed during decoding")
 	}
 	graph := canonical.NewCausalGraph()
-	if err := graph.AddBaseline(baseline.RecordID, nil); err != nil {
+	causes, err := baselineContentCauseIDs(decoded)
+	if err != nil {
+		return nil, fmt.Errorf("decode Replica Baseline checkpoint: %w", err)
+	}
+	if err := graph.AddBaseline(baseline.RecordID, causes); err != nil {
 		return nil, fmt.Errorf("add Replica Baseline: %w", err)
 	}
 	return &Replica{
@@ -396,12 +400,16 @@ func (r *Replica) AdoptVacuum(baseline canonical.Baseline, event canonical.Event
 	if err := candidate.AdmitKnownEvent(event); err != nil {
 		return nil, fmt.Errorf("admit Vacuum Event: %w", err)
 	}
-	if err := candidate.graph.AddBaseline(baseline.RecordID, nil); err != nil {
-		return nil, fmt.Errorf("add successor Baseline: %w", err)
-	}
 	decodedBaseline, err := canonical.DecodeBaseline(baseline.Bytes)
 	if err != nil || decodedBaseline.RecordID != baseline.RecordID {
 		return nil, errors.New("successor Baseline identity is invalid")
+	}
+	causes, err := baselineContentCauseIDs(decodedBaseline)
+	if err != nil {
+		return nil, fmt.Errorf("decode successor Baseline checkpoint: %w", err)
+	}
+	if err := candidate.graph.AddBaseline(baseline.RecordID, causes); err != nil {
+		return nil, fmt.Errorf("add successor Baseline: %w", err)
 	}
 	candidate.baseline = decodedBaseline
 	candidate.baselineID = baseline.RecordID
@@ -608,7 +616,11 @@ func (r *Replica) Clone() *Replica {
 		clone.featureManifests[id] = cloneFeatureManifest(manifest)
 	}
 	clone.baseline.Bytes = append([]byte(nil), r.baseline.Bytes...)
-	_ = clone.graph.AddBaseline(clone.baselineID, nil)
+	if causes, err := baselineContentCauseIDs(clone.baseline); err == nil {
+		_ = clone.graph.AddBaseline(clone.baselineID, causes)
+	} else {
+		_ = clone.graph.AddBaseline(clone.baselineID, nil)
+	}
 	for id, record := range r.records {
 		copyRecord := record
 		copyRecord.Bytes = append([]byte(nil), record.Bytes...)

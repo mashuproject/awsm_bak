@@ -136,6 +136,9 @@ func ProjectLibraryProjection(replica *Replica) (LibraryProjection, error) {
 	assignments := make(map[canonical.Identifier]libraryTagAssignmentState)
 	removedAssignmentCauses := make(map[canonical.Identifier]struct{})
 	notes := make(map[canonical.Identifier]*libraryNoteState)
+	if err := seedBaselineCollections(replica, collectionTitles); err != nil {
+		return LibraryProjection{}, err
+	}
 	orderedEvents, err := orderedContentEvents(replica)
 	if err != nil {
 		return LibraryProjection{}, err
@@ -871,7 +874,7 @@ func orderedContentEvents(replica *Replica) ([]canonical.Event, error) {
 	}
 	content := make(map[canonical.Identifier]canonical.Event)
 	for _, event := range replica.Events() {
-		if event.Family == canonical.ContentFamily {
+		if event.Family == canonical.ContentFamily && event.GenerationID == replica.generationID {
 			content[event.RecordID] = event
 		}
 	}
@@ -915,6 +918,295 @@ func orderedContentEvents(replica *Replica) ([]canonical.Event, error) {
 		}
 	}
 	return ordered, nil
+}
+
+func baselineContentCheckpoint(baseline canonical.Baseline) (canonical.Value, error) {
+	body, ok := replicaMapValue(baseline.Body)
+	if !ok || !replicaMapHasKeys(body, 6) {
+		return nil, errors.New("Baseline body is invalid")
+	}
+	content, ok := replicaMapEntry(body, 2)
+	if !ok || !replicaMapHasKeys(content, 10) {
+		return nil, errors.New("Baseline content checkpoint is invalid")
+	}
+	format, ok := replicaMapNumber(content, 0)
+	if !ok || format != 1 {
+		return nil, errors.New("Baseline content checkpoint format is invalid")
+	}
+	return content, nil
+}
+
+func appendBaselineCauseSet(value canonical.Value, key uint64, field string, causes *[]canonical.Identifier) error {
+	entry, ok := replicaMapEntry(value, key)
+	if !ok || entry == nil {
+		return nil
+	}
+	ids, err := parseCanonicalIdentifierSet(entry, field, false)
+	if err != nil {
+		return err
+	}
+	*causes = append(*causes, ids...)
+	return nil
+}
+
+func appendBaselineCauseID(value canonical.Value, key uint64, field string, causes *[]canonical.Identifier) error {
+	entry, ok := replicaMapEntry(value, key)
+	if !ok || entry == nil {
+		return nil
+	}
+	id, ok := replicaIdentifierValue(entry)
+	if !ok {
+		return fmt.Errorf("%s is invalid", field)
+	}
+	*causes = append(*causes, id)
+	return nil
+}
+
+func baselineContentCauseIDs(baseline canonical.Baseline) ([]canonical.Identifier, error) {
+	content, err := baselineContentCheckpoint(baseline)
+	if err != nil {
+		return nil, err
+	}
+	causes := make([]canonical.Identifier, 0)
+	if label, ok := replicaMapEntry(content, 1); ok && label != nil {
+		if err := appendBaselineCauseSet(label, 1, "Baseline Vault label causes", &causes); err != nil {
+			return nil, err
+		}
+	}
+	arrays := []struct {
+		key   uint64
+		field string
+	}{
+		{2, "Baseline Credential label causes"},
+		{3, "Baseline Capture assignment causes"},
+		{4, "Baseline Collection title causes"},
+		{5, "Baseline Folder causes"},
+		{6, "Baseline Tag causes"},
+		{7, "Baseline Tag assignment causes"},
+		{8, "Baseline Note causes"},
+		{9, "Baseline Conflict causes"},
+	}
+	for _, array := range arrays {
+		entries, ok := replicaMapArray(content, array.key)
+		if !ok {
+			return nil, fmt.Errorf("%s array is invalid", array.field)
+		}
+		for index, entry := range entries {
+			if !replicaMapValueIsMap(entry) {
+				return nil, fmt.Errorf("%s entry %d is invalid", array.field, index)
+			}
+			switch array.key {
+			case 2:
+				if err := appendBaselineCauseSet(entry, 2, array.field, &causes); err != nil {
+					return nil, err
+				}
+			case 3:
+				if err := appendBaselineCauseSet(entry, 3, array.field, &causes); err != nil {
+					return nil, err
+				}
+				if err := appendBaselineCauseSet(entry, 5, array.field, &causes); err != nil {
+					return nil, err
+				}
+				if err := appendBaselineCauseID(entry, 6, array.field, &causes); err != nil {
+					return nil, err
+				}
+			case 4:
+				if err := appendBaselineCauseSet(entry, 2, array.field, &causes); err != nil {
+					return nil, err
+				}
+				if err := appendBaselineCauseSet(entry, 4, array.field, &causes); err != nil {
+					return nil, err
+				}
+				for _, key := range []uint64{5, 6, 7} {
+					optional, exists := replicaMapEntry(entry, key)
+					if !exists || optional == nil {
+						continue
+					}
+					if err := appendBaselineCauseID(optional, 1, array.field, &causes); err != nil {
+						return nil, err
+					}
+				}
+			case 5:
+				if err := appendBaselineCauseSet(entry, 2, array.field, &causes); err != nil {
+					return nil, err
+				}
+				if err := appendBaselineCauseSet(entry, 4, array.field, &causes); err != nil {
+					return nil, err
+				}
+				if err := appendBaselineCauseSet(entry, 6, array.field, &causes); err != nil {
+					return nil, err
+				}
+			case 6:
+				if err := appendBaselineCauseSet(entry, 2, array.field, &causes); err != nil {
+					return nil, err
+				}
+				for _, key := range []uint64{3, 5} {
+					optional, exists := replicaMapEntry(entry, key)
+					if !exists || optional == nil {
+						continue
+					}
+					if err := appendBaselineCauseID(optional, 1, array.field, &causes); err != nil {
+						return nil, err
+					}
+				}
+			case 7:
+				if err := appendBaselineCauseID(entry, 1, array.field, &causes); err != nil {
+					return nil, err
+				}
+			case 8:
+				versions, ok := replicaMapArray(entry, 3)
+				if !ok {
+					return nil, fmt.Errorf("%s versions are invalid", array.field)
+				}
+				for _, version := range versions {
+					if err := appendBaselineCauseID(version, 0, array.field, &causes); err != nil {
+						return nil, err
+					}
+				}
+			case 9:
+				candidates, ok := replicaMapArray(entry, 2)
+				if !ok {
+					return nil, fmt.Errorf("%s candidates are invalid", array.field)
+				}
+				for _, candidate := range candidates {
+					if err := appendBaselineCauseID(candidate, 0, array.field, &causes); err != nil {
+						return nil, err
+					}
+				}
+			}
+		}
+	}
+	return sortUniqueIdentifiers(causes), nil
+}
+
+func replicaMapValueIsMap(value canonical.Value) bool {
+	_, ok := replicaMapValue(value)
+	return ok
+}
+
+func seedBaselineCollections(replica *Replica, collectionTitles map[canonical.Identifier]collectionTitleFact) error {
+	content, err := baselineContentCheckpoint(replica.baseline)
+	if err != nil {
+		return err
+	}
+	entries, ok := replicaMapArray(content, 4)
+	if !ok {
+		return errors.New("Baseline Collection checkpoint is invalid")
+	}
+	for index, entry := range entries {
+		if !replicaMapHasKeys(entry, 8) {
+			return fmt.Errorf("Baseline Collection entry %d is invalid", index)
+		}
+		collectionID, ok := replicaIdentifier(entry, 0)
+		if !ok {
+			return fmt.Errorf("Baseline Collection entry %d ID is invalid", index)
+		}
+		title, ok := replicaMapNullableText(entry, 1)
+		if !ok {
+			return fmt.Errorf("Baseline Collection entry %d title is invalid", index)
+		}
+		causes, err := parseCanonicalIdentifierSet(replicaMapEntryMust(entry, 2), "Baseline Collection title causes", false)
+		if err != nil {
+			return err
+		}
+		if title != nil && len(causes) == 0 {
+			return fmt.Errorf("Baseline Collection entry %d title has no cause", index)
+		}
+		if _, exists := collectionTitles[collectionID]; exists {
+			return fmt.Errorf("Baseline Collection %s is repeated", hexIdentifier(collectionID))
+		}
+		causeID := canonical.Identifier{}
+		if len(causes) > 0 {
+			causeID = causes[0]
+		}
+		collectionTitles[collectionID] = collectionTitleFact{causeID: causeID, title: title}
+	}
+	return nil
+}
+
+func freshBaselineCauseID() (canonical.Identifier, error) {
+	textID, err := randomID()
+	if err != nil {
+		return canonical.Identifier{}, err
+	}
+	return decodeHexIdentifier(textID)
+}
+
+func buildVacuumContentCheckpoint(replica *Replica, projection LibraryProjection) (canonical.Value, error) {
+	if replica == nil {
+		return nil, errors.New("Replica is required")
+	}
+	if len(projection.Captures) != 0 || len(projection.Folders) != 0 || len(projection.Tags) != 0 || len(projection.TagAssignments) != 0 || len(projection.Notes) != 0 || len(projection.Conflicts) != 0 {
+		return nil, errors.New("Vacuum content checkpoint currently supports only Collection title state")
+	}
+	for _, collection := range projection.Collections {
+		if collection.RedirectedTo != nil || collection.FolderID != nil || collection.TailBundleID != nil || collection.ActiveCaptureCount != 0 {
+			return nil, errors.New("Vacuum Collection checkpoint cannot represent redirects, folders, or captures")
+		}
+	}
+	oldContent, err := baselineContentCheckpoint(replica.baseline)
+	if err != nil {
+		return nil, err
+	}
+	oldLabel, ok := replicaMapEntry(oldContent, 1)
+	if !ok {
+		return nil, errors.New("Baseline Vault label checkpoint is missing")
+	}
+	for _, key := range []uint64{2, 3, 5, 6, 7, 8, 9} {
+		entries, entriesOK := replicaMapArray(oldContent, key)
+		if !entriesOK {
+			return nil, fmt.Errorf("Baseline content checkpoint field %d is invalid", key)
+		}
+		if len(entries) != 0 {
+			return nil, errors.New("Vacuum content checkpoint currently supports only Collection title state")
+		}
+	}
+	var labelCheckpoint canonical.Value
+	if oldLabel != nil {
+		label, ok := replicaMapNullableText(oldLabel, 0)
+		if !ok {
+			return nil, errors.New("Baseline Vault label checkpoint is invalid")
+		}
+		if label == nil {
+			labelCheckpoint = nil
+		} else {
+			causeID, causeErr := freshBaselineCauseID()
+			if causeErr != nil {
+				return nil, causeErr
+			}
+			labelCheckpoint = canonical.Map{0: *label, 1: canonicalSetValues([]canonical.Value{causeID[:]})}
+		}
+	}
+	collectionEntries := make([]canonical.Value, 0, len(projection.Collections))
+	for _, collection := range projection.Collections {
+		var title canonical.Value
+		causes := []canonical.Value{}
+		if collection.ExplicitTitle != nil {
+			causeID, causeErr := freshBaselineCauseID()
+			if causeErr != nil {
+				return nil, causeErr
+			}
+			title = *collection.ExplicitTitle
+			causes = canonicalSetValues([]canonical.Value{causeID[:]})
+		}
+		collectionID, decodeErr := decodeHexIdentifier(collection.CollectionID)
+		if decodeErr != nil {
+			return nil, fmt.Errorf("Collection checkpoint identity is invalid: %w", decodeErr)
+		}
+		collectionEntries = append(collectionEntries, canonical.Map{
+			0: collectionID[:], 1: title, 2: causes, 3: nil, 4: []canonical.Value{}, 5: nil, 6: nil, 7: nil,
+		})
+	}
+	sort.Slice(collectionEntries, func(left, right int) bool {
+		leftID, _ := replicaIdentifier(collectionEntries[left], 0)
+		rightID, _ := replicaIdentifier(collectionEntries[right], 0)
+		return bytes.Compare(leftID[:], rightID[:]) < 0
+	})
+	return canonical.Map{
+		0: uint64(1), 1: labelCheckpoint, 2: []canonical.Value{}, 3: []canonical.Value{},
+		4: collectionEntries, 5: []canonical.Value{}, 6: []canonical.Value{}, 7: []canonical.Value{},
+		8: []canonical.Value{}, 9: []canonical.Value{},
+	}, nil
 }
 
 type collectionTitleFact struct {

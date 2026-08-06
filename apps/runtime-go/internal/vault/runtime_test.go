@@ -904,6 +904,74 @@ func TestVacuumAdoptsAuthenticatedSuccessorBaselineAndReopens(t *testing.T) {
 	}
 }
 
+func TestVacuumPreservesCollectionTitleInSuccessorCheckpoint(t *testing.T) {
+	ctx := context.Background()
+	state := store.NewMemoryState()
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vaultID := createVaultForTest(t, runtime, "Vacuum collection")
+	collectionID := filledCreationID(222)
+	admitForkCollectionTitleEvent(t, runtime, dependencies, vaultID, collectionID, "Saved pages")
+
+	resultValue, err := runtime.Handle(ctx, mustJSON(map[string]any{"type": "VacuumVault", "expectedVaultId": vaultID}))
+	if err != nil {
+		t.Fatalf("VacuumVault: %v", err)
+	}
+	result, ok := resultValue.(map[string]string)
+	if !ok {
+		t.Fatalf("Vacuum result = %#v", resultValue)
+	}
+	baselineRecord, ok := runtime.replicas[vaultID].Record(mustIdentifier(t, result["successorBaselineId"]))
+	if !ok || baselineRecord.Baseline == nil {
+		t.Fatalf("successor Baseline = %#v", baselineRecord)
+	}
+	body, ok := replicaMapValue(baselineRecord.Baseline.Body)
+	if !ok {
+		t.Fatal("successor Baseline body is not a map")
+	}
+	content, ok := replicaMapValue(replicaMapEntryMust(body, 2))
+	if !ok {
+		t.Fatal("successor content checkpoint is not a map")
+	}
+	collections, ok := replicaMapArray(content, 4)
+	if !ok {
+		t.Fatal("successor Collection checkpoint is not an array")
+	}
+	found := false
+	for _, entry := range collections {
+		id, idOK := replicaIdentifier(entry, 0)
+		title, titleOK := replicaMapNullableText(entry, 1)
+		if idOK && id == collectionID && titleOK && title != nil && *title == "Saved pages" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("successor Collection checkpoint = %#v", collections)
+	}
+	projection, err := ProjectLibraryProjection(runtime.replicas[vaultID])
+	if err != nil {
+		t.Fatalf("project adopted successor: %v", err)
+	}
+	if len(projection.Collections) != 1 || projection.Collections[0].Title != "Saved pages" {
+		t.Fatalf("adopted Collection projection = %#v", projection.Collections)
+	}
+	restarted, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatalf("restart after Collection Vacuum: %v", err)
+	}
+	projection, err = ProjectLibraryProjection(restarted.replicas[vaultID])
+	if err != nil {
+		t.Fatalf("project restarted successor: %v", err)
+	}
+	if len(projection.Collections) != 1 || projection.Collections[0].Title != "Saved pages" {
+		t.Fatalf("restarted Collection projection = %#v", projection.Collections)
+	}
+}
+
 func mustIdentifier(t *testing.T, value string) canonical.Identifier {
 	t.Helper()
 	identifier, err := decodeHexIdentifier(value)
