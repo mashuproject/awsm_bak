@@ -541,6 +541,42 @@ func TestForkCreatesFreshCanonicalReplicaForEmptyVault(t *testing.T) {
 	}
 }
 
+func TestRecoverMemberEnrollsFreshClientCredentialAndReopens(t *testing.T) {
+	ctx := context.Background()
+	state := store.NewMemoryState()
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vaultID, phrase := createVaultWithPhraseForTest(t, runtime, "Recovery")
+	before := runtime.vaults[vaultID].Canonical.ClientCredentialID
+	resultValue, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "RecoverMember", "expectedVaultId": vaultID, "recoveryPhrase": phrase,
+	}))
+	if err != nil {
+		t.Fatalf("RecoverMember: %v", err)
+	}
+	result, ok := resultValue.(map[string]string)
+	if !ok || result["clientCredentialId"] == "" || result["eventRecordId"] == "" {
+		t.Fatalf("RecoverMember result = %#v", resultValue)
+	}
+	value := runtime.vaults[vaultID]
+	if value.Canonical.ClientCredentialID == before || value.Canonical.ClientCredentialID != result["clientCredentialId"] {
+		t.Fatalf("recovered Client Credential state = %#v, previous = %s", value.Canonical, before)
+	}
+	if _, ok := runtime.replicas[vaultID].Record(mustIdentifier(t, result["eventRecordId"])); !ok {
+		t.Fatal("recovery enrollment Event was not admitted")
+	}
+	restarted, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatalf("restart after recovery: %v", err)
+	}
+	if restarted.vaults[vaultID].Canonical.ClientCredentialID != result["clientCredentialId"] {
+		t.Fatalf("restarted Client Credential = %s, want %s", restarted.vaults[vaultID].Canonical.ClientCredentialID, result["clientCredentialId"])
+	}
+}
+
 func mustIdentifier(t *testing.T, value string) canonical.Identifier {
 	t.Helper()
 	identifier, err := decodeHexIdentifier(value)
@@ -798,6 +834,11 @@ func mustJSON(value map[string]any) json.RawMessage {
 }
 
 func createVaultForTest(t *testing.T, runtime *Runtime, label string) string {
+	vaultID, _ := createVaultWithPhraseForTest(t, runtime, label)
+	return vaultID
+}
+
+func createVaultWithPhraseForTest(t *testing.T, runtime *Runtime, label string) (string, string) {
 	t.Helper()
 	ctx := context.Background()
 	selected := runtime.State().SelectedVaultID
@@ -814,5 +855,5 @@ func createVaultForTest(t *testing.T, runtime *Runtime, label string) string {
 	if err != nil {
 		t.Fatalf("confirm %s creation: %v", label, err)
 	}
-	return confirmed.(map[string]string)["vaultId"]
+	return confirmed.(map[string]string)["vaultId"], setup["recoveryPhrase"]
 }

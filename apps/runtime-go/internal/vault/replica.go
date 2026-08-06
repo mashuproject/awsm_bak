@@ -97,6 +97,14 @@ func (r *Replica) AdmitEvent(event canonical.Event, signerPublicKey ed25519.Publ
 	if !canonical.VerifyEventSignature(decoded, signerPublicKey) {
 		return errors.New("Event signature is invalid")
 	}
+	var enrollment *enrollmentCredential
+	if decoded.Family == canonical.AuthorityFamily && decoded.Type == 9 {
+		parsed, err := parseEnrollmentCredential(decoded)
+		if err != nil {
+			return err
+		}
+		enrollment = &parsed
+	}
 	if decoded.Family == canonical.AuthorityFamily && decoded.Type == canonical.GenesisEvent {
 		if r.genesisID != (canonical.Identifier{}) || len(decoded.ParentRecordIDs) != 0 || len(decoded.AuthorityParentIDs) != 0 {
 			return errors.New("Replica already has a Genesis or Genesis has parents")
@@ -124,6 +132,10 @@ func (r *Replica) AdmitEvent(event canonical.Event, signerPublicKey ed25519.Publ
 			return err
 		}
 		acceptedKey, ok := r.credentialKeys[decoded.SignerCredentialID]
+		if enrollment != nil && enrollment.authorizationKind == 2 && decoded.SignerCredentialID == enrollment.credentialID {
+			acceptedKey = enrollment.signingPublicKey
+			ok = true
+		}
 		if !ok || !bytes.Equal(acceptedKey, signerPublicKey) {
 			return errors.New("Event signer Credential is not accepted")
 		}
@@ -132,6 +144,12 @@ func (r *Replica) AdmitEvent(event canonical.Event, signerPublicKey ed25519.Publ
 		return fmt.Errorf("add Event to causal DAG: %w", err)
 	}
 	r.records[decoded.RecordID] = canonical.Record{Kind: canonical.EventKind, Event: &decoded, Bytes: append([]byte(nil), decoded.Bytes...), RecordID: decoded.RecordID}
+	if enrollment != nil {
+		if _, exists := r.credentialKeys[enrollment.credentialID]; exists {
+			return errors.New("Client Enrollment reuses a Client Credential identity")
+		}
+		r.credentialKeys[enrollment.credentialID] = append(ed25519.PublicKey(nil), enrollment.signingPublicKey...)
+	}
 	if decoded.Family == canonical.AuthorityFamily || decoded.Family == canonical.LifecycleFamily {
 		r.continuityRecordIDs = appendUniqueSorted(r.continuityRecordIDs, decoded.RecordID)
 	}
@@ -153,6 +171,16 @@ func (r *Replica) AdmitKnownEvent(event canonical.Event) error {
 		return errors.New("Replica is required")
 	}
 	key, ok := r.credentialKeys[event.SignerCredentialID]
+	if event.Family == canonical.AuthorityFamily && event.Type == 9 {
+		parsed, err := parseEnrollmentCredential(event)
+		if err != nil {
+			return err
+		}
+		if parsed.authorizationKind == 2 && parsed.credentialID == event.SignerCredentialID {
+			key = parsed.signingPublicKey
+			ok = true
+		}
+	}
 	if !ok {
 		return errors.New("Event signer Credential is not accepted")
 	}
@@ -431,6 +459,87 @@ func genesisCredential(event canonical.Event) (canonical.Identifier, []byte, err
 	var credentialID canonical.Identifier
 	copy(credentialID[:], credentialBytes)
 	return credentialID, publicKey, nil
+}
+
+type enrollmentCredential struct {
+	authorizationKind uint64
+	credentialID      canonical.Identifier
+	memberID          canonical.Identifier
+	signingPublicKey  []byte
+}
+
+func parseEnrollmentCredential(event canonical.Event) (enrollmentCredential, error) {
+	body, ok := replicaMapValue(event.Body)
+	if !ok || !replicaMapHasKeys(body, 4) {
+		return enrollmentCredential{}, errors.New("Client Enrollment body is invalid")
+	}
+	proposal, ok := replicaMapValue(replicaMapEntryMust(body, 0))
+	if !ok || !replicaMapHasKeys(proposal, 6) {
+		return enrollmentCredential{}, errors.New("Client Enrollment proposal is invalid")
+	}
+	authorizationKind, ok := replicaMapNumber(body, 1)
+	if !ok || (authorizationKind != 1 && authorizationKind != 2) {
+		return enrollmentCredential{}, errors.New("Client Enrollment authorization kind is invalid")
+	}
+	certificate, ok := replicaMapValue(replicaMapEntryMust(proposal, 3))
+	if !ok || !replicaMapHasKeys(certificate, 4) {
+		return enrollmentCredential{}, errors.New("Client Enrollment certificate is invalid")
+	}
+	credentialBytes, ok := replicaMapBytes(certificate, 0, 32)
+	if !ok {
+		return enrollmentCredential{}, errors.New("Client Enrollment Credential ID is invalid")
+	}
+	memberBytes, ok := replicaMapBytes(certificate, 1, 32)
+	if !ok {
+		return enrollmentCredential{}, errors.New("Client Enrollment Member ID is invalid")
+	}
+	publicKey, ok := replicaMapBytes(certificate, 2, ed25519.PublicKeySize)
+	if !ok {
+		return enrollmentCredential{}, errors.New("Client Enrollment signing public key is invalid")
+	}
+	slots, ok := replicaMapEntry(proposal, 4)
+	if !ok {
+		return enrollmentCredential{}, errors.New("Client Enrollment Key Envelope slots are missing")
+	}
+	if values, ok := slots.([]canonical.Value); !ok || len(values) == 0 {
+		return enrollmentCredential{}, errors.New("Client Enrollment Key Envelope slots are invalid")
+	} else {
+		for _, value := range values {
+			slot, slotOK := replicaMapValue(value)
+			if !slotOK || !replicaMapHasKeys(slot, 5) {
+				return enrollmentCredential{}, errors.New("Client Enrollment Key Envelope slot is invalid")
+			}
+			targetKind, targetOK := replicaMapNumber(slot, 1)
+			targetID, targetIDOK := replicaMapBytes(slot, 2, 32)
+			if !targetOK || targetKind != awsmClientCredentialTarget || !targetIDOK || !bytes.Equal(targetID, credentialBytes) {
+				return enrollmentCredential{}, errors.New("Client Enrollment Key Envelope slot target is invalid")
+			}
+		}
+	}
+	if authorizationKind == 1 {
+		if _, ok := replicaMapEntry(body, 2); !ok {
+			return enrollmentCredential{}, errors.New("Client Enrollment authorization is incomplete")
+		}
+	}
+	return enrollmentCredential{
+		authorizationKind: authorizationKind,
+		credentialID:      bytesIdentifier(credentialBytes),
+		memberID:          bytesIdentifier(memberBytes),
+		signingPublicKey:  append([]byte(nil), publicKey...),
+	}, nil
+}
+
+const awsmClientCredentialTarget uint64 = 2
+
+func replicaMapEntryMust(value canonical.Value, key uint64) canonical.Value {
+	entry, _ := replicaMapEntry(value, key)
+	return entry
+}
+
+func bytesIdentifier(value []byte) canonical.Identifier {
+	var identifier canonical.Identifier
+	copy(identifier[:], value)
+	return identifier
 }
 
 func replicaMapValue(value canonical.Value) (canonical.Value, bool) {
