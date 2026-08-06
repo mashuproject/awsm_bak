@@ -352,3 +352,215 @@ func TestProjectLibraryProjectionSurfacesCollectionMergeConflict(t *testing.T) {
 		t.Fatalf("Collection conflicts = %#v", projection.Conflicts)
 	}
 }
+
+func TestProjectLibraryProjectionAppliesCollectionMergeResolution(t *testing.T) {
+	prepared := deterministicCreation(t)
+	replica, err := NewReplica(prepared.Baseline)
+	if err != nil {
+		t.Fatalf("NewReplica: %v", err)
+	}
+	publicKey := ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)
+	privateKey := ed25519.PrivateKey(prepared.ClientKeys.SigningSecretKey)
+	if err := replica.AdmitEvent(prepared.Genesis, publicKey); err != nil {
+		t.Fatalf("Admit Genesis: %v", err)
+	}
+	sourceID := filledCreationID(202)
+	destinationA := filledCreationID(203)
+	destinationB := filledCreationID(204)
+	sign := func(parents []canonical.Identifier, eventType uint64, body canonical.Value) canonical.Event {
+		event, signErr := canonical.SignEvent(canonical.EventInput{
+			VaultID: prepared.IDs.VaultID, GenerationID: prepared.IDs.GenerationID,
+			ParentRecordIDs: parents, AuthorityParentIDs: parents, RequiredFeatureSetID: prepared.RequiredFeatureSetID,
+			Extensions: map[string][]byte{}, Family: canonical.ContentFamily, Type: eventType,
+			SignerCredentialID: prepared.IDs.ClientCredentialID, AssertedAt: 220 + int64(eventType), Body: body,
+		}, privateKey)
+		if signErr != nil {
+			t.Fatalf("Sign Content Event %d: %v", eventType, signErr)
+		}
+		return event
+	}
+	mergeA := sign([]canonical.Identifier{prepared.Genesis.RecordID}, 8, canonical.Map{
+		0: canonicalSetValues([]canonical.Value{sourceID[:]}), 1: destinationA[:],
+	})
+	mergeB := sign([]canonical.Identifier{prepared.Genesis.RecordID}, 8, canonical.Map{
+		0: canonicalSetValues([]canonical.Value{sourceID[:]}), 1: destinationB[:],
+	})
+	for _, event := range []canonical.Event{mergeA, mergeB} {
+		if err := replica.AdmitEvent(event, publicKey); err != nil {
+			t.Fatalf("Admit merge: %v", err)
+		}
+	}
+	resolutionParents := sortUniqueIdentifiers([]canonical.Identifier{mergeA.RecordID, mergeB.RecordID})
+	resolution := sign(resolutionParents, 10, canonical.Map{
+		0: canonicalSetValues([]canonical.Value{mergeA.RecordID[:], mergeB.RecordID[:]}),
+		1: []canonical.Value{canonical.Map{0: sourceID[:], 1: destinationB[:]}},
+	})
+	if err := replica.AdmitEvent(resolution, publicKey); err != nil {
+		t.Fatalf("Admit merge resolution: %v", err)
+	}
+	projection, err := ProjectLibraryProjection(replica)
+	if err != nil {
+		t.Fatalf("ProjectLibraryProjection: %v", err)
+	}
+	if len(projection.Conflicts) != 0 {
+		t.Fatalf("Collection conflicts after resolution = %#v, want none", projection.Conflicts)
+	}
+	for _, collection := range projection.Collections {
+		if collection.CollectionID == hexIdentifier(sourceID) {
+			if collection.RedirectedTo == nil || *collection.RedirectedTo != hexIdentifier(destinationB) {
+				t.Fatalf("resolved source redirect = %#v, want %s", collection.RedirectedTo, hexIdentifier(destinationB))
+			}
+			return
+		}
+	}
+	t.Fatalf("resolved source Collection %s was not projected", hexIdentifier(sourceID))
+}
+
+func TestProjectLibraryProjectionSurfacesAndResolvesFolderCycle(t *testing.T) {
+	prepared := deterministicCreation(t)
+	replica, err := NewReplica(prepared.Baseline)
+	if err != nil {
+		t.Fatalf("NewReplica: %v", err)
+	}
+	publicKey := ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)
+	privateKey := ed25519.PrivateKey(prepared.ClientKeys.SigningSecretKey)
+	if err := replica.AdmitEvent(prepared.Genesis, publicKey); err != nil {
+		t.Fatalf("Admit Genesis: %v", err)
+	}
+	folderA := filledCreationID(205)
+	folderB := filledCreationID(206)
+	sign := func(parents []canonical.Identifier, eventType uint64, body canonical.Value, assertedAt int64) canonical.Event {
+		event, signErr := canonical.SignEvent(canonical.EventInput{
+			VaultID: prepared.IDs.VaultID, GenerationID: prepared.IDs.GenerationID,
+			ParentRecordIDs: parents, AuthorityParentIDs: parents, RequiredFeatureSetID: prepared.RequiredFeatureSetID,
+			Extensions: map[string][]byte{}, Family: canonical.ContentFamily, Type: eventType,
+			SignerCredentialID: prepared.IDs.ClientCredentialID, AssertedAt: assertedAt, Body: body,
+		}, privateKey)
+		if signErr != nil {
+			t.Fatalf("Sign Folder Event %d: %v", eventType, signErr)
+		}
+		return event
+	}
+	createdA := sign([]canonical.Identifier{prepared.Genesis.RecordID}, 12, canonical.Map{0: folderA[:], 1: "A", 2: nil}, 230)
+	createdB := sign([]canonical.Identifier{prepared.Genesis.RecordID}, 12, canonical.Map{0: folderB[:], 1: "B", 2: nil}, 231)
+	for _, event := range []canonical.Event{createdA, createdB} {
+		if err := replica.AdmitEvent(event, publicKey); err != nil {
+			t.Fatalf("Admit Folder Created: %v", err)
+		}
+	}
+	moveA := sign([]canonical.Identifier{createdA.RecordID}, 14, canonical.Map{0: folderA[:], 1: folderB[:]}, 232)
+	moveB := sign([]canonical.Identifier{createdB.RecordID}, 14, canonical.Map{0: folderB[:], 1: folderA[:]}, 233)
+	for _, event := range []canonical.Event{moveA, moveB} {
+		if err := replica.AdmitEvent(event, publicKey); err != nil {
+			t.Fatalf("Admit Folder Parent Placement: %v", err)
+		}
+	}
+	projection, err := ProjectLibraryProjection(replica)
+	if err != nil {
+		t.Fatalf("ProjectLibraryProjection with cycle: %v", err)
+	}
+	if len(projection.Conflicts) != 1 || projection.Conflicts[0].Kind != "Folder" {
+		t.Fatalf("Folder conflicts = %#v, want one cycle conflict", projection.Conflicts)
+	}
+	resolutionParents := sortUniqueIdentifiers([]canonical.Identifier{moveA.RecordID, moveB.RecordID})
+	resolution := sign(resolutionParents, 17, canonical.Map{
+		0: canonicalSetValues([]canonical.Value{moveA.RecordID[:], moveB.RecordID[:]}),
+		1: []canonical.Value{
+			canonical.Map{0: folderA[:], 1: nil},
+			canonical.Map{0: folderB[:], 1: nil},
+		},
+	}, 234)
+	if err := replica.AdmitEvent(resolution, publicKey); err != nil {
+		t.Fatalf("Admit Folder Conflict Resolution: %v", err)
+	}
+	projection, err = ProjectLibraryProjection(replica)
+	if err != nil {
+		t.Fatalf("ProjectLibraryProjection after Folder resolution: %v", err)
+	}
+	if len(projection.Conflicts) != 0 {
+		t.Fatalf("Folder conflicts after resolution = %#v, want none", projection.Conflicts)
+	}
+	for _, folder := range projection.Folders {
+		if folder.FolderID == hexIdentifier(folderA) || folder.FolderID == hexIdentifier(folderB) {
+			if folder.ParentFolderID != nil {
+				t.Fatalf("resolved Folder %s parent = %v, want nil", folder.FolderID, folder.ParentFolderID)
+			}
+		}
+	}
+}
+
+func TestProjectLibraryProjectionSurfacesAndResolvesTagMergeConflict(t *testing.T) {
+	prepared := deterministicCreation(t)
+	replica, err := NewReplica(prepared.Baseline)
+	if err != nil {
+		t.Fatalf("NewReplica: %v", err)
+	}
+	publicKey := ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)
+	privateKey := ed25519.PrivateKey(prepared.ClientKeys.SigningSecretKey)
+	if err := replica.AdmitEvent(prepared.Genesis, publicKey); err != nil {
+		t.Fatalf("Admit Genesis: %v", err)
+	}
+	tagSource := filledCreationID(207)
+	tagA := filledCreationID(208)
+	tagB := filledCreationID(209)
+	sign := func(parents []canonical.Identifier, eventType uint64, body canonical.Value, assertedAt int64) canonical.Event {
+		event, signErr := canonical.SignEvent(canonical.EventInput{
+			VaultID: prepared.IDs.VaultID, GenerationID: prepared.IDs.GenerationID,
+			ParentRecordIDs: parents, AuthorityParentIDs: parents, RequiredFeatureSetID: prepared.RequiredFeatureSetID,
+			Extensions: map[string][]byte{}, Family: canonical.ContentFamily, Type: eventType,
+			SignerCredentialID: prepared.IDs.ClientCredentialID, AssertedAt: assertedAt, Body: body,
+		}, privateKey)
+		if signErr != nil {
+			t.Fatalf("Sign Tag Event %d: %v", eventType, signErr)
+		}
+		return event
+	}
+	created := []canonical.Event{
+		sign([]canonical.Identifier{prepared.Genesis.RecordID}, 18, canonical.Map{0: tagSource[:], 1: "Source"}, 240),
+		sign([]canonical.Identifier{prepared.Genesis.RecordID}, 18, canonical.Map{0: tagA[:], 1: "A"}, 241),
+		sign([]canonical.Identifier{prepared.Genesis.RecordID}, 18, canonical.Map{0: tagB[:], 1: "B"}, 242),
+	}
+	for _, event := range created {
+		if err := replica.AdmitEvent(event, publicKey); err != nil {
+			t.Fatalf("Admit Tag Created: %v", err)
+		}
+	}
+	mergeA := sign([]canonical.Identifier{created[0].RecordID, created[1].RecordID}, 24, canonical.Map{0: canonicalSetValues([]canonical.Value{tagSource[:]}), 1: tagA[:]}, 243)
+	mergeB := sign([]canonical.Identifier{created[0].RecordID, created[2].RecordID}, 24, canonical.Map{0: canonicalSetValues([]canonical.Value{tagSource[:]}), 1: tagB[:]}, 244)
+	for _, event := range []canonical.Event{mergeA, mergeB} {
+		if err := replica.AdmitEvent(event, publicKey); err != nil {
+			t.Fatalf("Admit Tags Merged: %v", err)
+		}
+	}
+	projection, err := ProjectLibraryProjection(replica)
+	if err != nil {
+		t.Fatalf("ProjectLibraryProjection with tag conflict: %v", err)
+	}
+	if len(projection.Conflicts) != 1 || projection.Conflicts[0].Kind != "TagMerge" {
+		t.Fatalf("Tag conflicts = %#v, want one conflict", projection.Conflicts)
+	}
+	resolutionParents := sortUniqueIdentifiers([]canonical.Identifier{mergeA.RecordID, mergeB.RecordID})
+	resolution := sign(resolutionParents, 26, canonical.Map{
+		0: canonicalSetValues([]canonical.Value{mergeA.RecordID[:], mergeB.RecordID[:]}),
+		1: []canonical.Value{canonical.Map{0: tagSource[:], 1: tagB[:]}},
+	}, 245)
+	if err := replica.AdmitEvent(resolution, publicKey); err != nil {
+		t.Fatalf("Admit Tag Merge Conflict Resolution: %v", err)
+	}
+	projection, err = ProjectLibraryProjection(replica)
+	if err != nil {
+		t.Fatalf("ProjectLibraryProjection after tag resolution: %v", err)
+	}
+	if len(projection.Conflicts) != 0 {
+		t.Fatalf("Tag conflicts after resolution = %#v, want none", projection.Conflicts)
+	}
+	for _, tag := range projection.Tags {
+		if tag.TagID == hexIdentifier(tagSource) {
+			if tag.RedirectedTo == nil || *tag.RedirectedTo != hexIdentifier(tagB) {
+				t.Fatalf("resolved tag redirect = %#v, want %s", tag.RedirectedTo, hexIdentifier(tagB))
+			}
+			return
+		}
+	}
+	t.Fatalf("resolved source Tag %s was not projected", hexIdentifier(tagSource))
+}

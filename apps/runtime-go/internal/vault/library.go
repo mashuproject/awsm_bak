@@ -131,6 +131,8 @@ func ProjectLibraryProjection(replica *Replica) (LibraryProjection, error) {
 	folders := make(map[canonical.Identifier]*libraryFolderState)
 	collectionFolders := make(map[canonical.Identifier]libraryCollectionFolderFact)
 	tags := make(map[canonical.Identifier]*libraryTagState)
+	tagRedirects := make(map[canonical.Identifier]collectionRedirectFact)
+	inactiveTagRedirects := make(map[canonical.Identifier]struct{})
 	assignments := make(map[canonical.Identifier]libraryTagAssignmentState)
 	removedAssignmentCauses := make(map[canonical.Identifier]struct{})
 	notes := make(map[canonical.Identifier]*libraryNoteState)
@@ -223,6 +225,26 @@ func ProjectLibraryProjection(replica *Replica) (LibraryProjection, error) {
 				return LibraryProjection{}, errors.New("Collection Merge Reverted cause is not an observed redirect")
 			}
 			inactiveRedirects[cause] = struct{}{}
+		case 10:
+			body, ok := replicaMapValue(event.Body)
+			if !ok || !replicaMapHasKeys(body, 2) {
+				return LibraryProjection{}, errors.New("Collection Merge Conflict Resolution body is invalid")
+			}
+			causes, err := parseCanonicalIdentifierSet(replicaMapEntryMust(body, 0), "Conflicting Collection Cause IDs", true)
+			if err != nil {
+				return LibraryProjection{}, err
+			}
+			for _, cause := range causes {
+				if _, exists := collectionRedirects[cause]; !exists {
+					return LibraryProjection{}, errors.New("Collection Merge Conflict Resolution names an unknown cause")
+				}
+				inactiveRedirects[cause] = struct{}{}
+			}
+			edges, err := parseLibraryRedirectEdges(replicaMapEntryMust(body, 1), event.RecordID, "Collection")
+			if err != nil {
+				return LibraryProjection{}, err
+			}
+			collectionRedirects[event.RecordID] = collectionRedirectFact{causeID: event.RecordID, edges: edges}
 		case 11:
 			collectionID, ok := replicaIdentifier(event.Body, 0)
 			if !ok {
@@ -295,6 +317,53 @@ func ProjectLibraryProjection(replica *Replica) (LibraryProjection, error) {
 				return LibraryProjection{}, errors.New("Folder cannot be its own parent")
 			}
 			if newerEvent(replica, folder.parentCause, event.RecordID) {
+				folder.parent, folder.parentCause = parent, event.RecordID
+			}
+		case 17:
+			body, ok := replicaMapValue(event.Body)
+			if !ok || !replicaMapHasKeys(body, 2) {
+				return LibraryProjection{}, errors.New("Folder Conflict Resolution body is invalid")
+			}
+			causes, err := parseCanonicalIdentifierSet(replicaMapEntryMust(body, 0), "Conflicting Folder Cause IDs", true)
+			if err != nil {
+				return LibraryProjection{}, err
+			}
+			placements, ok := replicaMapArrayValue(replicaMapEntryMust(body, 1))
+			if !ok {
+				return LibraryProjection{}, errors.New("Folder Conflict Resolution placements are invalid")
+			}
+			for _, cause := range causes {
+				known := false
+				for _, folder := range folders {
+					if folder.parentCause == cause {
+						known = true
+						break
+					}
+				}
+				if !known {
+					return LibraryProjection{}, errors.New("Folder Conflict Resolution names an unknown cause")
+				}
+			}
+			for index, placement := range placements {
+				placementBody, ok := replicaMapValue(placement)
+				if !ok || !replicaMapHasKeys(placementBody, 2) {
+					return LibraryProjection{}, fmt.Errorf("Folder Conflict Resolution placement %d is invalid", index)
+				}
+				folderID, ok := replicaIdentifier(placementBody, 0)
+				if !ok {
+					return LibraryProjection{}, fmt.Errorf("Folder Conflict Resolution placement %d Folder ID is invalid", index)
+				}
+				folder := folders[folderID]
+				if folder == nil {
+					return LibraryProjection{}, errors.New("Folder Conflict Resolution target is unknown")
+				}
+				parent, err := nullableIdentifier(replicaMapEntryMust(placementBody, 1), "Folder Conflict Resolution parent Folder ID")
+				if err != nil {
+					return LibraryProjection{}, err
+				}
+				if parent != nil && *parent == folderID {
+					return LibraryProjection{}, errors.New("Folder Conflict Resolution creates a self-parent")
+				}
 				folder.parent, folder.parentCause = parent, event.RecordID
 			}
 		case 15, 16:
@@ -409,6 +478,54 @@ func ProjectLibraryProjection(replica *Replica) (LibraryProjection, error) {
 					tag.lifecycle = "Active"
 				}
 			}
+		case 24:
+			body, ok := replicaMapValue(event.Body)
+			if !ok || !replicaMapHasKeys(body, 2) {
+				return LibraryProjection{}, errors.New("Tags Merged body is invalid")
+			}
+			sources, err := parseCanonicalIdentifierSet(replicaMapEntryMust(body, 0), "Source Tag IDs", true)
+			if err != nil {
+				return LibraryProjection{}, err
+			}
+			destination, ok := replicaIdentifier(body, 1)
+			if !ok {
+				return LibraryProjection{}, errors.New("Tags Merged destination Tag ID is invalid")
+			}
+			edges := make([]collectionRedirectEdge, 0, len(sources))
+			for _, source := range sources {
+				edges = append(edges, collectionRedirectEdge{sourceID: source, destinationID: destination, causeID: event.RecordID})
+			}
+			tagRedirects[event.RecordID] = collectionRedirectFact{causeID: event.RecordID, edges: edges}
+		case 25:
+			cause, ok := replicaIdentifier(event.Body, 0)
+			if !ok {
+				return LibraryProjection{}, errors.New("Tag Merge Reverted cause ID is invalid")
+			}
+			fact, exists := tagRedirects[cause]
+			if !exists || !replica.IsAncestor(fact.causeID, event.RecordID) {
+				return LibraryProjection{}, errors.New("Tag Merge Reverted cause is not an observed redirect")
+			}
+			inactiveTagRedirects[cause] = struct{}{}
+		case 26:
+			body, ok := replicaMapValue(event.Body)
+			if !ok || !replicaMapHasKeys(body, 2) {
+				return LibraryProjection{}, errors.New("Tag Merge Conflict Resolution body is invalid")
+			}
+			causes, err := parseCanonicalIdentifierSet(replicaMapEntryMust(body, 0), "Conflicting Tag Cause IDs", true)
+			if err != nil {
+				return LibraryProjection{}, err
+			}
+			for _, cause := range causes {
+				if _, exists := tagRedirects[cause]; !exists {
+					return LibraryProjection{}, errors.New("Tag Merge Conflict Resolution names an unknown cause")
+				}
+				inactiveTagRedirects[cause] = struct{}{}
+			}
+			edges, err := parseLibraryRedirectEdges(replicaMapEntryMust(body, 1), event.RecordID, "Tag")
+			if err != nil {
+				return LibraryProjection{}, err
+			}
+			tagRedirects[event.RecordID] = collectionRedirectFact{causeID: event.RecordID, edges: edges}
 		case 27:
 			body, ok := replicaMapValue(event.Body)
 			if !ok || !replicaMapHasKeys(body, 3) {
@@ -575,6 +692,22 @@ func ProjectLibraryProjection(replica *Replica) (LibraryProjection, error) {
 		redirectIDs[edge.destinationID] = struct{}{}
 	}
 	redirected, conflicts := reduceCollectionRedirects(activeRedirects, redirectIDs)
+	tagActiveRedirects := make([]collectionRedirectEdge, 0)
+	for cause, fact := range tagRedirects {
+		if _, inactive := inactiveTagRedirects[cause]; inactive {
+			continue
+		}
+		tagActiveRedirects = append(tagActiveRedirects, fact.edges...)
+	}
+	tagRedirectIDs := make(map[canonical.Identifier]struct{})
+	for _, edge := range tagActiveRedirects {
+		tagRedirectIDs[edge.sourceID] = struct{}{}
+		tagRedirectIDs[edge.destinationID] = struct{}{}
+	}
+	tagRedirected, tagConflicts := reduceTagRedirects(tagActiveRedirects, tagRedirectIDs)
+	conflicts = append(conflicts, tagConflicts...)
+	folderConflicted, folderConflicts := detectFolderConflicts(folders)
+	conflicts = append(conflicts, folderConflicts...)
 	for _, capture := range captures {
 		collectionID, err := decodeHexIdentifier(capture.item.CollectionID)
 		if err != nil {
@@ -609,10 +742,14 @@ func ProjectLibraryProjection(replica *Replica) (LibraryProjection, error) {
 	folderProjection := make([]LibraryFolder, 0, len(folders))
 	for folderID, folder := range folders {
 		projected := LibraryFolder{FolderID: hexIdentifier(folderID), Name: folder.name, Lifecycle: folder.lifecycle}
+		if _, conflicted := folderConflicted[folderID]; conflicted {
+			folderProjection = append(folderProjection, projected)
+			continue
+		}
 		if folder.parent != nil {
 			projected.ParentFolderID = pointerString(hexIdentifier(*folder.parent))
 		}
-		if effective := nearestActiveFolder(folderID, folders); effective != nil {
+		if effective := nearestActiveFolder(folderID, folders, folderConflicted); effective != nil {
 			projected.EffectiveParentFolderID = pointerString(hexIdentifier(*effective))
 		}
 		folderProjection = append(folderProjection, projected)
@@ -621,6 +758,9 @@ func ProjectLibraryProjection(replica *Replica) (LibraryProjection, error) {
 	tagProjection := make([]LibraryTag, 0, len(tags))
 	for tagID, tag := range tags {
 		projected := LibraryTag{TagID: hexIdentifier(tagID), Name: tag.name, Lifecycle: tag.lifecycle}
+		if effective, ok := tagRedirected[tagID]; ok {
+			projected.RedirectedTo = pointerString(hexIdentifier(effective))
+		}
 		tagProjection = append(tagProjection, projected)
 	}
 	sort.Slice(tagProjection, func(left, right int) bool { return tagProjection[left].TagID < tagProjection[right].TagID })
@@ -695,7 +835,7 @@ func ProjectLibraryProjection(replica *Replica) (LibraryProjection, error) {
 			collection.RedirectedTo = pointerString(hexIdentifier(effective))
 		}
 		if fact, ok := collectionFolders[collectionID]; ok && fact.folderID != nil {
-			if effectiveFolder := nearestActiveFolder(*fact.folderID, folders); effectiveFolder != nil {
+			if effectiveFolder := nearestActiveFolder(*fact.folderID, folders, folderConflicted); effectiveFolder != nil {
 				collection.FolderID = pointerString(hexIdentifier(*effectiveFolder))
 			}
 		}
@@ -713,6 +853,15 @@ func ProjectLibraryProjection(replica *Replica) (LibraryProjection, error) {
 		collections = append(collections, collection)
 	}
 	sort.Slice(collections, func(left, right int) bool { return collections[left].CollectionID < collections[right].CollectionID })
+	sort.Slice(conflicts, func(left, right int) bool {
+		if conflicts[left].Kind != conflicts[right].Kind {
+			return conflicts[left].Kind < conflicts[right].Kind
+		}
+		if conflicts[left].Reason != conflicts[right].Reason {
+			return conflicts[left].Reason < conflicts[right].Reason
+		}
+		return firstString(conflicts[left].SubjectIDs) < firstString(conflicts[right].SubjectIDs)
+	})
 	return LibraryProjection{Captures: items, Collections: collections, Folders: folderProjection, Tags: tagProjection, TagAssignments: assignmentProjection, Notes: noteProjection, Conflicts: conflicts}, nil
 }
 
@@ -948,12 +1097,15 @@ func sameNullableIdentifier(left, right *canonical.Identifier) bool {
 	return *left == *right
 }
 
-func nearestActiveFolder(folderID canonical.Identifier, folders map[canonical.Identifier]*libraryFolderState) *canonical.Identifier {
+func nearestActiveFolder(folderID canonical.Identifier, folders map[canonical.Identifier]*libraryFolderState, conflicted map[canonical.Identifier]struct{}) *canonical.Identifier {
 	current := folderID
 	visited := make(map[canonical.Identifier]struct{})
 	for {
 		folder, ok := folders[current]
 		if !ok || folder.parent == nil {
+			return nil
+		}
+		if _, blocked := conflicted[current]; blocked {
 			return nil
 		}
 		if _, seen := visited[current]; seen {
@@ -965,6 +1117,9 @@ func nearestActiveFolder(folderID canonical.Identifier, folders map[canonical.Id
 		if !ok {
 			return nil
 		}
+		if _, blocked := conflicted[parentID]; blocked {
+			return nil
+		}
 		if parent.lifecycle == "Active" {
 			return &parentID
 		}
@@ -972,7 +1127,97 @@ func nearestActiveFolder(folderID canonical.Identifier, folders map[canonical.Id
 	}
 }
 
+func detectFolderConflicts(folders map[canonical.Identifier]*libraryFolderState) (map[canonical.Identifier]struct{}, []LibraryConflict) {
+	conflicted := make(map[canonical.Identifier]struct{})
+	conflicts := make([]LibraryConflict, 0)
+	for start := range folders {
+		path := make([]canonical.Identifier, 0)
+		positions := make(map[canonical.Identifier]int)
+		current := start
+		for {
+			if _, already := positions[current]; already {
+				begin := positions[current]
+				cycle := path[begin:]
+				causes := make([]canonical.Identifier, 0, len(cycle))
+				for _, folderID := range cycle {
+					conflicted[folderID] = struct{}{}
+					if folder := folders[folderID]; folder != nil {
+						causes = append(causes, folder.parentCause)
+					}
+				}
+				conflicts = append(conflicts, libraryConflict("Folder", "Cycle", cycle, causes))
+				break
+			}
+			positions[current] = len(path)
+			path = append(path, current)
+			folder := folders[current]
+			if folder == nil || folder.parent == nil {
+				break
+			}
+			if _, exists := folders[*folder.parent]; !exists {
+				break
+			}
+			current = *folder.parent
+		}
+	}
+	unique := make(map[string]LibraryConflict, len(conflicts))
+	for _, conflict := range conflicts {
+		key := conflict.Kind + ":" + conflict.Reason + ":" + firstString(conflict.SubjectIDs)
+		unique[key] = conflict
+	}
+	conflicts = conflicts[:0]
+	for _, conflict := range unique {
+		conflicts = append(conflicts, conflict)
+	}
+	sort.Slice(conflicts, func(left, right int) bool {
+		return firstString(conflicts[left].SubjectIDs) < firstString(conflicts[right].SubjectIDs)
+	})
+	return conflicted, conflicts
+}
+
+func parseLibraryRedirectEdges(value canonical.Value, causeID canonical.Identifier, kind string) ([]collectionRedirectEdge, error) {
+	entries, ok := replicaMapArrayValue(value)
+	if !ok {
+		return nil, fmt.Errorf("%s redirects are invalid", kind)
+	}
+	edges := make([]collectionRedirectEdge, 0, len(entries))
+	seenSources := make(map[canonical.Identifier]struct{}, len(entries))
+	for index, entry := range entries {
+		if !replicaMapHasKeys(entry, 2) {
+			return nil, fmt.Errorf("%s redirect %d is invalid", kind, index)
+		}
+		source, sourceOK := replicaIdentifier(entry, 0)
+		destination, destinationOK := replicaIdentifier(entry, 1)
+		if !sourceOK || !destinationOK {
+			return nil, fmt.Errorf("%s redirect %d IDs are invalid", kind, index)
+		}
+		if source == destination {
+			return nil, fmt.Errorf("%s redirect %d is self-referential", kind, index)
+		}
+		if _, exists := seenSources[source]; exists {
+			return nil, fmt.Errorf("%s redirects repeat a source", kind)
+		}
+		seenSources[source] = struct{}{}
+		edges = append(edges, collectionRedirectEdge{sourceID: source, destinationID: destination, causeID: causeID})
+	}
+	sort.Slice(edges, func(left, right int) bool {
+		if edges[left].sourceID != edges[right].sourceID {
+			return bytes.Compare(edges[left].sourceID[:], edges[right].sourceID[:]) < 0
+		}
+		return bytes.Compare(edges[left].destinationID[:], edges[right].destinationID[:]) < 0
+	})
+	return edges, nil
+}
+
 func reduceCollectionRedirects(edges []collectionRedirectEdge, redirectIDs map[canonical.Identifier]struct{}) (map[canonical.Identifier]canonical.Identifier, []LibraryConflict) {
+	return reduceRedirects("CollectionMerge", edges, redirectIDs)
+}
+
+func reduceTagRedirects(edges []collectionRedirectEdge, redirectIDs map[canonical.Identifier]struct{}) (map[canonical.Identifier]canonical.Identifier, []LibraryConflict) {
+	return reduceRedirects("TagMerge", edges, redirectIDs)
+}
+
+func reduceRedirects(kind string, edges []collectionRedirectEdge, redirectIDs map[canonical.Identifier]struct{}) (map[canonical.Identifier]canonical.Identifier, []LibraryConflict) {
 	bySource := make(map[canonical.Identifier][]collectionRedirectEdge)
 	for _, edge := range edges {
 		bySource[edge.sourceID] = append(bySource[edge.sourceID], edge)
@@ -990,7 +1235,7 @@ func reduceCollectionRedirects(edges []collectionRedirectEdge, redirectIDs map[c
 			continue
 		}
 		conflicted[source] = struct{}{}
-		conflicts = append(conflicts, libraryConflict("CollectionMerge", "MultipleDestinations", []canonical.Identifier{source}, causes))
+		conflicts = append(conflicts, libraryConflict(kind, "MultipleDestinations", []canonical.Identifier{source}, causes))
 	}
 	for source := range redirectIDs {
 		path := make([]canonical.Identifier, 0)
@@ -1011,7 +1256,7 @@ func reduceCollectionRedirects(edges []collectionRedirectEdge, redirectIDs map[c
 				for _, cycleSource := range cycle {
 					conflicted[cycleSource] = struct{}{}
 				}
-				conflicts = append(conflicts, libraryConflict("CollectionMerge", "Cycle", cycle, causes))
+				conflicts = append(conflicts, libraryConflict(kind, "Cycle", cycle, causes))
 				break
 			}
 			positions[current] = len(path)
