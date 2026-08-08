@@ -17,6 +17,8 @@ import {
   sendCanonicalApplicationRequest,
   subscribeCanonicalApplicationState,
 } from "../../src/app/canonical-application-client";
+import { DesktopRuntimeApplicationRouter } from "../../src/hosts/desktop/runtime-application-router";
+import { getDesktopRuntimeConnection } from "../../src/hosts/desktop/runtime-connection-factory";
 import { requestHostedReplicaPermissions } from "../../src/ui/canonical-hosted-replica-permission";
 import {
   type CanonicalPopupApplicationClient,
@@ -24,10 +26,23 @@ import {
 } from "../../src/ui/canonical-popup-application-client";
 import "@awsm/ui/styles.css";
 
-const client: CanonicalPopupApplicationClient = createCanonicalPopupApplicationClient({
+const applicationRouter = new DesktopRuntimeApplicationRouter({
   request: sendCanonicalApplicationRequest,
   subscribe: subscribeCanonicalApplicationState,
 });
+const client: CanonicalPopupApplicationClient =
+  createCanonicalPopupApplicationClient(applicationRouter);
+
+async function restoreDesktopRuntime(): Promise<void> {
+  try {
+    const connection = await getDesktopRuntimeConnection();
+    await connection.restore();
+    applicationRouter.setDesktopConnection(connection);
+  } catch {
+    // The browser-local Library remains available when the optional desktop
+    // connection or its installation state cannot be restored.
+  }
+}
 
 function displayVaultLabel(label: string | null): string {
   return label === null || label.length === 0 ? "Untitled Vault" : label;
@@ -268,4 +283,9 @@ function LibraryApp(): React.ReactElement {
   );
 }
 
-createRoot(document.querySelector<HTMLElement>("#app") ?? document.body).render(<LibraryApp />);
+async function bootstrap(): Promise<void> {
+  await restoreDesktopRuntime();
+  createRoot(document.querySelector<HTMLElement>("#app") ?? document.body).render(<LibraryApp />);
+}
+
+void bootstrap();
