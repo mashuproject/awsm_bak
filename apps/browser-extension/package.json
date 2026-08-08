@@ -16,6 +16,7 @@
     "test:integration": "tsc -p tests/integration/tsconfig.json && LD_LIBRARY_PATH=.output/browser-libs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH} playwright test tests/integration/indexeddb.browser.test.ts --project=chromium",
     "test:e2e": "corepack pnpm test:e2e:chrome && corepack pnpm test:e2e:firefox",
     "test:e2e:chrome": "corepack pnpm test:e2e:canonical-surface && corepack pnpm test:e2e:hosted-recovery",
+    "test:e2e:brave": "sh -c 'wxt build -c tests/canonical-surface/wxt.config.ts && node tests/canonical-surface/brave-capture-smoke.mjs; run_status=$?; wxt prepare; restore_status=$?; [ $run_status -eq 0 ] && exit $restore_status; exit $run_status'",
     "test:e2e:firefox": "corepack pnpm build:firefox && playwright test -c tests/firefox-production/playwright.config.mjs && wxt build -b firefox --mv3 --mode e2e && AWSM_FIREFOX_EXTENSION_BUILD=.output/firefox-mv3-e2e AWSM_FIREFOX_EXPORT=true playwright test -c tests/firefox-production/playwright.config.mjs",
     "test:e2e:cross-browser": "corepack pnpm test:e2e:chrome && corepack pnpm test:e2e:firefox",
     "test:e2e:canonical-surface": "sh -c 'wxt build -c tests/canonical-surface/wxt.config.ts && playwright test -c tests/canonical-surface/playwright.config.ts; run_status=$?; wxt prepare; restore_status=$?; [ $run_status -eq 0 ] && exit $restore_status; exit $run_status'",

@@ -133,6 +133,7 @@ headless browser:
 ```bash
 corepack pnpm test:e2e:desktop-runtime
 corepack pnpm test:e2e:desktop-runtime:firefox
+corepack pnpm test:e2e:brave
 ```
 
 Native Wails startup is a separate local smoke lane and requires GTK 3, WebKitGTK
@@ -140,6 +141,14 @@ Native Wails startup is a separate local smoke lane and requires GTK 3, WebKitGT
 
 ```bash
 corepack pnpm test:runtime:wails
+```
+
+The optional Brave lane builds the canonical extension and proves page capture in a real installed
+Brave browser over CDP. It defaults to the `com.brave.Browser` Flatpak; set `AWSM_BRAVE_EXECUTABLE`
+when using a directly installed Brave binary:
+
+```bash
+corepack pnpm test:e2e:brave
 ```
 
 The release packaging lane builds a Linux AppImage, a Windows x86_64 NSIS installer, and a

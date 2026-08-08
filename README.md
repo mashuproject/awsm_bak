@@ -285,6 +285,7 @@ corepack pnpm test:integration
 corepack pnpm test:e2e
 corepack pnpm test:e2e:desktop-runtime
 corepack pnpm test:e2e:desktop-runtime:firefox
+corepack pnpm test:e2e:brave
 corepack pnpm test:runtime:smoke
 corepack pnpm test:runtime:wails
 corepack pnpm test:ui
@@ -297,7 +298,10 @@ Vault Command envelope, one-use transfer staging, local Artifact Storage Relief 
 Library refresh, and local Search from the Wails Library surface. The Wails bridge proof exercises
 the same Vault-management presentation without exposing bearer tokens. Native Wails startup is an
 additional local lane; run `corepack pnpm test:runtime:wails` on a host with GTK 3, WebKitGTK 4,
-and `xvfb-run`. The CI equivalent is `AWSM_RUNTIME_WAILS=1 corepack pnpm test:runtime:smoke`.
+and `xvfb-run`. The CI equivalent is `AWSM_RUNTIME_WAILS=1 corepack pnpm test:runtime:smoke`. The
+optional `corepack pnpm test:e2e:brave` lane builds the canonical extension and proves real page
+capture in an installed Brave browser through its CDP endpoint. It uses the `com.brave.Browser`
+Flatpak by default; set `AWSM_BRAVE_EXECUTABLE` for a directly installed Brave binary.
 
 The shared application components live in `packages/ui`. Start the interactive Storybook when
 checking one component or state in isolation:

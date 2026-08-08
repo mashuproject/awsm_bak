@@ -113,8 +113,7 @@ controls. Remaining parity work is:
 - complete browser-to-desktop Vault journeys for the Content Commands and formalize randomized
   multi-Replica convergence, restart/crash, authority/conflict, sparse hydration, and
   cross-language evidence; and
-- run native Wails packaging/build proofs on every supported desktop dependency set and add a
-  native Brave capture run when a Brave installation is available.
+- run native Wails packaging/build proofs on every supported desktop dependency set.
 
 Capture remains extension-only and the extension-to-desktop Capture Bundle bridge is out of scope
 for this release. Complete Export/Import, authenticated replay, Library projection, Hosted Replica

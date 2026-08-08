@@ -33,6 +33,12 @@ request remains exercised from the user click path, including Firefox's user-ges
 The Wails bridge proof never supplies or renders a bearer token. It exercises the Vault-management
 presentation and exposes only pending-pairing, token-free grant, and staged-transfer summaries.
 
+The optional native Brave lane runs `corepack pnpm test:e2e:brave`. It builds the canonical extension,
+loads it into an installed Brave browser, and proves the real page-capture journey through the
+browser's CDP endpoint. It defaults to the `com.brave.Browser` Flatpak and accepts
+`AWSM_BRAVE_EXECUTABLE` for a directly installed Brave binary. This is browser capture evidence;
+it does not expand the desktop Runtime's extension-only Capture boundary.
+
 Native Wails startup is run locally with `corepack pnpm test:runtime:wails` and under `xvfb-run`; CI
 keeps that lane opt-in with `AWSM_RUNTIME_WAILS=1 corepack pnpm test:runtime:smoke` because GTK 3 and
 WebKitGTK are host prerequisites.

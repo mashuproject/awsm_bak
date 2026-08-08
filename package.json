@@ -13,6 +13,7 @@
     "test:integration": "corepack pnpm --filter @awsm/browser-extension test:integration",
     "test:e2e": "corepack pnpm --filter @awsm/browser-extension test:e2e",
     "test:e2e:chrome": "corepack pnpm --filter @awsm/browser-extension test:e2e:chrome",
+    "test:e2e:brave": "corepack pnpm --filter @awsm/browser-extension test:e2e:brave",
     "test:e2e:firefox": "corepack pnpm --filter @awsm/browser-extension test:e2e:firefox",
     "test:e2e:cross-browser": "corepack pnpm --filter @awsm/browser-extension test:e2e:cross-browser",
     "test:e2e:desktop-runtime": "corepack pnpm --filter @awsm/browser-extension test:e2e:desktop-runtime",
