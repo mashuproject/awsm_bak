@@ -1564,6 +1564,16 @@ func (r *Runtime) Handle(ctx context.Context, raw json.RawMessage) (any, error) 
 			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "ReauthorizeCapture contains invalid fields")
 		}
 		return r.reauthorizeCapture(ctx, input.ExpectedVaultID, input.SourceRecordID)
+	case "RevertCollectionMerge":
+		var input struct {
+			Type            string `json:"type"`
+			ExpectedVaultID string `json:"expectedVaultId"`
+			RedirectCauseID string `json:"redirectCauseId"`
+		}
+		if err := decode(raw, &input); err != nil {
+			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "RevertCollectionMerge contains invalid fields")
+		}
+		return r.revertCollectionMerge(ctx, input.ExpectedVaultID, input.RedirectCauseID)
 	case "CaptureActivePage":
 		var input struct {
 			Type            string `json:"type"`

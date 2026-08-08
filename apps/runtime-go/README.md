@@ -97,9 +97,11 @@ Manifest and Streamable Artifact wrappers. Imported Replicas are readable but ha
 authoring Credential or private key. The Runtime command boundary implements Membership and
 Administrator role changes, Invitation creation/Acceptance recording/cancellation/conflict
 resolution, Client Credential ending, Key Envelope delivery, Feature Activation, Administrator
-rotation, and same-Vault Event Re-authoring for eligible stale Bundle Registered Capture Events.
+rotation, Collection Merge Reverted authoring, and same-Vault Event Re-authoring for eligible stale
+Bundle Registered Capture Events.
 The external Redemption Authority and joining Client exchange the Join Request and receipts outside
-the Runtime; `AcceptInvitation` commits their exact result. Conflict/rebase authoring and remaining
+the Runtime; `AcceptInvitation` commits their exact result. Conflict/rebase resolution beyond
+Collection Merge Reverted and remaining
 cross-surface journeys are unresolved. Runtime
 projections expose Complete, Sparse, and Unavailable Replica state; on-demand hydration remains
 the user action for Sparse content.

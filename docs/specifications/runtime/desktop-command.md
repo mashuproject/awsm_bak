@@ -41,7 +41,7 @@ creation and selection, Recovery Phrase ceremonies, `RecoverMember`, state-only 
 authenticated Library checkpoint, `CloseVault`, authenticated `EndMembership`, `GrantAdministrator`,
 `EndAdministrator`, `EndClientCredential`, `DeliverKeyEnvelope`, `ActivateFeature`, Administrator `RotateKeyEpoch`, `VacuumVault`, `ListLibrary`, Storage Relief/GC
 through the Runtime API, `CreateInvitation`, `AcceptInvitation`, `CancelInvitation`, and
-`ResolveInvitationConflict`, `ReauthorizeCapture`, the read-only `GetAuthorityState` projection, Hosted Replica
+`ResolveInvitationConflict`, `RevertCollectionMerge`, `ReauthorizeCapture`, the read-only `GetAuthorityState` projection, Hosted Replica
 creation/attachment/materialization, receiver pull, and Artifact hydration. Capture remains an
 extension-only surface; the extension-to-desktop Capture Bundle bridge is not implemented.
 Unsupported desktop capabilities return a canonical application error rather than pretending that
@@ -82,6 +82,10 @@ Administrator's removal of another Member, deriving closure when no Administrato
 `DeliverKeyEnvelope` for a missing eligible Client or Recovery slot in an established Key Epoch.
 `GrantAdministrator` and `EndAdministrator` author type-3 and type-4 role Events for an
 unambiguous Administrator; ending the final Administrator derives closure.
+`RevertCollectionMerge` accepts an authenticated current-generation Collection Merge or Collection
+Merge Conflict Resolution Record and authors the type-9 Collection Merge Reverted Event. The
+Runtime rejects unrelated, malformed, or already-reverted causes and commits the opaque Record
+with the derived frontiers atomically.
 The Wails Authority panel exposes these role changes and `EndMembership` with an explicit
 confirmation for ending a role or Member. It also exposes `DeliverKeyEnvelope` for a selected
 Key Epoch and credential slot, and `ActivateFeature` for complete canonical Feature Manifest
