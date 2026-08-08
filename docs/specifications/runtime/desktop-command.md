@@ -40,7 +40,8 @@ The body is one tagged `CanonicalApplicationRequest`. The Go Runtime implements 
 creation and selection, Recovery Phrase ceremonies, `RecoverMember`, state-only Fork from the
 authenticated Library checkpoint, `CloseVault`, authenticated `EndMembership`, `GrantAdministrator`,
 `EndAdministrator`, `EndClientCredential`, `DeliverKeyEnvelope`, `ActivateFeature`, Administrator `RotateKeyEpoch`, `VacuumVault`, `ListLibrary`, Storage Relief/GC
-through the Runtime API, the read-only `GetAuthorityState` projection, Hosted Replica
+through the Runtime API, `CreateInvitation`, `AcceptInvitation`, `CancelInvitation`, and
+`ResolveInvitationConflict`, the read-only `GetAuthorityState` projection, Hosted Replica
 creation/attachment/materialization, receiver pull, and Artifact hydration. Capture remains an
 extension-only surface; the extension-to-desktop Capture Bundle bridge is not implemented.
 Unsupported desktop capabilities return a canonical application error rather than pretending that
@@ -97,6 +98,24 @@ base64url-encoded 32-byte Redemption and Cancellation Capability seeds. The Runt
 persist those seeds or impersonate the Redemption Authority; subsequent Join, Acceptance, and
 Cancellation ceremonies require the exact external authority receipts defined by the Vault
 Authority specification.
+`AcceptInvitation` records a type-6 Invitation Acceptance Event from the exact external ceremony
+artifacts. The Runtime validates the canonical Join Request, Acceptance Proposal, and Consumed
+Receipt, creates the proposed Client and Recovery Key Envelopes from their public wrapping keys,
+and signs the Event with the current authenticated servicing Client Credential:
+
+```json
+{
+  "type": "AcceptInvitation",
+  "expectedVaultId": "<vault id>",
+  "joinRequest": "<canonical Join Request CBOR>",
+  "acceptanceProposal": "<canonical Acceptance Proposal CBOR>",
+  "consumedReceipt": "<canonical Consumed Receipt CBOR>"
+}
+```
+
+The result returns the accepted Invitation, Member, proposed Credential identities, and Event
+Record ID. The Runtime does not manufacture Redemption Authority receipts or retain the external
+capability secrets.
 `CancelInvitation` records a type-7 Cancellation Event after the independently operated authority
 has verified the Cancellation Capability and supplied its exact canonical request and cancelled
 receipt:

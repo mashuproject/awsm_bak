@@ -244,6 +244,14 @@ test("Wails Vault surface authors an Invitation through the Runtime command boun
                 redemptionVerifier: "redemption-verifier",
                 cancellationVerifier: "cancellation-verifier",
               };
+            if (request.type === "AcceptInvitation")
+              return {
+                invitationId: "5".repeat(64),
+                memberId: "7".repeat(64),
+                clientCredentialId: "8".repeat(64),
+                recoveryCredentialId: "9".repeat(64),
+                eventRecordId: "a".repeat(64),
+              };
             throw new Error(`unexpected command: ${request.type}`);
           },
           PendingTransfers: async () => [],
@@ -261,6 +269,11 @@ test("Wails Vault surface authors an Invitation through the Runtime command boun
   await expect(page.getByRole("heading", { name: "Invitation created." })).toBeVisible();
   await expect(page.getByLabel("Redemption Capability seed")).toHaveValue("redemption-secret");
   await expect(page.getByLabel("Cancellation Capability seed")).toHaveValue("cancellation-secret");
+  await page.getByLabel("Invitation Join Request CBOR").fill("join-request");
+  await page.getByLabel("Invitation Acceptance Proposal CBOR").fill("acceptance-proposal");
+  await page.getByLabel("Consumed Invitation receipt CBOR").fill("consumed-receipt");
+  await page.getByRole("button", { name: "Record Invitation acceptance" }).click();
+  await expect(page.getByRole("heading", { name: "Invitation accepted." })).toBeVisible();
   await page.screenshot({
     path: testInfo.outputPath("desktop-invitation-wide.png"),
     fullPage: true,

@@ -95,10 +95,12 @@ The Runtime command boundary also produces and accepts the browser-compatible Co
 container for authenticated multi-Key-Epoch and adopted-Vacuum closures, including Feature
 Manifest and Streamable Artifact wrappers. Imported Replicas are readable but have no selected
 authoring Credential or private key. The Runtime command boundary implements Membership and
-Administrator role changes, Invitation creation/cancellation/conflict resolution, Client
-Credential ending, Key Envelope delivery, Feature Activation, and Administrator rotation. Event
-Re-authoring for eligible unpublished Capture work, Invitation enrollment ceremonies,
-conflict/rebase authoring, and remaining cross-surface journeys are unresolved. Runtime
+Administrator role changes, Invitation creation/Acceptance recording/cancellation/conflict
+resolution, Client Credential ending, Key Envelope delivery, Feature Activation, and Administrator
+rotation. The external Redemption Authority and joining Client exchange the Join Request and
+receipts outside the Runtime; `AcceptInvitation` commits their exact result. Event Re-authoring
+for eligible unpublished Capture work, conflict/rebase authoring, and remaining cross-surface
+journeys are unresolved. Runtime
 projections expose Complete, Sparse, and Unavailable Replica state; on-demand hydration remains
 the user action for Sparse content.
 

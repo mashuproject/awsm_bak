@@ -313,6 +313,181 @@ func TestCreateInvitationAuthorsPortableInvitationAndReturnsCapabilitySecrets(t 
 	}
 }
 
+func TestAcceptInvitationRejectsMalformedCanonicalPayload(t *testing.T) {
+	ctx := context.Background()
+	runtime, err := New(ctx, store.NewMemoryState(), memoryDependencies(t))
+	if err != nil {
+		t.Fatalf("create Runtime: %v", err)
+	}
+	vaultID, _ := createVaultWithPhraseForTest(t, runtime, "Invitation acceptance")
+	_, err = runtime.Handle(ctx, mustJSON(map[string]any{
+		"type":               "AcceptInvitation",
+		"expectedVaultId":    vaultID,
+		"joinRequest":        "",
+		"acceptanceProposal": "",
+		"consumedReceipt":    "",
+	}))
+	if err == nil {
+		t.Fatal("AcceptInvitation accepted malformed canonical payload")
+	}
+	command, ok := err.(*CommandError)
+	if !ok || command.ID != "INVITATION_INVALID" {
+		t.Fatalf("AcceptInvitation error = %#v, want INVITATION_INVALID", err)
+	}
+}
+
+func TestAcceptInvitationAuthorsAndRestartsVerifiedAcceptance(t *testing.T) {
+	ctx := context.Background()
+	state := store.NewMemoryState()
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatalf("create Runtime: %v", err)
+	}
+	vaultID, _ := createVaultWithPhraseForTest(t, runtime, "Invitation acceptance authoring")
+	vaultIdentifier, err := decodeHexIdentifier(vaultID)
+	if err != nil {
+		t.Fatalf("decode Vault ID: %v", err)
+	}
+	value := runtime.vaults[vaultID]
+	memberID, err := decodeHexIdentifier(value.Canonical.MemberID)
+	if err != nil {
+		t.Fatalf("decode author Member ID: %v", err)
+	}
+	receiptPrivate := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x72}, ed25519.SeedSize))
+	capability := canonical.Map{0: "awsm.vault", 1: memberID[:], 2: vaultIdentifier[:], 3: "awsm.vault.join", 4: []byte{}}
+	capabilityBytes := mustCanonical(capability)
+	createdResult, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type":                   "CreateInvitation",
+		"expectedVaultId":        vaultID,
+		"capabilities":           []string{base64.RawURLEncoding.EncodeToString(capabilityBytes)},
+		"redemptionAuthorityId":  base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{0x73}, 32)),
+		"receiptVerificationKey": base64.RawURLEncoding.EncodeToString(receiptPrivate.Public().(ed25519.PublicKey)),
+	}))
+	if err != nil {
+		t.Fatalf("CreateInvitation: %v", err)
+	}
+	created := createdResult.(map[string]string)
+	invitationID, err := decodeHexIdentifier(created["invitationId"])
+	if err != nil {
+		t.Fatalf("decode Invitation ID: %v", err)
+	}
+	redemptionSeed, err := base64.RawURLEncoding.DecodeString(created["redemptionSecret"])
+	if err != nil {
+		t.Fatalf("decode Redemption capability: %v", err)
+	}
+	redemptionPrivate := ed25519.NewKeyFromSeed(redemptionSeed)
+	newMember := filledCreationID(161)
+	newClient := filledCreationID(162)
+	newRecovery := filledCreationID(163)
+	clientKeys, err := awsmcrypto.CreateClientCredentialKeys(bytes.Repeat([]byte{0x81}, 32), bytes.Repeat([]byte{0x82}, 32))
+	if err != nil {
+		t.Fatalf("create proposed Client keys: %v", err)
+	}
+	recoveryKeys, err := awsmcrypto.DeriveRecoveryCredential(bytes.Repeat([]byte{0x83}, 16))
+	if err != nil {
+		t.Fatalf("derive proposed Recovery keys: %v", err)
+	}
+	clientCertificate := canonical.Map{0: newClient[:], 1: newMember[:], 2: clientKeys.SigningPublicKey, 3: clientKeys.WrappingPublicKey}
+	recoveryDescriptor := canonical.Map{0: newRecovery[:], 1: newMember[:], 2: uint64(0), 3: recoveryKeys.SigningPublicKey, 4: recoveryKeys.WrappingPublicKey}
+	joinPrefix := canonical.Map{0: invitationID[:], 1: canonicalSetValues([]canonical.Value{capability}), 2: newMember[:], 3: clientCertificate, 4: recoveryDescriptor}
+	joinPrefixBytes := mustCanonical(joinPrefix)
+	joinTranscript, err := canonical.Transcript("awsm:invitation-join-request:v1", joinPrefixBytes)
+	if err != nil {
+		t.Fatalf("Invitation Join Request transcript: %v", err)
+	}
+	join := canonical.Map{
+		0: invitationID[:], 1: canonicalSetValues([]canonical.Value{capability}), 2: newMember[:], 3: clientCertificate, 4: recoveryDescriptor,
+		5: ed25519.Sign(clientKeys.SigningSecretKey, joinTranscript), 6: ed25519.Sign(recoveryKeys.SigningSecretKey, joinTranscript), 7: ed25519.Sign(redemptionPrivate, joinTranscript),
+	}
+	joinBytes := mustCanonical(join)
+	joinIDTranscript, err := canonical.Transcript("awsm:invitation-join-request-id:v1", joinBytes)
+	if err != nil {
+		t.Fatalf("Invitation Join Request ID transcript: %v", err)
+	}
+	joinID := sha256.Sum256(joinIDTranscript)
+	epochID, err := decodeHexIdentifier(value.Canonical.KeyEpochID)
+	if err != nil {
+		t.Fatalf("decode Key Epoch ID: %v", err)
+	}
+	epochEncoded, err := dependencies.Secrets.Get(trustedSecretService, epochSecretAccount(vaultID, value.Canonical.KeyEpochID))
+	if err != nil {
+		t.Fatalf("read Key Epoch: %v", err)
+	}
+	epoch, err := decodeEpochSecret(epochEncoded, vaultIdentifier, epochID)
+	if err != nil {
+		t.Fatalf("decode Key Epoch: %v", err)
+	}
+	clientEnvelope, err := awsmcrypto.SealKeyEnvelope(awsmcrypto.KeyEnvelopeInput{
+		VaultID: vaultIdentifier, KeyEpochID: epochID, KeyEpochKey: epoch.key, TargetKind: awsmcrypto.ClientCredentialTarget,
+		TargetCredentialID: newClient, RecipientWrappingPublicKey: clientKeys.WrappingPublicKey,
+	})
+	if err != nil {
+		t.Fatalf("prepare Client Key Envelope: %v", err)
+	}
+	recoveryRevision := uint64(0)
+	recoveryEnvelope, err := awsmcrypto.SealKeyEnvelope(awsmcrypto.KeyEnvelopeInput{
+		VaultID: vaultIdentifier, KeyEpochID: epochID, KeyEpochKey: epoch.key, TargetKind: awsmcrypto.RecoveryCredentialTarget,
+		TargetCredentialID: newRecovery, TargetRevision: &recoveryRevision, RecipientWrappingPublicKey: recoveryKeys.WrappingPublicKey,
+	})
+	if err != nil {
+		t.Fatalf("prepare Recovery Key Envelope: %v", err)
+	}
+	slots := canonicalSetValues([]canonical.Value{
+		canonical.Map{0: epochID[:], 1: uint64(1), 2: newRecovery[:], 3: uint64(0), 4: recoveryEnvelope.ID[:]},
+		canonical.Map{0: epochID[:], 1: uint64(2), 2: newClient[:], 3: nil, 4: clientEnvelope.ID[:]},
+	})
+	proposal := canonical.Map{
+		0: invitationID[:], 1: joinID[:], 2: canonicalSetValues(identifiersToValues(runtime.replicas[vaultID].State().AuthorityFrontier)), 3: newMember[:],
+		4: clientCertificate, 5: recoveryDescriptor, 6: canonicalSetValues([]canonical.Value{capability}), 7: slots,
+	}
+	proposalBytes := mustCanonical(proposal)
+	proposalIDTranscript, err := canonical.Transcript("awsm:invitation-acceptance-proposal-id:v1", proposalBytes)
+	if err != nil {
+		t.Fatalf("Acceptance Proposal ID transcript: %v", err)
+	}
+	proposalID := sha256.Sum256(proposalIDTranscript)
+	receiptID := filledCreationID(164)
+	receiptPrefix := canonical.Map{0: invitationID[:], 1: uint64(1), 2: joinID[:], 3: proposalID[:], 4: receiptID[:]}
+	receiptTranscript, err := canonical.Transcript("awsm:invitation-receipt:v1", mustCanonical(receiptPrefix))
+	if err != nil {
+		t.Fatalf("Invitation receipt transcript: %v", err)
+	}
+	receipt := canonical.Map{0: invitationID[:], 1: uint64(1), 2: joinID[:], 3: proposalID[:], 4: receiptID[:], 5: ed25519.Sign(receiptPrivate, receiptTranscript)}
+	result, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "AcceptInvitation", "expectedVaultId": vaultID,
+		"joinRequest":        base64.RawURLEncoding.EncodeToString(joinBytes),
+		"acceptanceProposal": base64.RawURLEncoding.EncodeToString(proposalBytes),
+		"consumedReceipt":    base64.RawURLEncoding.EncodeToString(mustCanonical(receipt)),
+	}))
+	if err != nil {
+		t.Fatalf("AcceptInvitation: %v", err)
+	}
+	accepted := result.(map[string]string)
+	if accepted["invitationId"] != created["invitationId"] || accepted["memberId"] != hexIdentifier(newMember) || accepted["eventRecordId"] == "" {
+		t.Fatalf("AcceptInvitation result = %#v", result)
+	}
+	authorityResult, err := runtime.Handle(ctx, mustJSON(map[string]any{"type": "GetAuthorityState", "expectedVaultId": vaultID}))
+	if err != nil {
+		t.Fatalf("GetAuthorityState after AcceptInvitation: %v", err)
+	}
+	authority := authorityResult.(AuthorityStateSummary)
+	if len(authority.ActiveInvitationIDs) != 0 || len(authority.ActiveMemberIDs) != 2 {
+		t.Fatalf("authority after AcceptInvitation = %#v", authority)
+	}
+	restarted, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatalf("restart Runtime after AcceptInvitation: %v", err)
+	}
+	restartedAuthority, err := restarted.Handle(ctx, mustJSON(map[string]any{"type": "GetAuthorityState", "expectedVaultId": vaultID}))
+	if err != nil {
+		t.Fatalf("GetAuthorityState after restart: %v", err)
+	}
+	if len(restartedAuthority.(AuthorityStateSummary).ActiveMemberIDs) != 2 {
+		t.Fatalf("restart lost accepted Member: %#v", restartedAuthority)
+	}
+}
+
 func TestCancelInvitationAuthorsVerifiedTerminalEventFromAuthorityReceipt(t *testing.T) {
 	ctx := context.Background()
 	runtime, err := New(ctx, store.NewMemoryState(), memoryDependencies(t))

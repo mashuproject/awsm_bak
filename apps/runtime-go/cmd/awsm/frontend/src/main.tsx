@@ -923,6 +923,10 @@ function InvitationOperations({
   const [cancelledReceipt, setCancelledReceipt] = React.useState("");
   const [resolution, setResolution] = React.useState("");
   const [created, setCreated] = React.useState<Record<string, string>>();
+  const [joinRequest, setJoinRequest] = React.useState("");
+  const [acceptanceProposal, setAcceptanceProposal] = React.useState("");
+  const [consumedReceipt, setConsumedReceipt] = React.useState("");
+  const [accepted, setAccepted] = React.useState<Record<string, string>>();
   const [busy, setBusy] = React.useState<string>();
 
   const invoke = async (
@@ -988,6 +992,22 @@ function InvitationOperations({
         resolution: resolution.trim(),
       },
       "Invitation conflict resolved.",
+    );
+  };
+
+  const accept = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void invoke(
+      "accept",
+      {
+        type: "AcceptInvitation",
+        expectedVaultId: vaultId,
+        joinRequest: joinRequest.trim(),
+        acceptanceProposal: acceptanceProposal.trim(),
+        consumedReceipt: consumedReceipt.trim(),
+      },
+      "Invitation accepted.",
+      (result) => setAccepted(result as Record<string, string>),
     );
   };
 
@@ -1122,6 +1142,64 @@ function InvitationOperations({
               >
                 Record Invitation cancellation
               </Button>
+            </form>
+          </Card>
+        ) : null}
+        {authority.activeInvitationIds.length > 0 || created !== undefined ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>Record Invitation acceptance</CardTitle>
+              <CardDescription>
+                Paste the exact canonical Join Request, Acceptance Proposal, and Consumed Receipt
+                returned by the invitation ceremony.
+              </CardDescription>
+            </CardHeader>
+            <form className="grid gap-5" onSubmit={accept}>
+              <Field label="Invitation Join Request CBOR">
+                <textarea
+                  className={`${inputClassName} min-h-24 resize-y font-mono text-xs`}
+                  value={joinRequest}
+                  onChange={(event) => setJoinRequest(event.target.value)}
+                  aria-label="Invitation Join Request CBOR"
+                  spellCheck={false}
+                  required
+                  disabled={!enabled || busy !== undefined}
+                />
+              </Field>
+              <Field label="Invitation Acceptance Proposal CBOR">
+                <textarea
+                  className={`${inputClassName} min-h-24 resize-y font-mono text-xs`}
+                  value={acceptanceProposal}
+                  onChange={(event) => setAcceptanceProposal(event.target.value)}
+                  aria-label="Invitation Acceptance Proposal CBOR"
+                  spellCheck={false}
+                  required
+                  disabled={!enabled || busy !== undefined}
+                />
+              </Field>
+              <Field label="Consumed Invitation receipt CBOR">
+                <textarea
+                  className={`${inputClassName} min-h-24 resize-y font-mono text-xs`}
+                  value={consumedReceipt}
+                  onChange={(event) => setConsumedReceipt(event.target.value)}
+                  aria-label="Consumed Invitation receipt CBOR"
+                  spellCheck={false}
+                  required
+                  disabled={!enabled || busy !== undefined}
+                />
+              </Field>
+              <Button
+                type="submit"
+                busy={busy === "accept"}
+                disabled={!enabled || busy !== undefined}
+              >
+                Record Invitation acceptance
+              </Button>
+              {accepted !== undefined ? (
+                <Notice tone="success" title="Invitation accepted.">
+                  Member {displayIdentifier(accepted.memberId ?? "")} is now in this Vault.
+                </Notice>
+              ) : null}
             </form>
           </Card>
         ) : null}

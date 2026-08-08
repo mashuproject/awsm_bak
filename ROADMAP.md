@@ -108,8 +108,8 @@ not co-own one Replica namespace; that becomes ordinary Replica synchronization.
 Close the remaining canonical desktop/headless Vault boundaries behind the existing process
 contract:
 
-- implement the remaining Authority and Key-Epoch authoring families, including Invitation
-  enrollment, with their operational ceremony boundaries;
+- implement the remaining Authority and Key-Epoch authoring families beyond the current
+  Membership, role, Key Envelope, Feature, Invitation, and conflict-resolution boundaries;
 - implement Event Re-authoring for eligible unpublished Capture work and the remaining
   dependency-bearing organization cases defined by the Fork specification;
 - complete conflict/rebase authoring and the remaining sparse/on-demand hydration journeys through
