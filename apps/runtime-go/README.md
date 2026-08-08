@@ -94,13 +94,13 @@ its encrypted transfer envelope, so an accepted package reopens the Replica on t
 The Runtime command boundary also produces and accepts the browser-compatible Complete Export
 container for authenticated multi-Key-Epoch and adopted-Vacuum closures, including Feature
 Manifest and Streamable Artifact wrappers. Imported Replicas are readable but have no selected
-authoring Credential or private key. Event Re-authoring for eligible unpublished Capture work,
-remaining Authority/Key-Epoch authoring families beyond the implemented Membership/Administrator
-role changes, Client Credential ending, Key Envelope delivery, Feature Activation, and
-Administrator rotation, Invitation enrollment ceremonies, conflict/rebase authoring, and
-remaining cross-surface journeys are unresolved. Runtime projections expose
-Complete, Sparse, and Unavailable Replica state; on-demand hydration remains the user action for
-Sparse content.
+authoring Credential or private key. The Runtime command boundary implements Membership and
+Administrator role changes, Invitation creation/cancellation/conflict resolution, Client
+Credential ending, Key Envelope delivery, Feature Activation, and Administrator rotation. Event
+Re-authoring for eligible unpublished Capture work, Invitation enrollment ceremonies,
+conflict/rebase authoring, and remaining cross-surface journeys are unresolved. Runtime
+projections expose Complete, Sparse, and Unavailable Replica state; on-demand hydration remains
+the user action for Sparse content.
 
 The move boundary is deliberately separate from Vault synchronization. A source Client seals the
 canonical opaque closure and trusted local secrets with a one-use secret, stages it in the desktop
