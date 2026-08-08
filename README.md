@@ -64,12 +64,14 @@ The browser extension currently supports:
   supplies and the Client verifies it.
 
 The reference Go Runtime also provides a desktop/headless Client mode behind the same tagged
-Command boundary. It can create, select, recover, Fork an empty state or re-author Artifact, Bundle,
+Command boundary. It can create, select, recover from a Hosted Replica with a Recovery Phrase,
+Fork an empty state or re-author Artifact, Bundle,
 and Note content closures plus dependency-free content labels, close, Vacuum, replay
 authenticated Records/Objects, project its Library, perform Storage Relief/GC, attach and
 materialize Hosted Replicas, pull opaque Compact items, hydrate a known Artifact, accept an
 encrypted Go-to-Go transfer closure, and export/import the browser-compatible Complete Export
-container for the supported single-Key-Epoch closure. Complete Import is readable but authoring-free.
+container for the supported closure. Hosted recovery activates an authoring-capable Sparse Replica
+without inventing missing Artifact wrappers; Complete Import remains readable but authoring-free.
 A paired extension can operate those Vaults through the
 loopback Runtime API. The desktop window does not capture pages. Extension page capture remains
 available for extension-owned local Vaults; a Capture Bundle bridge for desktop-owned Vaults is not

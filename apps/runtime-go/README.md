@@ -64,7 +64,8 @@ creation and selection, Recovery Phrase confirmation/replacement and same-member
 Fork for the authenticated Library checkpoint and referenced Artifact/Bundle/Note object closure,
 Closure, authenticated Membership and Administrator role changes, Client Credential ending, Key Envelope delivery, Feature Activation, and Administrator Key Epoch rotation, Vacuum adoption, Library projection, authenticated Event/Object replay,
 Storage Relief, Garbage Collection, Hosted Replica creation and attachment, Compact materialization,
-receiver-initiated pull, and explicit Artifact hydration. The Wails surface and loopback API also
+phrase-authenticated Hosted recovery into a Sparse Replica, receiver-initiated pull, and explicit
+Artifact hydration. The Wails surface and loopback API also
 expose the read-only `GetAuthorityState` projection derived from authenticated Authority and
 Lifecycle Events, including active Invitation and Invitation conflict state. They use this same
 Runtime; a paired extension reaches it under the single

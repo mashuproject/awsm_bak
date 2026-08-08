@@ -1500,7 +1500,7 @@ func (r *Runtime) Handle(ctx context.Context, raw json.RawMessage) (any, error) 
 		if err := decode(raw, &input); err != nil {
 			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "RecoverHostedMember contains invalid fields")
 		}
-		return nil, commandError("HOSTED_RECOVERY_UNAVAILABLE", "Hosted Vault recovery is not available from this desktop Client yet.")
+		return r.recoverHostedMember(ctx, input.Endpoint, input.Username, input.Password, input.RecoveryPhrase)
 	default:
 		return nil, commandError("APPLICATION_PROTOCOL_INVALID", "Unsupported application Command")
 	}
@@ -1898,6 +1898,10 @@ func (r *Runtime) confirmFork(ctx context.Context, setupID, phrase string) (any,
 func (r *Runtime) recoverMember(ctx context.Context, id, phrase string) (any, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.recoverMemberLocked(ctx, id, phrase)
+}
+
+func (r *Runtime) recoverMemberLocked(ctx context.Context, id, phrase string) (any, error) {
 	before := r.snapshotLocked()
 	if err := r.requireExpectedLocked(&id); err != nil {
 		return nil, err
@@ -1927,7 +1931,7 @@ func (r *Runtime) recoverMember(ctx context.Context, id, phrase string) (any, er
 	if err != nil {
 		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The Recovery Credential identity is invalid.")
 	}
-	epochID, err := decodeHexIdentifier(value.Canonical.KeyEpochID)
+	currentEpochID, err := decodeHexIdentifier(value.Canonical.KeyEpochID)
 	if err != nil {
 		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The Key Epoch identity is invalid.")
 	}
@@ -1941,18 +1945,78 @@ func (r *Runtime) recoverMember(ctx context.Context, id, phrase string) (any, er
 		return nil, commandError("RECOVERY_PHRASE_INVALID", "The Recovery Phrase could not derive its credential.")
 	}
 	defer wipeCredentialKeys(&recoveryKeys)
-	reader, err := r.deps.Artifacts.Open(value.Canonical.RecoveryEnvelopeStorageID)
+	authority, err := replayReplicaAuthorityState(r.replicas[id], nil, nil)
 	if err != nil {
-		return nil, commandError("RECOVERY_KEY_UNAVAILABLE", "The Recovery Key Envelope is unavailable.")
+		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The authenticated Authority State could not be replayed.")
 	}
-	recoveryEnvelopeBytes, err := io.ReadAll(reader)
-	_ = reader.Close()
-	if err != nil {
-		return nil, commandError("RECOVERY_KEY_UNAVAILABLE", "The Recovery Key Envelope is unavailable.")
+	recoveryRevision, effective := authority.recoveryTargets[recoveryCredentialID]
+	if !effective {
+		return nil, commandError("RECOVERY_KEY_INVALID", "The Recovery Phrase does not match an effective Recovery Credential.")
 	}
-	openedRecovery, err := awsmcrypto.OpenKeyEnvelope(awsmcrypto.RecoveryCredentialTarget, recoveryKeys.WrappingPrivateKey, recoveryEnvelopeBytes)
-	if err != nil || openedRecovery.VaultID != vaultID || openedRecovery.KeyEpochID != epochID || openedRecovery.TargetCredentialID != recoveryCredentialID || openedRecovery.TargetRevision == nil || *openedRecovery.TargetRevision != 0 {
-		return nil, commandError("RECOVERY_KEY_INVALID", "The Recovery Phrase does not open the accepted Recovery Key Envelope.")
+	type recoveredEpoch struct {
+		id      canonical.Identifier
+		display uint64
+		key     []byte
+	}
+	orderedEpochs := sortedIdentifierKeys(authority.epochs)
+	sort.Slice(orderedEpochs, func(left, right int) bool {
+		leftDisplay := authority.epochs[orderedEpochs[left]]
+		rightDisplay := authority.epochs[orderedEpochs[right]]
+		if leftDisplay != rightDisplay {
+			return leftDisplay < rightDisplay
+		}
+		return bytes.Compare(orderedEpochs[left][:], orderedEpochs[right][:]) < 0
+	})
+	recoveredEpochs := make([]recoveredEpoch, 0, len(orderedEpochs))
+	for _, readableEpochID := range orderedEpochs {
+		var slot *keyEpochEnvelopeSlot
+		for index := range authority.epochSlots[readableEpochID] {
+			candidate := authority.epochSlots[readableEpochID][index]
+			if candidate.targetKind == awsmcrypto.RecoveryCredentialTarget && candidate.targetID == recoveryCredentialID &&
+				candidate.targetRevision != nil && *candidate.targetRevision == recoveryRevision {
+				if slot != nil {
+					return nil, commandError("RECOVERY_KEY_INVALID", "The authenticated Recovery Key Envelope slots are ambiguous.")
+				}
+				copyOfSlot := candidate
+				slot = &copyOfSlot
+			}
+		}
+		if slot == nil {
+			return nil, commandError("RECOVERY_KEY_UNAVAILABLE", "A readable Key Epoch does not have an accepted Recovery Key Envelope.")
+		}
+		storageID, exists := value.Canonical.KeyEnvelopeStorageItemIDs[hexIdentifier(slot.envelopeID)]
+		if !exists || storageID == "" {
+			return nil, commandError("RECOVERY_KEY_UNAVAILABLE", "A readable Recovery Key Envelope is unavailable.")
+		}
+		reader, openErr := r.deps.Artifacts.Open(storageID)
+		if openErr != nil {
+			return nil, commandError("RECOVERY_KEY_UNAVAILABLE", "A readable Recovery Key Envelope is unavailable.")
+		}
+		recoveryEnvelopeBytes, readErr := io.ReadAll(reader)
+		_ = reader.Close()
+		if readErr != nil {
+			return nil, commandError("RECOVERY_KEY_UNAVAILABLE", "A readable Recovery Key Envelope is unavailable.")
+		}
+		openedRecovery, openErr := awsmcrypto.OpenKeyEnvelope(awsmcrypto.RecoveryCredentialTarget, recoveryKeys.WrappingPrivateKey, recoveryEnvelopeBytes)
+		if openErr != nil || openedRecovery.ID != slot.envelopeID || openedRecovery.VaultID != vaultID || openedRecovery.KeyEpochID != readableEpochID ||
+			openedRecovery.TargetCredentialID != recoveryCredentialID || openedRecovery.TargetRevision == nil || *openedRecovery.TargetRevision != recoveryRevision {
+			return nil, commandError("RECOVERY_KEY_INVALID", "The Recovery Phrase does not open an authenticated Recovery Key Envelope.")
+		}
+		recoveredEpochs = append(recoveredEpochs, recoveredEpoch{id: readableEpochID, display: authority.epochs[readableEpochID], key: openedRecovery.KeyEpochKey})
+		defer zeroBytes(openedRecovery.KeyEpochKey)
+	}
+	if len(recoveredEpochs) == 0 {
+		return nil, commandError("RECOVERY_KEY_INVALID", "The Vault has no readable Key Epoch.")
+	}
+	currentEpochIndex := -1
+	for index := range recoveredEpochs {
+		if recoveredEpochs[index].id == currentEpochID {
+			currentEpochIndex = index
+			break
+		}
+	}
+	if currentEpochIndex < 0 {
+		return nil, commandError("RECOVERY_KEY_INVALID", "The Recovery Phrase does not open the accepted current Key Epoch.")
 	}
 	clientKeys, err := awsmcrypto.CreateClientCredentialKeys(nil, nil)
 	if err != nil {
@@ -1967,24 +2031,39 @@ func (r *Runtime) recoverMember(ctx context.Context, id, phrase string) (any, er
 	if err != nil {
 		return nil, err
 	}
-	clientEnvelope, err := awsmcrypto.SealKeyEnvelope(awsmcrypto.KeyEnvelopeInput{
-		VaultID: vaultID, KeyEpochID: epochID, KeyEpochKey: openedRecovery.KeyEpochKey,
-		TargetKind: awsmcrypto.ClientCredentialTarget, TargetCredentialID: clientCredentialID,
-		RecipientWrappingPublicKey: clientKeys.WrappingPublicKey,
-	})
-	if err != nil {
-		return nil, commandError("CLIENT_CREDENTIAL_INVALID", "The Client Key Envelope could not be created.")
+	clientEnvelopes := make([]awsmcrypto.KeyEnvelope, 0, len(recoveredEpochs))
+	for _, recovered := range recoveredEpochs {
+		clientEnvelope, sealErr := awsmcrypto.SealKeyEnvelope(awsmcrypto.KeyEnvelopeInput{
+			VaultID: vaultID, KeyEpochID: recovered.id, KeyEpochKey: recovered.key,
+			TargetKind: awsmcrypto.ClientCredentialTarget, TargetCredentialID: clientCredentialID,
+			RecipientWrappingPublicKey: clientKeys.WrappingPublicKey,
+		})
+		if sealErr != nil {
+			return nil, commandError("CLIENT_CREDENTIAL_INVALID", "The Client Key Envelope could not be created.")
+		}
+		challenge, challengeErr := awsmcrypto.OpenKeyEnvelope(awsmcrypto.ClientCredentialTarget, clientKeys.WrappingPrivateKey, clientEnvelope.Envelope.Bytes)
+		if challengeErr != nil || challenge.ID != clientEnvelope.ID || challenge.VaultID != vaultID || challenge.KeyEpochID != recovered.id ||
+			!bytes.Equal(challenge.KeyEpochKey, recovered.key) || challenge.TargetCredentialID != clientCredentialID {
+			zeroBytes(challenge.KeyEpochKey)
+			return nil, commandError("CLIENT_CREDENTIAL_INVALID", "The Client wrapping-key challenge failed.")
+		}
+		zeroBytes(challenge.KeyEpochKey)
+		clientEnvelopes = append(clientEnvelopes, clientEnvelope)
 	}
-	challenge, err := awsmcrypto.OpenKeyEnvelope(awsmcrypto.ClientCredentialTarget, clientKeys.WrappingPrivateKey, clientEnvelope.Envelope.Bytes)
-	if err != nil || challenge.ID != clientEnvelope.ID || challenge.VaultID != vaultID || challenge.KeyEpochID != epochID || challenge.TargetCredentialID != clientCredentialID {
-		return nil, commandError("CLIENT_CREDENTIAL_INVALID", "The Client wrapping-key challenge failed.")
-	}
-	zeroBytes(challenge.KeyEpochKey)
+	clientEnvelope := clientEnvelopes[currentEpochIndex]
 	certificate := canonical.Map{0: clientCredentialID[:], 1: memberID[:], 2: clientKeys.SigningPublicKey, 3: clientKeys.WrappingPublicKey}
-	slot := canonical.Map{0: epochID[:], 1: uint64(2), 2: clientCredentialID[:], 3: nil, 4: clientEnvelope.ID[:]}
+	slots := make([]canonical.Value, 0, len(clientEnvelopes))
+	dependencies := make([]canonical.Dependency, 0, len(clientEnvelopes))
+	for _, envelope := range clientEnvelopes {
+		slots = append(slots, canonical.Map{0: envelope.KeyEpochID[:], 1: uint64(2), 2: clientCredentialID[:], 3: nil, 4: envelope.ID[:]})
+		dependencies = append(dependencies, canonical.Dependency{Type: 7, ID: envelope.ID})
+	}
+	sort.Slice(dependencies, func(left, right int) bool {
+		return bytes.Compare(dependencies[left].ID[:], dependencies[right].ID[:]) < 0
+	})
 	proposalPrefix := canonical.Map{
 		0: vaultID[:], 1: memberID[:], 2: canonicalSetValues(identifiersToValues(r.replicas[id].State().AuthorityFrontier)),
-		3: certificate, 4: canonicalSetValues([]canonical.Value{slot}),
+		3: certificate, 4: canonicalSetValues(slots),
 	}
 	proposalBytes, err := canonical.EncodeValue(proposalPrefix)
 	if err != nil {
@@ -2019,14 +2098,14 @@ func (r *Runtime) recoverMember(ctx context.Context, id, phrase string) (any, er
 	state := r.replicas[id].State()
 	event, err := canonical.SignEvent(canonical.EventInput{
 		VaultID: vaultID, GenerationID: generationID, ParentRecordIDs: state.CausalFrontier, AuthorityParentIDs: state.AuthorityFrontier,
-		Dependencies: []canonical.Dependency{{Type: 7, ID: clientEnvelope.ID}}, RequiredFeatureSetID: featureSetID,
+		Dependencies: dependencies, RequiredFeatureSetID: featureSetID,
 		Extensions: map[string][]byte{}, Family: canonical.AuthorityFamily, Type: 9, SignerCredentialID: clientCredentialID,
 		AssertedAt: time.Now().UnixMilli(), Body: canonical.Map{0: proposal, 1: uint64(2), 2: recoveryCredentialID[:], 3: ed25519.Sign(recoveryKeys.SigningSecretKey, recoveryAuthorizationTranscript)},
 	}, ed25519.PrivateKey(clientKeys.SigningSecretKey))
 	if err != nil {
 		return nil, commandError("VAULT_EVENT_INVALID", "The Client Enrollment Event could not be authored.")
 	}
-	encoded, err := awsmcrypto.SealCompactItem(awsmcrypto.CompactItemInput{VaultID: vaultID, KeyEpochID: epochID, KeyEpochKey: openedRecovery.KeyEpochKey, PayloadType: 1, PayloadBytes: event.Bytes})
+	encoded, err := awsmcrypto.SealCompactItem(awsmcrypto.CompactItemInput{VaultID: vaultID, KeyEpochID: currentEpochID, KeyEpochKey: recoveredEpochs[currentEpochIndex].key, PayloadType: 1, PayloadBytes: event.Bytes})
 	if err != nil {
 		return nil, commandError("VAULT_EVENT_INVALID", "The Client Enrollment Event could not be protected.")
 	}
@@ -2042,23 +2121,40 @@ func (r *Runtime) recoverMember(ctx context.Context, id, phrase string) (any, er
 	if err != nil {
 		return nil, commandError("CLIENT_CREDENTIAL_INVALID", "The Client Credential could not be protected.")
 	}
-	if err := storeOpaqueCreationItem(r.deps.Artifacts, clientEnvelope.Envelope.StorageItemID, clientEnvelope.Envelope.Bytes); err != nil {
-		return nil, commandError("VAULT_CREATION_STORAGE_FAILED", "The Client Key Envelope could not be stored.")
+	storedClientEnvelopeIDs := make([][32]byte, 0, len(clientEnvelopes))
+	for _, envelope := range clientEnvelopes {
+		if err := storeOpaqueCreationItem(r.deps.Artifacts, envelope.Envelope.StorageItemID, envelope.Envelope.Bytes); err != nil {
+			for _, storedID := range storedClientEnvelopeIDs {
+				deleteOpaqueCreationItem(r.deps.Artifacts, storedID)
+			}
+			return nil, commandError("VAULT_CREATION_STORAGE_FAILED", "The Client Key Envelope could not be stored.")
+		}
+		storedClientEnvelopeIDs = append(storedClientEnvelopeIDs, envelope.Envelope.StorageItemID)
 	}
 	if err := storeOpaqueCreationItem(r.deps.Artifacts, envelope.StorageItemID, encoded); err != nil {
-		deleteOpaqueCreationItem(r.deps.Artifacts, clientEnvelope.Envelope.StorageItemID)
+		for _, storedID := range storedClientEnvelopeIDs {
+			deleteOpaqueCreationItem(r.deps.Artifacts, storedID)
+		}
 		return nil, commandError("VAULT_CREATION_STORAGE_FAILED", "The Client Enrollment Event could not be stored.")
 	}
 	if err := r.deps.Secrets.Put(trustedSecretService, clientSecretAccount(id, credentialBytes), clientSecret); err != nil {
-		deleteOpaqueCreationItem(r.deps.Artifacts, clientEnvelope.Envelope.StorageItemID)
+		for _, storedID := range storedClientEnvelopeIDs {
+			deleteOpaqueCreationItem(r.deps.Artifacts, storedID)
+		}
 		deleteOpaqueCreationItem(r.deps.Artifacts, envelope.StorageItemID)
 		return nil, commandError("TRUSTED_SECRET_UNAVAILABLE", "The recovered Client Credential could not be stored.")
 	}
 	value.Canonical.ClientCredentialID = credentialBytes
+	for _, clientEnvelope := range clientEnvelopes {
+		envelopeID := hexIdentifier(clientEnvelope.ID)
+		storageID := hexIdentifier(clientEnvelope.Envelope.StorageItemID)
+		value.Canonical.KeyEnvelopeStorageItemIDs[envelopeID] = storageID
+		bindStorageItemKeyEpoch(value.Canonical, storageID, clientEnvelope.KeyEpochID)
+	}
 	value.Canonical.ClientEnvelopeID = hexIdentifier(clientEnvelope.ID)
 	value.Canonical.ClientEnvelopeStorageID = hexIdentifier(clientEnvelope.Envelope.StorageItemID)
 	value.Canonical.KeyEnvelopeStorageItemIDs[value.Canonical.ClientEnvelopeID] = value.Canonical.ClientEnvelopeStorageID
-	bindStorageItemKeyEpoch(value.Canonical, value.Canonical.ClientEnvelopeStorageID, epochID)
+	bindStorageItemKeyEpoch(value.Canonical, value.Canonical.ClientEnvelopeStorageID, currentEpochID)
 	value.Canonical.AuthoringAvailable = true
 	nextState := nextReplica.State()
 	value.Canonical.CausalFrontier = identifiersToHex(nextState.CausalFrontier)
@@ -2066,17 +2162,18 @@ func (r *Runtime) recoverMember(ctx context.Context, id, phrase string) (any, er
 	value.Canonical.ContinuityRecordIDs = identifiersToHex(nextState.ContinuityRecordIDs)
 	storageItemID := hexIdentifier(envelope.StorageItemID)
 	value.Canonical.RecordStorageItemIDs[hexIdentifier(event.RecordID)] = storageItemID
-	bindStorageItemKeyEpoch(value.Canonical, storageItemID, epochID)
+	bindStorageItemKeyEpoch(value.Canonical, storageItemID, currentEpochID)
 	r.replicas[id] = nextReplica
 	r.selected = id
 	if err := r.persistLocked(ctx); err != nil {
 		r.restoreLocked(before)
 		_ = r.deps.Secrets.Delete(trustedSecretService, clientSecretAccount(id, credentialBytes))
-		deleteOpaqueCreationItem(r.deps.Artifacts, clientEnvelope.Envelope.StorageItemID)
+		for _, storedID := range storedClientEnvelopeIDs {
+			deleteOpaqueCreationItem(r.deps.Artifacts, storedID)
+		}
 		deleteOpaqueCreationItem(r.deps.Artifacts, envelope.StorageItemID)
 		return nil, err
 	}
-	zeroBytes(openedRecovery.KeyEpochKey)
 	r.signal()
 	return map[string]string{"memberId": value.Canonical.MemberID, "clientCredentialId": credentialBytes, "eventRecordId": hexIdentifier(event.RecordID)}, nil
 }
@@ -2143,7 +2240,7 @@ func (r *Runtime) confirmReplacement(ctx context.Context, setupID, phrase string
 	if err != nil {
 		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The Recovery Credential identity is invalid.")
 	}
-	epochID, err := decodeHexIdentifier(value.Canonical.KeyEpochID)
+	currentEpochID, err := decodeHexIdentifier(value.Canonical.KeyEpochID)
 	if err != nil {
 		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The Key Epoch identity is invalid.")
 	}
@@ -2178,35 +2275,83 @@ func (r *Runtime) confirmReplacement(ctx context.Context, setupID, phrase string
 		return nil, err
 	}
 	revision := uint64(pending.RecoveryRevision)
-	keyEpochBytes, err := r.deps.Secrets.Get(trustedSecretService, epochSecretAccount(value.VaultID, value.Canonical.KeyEpochID))
+	authority, err := replayReplicaAuthorityState(r.replicas[value.VaultID], nil, nil)
 	if err != nil {
-		return nil, commandError("TRUSTED_SECRET_UNAVAILABLE", "The Key Epoch could not be opened.")
+		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The authenticated Authority State could not be replayed.")
 	}
-	epochSecret, err := decodeEpochSecret(keyEpochBytes, vaultID, epochID)
-	if err != nil {
-		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The Key Epoch is invalid.")
+	type replacementEpoch struct {
+		id  canonical.Identifier
+		key []byte
 	}
-	defer zeroBytes(epochSecret.key)
-	recoveryEnvelope, err := awsmcrypto.SealKeyEnvelope(awsmcrypto.KeyEnvelopeInput{
-		VaultID: vaultID, KeyEpochID: epochID, KeyEpochKey: epochSecret.key,
-		TargetKind: awsmcrypto.RecoveryCredentialTarget, TargetCredentialID: newRecoveryID,
-		TargetRevision: &revision, RecipientWrappingPublicKey: recoveryKeys.WrappingPublicKey,
+	orderedEpochs := sortedIdentifierKeys(authority.epochs)
+	sort.Slice(orderedEpochs, func(left, right int) bool {
+		leftDisplay := authority.epochs[orderedEpochs[left]]
+		rightDisplay := authority.epochs[orderedEpochs[right]]
+		if leftDisplay != rightDisplay {
+			return leftDisplay < rightDisplay
+		}
+		return bytes.Compare(orderedEpochs[left][:], orderedEpochs[right][:]) < 0
 	})
-	if err != nil {
-		return nil, commandError("RECOVERY_KEY_INVALID", "The replacement Recovery Key Envelope could not be created.")
+	replacementEpochs := make([]replacementEpoch, 0, len(orderedEpochs))
+	for _, readableEpochID := range orderedEpochs {
+		encodedEpoch, getErr := r.deps.Secrets.Get(trustedSecretService, epochSecretAccount(value.VaultID, hexIdentifier(readableEpochID)))
+		if getErr != nil {
+			return nil, commandError("TRUSTED_SECRET_UNAVAILABLE", "A readable Key Epoch could not be opened.")
+		}
+		epochSecret, decodeErr := decodeEpochSecret(encodedEpoch, vaultID, readableEpochID)
+		if decodeErr != nil {
+			return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "A readable Key Epoch is invalid.")
+		}
+		replacementEpochs = append(replacementEpochs, replacementEpoch{id: readableEpochID, key: epochSecret.key})
+		defer zeroBytes(epochSecret.key)
 	}
-	challenge, err := awsmcrypto.OpenKeyEnvelope(awsmcrypto.RecoveryCredentialTarget, recoveryKeys.WrappingPrivateKey, recoveryEnvelope.Envelope.Bytes)
-	if err != nil || challenge.ID != recoveryEnvelope.ID || challenge.VaultID != vaultID || challenge.KeyEpochID != epochID || challenge.TargetCredentialID != newRecoveryID || challenge.TargetRevision == nil || *challenge.TargetRevision != revision {
-		return nil, commandError("RECOVERY_KEY_INVALID", "The replacement Recovery wrapping-key challenge failed.")
+	if len(replacementEpochs) == 0 {
+		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The Vault has no readable Key Epoch.")
 	}
-	zeroBytes(challenge.KeyEpochKey)
+	currentEpochIndex := -1
+	for index := range replacementEpochs {
+		if replacementEpochs[index].id == currentEpochID {
+			currentEpochIndex = index
+			break
+		}
+	}
+	if currentEpochIndex < 0 {
+		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The current Key Epoch is not readable.")
+	}
+	recoveryEnvelopes := make([]awsmcrypto.KeyEnvelope, 0, len(replacementEpochs))
+	for _, readableEpoch := range replacementEpochs {
+		recoveryEnvelope, sealErr := awsmcrypto.SealKeyEnvelope(awsmcrypto.KeyEnvelopeInput{
+			VaultID: vaultID, KeyEpochID: readableEpoch.id, KeyEpochKey: readableEpoch.key,
+			TargetKind: awsmcrypto.RecoveryCredentialTarget, TargetCredentialID: newRecoveryID,
+			TargetRevision: &revision, RecipientWrappingPublicKey: recoveryKeys.WrappingPublicKey,
+		})
+		if sealErr != nil {
+			return nil, commandError("RECOVERY_KEY_INVALID", "The replacement Recovery Key Envelope could not be created.")
+		}
+		challenge, challengeErr := awsmcrypto.OpenKeyEnvelope(awsmcrypto.RecoveryCredentialTarget, recoveryKeys.WrappingPrivateKey, recoveryEnvelope.Envelope.Bytes)
+		if challengeErr != nil || challenge.ID != recoveryEnvelope.ID || challenge.VaultID != vaultID || challenge.KeyEpochID != readableEpoch.id ||
+			!bytes.Equal(challenge.KeyEpochKey, readableEpoch.key) || challenge.TargetCredentialID != newRecoveryID || challenge.TargetRevision == nil || *challenge.TargetRevision != revision {
+			zeroBytes(challenge.KeyEpochKey)
+			return nil, commandError("RECOVERY_KEY_INVALID", "The replacement Recovery wrapping-key challenge failed.")
+		}
+		zeroBytes(challenge.KeyEpochKey)
+		recoveryEnvelopes = append(recoveryEnvelopes, recoveryEnvelope)
+	}
 	descriptor := canonical.Map{0: newRecoveryID[:], 1: memberID[:], 2: revision, 3: recoveryKeys.SigningPublicKey, 4: recoveryKeys.WrappingPublicKey}
-	slot := canonical.Map{0: epochID[:], 1: uint64(1), 2: newRecoveryID[:], 3: revision, 4: recoveryEnvelope.ID[:]}
 	descriptorBytes, err := canonical.EncodeValue(descriptor)
 	if err != nil {
 		return nil, commandError("VAULT_EVENT_INVALID", "The replacement Recovery Credential could not be encoded.")
 	}
-	slots := canonicalSetValues([]canonical.Value{slot})
+	slotValues := make([]canonical.Value, 0, len(recoveryEnvelopes))
+	dependencies := make([]canonical.Dependency, 0, len(recoveryEnvelopes))
+	for _, recoveryEnvelope := range recoveryEnvelopes {
+		slotValues = append(slotValues, canonical.Map{0: recoveryEnvelope.KeyEpochID[:], 1: uint64(1), 2: newRecoveryID[:], 3: revision, 4: recoveryEnvelope.ID[:]})
+		dependencies = append(dependencies, canonical.Dependency{Type: 7, ID: recoveryEnvelope.ID})
+	}
+	slots := canonicalSetValues(slotValues)
+	sort.Slice(dependencies, func(left, right int) bool {
+		return bytes.Compare(dependencies[left].ID[:], dependencies[right].ID[:]) < 0
+	})
 	slotsBytes, err := canonical.EncodeValue(slots)
 	if err != nil {
 		return nil, commandError("VAULT_EVENT_INVALID", "The replacement Recovery Key Envelope slot could not be encoded.")
@@ -2227,14 +2372,14 @@ func (r *Runtime) confirmReplacement(ctx context.Context, setupID, phrase string
 	replicaState := r.replicas[value.VaultID].State()
 	event, err := canonical.SignEvent(canonical.EventInput{
 		VaultID: vaultID, GenerationID: generationID, ParentRecordIDs: replicaState.CausalFrontier, AuthorityParentIDs: replicaState.AuthorityFrontier,
-		Dependencies: []canonical.Dependency{{Type: 7, ID: recoveryEnvelope.ID}}, RequiredFeatureSetID: featureSetID,
+		Dependencies: dependencies, RequiredFeatureSetID: featureSetID,
 		Extensions: map[string][]byte{}, Family: canonical.AuthorityFamily, Type: 11, SignerCredentialID: clientCredentialID,
 		AssertedAt: time.Now().UnixMilli(), Body: canonical.Map{0: memberID[:], 1: canonicalSetValues([]canonical.Value{oldRecoveryID[:]}), 2: descriptor, 3: slots, 4: ed25519.Sign(ed25519.PrivateKey(recoveryKeys.SigningSecretKey), possessionTranscript)},
 	}, ed25519.PrivateKey(clientSecret.signingSecretKey))
 	if err != nil {
 		return nil, commandError("VAULT_EVENT_INVALID", "The Recovery Replacement Event could not be authored.")
 	}
-	encoded, err := awsmcrypto.SealCompactItem(awsmcrypto.CompactItemInput{VaultID: vaultID, KeyEpochID: epochID, KeyEpochKey: epochSecret.key, PayloadType: 1, PayloadBytes: event.Bytes})
+	encoded, err := awsmcrypto.SealCompactItem(awsmcrypto.CompactItemInput{VaultID: vaultID, KeyEpochID: currentEpochID, KeyEpochKey: replacementEpochs[currentEpochIndex].key, PayloadType: 1, PayloadBytes: event.Bytes})
 	if err != nil {
 		return nil, commandError("VAULT_EVENT_INVALID", "The Recovery Replacement Event could not be protected.")
 	}
@@ -2246,32 +2391,50 @@ func (r *Runtime) confirmReplacement(ctx context.Context, setupID, phrase string
 	if err := nextReplica.AdmitEvent(event, ed25519.PublicKey(clientSecret.signingPublicKey)); err != nil {
 		return nil, commandError("VAULT_EVENT_INVALID", "The Recovery Replacement Event could not be admitted.")
 	}
-	if err := storeOpaqueCreationItem(r.deps.Artifacts, recoveryEnvelope.Envelope.StorageItemID, recoveryEnvelope.Envelope.Bytes); err != nil {
-		return nil, commandError("VAULT_CREATION_STORAGE_FAILED", "The replacement Recovery Key Envelope could not be stored.")
+	storedRecoveryEnvelopeIDs := make([][32]byte, 0, len(recoveryEnvelopes))
+	for _, recoveryEnvelope := range recoveryEnvelopes {
+		if err := storeOpaqueCreationItem(r.deps.Artifacts, recoveryEnvelope.Envelope.StorageItemID, recoveryEnvelope.Envelope.Bytes); err != nil {
+			for _, storedID := range storedRecoveryEnvelopeIDs {
+				deleteOpaqueCreationItem(r.deps.Artifacts, storedID)
+			}
+			return nil, commandError("VAULT_CREATION_STORAGE_FAILED", "The replacement Recovery Key Envelope could not be stored.")
+		}
+		storedRecoveryEnvelopeIDs = append(storedRecoveryEnvelopeIDs, recoveryEnvelope.Envelope.StorageItemID)
 	}
 	if err := storeOpaqueCreationItem(r.deps.Artifacts, envelope.StorageItemID, encoded); err != nil {
-		deleteOpaqueCreationItem(r.deps.Artifacts, recoveryEnvelope.Envelope.StorageItemID)
+		for _, storedID := range storedRecoveryEnvelopeIDs {
+			deleteOpaqueCreationItem(r.deps.Artifacts, storedID)
+		}
 		return nil, commandError("VAULT_CREATION_STORAGE_FAILED", "The Recovery Replacement Event could not be stored.")
 	}
 	value.RecoveryHash = pending.PhraseHash
 	value.RecoveryRevision = pending.RecoveryRevision
 	value.Canonical.RecoveryCredentialID = newRecoveryIDText
-	value.Canonical.RecoveryEnvelopeID = hexIdentifier(recoveryEnvelope.ID)
-	value.Canonical.RecoveryEnvelopeStorageID = hexIdentifier(recoveryEnvelope.Envelope.StorageItemID)
+	for _, recoveryEnvelope := range recoveryEnvelopes {
+		envelopeID := hexIdentifier(recoveryEnvelope.ID)
+		storageID := hexIdentifier(recoveryEnvelope.Envelope.StorageItemID)
+		value.Canonical.KeyEnvelopeStorageItemIDs[envelopeID] = storageID
+		bindStorageItemKeyEpoch(value.Canonical, storageID, recoveryEnvelope.KeyEpochID)
+	}
+	currentRecoveryEnvelope := recoveryEnvelopes[currentEpochIndex]
+	value.Canonical.RecoveryEnvelopeID = hexIdentifier(currentRecoveryEnvelope.ID)
+	value.Canonical.RecoveryEnvelopeStorageID = hexIdentifier(currentRecoveryEnvelope.Envelope.StorageItemID)
 	value.Canonical.KeyEnvelopeStorageItemIDs[value.Canonical.RecoveryEnvelopeID] = value.Canonical.RecoveryEnvelopeStorageID
-	bindStorageItemKeyEpoch(value.Canonical, value.Canonical.RecoveryEnvelopeStorageID, epochID)
+	bindStorageItemKeyEpoch(value.Canonical, value.Canonical.RecoveryEnvelopeStorageID, currentEpochID)
 	nextState := nextReplica.State()
 	value.Canonical.CausalFrontier = identifiersToHex(nextState.CausalFrontier)
 	value.Canonical.AuthorityFrontier = identifiersToHex(nextState.AuthorityFrontier)
 	value.Canonical.ContinuityRecordIDs = identifiersToHex(nextState.ContinuityRecordIDs)
 	storageItemID := hexIdentifier(envelope.StorageItemID)
 	value.Canonical.RecordStorageItemIDs[hexIdentifier(event.RecordID)] = storageItemID
-	bindStorageItemKeyEpoch(value.Canonical, storageItemID, epochID)
+	bindStorageItemKeyEpoch(value.Canonical, storageItemID, currentEpochID)
 	r.replicas[value.VaultID] = nextReplica
 	r.pending = nil
 	if err := r.persistLocked(ctx); err != nil {
 		r.restoreLocked(before)
-		deleteOpaqueCreationItem(r.deps.Artifacts, recoveryEnvelope.Envelope.StorageItemID)
+		for _, storedID := range storedRecoveryEnvelopeIDs {
+			deleteOpaqueCreationItem(r.deps.Artifacts, storedID)
+		}
 		deleteOpaqueCreationItem(r.deps.Artifacts, envelope.StorageItemID)
 		return nil, err
 	}

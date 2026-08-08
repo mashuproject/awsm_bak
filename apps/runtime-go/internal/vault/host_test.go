@@ -27,9 +27,9 @@ func TestHostedReplicaHTTPClientUsesStrictProtocolAndOpaqueItems(t *testing.T) {
 		case request.Method == http.MethodPost && request.URL.Path == "/api/sessions":
 			writer.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(writer).Encode(map[string]any{
-				"account":    map[string]any{"username": "alice", "inactive_deletion_at": "2026-08-07T00:00:00.000Z"},
-				"session_id": "00000000-0000-4000-8000-000000000001", "access_token": "access", "access_expires_at": "2026-08-07T00:00:00.000Z",
-				"refresh_token": "refresh", "refresh_expires_at": "2026-08-08T00:00:00.000Z",
+				"account":    map[string]any{"username": "alice", "inactive_deletion_at": "2099-08-07T00:00:00.000Z"},
+				"session_id": "00000000-0000-4000-8000-000000000001", "access_token": "access", "access_expires_at": "2099-08-07T00:00:00.000Z",
+				"refresh_token": "refresh", "refresh_expires_at": "2099-08-08T00:00:00.000Z",
 			})
 		case request.Method == http.MethodPost && request.URL.Path == "/api/replicas":
 			writer.Header().Set("Content-Type", "application/json")
@@ -110,9 +110,9 @@ func newHostedRuntimeFixture(t *testing.T) (string, *http.Client) {
 		case request.Method == http.MethodPost && strings.HasSuffix(request.URL.Path, "/api/sessions"):
 			writer.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(writer).Encode(map[string]any{
-				"account":    map[string]any{"username": "alice", "inactive_deletion_at": "2026-08-07T00:00:00.000Z"},
-				"session_id": "00000000-0000-4000-8000-000000000011", "access_token": "access", "access_expires_at": "2026-08-07T00:00:00.000Z",
-				"refresh_token": "refresh", "refresh_expires_at": "2026-08-08T00:00:00.000Z",
+				"account":    map[string]any{"username": "alice", "inactive_deletion_at": "2099-08-07T00:00:00.000Z"},
+				"session_id": "00000000-0000-4000-8000-000000000011", "access_token": "access", "access_expires_at": "2099-08-07T00:00:00.000Z",
+				"refresh_token": "refresh", "refresh_expires_at": "2099-08-08T00:00:00.000Z",
 			})
 		case request.Method == http.MethodPost && strings.HasSuffix(request.URL.Path, "/api/replicas"):
 			writer.Header().Set("Content-Type", "application/json")
@@ -162,9 +162,9 @@ func newHostedSyncFixture(t *testing.T) *hostedSyncFixture {
 		case request.Method == http.MethodPost && strings.HasSuffix(request.URL.Path, "/api/sessions"):
 			writer.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(writer).Encode(map[string]any{
-				"account":    map[string]any{"username": "alice", "inactive_deletion_at": "2026-08-07T00:00:00.000Z"},
-				"session_id": "00000000-0000-4000-8000-000000000021", "access_token": "access", "access_expires_at": "2026-08-07T00:00:00.000Z",
-				"refresh_token": "refresh", "refresh_expires_at": "2026-08-08T00:00:00.000Z",
+				"account":    map[string]any{"username": "alice", "inactive_deletion_at": "2099-08-07T00:00:00.000Z"},
+				"session_id": "00000000-0000-4000-8000-000000000021", "access_token": "access", "access_expires_at": "2099-08-07T00:00:00.000Z",
+				"refresh_token": "refresh", "refresh_expires_at": "2099-08-08T00:00:00.000Z",
 			})
 		case request.Method == http.MethodPost && strings.HasSuffix(request.URL.Path, "/api/replicas"):
 			writer.Header().Set("Content-Type", "application/json")

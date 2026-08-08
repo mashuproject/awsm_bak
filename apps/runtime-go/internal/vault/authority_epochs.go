@@ -2728,7 +2728,7 @@ func parseKeyEpochEnvelopeSlots(value canonical.Value, field string) ([]keyEpoch
 		} else if revisionValue != nil {
 			return nil, fmt.Errorf("%s contain a non-null Client target revision", field)
 		}
-		target := fmt.Sprintf("%d:%x:%v", targetKind, targetBytes, revision)
+		target := fmt.Sprintf("%x:%d:%x:%v", epochBytes, targetKind, targetBytes, revision)
 		if _, exists := seenTargets[target]; exists {
 			return nil, fmt.Errorf("%s repeat an Envelope target", field)
 		}

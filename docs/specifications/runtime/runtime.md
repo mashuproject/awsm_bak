@@ -47,7 +47,8 @@ transcript framing, authenticated Event/Baseline codecs, Record IDs, and causal 
 The Go Runtime now provides browser-compatible BIP39, Credential, Key Epoch, compact-encryption,
 HPKE, Key Envelope, opaque Compact/Streamable envelopes, authenticated Event/DAG replay, Library
 projection, state-only Fork checkpointing, Membership and Administrator role changes, Client Credential ending, Key Envelope delivery, Feature Activation, Storage Relief, Garbage Collection, Hosted Replica
-creation/attachment/materialization, receiver pull, Artifact hydration, the read-only
+creation/attachment/materialization, phrase-authenticated Hosted recovery into an authoring-capable
+Sparse Replica, receiver pull, Artifact hydration, the read-only
 `GetAuthorityState` projection (including Invitation state), and encrypted Go-to-Go
 transfer import/export. Focused tests use browser-derived vectors and restart/Host-boundary proofs.
 The Go Runtime also exposes browser-compatible Complete Export/Import for the supported

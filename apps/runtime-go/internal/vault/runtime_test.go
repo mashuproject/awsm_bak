@@ -913,6 +913,96 @@ func TestRecoveryPhraseReplacementAuthorsAuthenticatedAuthorityEvent(t *testing.
 	}
 }
 
+func TestRecoveryPhraseReplacementAfterKeyEpochRotationUsesEveryReadableEpoch(t *testing.T) {
+	ctx := context.Background()
+	state := store.NewMemoryState()
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vaultID, _ := createVaultWithPhraseForTest(t, runtime, "Replacement after rotation")
+	if _, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "RotateKeyEpoch", "expectedVaultId": vaultID,
+	})); err != nil {
+		t.Fatalf("RotateKeyEpoch: %v", err)
+	}
+	startedValue, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "BeginRecoveryPhraseReplacement", "expectedVaultId": vaultID,
+	}))
+	if err != nil {
+		t.Fatalf("begin replacement: %v", err)
+	}
+	started := startedValue.(map[string]string)
+	confirmedValue, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "ConfirmRecoveryPhraseReplacement", "setupId": started["setupId"], "recoveryPhrase": started["recoveryPhrase"],
+	}))
+	if err != nil {
+		t.Fatalf("confirm replacement after Key Epoch rotation: %v", err)
+	}
+	confirmed := confirmedValue.(map[string]any)
+	record, ok := runtime.replicas[vaultID].Record(mustIdentifier(t, confirmed["eventRecordId"].(string)))
+	if !ok || record.Event == nil || record.Event.Type != 11 {
+		t.Fatalf("Recovery Replacement record = %#v", record)
+	}
+	body, ok := replicaMapValue(record.Event.Body)
+	if !ok {
+		t.Fatalf("Recovery Replacement body = %#v", record.Event.Body)
+	}
+	slots, ok := replicaMapArrayValue(replicaMapEntryMust(body, 3))
+	if !ok || len(slots) != 2 {
+		t.Fatalf("Recovery Replacement slots = %#v, want one slot per readable Epoch", replicaMapEntryMust(body, 3))
+	}
+	if len(record.Event.Dependencies) != 2 {
+		t.Fatalf("Recovery Replacement dependencies = %#v, want one per readable Epoch", record.Event.Dependencies)
+	}
+}
+
+func TestRecoverMemberAfterKeyEpochRotationUsesEveryReadableEpoch(t *testing.T) {
+	ctx := context.Background()
+	state := store.NewMemoryState()
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vaultID, phrase := createVaultWithPhraseForTest(t, runtime, "Recovery after rotation")
+	if _, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "RotateKeyEpoch", "expectedVaultId": vaultID,
+	})); err != nil {
+		t.Fatalf("RotateKeyEpoch: %v", err)
+	}
+	resultValue, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "RecoverMember", "expectedVaultId": vaultID, "recoveryPhrase": phrase,
+	}))
+	if err != nil {
+		t.Fatalf("RecoverMember after Key Epoch rotation: %v", err)
+	}
+	result, ok := resultValue.(map[string]string)
+	if !ok || !validDigest(result["eventRecordId"]) {
+		t.Fatalf("RecoverMember result = %#v", resultValue)
+	}
+	record, ok := runtime.replicas[vaultID].Record(mustIdentifier(t, result["eventRecordId"]))
+	if !ok || record.Event == nil || record.Event.Type != 9 {
+		t.Fatalf("Recovery Enrollment record = %#v", record)
+	}
+	body, ok := replicaMapValue(record.Event.Body)
+	if !ok {
+		t.Fatalf("Recovery Enrollment body = %#v", record.Event.Body)
+	}
+	proposal, ok := replicaMapValue(replicaMapEntryMust(body, 0))
+	if !ok {
+		t.Fatalf("Recovery Enrollment proposal = %#v", replicaMapEntryMust(body, 0))
+	}
+	slots, ok := replicaMapArrayValue(replicaMapEntryMust(proposal, 4))
+	if !ok || len(slots) != 2 {
+		t.Fatalf("Recovery Enrollment slots = %#v, want one slot per readable Epoch", replicaMapEntryMust(proposal, 4))
+	}
+	if len(record.Event.Dependencies) != 2 {
+		t.Fatalf("Recovery Enrollment dependencies = %#v, want one per readable Epoch", record.Event.Dependencies)
+	}
+}
+
 func TestRotateKeyEpochAuthorsAuthenticatedTransitionAndReopens(t *testing.T) {
 	ctx := context.Background()
 	state := store.NewMemoryState()
@@ -2006,6 +2096,66 @@ func TestHostedReplicaAttachmentMaterializationAndPull(t *testing.T) {
 	pulled := pulledValue.([]map[string]string)
 	if len(pulled) != 2 || pulled[0]["status"] != "Completed" || pulled[1]["status"] != "Completed" {
 		t.Fatalf("pull summary = %#v", pulled)
+	}
+}
+
+func TestRecoverHostedMemberActivatesPhraseAuthenticatedSparseReplica(t *testing.T) {
+	ctx := context.Background()
+	fixture := newHostedSyncFixture(t)
+
+	sourceDependencies := memoryDependencies(t)
+	sourceDependencies.HTTPClient = fixture.Client
+	source, err := New(ctx, store.NewMemoryState(), sourceDependencies)
+	if err != nil {
+		t.Fatalf("create source Runtime: %v", err)
+	}
+	vaultID, phrase := createVaultWithPhraseForTest(t, source, "Hosted Recovery")
+	created, err := source.Handle(ctx, mustJSON(map[string]any{
+		"type": "CreateHostedReplica", "expectedVaultId": vaultID,
+		"endpoint": fixture.Endpoint, "name": "Recovery Host", "username": "alice", "password": "secret",
+	}))
+	if err != nil {
+		t.Fatalf("create source Hosted Replica: %v", err)
+	}
+	remote := created.(RemoteSummary)
+	if _, err := source.Handle(ctx, mustJSON(map[string]any{
+		"type": "MaterializeHostedReplica", "expectedVaultId": vaultID, "remoteId": remote.RemoteID,
+	})); err != nil {
+		t.Fatalf("materialize source Hosted Replica: %v", err)
+	}
+
+	destinationState := store.NewMemoryState()
+	destinationDependencies := memoryDependencies(t)
+	destinationDependencies.HTTPClient = fixture.Client
+	destination, err := New(ctx, destinationState, destinationDependencies)
+	if err != nil {
+		t.Fatalf("create destination Runtime: %v", err)
+	}
+	recoveredValue, err := destination.Handle(ctx, mustJSON(map[string]any{
+		"type": "RecoverHostedMember", "endpoint": fixture.Endpoint, "username": "alice", "password": "secret",
+		"recoveryPhrase": phrase,
+	}))
+	if err != nil {
+		t.Fatalf("recover Hosted Member: %v", err)
+	}
+	value := destination.vaults[vaultID]
+	recovered, ok := recoveredValue.(map[string]string)
+	if !ok || recovered["memberId"] == "" || recovered["clientCredentialId"] == "" || recovered["eventRecordId"] == "" || value == nil || value.Canonical == nil || !value.Canonical.AuthoringAvailable {
+		t.Fatalf("recovered result = %#v, value = %#v", recoveredValue, value)
+	}
+	if value == nil || len(value.Remotes) != 0 {
+		t.Fatalf("recovered Vault unexpectedly retained Hosted Remotes: %#v", value)
+	}
+	if value.Canonical == nil || len(value.Canonical.ArtifactStorageItemIDs) != 0 {
+		t.Fatalf("recovered sparse Artifact state = %#v", value.Canonical)
+	}
+	restarted, err := New(ctx, destinationState, destinationDependencies)
+	if err != nil {
+		t.Fatalf("restart recovered Runtime: %v", err)
+	}
+	restartedValue := restarted.vaults[vaultID]
+	if restartedValue == nil || restartedValue.Canonical == nil || !restartedValue.Canonical.AuthoringAvailable || restarted.replicas[vaultID] == nil {
+		t.Fatalf("restarted recovered Vault = %#v", restartedValue)
 	}
 }
 
