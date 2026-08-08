@@ -109,7 +109,7 @@ Close the remaining canonical desktop/headless Vault boundaries behind the exist
 contract:
 
 - implement the remaining Authority and Key-Epoch authoring families, including Invitation
-  enrollment, cancellation, and conflict resolution, with their operational ceremony boundaries;
+  enrollment and conflict resolution, with their operational ceremony boundaries;
 - implement Event Re-authoring for eligible unpublished Capture work and the remaining
   dependency-bearing organization cases defined by the Fork specification;
 - complete conflict/rebase authoring and the remaining sparse/on-demand hydration journeys through

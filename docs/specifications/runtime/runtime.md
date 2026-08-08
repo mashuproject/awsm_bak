@@ -53,11 +53,11 @@ Sparse Replica, receiver pull, Artifact hydration, the read-only
 transfer import/export. Focused tests use browser-derived vectors and restart/Host-boundary proofs.
 The Go Runtime also exposes browser-compatible Complete Export/Import for authenticated
 multi-Key-Epoch and adopted-Vacuum closures, including Feature Manifest and Streamable Artifact
-wrappers. Complete Import remains authoring-free. Remaining Authority and Key-Epoch authoring
-families beyond the implemented Membership/Administrator role changes, Invitation creation, Client
-Credential ending, Key Envelope delivery, Feature Activation, and Administrator rotation; Event Re-authoring for
-eligible unpublished Capture work; conflict/rebase authoring; and the remaining cross-surface
-journeys remain explicit parity boundaries.
+wrappers. Complete Import remains authoring-free. The Go Runtime implements Membership and
+Administrator role changes, Invitation creation and cancellation, Client Credential ending, Key
+Envelope delivery, Feature Activation, and Administrator rotation. Invitation enrollment and
+conflict resolution; Event Re-authoring for eligible unpublished Capture work; conflict/rebase
+authoring; and the remaining cross-surface journeys remain explicit parity boundaries.
 Runtime projections expose Complete, Sparse, and Unavailable Replica state, with on-demand
 hydration as the Sparse action. Capture remains extension-only, and Fork itself copies
 authenticated state into a fresh Initial Baseline without re-authoring source Content Events.

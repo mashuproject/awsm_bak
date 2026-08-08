@@ -90,6 +90,21 @@ base64url-encoded 32-byte Redemption and Cancellation Capability seeds. The Runt
 persist those seeds or impersonate the Redemption Authority; subsequent Join, Acceptance, and
 Cancellation ceremonies require the exact external authority receipts defined by the Vault
 Authority specification.
+`CancelInvitation` records a type-7 Cancellation Event after the independently operated authority
+has verified the Cancellation Capability and supplied its exact canonical request and cancelled
+receipt:
+
+```json
+{
+  "type": "CancelInvitation",
+  "expectedVaultId": "<vault id>",
+  "cancellationRequest": "<canonical request CBOR>",
+  "cancelledReceipt": "<canonical receipt CBOR>"
+}
+```
+
+Both payloads use unpadded base64url. The Runtime does not manufacture, replay, or persist
+authority challenges, receipt keys, or capability secrets.
 `ActivateFeature` authors a type-14 Feature Activation Event from complete canonical Feature
 Manifest bytes, stores each Manifest as an authenticated dependency, and advances the current
 Required Feature Set while preserving the Baseline's original Feature Set identity.

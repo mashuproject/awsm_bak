@@ -1321,6 +1321,17 @@ func (r *Runtime) Handle(ctx context.Context, raw json.RawMessage) (any, error) 
 			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "CreateInvitation contains invalid fields")
 		}
 		return r.createInvitation(ctx, input.ExpectedVaultID, input.Capabilities, input.RedemptionAuthorityID, input.ReceiptVerificationKey)
+	case "CancelInvitation":
+		var input struct {
+			Type                string `json:"type"`
+			ExpectedVaultID     string `json:"expectedVaultId"`
+			CancellationRequest string `json:"cancellationRequest"`
+			CancelledReceipt    string `json:"cancelledReceipt"`
+		}
+		if err := decode(raw, &input); err != nil {
+			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "CancelInvitation contains invalid fields")
+		}
+		return r.cancelInvitation(ctx, input.ExpectedVaultID, input.CancellationRequest, input.CancelledReceipt)
 	case "ActivateFeature":
 		var input struct {
 			Type            string   `json:"type"`

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -308,6 +309,94 @@ func TestCreateInvitationAuthorsPortableInvitationAndReturnsCapabilitySecrets(t 
 	}
 	if _, err := base64.RawURLEncoding.DecodeString(created["cancellationSecret"]); err != nil {
 		t.Fatalf("cancellation secret encoding: %v", err)
+	}
+}
+
+func TestCancelInvitationAuthorsVerifiedTerminalEventFromAuthorityReceipt(t *testing.T) {
+	ctx := context.Background()
+	runtime, err := New(ctx, store.NewMemoryState(), memoryDependencies(t))
+	if err != nil {
+		t.Fatalf("create Runtime: %v", err)
+	}
+	vaultID, _ := createVaultWithPhraseForTest(t, runtime, "Invitation cancellation")
+	value := runtime.vaults[vaultID]
+	memberID, err := decodeHexIdentifier(value.Canonical.MemberID)
+	if err != nil {
+		t.Fatalf("decode member ID: %v", err)
+	}
+	vaultIdentifier, err := decodeHexIdentifier(vaultID)
+	if err != nil {
+		t.Fatalf("decode Vault ID: %v", err)
+	}
+	capability, err := canonical.EncodeValue(canonical.Map{
+		0: "awsm.vault", 1: memberID[:], 2: vaultIdentifier[:], 3: "awsm.vault.join", 4: []byte{},
+	})
+	if err != nil {
+		t.Fatalf("encode Invitation capability: %v", err)
+	}
+	receiptPrivate := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{10}, ed25519.SeedSize))
+	createdResult, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type":                   "CreateInvitation",
+		"expectedVaultId":        vaultID,
+		"capabilities":           []string{base64.RawURLEncoding.EncodeToString(capability)},
+		"redemptionAuthorityId":  base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32)),
+		"receiptVerificationKey": base64.RawURLEncoding.EncodeToString(receiptPrivate.Public().(ed25519.PublicKey)),
+	}))
+	if err != nil {
+		t.Fatalf("CreateInvitation: %v", err)
+	}
+	created := createdResult.(map[string]string)
+	invitationID, err := decodeHexIdentifier(created["invitationId"])
+	if err != nil {
+		t.Fatalf("decode Invitation ID: %v", err)
+	}
+	cancellationSeed, err := base64.RawURLEncoding.DecodeString(created["cancellationSecret"])
+	if err != nil {
+		t.Fatalf("decode Cancellation capability: %v", err)
+	}
+	cancellationPrivate := ed25519.NewKeyFromSeed(cancellationSeed)
+	challenge := bytes.Repeat([]byte{11}, 32)
+	cancellationTranscript, err := canonical.Transcript("awsm:invitation-cancel-request:v1", invitationID[:], challenge)
+	if err != nil {
+		t.Fatalf("Cancellation request transcript: %v", err)
+	}
+	request := canonical.Map{0: invitationID[:], 1: challenge, 2: ed25519.Sign(cancellationPrivate, cancellationTranscript)}
+	requestBytes, err := canonical.EncodeValue(request)
+	if err != nil {
+		t.Fatalf("encode Cancellation request: %v", err)
+	}
+	requestIDTranscript, err := canonical.Transcript("awsm:invitation-cancel-request-id:v1", requestBytes)
+	if err != nil {
+		t.Fatalf("Cancellation request ID transcript: %v", err)
+	}
+	requestID := sha256.Sum256(requestIDTranscript)
+	receiptID := [32]byte{}
+	copy(receiptID[:], bytes.Repeat([]byte{12}, 32))
+	receiptPrefix := canonical.Map{0: invitationID[:], 1: uint64(2), 2: requestID[:], 3: nil, 4: receiptID[:]}
+	receiptTranscript, err := canonical.Transcript("awsm:invitation-receipt:v1", mustCanonical(receiptPrefix))
+	if err != nil {
+		t.Fatalf("Cancellation receipt transcript: %v", err)
+	}
+	receipt := canonical.Map{0: invitationID[:], 1: uint64(2), 2: requestID[:], 3: nil, 4: receiptID[:], 5: ed25519.Sign(receiptPrivate, receiptTranscript)}
+	result, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type":                "CancelInvitation",
+		"expectedVaultId":     vaultID,
+		"cancellationRequest": base64.RawURLEncoding.EncodeToString(requestBytes),
+		"cancelledReceipt":    base64.RawURLEncoding.EncodeToString(mustCanonical(receipt)),
+	}))
+	if err != nil {
+		t.Fatalf("CancelInvitation: %v", err)
+	}
+	if cancelled, ok := result.(map[string]string); !ok || cancelled["invitationId"] != created["invitationId"] || cancelled["eventRecordId"] == "" {
+		t.Fatalf("CancelInvitation result = %#v", result)
+	}
+	authorityResult, err := runtime.Handle(ctx, mustJSON(map[string]any{"type": "GetAuthorityState", "expectedVaultId": vaultID}))
+	if err != nil {
+		t.Fatalf("GetAuthorityState after CancelInvitation: %v", err)
+	}
+	authority := authorityResult.(AuthorityStateSummary)
+	if len(authority.ActiveInvitationIDs) != 0 || len(authority.InvitationConflictIDs) != 0 {
+		t.Fatalf("authority after CancelInvitation = %#v", authority)
 	}
 }
 
