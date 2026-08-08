@@ -248,6 +248,14 @@ without either popup reloading. The loopback TLS terminator is test-only. These 
 evidence, not evidence of a named deployment, Firefox behavior, full Authority-branch
 synchronization, or global freshness.
 
+The Go Replica suite additionally proves deterministic Content replay across three independently
+admitted Replicas with different sibling arrival orders, a multi-parent merge, equal Library
+projections, equal causal and Authority Frontiers, and exact retained Event bytes. The extension's
+Library page restores the optional Desktop Runtime grant and uses the same Vault-ID router as the
+popup, so a selected desktop Vault is read from the desktop Runtime rather than a browser-local
+duplicate. The native Brave lane is separate browser-capture evidence and does not change the
+extension-only Capture boundary.
+
 The shared presentation package has a separate component-level review surface. Run
 `corepack pnpm test:ui` for the deterministic theme-contract unit tests,
 `corepack pnpm ui:storybook` for interactive inspection or `corepack pnpm ui:storybook:build` for

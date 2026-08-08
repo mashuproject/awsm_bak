@@ -302,6 +302,9 @@ and `xvfb-run`. The CI equivalent is `AWSM_RUNTIME_WAILS=1 corepack pnpm test:ru
 optional `corepack pnpm test:e2e:brave` lane builds the canonical extension and proves real page
 capture in an installed Brave browser through its CDP endpoint. It uses the `com.brave.Browser`
 Flatpak by default; set `AWSM_BRAVE_EXECUTABLE` for a directly installed Brave binary.
+When a Desktop Runtime grant is restored, the separate Library page uses the same Vault selection
+router and reads a selected desktop Vault through the Runtime API rather than copying its bytes
+into browser storage.
 
 The shared application components live in `packages/ui`. Start the interactive Storybook when
 checking one component or state in isolation:
