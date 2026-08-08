@@ -177,6 +177,86 @@ test("Wails Vault surface renders the selected Vault management slice", async ({
   });
 });
 
+test("Wails Vault projections reconcile from a Runtime invalidation without reload", async ({
+  page,
+}) => {
+  const vaultId = "a".repeat(64);
+  await page.addInitScript((selectedVaultId) => {
+    const state = {
+      selectedVaultId,
+      vaults: [
+        {
+          vaultId: selectedVaultId,
+          label: "Live archive",
+          lifecycle: "Open",
+          access: "Authoring",
+          clientCredentialId: "2".repeat(64),
+          selected: true,
+        },
+      ],
+    };
+    const authority = {
+      vaultId: selectedVaultId,
+      activeMemberIds: ["1".repeat(64)],
+      administratorIds: ["1".repeat(64)],
+      administratorConflicts: [],
+      activeInvitationIds: [],
+      invitationConflictIds: [],
+      activeClientCredentialIds: ["2".repeat(64)],
+      effectiveRecoveryCredentialIds: ["3".repeat(64)],
+      recoveryConflicts: [],
+      keyEpochConflicts: [],
+      currentKeyEpochIds: ["4".repeat(64)],
+      lifecycle: "Open",
+    };
+    const listeners = new Set<() => void>();
+    const emitInvalidation = () => listeners.forEach((listener) => listener());
+    (globalThis as unknown as { runtime: unknown }).runtime = {
+      EventsOn: (name: string, listener: () => void) => {
+        if (name === "awsm.runtime.invalidated") listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    };
+    (globalThis as unknown as { mutateAndEmit: () => void }).mutateAndEmit = () => {
+      state.vaults[0].access = "ReadOnly";
+      authority.activeClientCredentialIds = [];
+      emitInvalidation();
+    };
+    (globalThis as unknown as { go: unknown }).go = {
+      main: {
+        desktopBinding: {
+          PendingPairings: async () => [],
+          ListGrants: async () => [],
+          RuntimeAddress: () => "127.0.0.1:37373",
+          VaultCommand: async (request: { type: string }) => {
+            if (request.type === "GetState") return state;
+            if (request.type === "ListLibraryProjection")
+              return {
+                captures: [],
+                collections: [],
+                folders: [],
+                tags: [],
+                tagAssignments: [],
+                notes: [],
+                conflicts: [],
+              };
+            if (request.type === "ListRemotes") return [];
+            if (request.type === "GetAuthorityState") return authority;
+            throw new Error(`unexpected command: ${request.type}`);
+          },
+        },
+      },
+    };
+  }, vaultId);
+
+  await page.goto("/");
+  await expect(page.getByText("Live archive · Open · Authoring")).toBeVisible();
+  await page.evaluate(() => (globalThis as unknown as { mutateAndEmit: () => void }).mutateAndEmit());
+  await expect(page.getByText("Live archive · Open · ReadOnly")).toBeVisible();
+  await expect(page.getByText("Client credentials", { exact: true }).locator(".."))
+    .toContainText("0");
+});
+
 test("Wails Library surface releases local Artifact bytes and refreshes its projection", async ({
   page,
 }, testInfo) => {

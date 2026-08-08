@@ -196,12 +196,18 @@ type DesktopBinding = {
   RejectTransfer?: (transferId: string) => MaybePromise<void>;
 };
 
+type DesktopEventRuntime = {
+  readonly EventsOn?: (eventName: string, callback: () => void) => (() => void) | undefined;
+  readonly EventsOff?: (eventName: string, callback?: () => void) => void;
+};
+
 declare global {
   var go:
     | {
         readonly main?: { readonly desktopBinding?: DesktopBinding };
       }
     | undefined;
+  var runtime: DesktopEventRuntime | undefined;
 }
 
 type Section = "vaults" | "library" | "connections" | "settings";
@@ -2115,24 +2121,40 @@ function DesktopApp(): React.ReactElement {
   const [status, setStatus] = React.useState<string>();
   const [announce, setAnnounce] = React.useState("");
 
-  const refresh = React.useCallback(async () => {
+  const refreshGeneration = React.useRef(0);
+  const refreshPending = React.useRef(false);
+  const refreshInFlight = React.useRef<Promise<void> | undefined>(undefined);
+  const reconcile = React.useCallback(async () => {
+    const generation = ++refreshGeneration.current;
+    const isCurrent = () => refreshGeneration.current === generation;
     const nextBinding = getBinding();
-    setBinding(nextBinding);
+    if (isCurrent()) setBinding(nextBinding);
     if (nextBinding === undefined) {
-      setLoading(false);
-      setError("Desktop Runtime bindings are unavailable.");
+      if (isCurrent()) {
+        setLoading(false);
+        setError("Desktop Runtime bindings are unavailable.");
+      }
       return;
     }
     try {
       const nextAddress = await nextBinding.RuntimeAddress();
+      const nextVersion =
+        nextBinding.RuntimeVersion === undefined ? undefined : await nextBinding.RuntimeVersion();
+      const nextPairings = await nextBinding.PendingPairings();
+      const nextGrants = await nextBinding.ListGrants();
+      const nextTransfers =
+        nextBinding.PendingTransfers === undefined
+          ? undefined
+          : await nextBinding.PendingTransfers();
+      if (!isCurrent()) return;
       setAddress(nextAddress);
-      if (nextBinding.RuntimeVersion !== undefined) setVersion(await nextBinding.RuntimeVersion());
-      setPairings(await nextBinding.PendingPairings());
-      setGrants(await nextBinding.ListGrants());
-      if (nextBinding.PendingTransfers !== undefined)
-        setTransfers(await nextBinding.PendingTransfers());
+      if (nextVersion !== undefined) setVersion(nextVersion);
+      setPairings(nextPairings);
+      setGrants(nextGrants);
+      if (nextBinding.PendingTransfers !== undefined) setTransfers(nextTransfers ?? []);
       if (nextBinding.VaultCommand !== undefined) {
         const nextState = (await nextBinding.VaultCommand({ type: "GetState" })) as RuntimeState;
+        if (!isCurrent()) return;
         setState(nextState);
         if (nextState.selectedVaultId !== undefined) {
           const [nextLibraryProjection, nextRemotes, nextAuthority] = await Promise.all([
@@ -2149,6 +2171,7 @@ function DesktopApp(): React.ReactElement {
               expectedVaultId: nextState.selectedVaultId,
             }) as Promise<AuthorityState>,
           ]);
+          if (!isCurrent()) return;
           setLibraryProjection(nextLibraryProjection);
           setRemotes(nextRemotes);
           setAuthority(nextAuthority);
@@ -2158,14 +2181,43 @@ function DesktopApp(): React.ReactElement {
           setAuthority(undefined);
         }
       }
-      setError(undefined);
-      setAnnounce("Runtime state updated");
+      if (isCurrent()) {
+        setError(undefined);
+        setAnnounce("Runtime state updated");
+      }
     } catch (reason) {
-      setError(errorMessage(reason));
+      if (isCurrent()) setError(errorMessage(reason));
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
-  }, []);
+  }, [emptyLibraryProjection]);
+
+  const refresh = React.useCallback(() => {
+    refreshPending.current = true;
+    if (refreshInFlight.current !== undefined) return refreshInFlight.current;
+    const work = (async () => {
+      while (refreshPending.current) {
+        refreshPending.current = false;
+        await reconcile();
+      }
+    })();
+    refreshInFlight.current = work.finally(() => {
+      refreshInFlight.current = undefined;
+      if (refreshPending.current) void refresh();
+    });
+    return refreshInFlight.current;
+  }, [reconcile]);
+
+  React.useEffect(() => {
+    const eventRuntime = globalThis.runtime;
+    if (eventRuntime?.EventsOn === undefined) return;
+    const callback = () => void refresh();
+    const unsubscribe = eventRuntime.EventsOn("awsm.runtime.invalidated", callback);
+    return () => {
+      if (unsubscribe !== undefined) unsubscribe();
+      else eventRuntime.EventsOff?.("awsm.runtime.invalidated", callback);
+    };
+  }, [refresh]);
 
   React.useEffect(() => {
     void refresh();
