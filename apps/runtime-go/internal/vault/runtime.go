@@ -65,12 +65,14 @@ func commandError(id, message string) *CommandError {
 }
 
 type VaultSummary struct {
-	VaultID            string  `json:"vaultId"`
-	Label              *string `json:"label"`
-	Lifecycle          string  `json:"lifecycle"`
-	Access             string  `json:"access"`
-	ClientCredentialID string  `json:"clientCredentialId,omitempty"`
-	Selected           bool    `json:"selected"`
+	VaultID              string  `json:"vaultId"`
+	Label                *string `json:"label"`
+	Lifecycle            string  `json:"lifecycle"`
+	Access               string  `json:"access"`
+	ReplicaAvailability  string  `json:"replicaAvailability"`
+	MissingArtifactCount int     `json:"missingArtifactCount"`
+	ClientCredentialID   string  `json:"clientCredentialId,omitempty"`
+	Selected             bool    `json:"selected"`
 }
 
 type PendingCreationState struct {
@@ -1062,20 +1064,48 @@ func (r *Runtime) stateLocked() ClientState {
 		if value.Lifecycle == "Open" && value.Canonical != nil && value.Canonical.AuthoringAvailable {
 			access = "Authoring"
 		}
+		replicaAvailability, missingArtifactCount := r.replicaAvailabilityLocked(id)
 		clientCredentialID := ""
 		if value.Canonical != nil {
 			clientCredentialID = value.Canonical.ClientCredentialID
 		}
 		state.Vaults = append(state.Vaults, VaultSummary{
-			VaultID:            value.VaultID,
-			Label:              cloneString(value.Label),
-			Lifecycle:          value.Lifecycle,
-			Access:             access,
-			ClientCredentialID: clientCredentialID,
-			Selected:           value.VaultID == r.selected,
+			VaultID:              value.VaultID,
+			Label:                cloneString(value.Label),
+			Lifecycle:            value.Lifecycle,
+			Access:               access,
+			ReplicaAvailability:  replicaAvailability,
+			MissingArtifactCount: missingArtifactCount,
+			ClientCredentialID:   clientCredentialID,
+			Selected:             value.VaultID == r.selected,
 		})
 	}
 	return state
+}
+
+// replicaAvailabilityLocked derives the user-facing local availability state
+// from the authenticated Library projection and loaded Object closure. It is
+// intentionally not persisted: a restarted Runtime rebuilds the same answer
+// from authenticated Records and local opaque bytes.
+func (r *Runtime) replicaAvailabilityLocked(vaultID string) (string, int) {
+	replica := r.replicas[vaultID]
+	if replica == nil {
+		return "Unavailable", 0
+	}
+	projection, err := ProjectLibraryProjection(replica)
+	if err != nil {
+		return "Unavailable", 0
+	}
+	missing := 0
+	for _, capture := range projection.Captures {
+		if capture.Lifecycle == "Active" && !capture.AvailableLocally {
+			missing++
+		}
+	}
+	if missing > 0 {
+		return "Sparse", missing
+	}
+	return "Complete", 0
 }
 
 func (r *Runtime) Handle(ctx context.Context, raw json.RawMessage) (any, error) {

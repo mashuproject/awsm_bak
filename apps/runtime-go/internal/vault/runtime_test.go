@@ -254,6 +254,34 @@ func TestRuntimeGetAuthorityStateCommandReturnsPortableProjection(t *testing.T) 
 	}
 }
 
+func TestStateExposesSparseReplicaAvailability(t *testing.T) {
+	ctx := context.Background()
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, store.NewMemoryState(), dependencies)
+	if err != nil {
+		t.Fatalf("create Runtime: %v", err)
+	}
+	vaultID := createVaultForTest(t, runtime, "Sparse projection")
+	artifactID := filledCreationID(243)
+	admitForkBundleRegisteredEvent(t, runtime, dependencies, vaultID, artifactID)
+
+	state := runtime.State()
+	if len(state.Vaults) != 1 {
+		t.Fatalf("Runtime state Vaults = %#v", state.Vaults)
+	}
+	if state.Vaults[0].ReplicaAvailability != "Sparse" || state.Vaults[0].MissingArtifactCount != 1 {
+		t.Fatalf("sparse Replica projection = %#v", state.Vaults[0])
+	}
+	restarted, err := New(ctx, runtime.store, dependencies)
+	if err != nil {
+		t.Fatalf("restart Runtime: %v", err)
+	}
+	restartedState := restarted.State()
+	if len(restartedState.Vaults) != 1 || restartedState.Vaults[0].ReplicaAvailability != "Sparse" || restartedState.Vaults[0].MissingArtifactCount != 1 {
+		t.Fatalf("restarted sparse Replica projection = %#v", restartedState.Vaults)
+	}
+}
+
 func TestConfirmVaultCreationCommitsCanonicalReplicaAndTrustedSecrets(t *testing.T) {
 	ctx := context.Background()
 	state := store.NewMemoryState()

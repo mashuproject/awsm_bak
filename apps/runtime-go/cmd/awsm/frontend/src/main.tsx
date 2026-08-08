@@ -35,6 +35,8 @@ type VaultSummary = {
   readonly label: string | null;
   readonly lifecycle: string;
   readonly access: string;
+  readonly replicaAvailability?: "Complete" | "Sparse" | "Unavailable";
+  readonly missingArtifactCount?: number;
   readonly clientCredentialId?: string;
   readonly selected: boolean;
 };
@@ -227,6 +229,15 @@ function displayVaultLabel(label: string | null | undefined): string {
   return label === null || label === undefined || label.length === 0 ? "Untitled Vault" : label;
 }
 
+function replicaAvailabilityLabel(vault: VaultSummary): string {
+  if (vault.replicaAvailability === "Sparse") {
+    const count = vault.missingArtifactCount ?? 0;
+    return `${count} Artifact${count === 1 ? "" : "s"} needs hydration`;
+  }
+  if (vault.replicaAvailability === "Unavailable") return "Replica unavailable";
+  return "Replica complete";
+}
+
 function displayCaptureTitle(title: string | null, finalUrl: string): string {
   if (title !== null && title.length > 0) return title;
   try {
@@ -338,7 +349,7 @@ function DesktopSidebar({
         </label>
         {vault !== undefined ? (
           <span className="text-sm text-awsm-text-muted">
-            {vault.lifecycle} · {vault.access}
+            {vault.lifecycle} · {vault.access} · {replicaAvailabilityLabel(vault)}
           </span>
         ) : null}
       </div>
@@ -1676,7 +1687,8 @@ function VaultsView({
                   {displayVaultLabel(vault.label)}
                 </strong>
                 <span className="text-sm font-semibold text-awsm-text-muted">
-                  {displayVaultLabel(vault.label)} · {vault.lifecycle} · {vault.access}
+                  {displayVaultLabel(vault.label)} · {vault.lifecycle} · {vault.access} ·{" "}
+                  {replicaAvailabilityLabel(vault)}
                 </span>
               </div>
               {vault.selected ? (
@@ -1716,7 +1728,7 @@ function VaultsView({
               {displayVaultLabel(selected.label)}
             </h2>
             <p className="text-base leading-relaxed text-awsm-text-muted">
-              {selected.lifecycle} · {selected.access}
+              {selected.lifecycle} · {selected.access} · {replicaAvailabilityLabel(selected)}
             </p>
           </div>
           <ActionRow>

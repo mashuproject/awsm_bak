@@ -92,11 +92,14 @@ extension-to-desktop Capture Bundle bridge is intentionally out of scope for thi
 one-use move boundary now carries the authenticated opaque closure and trusted local secrets inside
 its encrypted transfer envelope, so an accepted package reopens the Replica on the destination.
 The Runtime command boundary also produces and accepts the browser-compatible Complete Export
-container for the supported single-Key-Epoch closure, including authenticated Feature Manifest and
-Streamable Artifact wrappers. Imported Replicas are readable but have no selected authoring Credential or private key.
-Event Re-authoring for eligible unpublished Capture work, remaining Authority/Key-Epoch event families
-beyond Membership/Administrator role changes, Client Credential ending, Key Envelope delivery, Feature Activation, and Administrator rotation, conflict/rebase projections, sparse-Replica state, and the remaining Wails workflow coverage beyond
-the current Vault-management controls and cross-surface journeys.
+container for authenticated multi-Key-Epoch and adopted-Vacuum closures, including Feature
+Manifest and Streamable Artifact wrappers. Imported Replicas are readable but have no selected
+authoring Credential or private key. Event Re-authoring for eligible unpublished Capture work,
+remaining Authority/Key-Epoch authoring families beyond the implemented Membership/Administrator
+role changes, Client Credential ending, Key Envelope delivery, Feature Activation, and
+Administrator rotation, conflict/rebase authoring, and remaining cross-surface journeys are
+unresolved. Runtime projections expose Complete, Sparse, and Unavailable Replica state; on-demand
+hydration remains the user action for Sparse content.
 
 The move boundary is deliberately separate from Vault synchronization. A source Client seals the
 canonical opaque closure and trusted local secrets with a one-use secret, stages it in the desktop
@@ -143,6 +146,5 @@ test are `script/package-linux-appimage.sh` and `script/packaged-desktop-smoke.m
 These proofs cover the process boundary, Runtime API grant lifecycle, canonical Vault Command
 envelope, authenticated replay, Hosted Replica sync boundaries, Library Storage Relief and
 hydration, and encrypted transfer staging. They do not claim desktop page Capture, the
-extension-to-desktop Capture Bundle bridge, advanced Complete Export closures beyond the supported
-single-Key-Epoch vectors, Event Re-authoring for eligible unpublished Capture work, or user-facing
-search/AI semantics.
+extension-to-desktop Capture Bundle bridge, Event Re-authoring for eligible unpublished Capture
+work, unresolved Authority authoring families, or user-facing search/AI semantics.

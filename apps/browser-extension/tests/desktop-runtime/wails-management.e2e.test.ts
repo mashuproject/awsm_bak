@@ -61,6 +61,8 @@ test("Wails Vault surface renders the selected Vault management slice", async ({
           label: "Personal archive",
           lifecycle: "Open",
           access: "Authoring",
+          replicaAvailability: "Complete",
+          missingArtifactCount: 0,
           clientCredentialId: "2".repeat(64),
           selected: true,
         },
@@ -131,7 +133,9 @@ test("Wails Vault surface renders the selected Vault management slice", async ({
   await expect(
     page.getByRole("navigation", { name: "Primary" }).getByRole("button", { name: "Vaults" }),
   ).toHaveCount(1);
-  await expect(page.getByText("Personal archive · Open · Authoring")).toBeVisible();
+  await expect(
+    page.getByText("Personal archive · Open · Authoring · Replica complete"),
+  ).toBeVisible();
   await expect(page.getByRole("button", { name: "Fork this Vault" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Vault authority" })).toBeVisible();
   await expect(page.getByText("Active members", { exact: true })).toBeVisible();
@@ -190,6 +194,8 @@ test("Wails Vault projections reconcile from a Runtime invalidation without relo
           label: "Live archive",
           lifecycle: "Open",
           access: "Authoring",
+          replicaAvailability: "Complete",
+          missingArtifactCount: 0,
           clientCredentialId: "2".repeat(64),
           selected: true,
         },
@@ -210,7 +216,10 @@ test("Wails Vault projections reconcile from a Runtime invalidation without relo
       lifecycle: "Open",
     };
     const listeners = new Set<() => void>();
-    const emitInvalidation = () => listeners.forEach((listener) => listener());
+    const emitInvalidation = () =>
+      listeners.forEach((listener) => {
+        listener();
+      });
     (globalThis as unknown as { runtime: unknown }).runtime = {
       EventsOn: (name: string, listener: () => void) => {
         if (name === "awsm.runtime.invalidated") listeners.add(listener);
@@ -219,6 +228,8 @@ test("Wails Vault projections reconcile from a Runtime invalidation without relo
     };
     (globalThis as unknown as { mutateAndEmit: () => void }).mutateAndEmit = () => {
       state.vaults[0].access = "ReadOnly";
+      state.vaults[0].replicaAvailability = "Sparse";
+      state.vaults[0].missingArtifactCount = 1;
       authority.activeClientCredentialIds = [];
       emitInvalidation();
     };
@@ -250,11 +261,16 @@ test("Wails Vault projections reconcile from a Runtime invalidation without relo
   }, vaultId);
 
   await page.goto("/");
-  await expect(page.getByText("Live archive · Open · Authoring")).toBeVisible();
-  await page.evaluate(() => (globalThis as unknown as { mutateAndEmit: () => void }).mutateAndEmit());
-  await expect(page.getByText("Live archive · Open · ReadOnly")).toBeVisible();
-  await expect(page.getByText("Client credentials", { exact: true }).locator(".."))
-    .toContainText("0");
+  await expect(page.getByText("Live archive · Open · Authoring · Replica complete")).toBeVisible();
+  await page.evaluate(() =>
+    (globalThis as unknown as { mutateAndEmit: () => void }).mutateAndEmit(),
+  );
+  await expect(
+    page.getByText("Live archive · Open · ReadOnly · 1 Artifact needs hydration"),
+  ).toBeVisible();
+  await expect(page.getByText("Client credentials", { exact: true }).locator("..")).toContainText(
+    "0",
+  );
 });
 
 test("Wails Library surface releases local Artifact bytes and refreshes its projection", async ({

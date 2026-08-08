@@ -105,27 +105,24 @@ not co-own one Replica namespace; that becomes ordinary Replica synchronization.
 
 **Status:** Candidate
 
-Finish the remaining canonical desktop/headless Vault boundaries behind the existing process
-contract. The Go Runtime now covers authenticated Record/Object and Event-DAG replay, browser-derived
-cryptographic primitives, Library projection, Hosted Replica creation/attachment/materialization,
-receiver pull, Artifact hydration, Storage Relief, Garbage Collection, and encrypted Go-to-Go
-transfer closure import/export, including authenticated Membership, Administrator role, Client
-Credential, Key Delivery, Feature Activation, and Key Epoch authority events. It also accepts and produces the browser-compatible Complete Export
-container for the supported single-Key-Epoch closure and installs it as an authoring-free readable
-Replica.
+Close the remaining canonical desktop/headless Vault boundaries behind the existing process
+contract:
 
-Remaining work is deliberately narrower: implement Event Re-authoring for eligible unpublished Capture
-work; implement the remaining Authority and Key-Epoch event families beyond Membership/Administrator
-role changes, Client Credential ending, Key Envelope delivery, Feature Activation, and the authenticated Administrator type-12 rotation; expose conflict/rebase and sparse-Replica state; and finish Wails
-workflow coverage beyond the current Vault-management controls, plus cross-surface journeys. State-only Fork now copies the authenticated Library checkpoint, remaps content identities,
-and rewraps its object and Feature Manifest closure without source Content Event re-authoring.
-Capture remains extension-only and the extension-to-desktop Capture Bundle bridge is out of scope for
-this release.
+- implement the remaining Authority and Key-Epoch authoring families, including Invitation
+  creation, enrollment, cancellation, and conflict resolution, with their operational ceremony
+  boundaries;
+- implement Event Re-authoring for eligible unpublished Capture work and the remaining
+  dependency-bearing organization cases defined by the Fork specification;
+- complete conflict/rebase authoring and the remaining sparse/on-demand hydration journeys through
+  live Wails and Runtime projections; and
+- complete the remaining browser-to-desktop Vault journeys and formal cross-language,
+  restart/crash, authority/conflict, sparse-Replica, and multi-Replica convergence evidence.
 
-Promotion requires formal cross-language vectors plus restart/crash, authority, conflict, sparse
-Replica, multi-Remote convergence, sync-proof, Wails, and browser-to-desktop tests. Keep the Command
-contract and move semantics in the living Runtime documents; this entry records only unresolved
-work.
+Capture remains extension-only and the extension-to-desktop Capture Bundle bridge is out of scope
+for this release. Complete Export/Import, authenticated replay, Library projection, Hosted Replica
+behavior, pull, hydration, Storage Relief, Garbage Collection, Fork checkpointing, Vacuum adoption,
+multi-Key-Epoch closures, and adopted-Vacuum closures are implemented current behavior and are not
+roadmap items.
 
 ## Zero-knowledge web Client
 

@@ -51,14 +51,16 @@ creation/attachment/materialization, phrase-authenticated Hosted recovery into a
 Sparse Replica, receiver pull, Artifact hydration, the read-only
 `GetAuthorityState` projection (including Invitation state), and encrypted Go-to-Go
 transfer import/export. Focused tests use browser-derived vectors and restart/Host-boundary proofs.
-The Go Runtime also exposes browser-compatible Complete Export/Import for the supported
-single-Key-Epoch closure, including authenticated Feature Manifest and Streamable Artifact wrappers;
-Complete Import remains authoring-free, including authenticated multi-Key-Epoch and adopted-Vacuum
-closures. Remaining Authority and Key-Epoch event families beyond Membership/Administrator role changes, Client Credential ending, Key Envelope delivery, Feature Activation, and Administrator rotation, conflict/rebase projections, sparse-Replica state,
-and the remaining Wails workflow controls and cross-surface journeys remain explicit parity
-boundaries. Capture remains extension-only, and Event Re-authoring for eligible unpublished Capture
-work remains a separate unresolved boundary; Fork itself copies authenticated state into a fresh
-Initial Baseline and does not re-author source Content Events.
+The Go Runtime also exposes browser-compatible Complete Export/Import for authenticated
+multi-Key-Epoch and adopted-Vacuum closures, including Feature Manifest and Streamable Artifact
+wrappers. Complete Import remains authoring-free. Remaining Authority and Key-Epoch authoring
+families beyond the implemented Membership/Administrator role changes, Client Credential ending,
+Key Envelope delivery, Feature Activation, and Administrator rotation; Event Re-authoring for
+eligible unpublished Capture work; conflict/rebase authoring; and the remaining cross-surface
+journeys remain explicit parity boundaries.
+Runtime projections expose Complete, Sparse, and Unavailable Replica state, with on-demand
+hydration as the Sparse action. Capture remains extension-only, and Fork itself copies
+authenticated state into a fresh Initial Baseline without re-authoring source Content Events.
 Unsupported desktop page Capture remains intentional.
 
 ## 2.1 Desktop Command and move boundary
