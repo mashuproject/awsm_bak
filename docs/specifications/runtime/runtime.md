@@ -56,11 +56,12 @@ multi-Key-Epoch and adopted-Vacuum closures, including Feature Manifest and Stre
 wrappers. Complete Import remains authoring-free. The Go Runtime implements Membership and
 Administrator role changes, Invitation creation and Acceptance recording, cancellation, Client
 Credential ending, Key Envelope delivery, Feature Activation, Administrator rotation, Invitation
-conflict resolution, and same-Vault Event Re-authoring for eligible stale Bundle Registered
-Capture Events. The external Redemption Authority and joining Client exchange the Join Request and
-receipts outside the Runtime; `AcceptInvitation` is the authenticated servicing-Client boundary
-that commits their exact result. Conflict/rebase authoring and the remaining cross-surface
-journeys remain explicit parity boundaries.
+conflict resolution, authenticated Collection, Folder, Capture, Tag, and Note Content authoring
+with scoped conflict resolution, and same-Vault Event Re-authoring for eligible stale Bundle
+Registered Capture Events. The external Redemption Authority and joining Client exchange the Join
+Request and receipts outside the Runtime; `AcceptInvitation` is the authenticated servicing-Client
+boundary that commits their exact result. The extension-to-desktop Capture Bundle bridge remains
+out of scope.
 Runtime projections expose Complete, Sparse, and Unavailable Replica state, with on-demand
 hydration as the Sparse action. Capture remains extension-only, and Fork itself copies
 authenticated state into a fresh Initial Baseline without re-authoring source Content Events.

@@ -706,8 +706,17 @@ func ProjectLibraryProjection(replica *Replica) (LibraryProjection, error) {
 			var contentID *canonical.Identifier
 			var restoreID *canonical.Identifier
 			for _, cause := range causes {
-				if prior, exists := note.versions[cause]; exists && prior.contentID != nil {
-					candidate := *prior.contentID
+				if prior, exists := note.versions[cause]; exists {
+					var candidateID *canonical.Identifier
+					if prior.contentID != nil {
+						candidateID = prior.contentID
+					} else if prior.restoreID != nil {
+						candidateID = prior.restoreID
+					}
+					if candidateID == nil {
+						continue
+					}
+					candidate := *candidateID
 					if event.Type == 30 {
 						contentID = &candidate
 					} else if restoreID == nil {

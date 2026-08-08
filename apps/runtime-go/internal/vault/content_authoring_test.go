@@ -118,3 +118,197 @@ func TestRevertCollectionMergeAuthorsAuthenticatedEventAndRestarts(t *testing.T)
 		t.Fatalf("restarted projection conflicts = %#v", restartedProjection.(LibraryProjection).Conflicts)
 	}
 }
+
+func TestCreateFolderAuthorsContentEventAndRestarts(t *testing.T) {
+	ctx := context.Background()
+	state := store.NewMemoryState()
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatalf("create Runtime: %v", err)
+	}
+	vaultID, _ := createVaultWithPhraseForTest(t, runtime, "Folder authoring")
+	result, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "CreateFolder", "expectedVaultId": vaultID, "name": "Archive", "parentFolderId": nil,
+	}))
+	if err != nil {
+		t.Fatalf("CreateFolder: %v", err)
+	}
+	created, ok := result.(map[string]string)
+	if !ok || created["folderId"] == "" || created["eventRecordId"] == "" {
+		t.Fatalf("CreateFolder result = %#v", result)
+	}
+	projection, err := ProjectLibraryProjection(runtime.replicas[vaultID])
+	if err != nil {
+		t.Fatalf("project after CreateFolder: %v", err)
+	}
+	if len(projection.Folders) != 1 || projection.Folders[0].FolderID != created["folderId"] || projection.Folders[0].Name != "Archive" {
+		t.Fatalf("folders after CreateFolder = %#v", projection.Folders)
+	}
+	restarted, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatalf("restart Runtime: %v", err)
+	}
+	restartedProjection, err := restarted.Handle(ctx, mustJSON(map[string]any{
+		"type": "ListLibraryProjection", "expectedVaultId": vaultID,
+	}))
+	if err != nil {
+		t.Fatalf("ListLibraryProjection after CreateFolder restart: %v", err)
+	}
+	if folders := restartedProjection.(LibraryProjection).Folders; len(folders) != 1 || folders[0].FolderID != created["folderId"] {
+		t.Fatalf("restarted folders = %#v", folders)
+	}
+}
+
+func TestCreateReviseDeleteRestoreNoteAuthorsObjectClosureAndRestarts(t *testing.T) {
+	ctx := context.Background()
+	state := store.NewMemoryState()
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatalf("create Runtime: %v", err)
+	}
+	vaultID, _ := createVaultWithPhraseForTest(t, runtime, "Note authoring")
+	_, collectionID := admitForkBundleRegisteredEvent(t, runtime, dependencies, vaultID, filledCreationID(246))
+	title := "First title"
+	result, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "CreateNote", "expectedVaultId": vaultID, "targetKind": "Collection", "targetId": hexIdentifier(collectionID),
+		"title": title, "body": "First body",
+	}))
+	if err != nil {
+		t.Fatalf("CreateNote: %v", err)
+	}
+	created, ok := result.(map[string]string)
+	if !ok || created["noteId"] == "" || created["eventRecordId"] == "" {
+		t.Fatalf("CreateNote result = %#v", result)
+	}
+	projection, err := ProjectLibraryProjection(runtime.replicas[vaultID])
+	if err != nil {
+		t.Fatalf("project after CreateNote: %v", err)
+	}
+	if len(projection.Notes) != 1 || projection.Notes[0].State != "Active" || projection.Notes[0].Versions[0].Body == nil || *projection.Notes[0].Versions[0].Body != "First body" {
+		t.Fatalf("notes after CreateNote = %#v", projection.Notes)
+	}
+	if _, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "ReviseNote", "expectedVaultId": vaultID, "noteId": created["noteId"], "title": "Second title", "body": "Second body",
+	})); err != nil {
+		t.Fatalf("ReviseNote: %v", err)
+	}
+	if _, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "DeleteNote", "expectedVaultId": vaultID, "noteId": created["noteId"],
+	})); err != nil {
+		t.Fatalf("DeleteNote: %v", err)
+	}
+	if _, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "RestoreNote", "expectedVaultId": vaultID, "noteId": created["noteId"],
+	})); err != nil {
+		t.Fatalf("RestoreNote: %v", err)
+	}
+	restarted, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatalf("restart Runtime: %v", err)
+	}
+	projection, err = ProjectLibraryProjection(restarted.replicas[vaultID])
+	if err != nil {
+		t.Fatalf("project after Note restart: %v", err)
+	}
+	if len(projection.Notes) != 1 || projection.Notes[0].State != "Active" || len(projection.Notes[0].Versions) != 1 || projection.Notes[0].Versions[0].Body == nil || *projection.Notes[0].Versions[0].Body != "Second body" {
+		t.Fatalf("restarted notes = %#v", projection.Notes)
+	}
+}
+
+func TestCreateTagAndFolderOrganizationCommandsReplayAcrossRestart(t *testing.T) {
+	ctx := context.Background()
+	state := store.NewMemoryState()
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatalf("create Runtime: %v", err)
+	}
+	vaultID, _ := createVaultWithPhraseForTest(t, runtime, "Organization authoring")
+	folderResult, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "CreateFolder", "expectedVaultId": vaultID, "name": "Archive", "parentFolderId": nil,
+	}))
+	if err != nil {
+		t.Fatalf("CreateFolder: %v", err)
+	}
+	folderID := folderResult.(map[string]string)["folderId"]
+	if _, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "RenameFolder", "expectedVaultId": vaultID, "folderId": folderID, "name": "Renamed",
+	})); err != nil {
+		t.Fatalf("RenameFolder: %v", err)
+	}
+	if _, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "DeleteFolder", "expectedVaultId": vaultID, "folderId": folderID,
+	})); err != nil {
+		t.Fatalf("DeleteFolder: %v", err)
+	}
+	if _, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "RestoreFolder", "expectedVaultId": vaultID, "folderId": folderID,
+	})); err != nil {
+		t.Fatalf("RestoreFolder: %v", err)
+	}
+	tagResult, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "CreateTag", "expectedVaultId": vaultID, "name": "Reading",
+	}))
+	if err != nil {
+		t.Fatalf("CreateTag: %v", err)
+	}
+	tagID := tagResult.(map[string]string)["tagId"]
+	if _, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "RenameTag", "expectedVaultId": vaultID, "tagId": tagID, "name": "Books",
+	})); err != nil {
+		t.Fatalf("RenameTag: %v", err)
+	}
+	secondTagResult, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "CreateTag", "expectedVaultId": vaultID, "name": "Archive",
+	}))
+	if err != nil {
+		t.Fatalf("Create second Tag: %v", err)
+	}
+	secondTagID := secondTagResult.(map[string]string)["tagId"]
+	mergeResult, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "MergeTags", "expectedVaultId": vaultID, "sourceTagIds": []string{tagID}, "destinationTagId": secondTagID,
+	}))
+	if err != nil {
+		t.Fatalf("MergeTags: %v", err)
+	}
+	mergeRecordID := mergeResult.(map[string]string)["eventRecordId"]
+	if _, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "RevertTagMerge", "expectedVaultId": vaultID, "redirectCauseId": mergeRecordID,
+	})); err != nil {
+		t.Fatalf("RevertTagMerge: %v", err)
+	}
+	if _, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "DeleteTag", "expectedVaultId": vaultID, "tagId": tagID,
+	})); err != nil {
+		t.Fatalf("DeleteTag: %v", err)
+	}
+	if _, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "RestoreTag", "expectedVaultId": vaultID, "tagId": tagID,
+	})); err != nil {
+		t.Fatalf("RestoreTag: %v", err)
+	}
+	restarted, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatalf("restart Runtime: %v", err)
+	}
+	projection, err := ProjectLibraryProjection(restarted.replicas[vaultID])
+	if err != nil {
+		t.Fatalf("project organization after restart: %v", err)
+	}
+	if len(projection.Folders) != 1 || projection.Folders[0].Name != "Renamed" || projection.Folders[0].Lifecycle != "Active" {
+		t.Fatalf("restarted folders = %#v", projection.Folders)
+	}
+	if len(projection.Tags) != 2 {
+		t.Fatalf("restarted tags = %#v", projection.Tags)
+	}
+	for _, tag := range projection.Tags {
+		if tag.TagID == tagID && (tag.Name != "Books" || tag.Lifecycle != "Active" || tag.RedirectedTo != nil) {
+			t.Fatalf("restarted source Tag = %#v", tag)
+		}
+		if tag.TagID == secondTagID && (tag.Name != "Archive" || tag.Lifecycle != "Active") {
+			t.Fatalf("restarted destination Tag = %#v", tag)
+		}
+	}
+}

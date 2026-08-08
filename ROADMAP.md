@@ -105,15 +105,17 @@ not co-own one Replica namespace; that becomes ordinary Replica synchronization.
 
 **Status:** Candidate
 
-Close the remaining canonical desktop/headless Vault boundaries behind the existing process
-contract:
+The headless Go Runtime now authors the canonical Collection, Folder, Capture, Tag, and Note
+Content families through the authenticated Client/Key-Epoch boundary, and the Wails surface has
+basic Collection-title, Folder, Tag, and Note authoring controls. Remaining parity work is:
 
-- implement the remaining Authority and Key-Epoch authoring families beyond the current
-  Membership, role, Key Envelope, Feature, Invitation, and conflict-resolution boundaries;
-- complete conflict/rebase authoring and the remaining sparse/on-demand hydration journeys through
-  live Wails and Runtime projections; and
-- complete the remaining browser-to-desktop Vault journeys and formal cross-language,
-  restart/crash, authority/conflict, sparse-Replica, and multi-Replica convergence evidence.
+- expose the remaining organization lifecycle, merge, and scoped conflict-resolution Commands in
+  the Wails interaction surface with focused visual and keyboard evidence;
+- complete browser-to-desktop Vault journeys for those Content Commands and formalize randomized
+  multi-Replica convergence, restart/crash, authority/conflict, sparse hydration, and
+  cross-language evidence; and
+- run native Wails packaging/build proofs on every supported desktop dependency set and add a
+  native Brave capture run when a Brave installation is available.
 
 Capture remains extension-only and the extension-to-desktop Capture Bundle bridge is out of scope
 for this release. Complete Export/Import, authenticated replay, Library projection, Hosted Replica

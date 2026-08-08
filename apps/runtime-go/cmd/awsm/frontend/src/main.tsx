@@ -822,6 +822,278 @@ function LibrarySemanticSummary({
   );
 }
 
+function LibraryAuthoringOperations({
+  binding,
+  vaultId,
+  projection,
+  enabled,
+  refresh,
+  onError,
+  onStatus,
+}: {
+  readonly binding: DesktopBinding;
+  readonly vaultId: string;
+  readonly projection: LibraryProjection;
+  readonly enabled: boolean;
+  readonly refresh: () => void;
+  readonly onError: (error: unknown) => void;
+  readonly onStatus: (message: string) => void;
+}): React.ReactElement {
+  const [folderName, setFolderName] = React.useState("");
+  const [folderParentId, setFolderParentId] = React.useState("");
+  const [tagName, setTagName] = React.useState("");
+  const [collectionId, setCollectionId] = React.useState(
+    projection.collections[0]?.collectionId ?? "",
+  );
+  const [collectionTitle, setCollectionTitle] = React.useState("");
+  const [noteTarget, setNoteTarget] = React.useState("");
+  const [noteTitle, setNoteTitle] = React.useState("");
+  const [noteBody, setNoteBody] = React.useState("");
+  const [busy, setBusy] = React.useState<string>();
+  const activeFolders = projection.folders.filter(({ lifecycle }) => lifecycle === "Active");
+  const activeCollections = projection.collections.filter(
+    ({ redirectedTo }) => redirectedTo === null,
+  );
+  const activeCaptures = projection.captures.filter(({ lifecycle }) => lifecycle === "Active");
+  const targets = [
+    ...activeCollections.map((collection) => ({
+      value: `Collection:${collection.collectionId}`,
+      label: `Collection · ${collection.title}`,
+    })),
+    ...activeCaptures.map((capture) => ({
+      value: `Capture:${capture.bundleId}`,
+      label: `Capture · ${displayCaptureTitle(capture.title, capture.finalUrl)}`,
+    })),
+  ];
+
+  React.useEffect(() => {
+    if (!activeCollections.some(({ collectionId: candidate }) => candidate === collectionId)) {
+      setCollectionId(activeCollections[0]?.collectionId ?? "");
+    }
+    if (!targets.some(({ value }) => value === noteTarget)) setNoteTarget(targets[0]?.value ?? "");
+  }, [activeCollections, collectionId, noteTarget, targets]);
+
+  const invoke = async (key: string, command: Record<string, unknown>, message: string) => {
+    if (binding.VaultCommand === undefined)
+      return onError(new Error("Vault commands are unavailable."));
+    setBusy(key);
+    try {
+      await binding.VaultCommand(command);
+      refresh();
+      onStatus(message);
+    } catch (error) {
+      onError(error);
+    } finally {
+      setBusy(undefined);
+    }
+  };
+
+  const submitFolder = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void invoke(
+      "folder",
+      {
+        type: "CreateFolder",
+        expectedVaultId: vaultId,
+        name: folderName.trim(),
+        parentFolderId: folderParentId === "" ? null : folderParentId,
+      },
+      "Folder created.",
+    ).then(() => setFolderName(""));
+  };
+
+  const submitTag = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void invoke(
+      "tag",
+      { type: "CreateTag", expectedVaultId: vaultId, name: tagName.trim() },
+      "Tag created.",
+    ).then(() => setTagName(""));
+  };
+
+  const submitTitle = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void invoke(
+      "title",
+      {
+        type: "SetCollectionTitle",
+        expectedVaultId: vaultId,
+        collectionId,
+        title: collectionTitle.trim() === "" ? null : collectionTitle.trim(),
+      },
+      "Collection title updated.",
+    );
+  };
+
+  const submitNote = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const separator = noteTarget.indexOf(":");
+    if (separator < 0) return onError(new Error("Choose a Note target."));
+    const targetKind = noteTarget.slice(0, separator);
+    const targetId = noteTarget.slice(separator + 1);
+    void invoke(
+      "note",
+      {
+        type: "CreateNote",
+        expectedVaultId: vaultId,
+        targetKind,
+        targetId,
+        title: noteTitle.trim() === "" ? null : noteTitle.trim(),
+        body: noteBody,
+      },
+      "Note created.",
+    ).then(() => {
+      setNoteTitle("");
+      setNoteBody("");
+    });
+  };
+
+  return (
+    <section className="grid gap-4" aria-labelledby="library-authoring-heading">
+      <Card>
+        <CardHeader>
+          <CardTitle>Author Library content</CardTitle>
+          <CardDescription>
+            These actions author authenticated Vault Events. Capture remains available from the
+            browser extension; the desktop Client does not acquire pages.
+          </CardDescription>
+        </CardHeader>
+        {!enabled ? (
+          <Notice tone="info" title="Library authoring unavailable">
+            Recover an active Client Credential to author content here.
+          </Notice>
+        ) : null}
+        <div className="mt-5 grid gap-6 lg:grid-cols-2">
+          <form className="grid gap-4" onSubmit={submitFolder}>
+            <Field label="Folder name">
+              <input
+                className={inputClassName}
+                value={folderName}
+                onChange={(event) => setFolderName(event.target.value)}
+                required
+                disabled={!enabled || busy !== undefined}
+              />
+            </Field>
+            <label className="grid gap-2 text-sm font-bold leading-tight text-awsm-ink">
+              Parent Folder
+              <select
+                className={inputClassName}
+                value={folderParentId}
+                onChange={(event) => setFolderParentId(event.target.value)}
+                disabled={!enabled || busy !== undefined}
+              >
+                <option value="">Root level</option>
+                {activeFolders.map((folder) => (
+                  <option key={folder.folderId} value={folder.folderId}>
+                    {folder.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <Button
+              type="submit"
+              busy={busy === "folder"}
+              disabled={!enabled || busy !== undefined}
+            >
+              Create Folder
+            </Button>
+          </form>
+          <form className="grid gap-4" onSubmit={submitTag}>
+            <Field label="Tag name">
+              <input
+                className={inputClassName}
+                value={tagName}
+                onChange={(event) => setTagName(event.target.value)}
+                required
+                disabled={!enabled || busy !== undefined}
+              />
+            </Field>
+            <p className="text-sm leading-relaxed text-awsm-text-muted">
+              Tag names are presentation labels; identity is assigned by the Vault.
+            </p>
+            <Button type="submit" busy={busy === "tag"} disabled={!enabled || busy !== undefined}>
+              Create Tag
+            </Button>
+          </form>
+          <form className="grid gap-4" onSubmit={submitTitle}>
+            <label className="grid gap-2 text-sm font-bold leading-tight text-awsm-ink">
+              Collection
+              <select
+                className={inputClassName}
+                value={collectionId}
+                onChange={(event) => setCollectionId(event.target.value)}
+                disabled={!enabled || busy !== undefined || activeCollections.length === 0}
+              >
+                {activeCollections.map((collection) => (
+                  <option key={collection.collectionId} value={collection.collectionId}>
+                    {collection.title}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <Field label="Explicit title" description="Leave empty to restore automatic naming.">
+              <input
+                className={inputClassName}
+                value={collectionTitle}
+                onChange={(event) => setCollectionTitle(event.target.value)}
+                disabled={!enabled || busy !== undefined || activeCollections.length === 0}
+              />
+            </Field>
+            <Button
+              type="submit"
+              busy={busy === "title"}
+              disabled={!enabled || busy !== undefined || activeCollections.length === 0}
+            >
+              Set Collection Title
+            </Button>
+          </form>
+          <form className="grid gap-4" onSubmit={submitNote}>
+            <label className="grid gap-2 text-sm font-bold leading-tight text-awsm-ink">
+              Note target
+              <select
+                className={inputClassName}
+                value={noteTarget}
+                onChange={(event) => setNoteTarget(event.target.value)}
+                disabled={!enabled || busy !== undefined || targets.length === 0}
+              >
+                {targets.map((target) => (
+                  <option key={target.value} value={target.value}>
+                    {target.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <Field label="Note title">
+              <input
+                className={inputClassName}
+                value={noteTitle}
+                onChange={(event) => setNoteTitle(event.target.value)}
+                disabled={!enabled || busy !== undefined || targets.length === 0}
+              />
+            </Field>
+            <Field label="Note body">
+              <textarea
+                className={`${inputClassName} min-h-28 resize-y`}
+                value={noteBody}
+                onChange={(event) => setNoteBody(event.target.value)}
+                required
+                disabled={!enabled || busy !== undefined || targets.length === 0}
+              />
+            </Field>
+            <Button
+              type="submit"
+              busy={busy === "note"}
+              disabled={!enabled || busy !== undefined || targets.length === 0}
+            >
+              Create Note
+            </Button>
+          </form>
+        </div>
+      </Card>
+    </section>
+  );
+}
+
 function AuthoritySummary({
   authority,
 }: {
@@ -2599,6 +2871,15 @@ function VaultsView({
               onStatus={onStatus}
             />
             <LibrarySemanticSummary projection={libraryProjection} />
+            <LibraryAuthoringOperations
+              binding={binding}
+              vaultId={selected.vaultId}
+              projection={libraryProjection}
+              enabled={selected.lifecycle === "Open" && selected.access === "Authoring"}
+              refresh={refresh}
+              onError={onError}
+              onStatus={onStatus}
+            />
           </section>
           <HostedReplicas
             binding={binding}
@@ -2672,6 +2953,15 @@ function LibraryView({
         onStatus={onStatus}
       />
       <LibrarySemanticSummary projection={libraryProjection} />
+      <LibraryAuthoringOperations
+        binding={binding}
+        vaultId={vault.vaultId}
+        projection={libraryProjection}
+        enabled={vault.lifecycle === "Open" && vault.access === "Authoring"}
+        refresh={refresh}
+        onError={onError}
+        onStatus={onStatus}
+      />
     </section>
   );
 }

@@ -38,12 +38,15 @@ Content-Type: application/json
 
 The body is one tagged `CanonicalApplicationRequest`. The Go Runtime implements `GetState`, Vault
 creation and selection, Recovery Phrase ceremonies, `RecoverMember`, state-only Fork from the
-authenticated Library checkpoint, `CloseVault`, authenticated `EndMembership`, `GrantAdministrator`,
-`EndAdministrator`, `EndClientCredential`, `DeliverKeyEnvelope`, `ActivateFeature`, Administrator `RotateKeyEpoch`, `VacuumVault`, `ListLibrary`, Storage Relief/GC
-through the Runtime API, `CreateInvitation`, `AcceptInvitation`, `CancelInvitation`, and
-`ResolveInvitationConflict`, `RevertCollectionMerge`, `ReauthorizeCapture`, the read-only `GetAuthorityState` projection, Hosted Replica
-creation/attachment/materialization, receiver pull, and Artifact hydration. Capture remains an
-extension-only surface; the extension-to-desktop Capture Bundle bridge is not implemented.
+authenticated Library checkpoint, `CloseVault`, authenticated Authority and Key-Epoch commands,
+`VacuumVault`, `ListLibrary`, Storage Relief/GC through the Runtime API, Hosted Replica
+creation/attachment/materialization, receiver pull, Artifact hydration, and the authenticated
+Content command families: Collection title, merge/revert/conflict resolution, Folder creation and
+organization, Capture lifecycle and routing, Tag creation/assignment/lifecycle/merge/revert/conflict
+resolution, and Note creation/revision/lifecycle/conflict resolution. `CreateInvitation`,
+`AcceptInvitation`, `CancelInvitation`, `ResolveInvitationConflict`, `ReauthorizeCapture`, and the
+read-only `GetAuthorityState` projection are also available. Capture remains an extension-only
+surface; the extension-to-desktop Capture Bundle bridge is not implemented.
 Unsupported desktop capabilities return a canonical application error rather than pretending that
 the operation succeeded. Desktop page acquisition is intentionally unsupported.
 
@@ -86,6 +89,11 @@ unambiguous Administrator; ending the final Administrator derives closure.
 Merge Conflict Resolution Record and authors the type-9 Collection Merge Reverted Event. The
 Runtime rejects unrelated, malformed, or already-reverted causes and commits the opaque Record
 with the derived frontiers atomically.
+The Content commands use the same authenticated Client Credential and current Key Epoch boundary.
+Note commands create or consume type-6 Note Content Objects, include exact Object dependencies,
+and project their immutable title/body revisions after restart. Tag merge, Tag merge reversion, and
+Tag merge conflict resolution require an unambiguous current Administrator. Folder and merge
+conflict resolution require the complete current scoped Cause set and reject a changed conflict.
 The Wails Authority panel exposes these role changes and `EndMembership` with an explicit
 confirmation for ending a role or Member. It also exposes `DeliverKeyEnvelope` for a selected
 Key Epoch and credential slot, and `ActivateFeature` for complete canonical Feature Manifest

@@ -1574,6 +1574,316 @@ func (r *Runtime) Handle(ctx context.Context, raw json.RawMessage) (any, error) 
 			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "RevertCollectionMerge contains invalid fields")
 		}
 		return r.revertCollectionMerge(ctx, input.ExpectedVaultID, input.RedirectCauseID)
+	case "CreateFolder":
+		var input struct {
+			Type            string  `json:"type"`
+			ExpectedVaultID string  `json:"expectedVaultId"`
+			Name            string  `json:"name"`
+			ParentFolderID  *string `json:"parentFolderId"`
+		}
+		if err := decode(raw, &input); err != nil {
+			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "CreateFolder contains invalid fields")
+		}
+		return r.createFolder(ctx, input.ExpectedVaultID, input.Name, input.ParentFolderID)
+	case "SetCollectionTitle":
+		var input struct {
+			Type            string  `json:"type"`
+			ExpectedVaultID string  `json:"expectedVaultId"`
+			CollectionID    string  `json:"collectionId"`
+			Title           *string `json:"title"`
+		}
+		if err := decode(raw, &input); err != nil {
+			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "SetCollectionTitle contains invalid fields")
+		}
+		return r.setCollectionTitle(ctx, input.ExpectedVaultID, input.CollectionID, input.Title)
+	case "MergeCollections":
+		var input struct {
+			Type                    string   `json:"type"`
+			ExpectedVaultID         string   `json:"expectedVaultId"`
+			SourceCollectionIDs     []string `json:"sourceCollectionIds"`
+			DestinationCollectionID string   `json:"destinationCollectionId"`
+		}
+		if err := decode(raw, &input); err != nil {
+			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "MergeCollections contains invalid fields")
+		}
+		return r.mergeCollections(ctx, input.ExpectedVaultID, input.SourceCollectionIDs, input.DestinationCollectionID)
+	case "ResolveCollectionMergeConflict":
+		var input struct {
+			Type                 string   `json:"type"`
+			ExpectedVaultID      string   `json:"expectedVaultId"`
+			SubjectCollectionIDs []string `json:"subjectCollectionIds"`
+			ConflictingCauseIDs  []string `json:"conflictingCauseIds"`
+			Redirects            []struct {
+				SourceCollectionID      string `json:"sourceCollectionId"`
+				DestinationCollectionID string `json:"destinationCollectionId"`
+			} `json:"redirects"`
+		}
+		if err := decode(raw, &input); err != nil {
+			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "ResolveCollectionMergeConflict contains invalid fields")
+		}
+		redirects := make([]contentRedirectInput, 0, len(input.Redirects))
+		for _, redirect := range input.Redirects {
+			redirects = append(redirects, contentRedirectInput{source: redirect.SourceCollectionID, destination: redirect.DestinationCollectionID})
+		}
+		return r.resolveCollectionMergeConflict(ctx, input.ExpectedVaultID, input.SubjectCollectionIDs, input.ConflictingCauseIDs, redirects)
+	case "PlaceCollectionInFolder":
+		var input struct {
+			Type            string  `json:"type"`
+			ExpectedVaultID string  `json:"expectedVaultId"`
+			CollectionID    string  `json:"collectionId"`
+			FolderID        *string `json:"folderId"`
+		}
+		if err := decode(raw, &input); err != nil {
+			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "PlaceCollectionInFolder contains invalid fields")
+		}
+		return r.placeCollectionInFolder(ctx, input.ExpectedVaultID, input.CollectionID, input.FolderID)
+	case "RenameFolder":
+		var input struct {
+			Type            string `json:"type"`
+			ExpectedVaultID string `json:"expectedVaultId"`
+			FolderID        string `json:"folderId"`
+			Name            string `json:"name"`
+		}
+		if err := decode(raw, &input); err != nil {
+			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "RenameFolder contains invalid fields")
+		}
+		return r.renameFolder(ctx, input.ExpectedVaultID, input.FolderID, input.Name)
+	case "PlaceFolder":
+		var input struct {
+			Type            string  `json:"type"`
+			ExpectedVaultID string  `json:"expectedVaultId"`
+			FolderID        string  `json:"folderId"`
+			ParentFolderID  *string `json:"parentFolderId"`
+		}
+		if err := decode(raw, &input); err != nil {
+			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "PlaceFolder contains invalid fields")
+		}
+		return r.placeFolder(ctx, input.ExpectedVaultID, input.FolderID, input.ParentFolderID)
+	case "ResolveFolderConflict":
+		var input struct {
+			Type                string   `json:"type"`
+			ExpectedVaultID     string   `json:"expectedVaultId"`
+			SubjectFolderIDs    []string `json:"subjectFolderIds"`
+			ConflictingCauseIDs []string `json:"conflictingCauseIds"`
+			Placements          []struct {
+				FolderID       string  `json:"folderId"`
+				ParentFolderID *string `json:"parentFolderId"`
+			} `json:"placements"`
+		}
+		if err := decode(raw, &input); err != nil {
+			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "ResolveFolderConflict contains invalid fields")
+		}
+		placements := make([]contentFolderPlacementInput, 0, len(input.Placements))
+		for _, placement := range input.Placements {
+			placements = append(placements, contentFolderPlacementInput{folder: placement.FolderID, parent: placement.ParentFolderID})
+		}
+		return r.resolveFolderConflict(ctx, input.ExpectedVaultID, input.SubjectFolderIDs, input.ConflictingCauseIDs, placements)
+	case "DeleteFolder", "RestoreFolder":
+		var input struct {
+			Type            string `json:"type"`
+			ExpectedVaultID string `json:"expectedVaultId"`
+			FolderID        string `json:"folderId"`
+		}
+		if err := decode(raw, &input); err != nil {
+			return nil, commandError("APPLICATION_PROTOCOL_INVALID", input.Type+" contains invalid fields")
+		}
+		eventType := uint64(15)
+		if input.Type == "RestoreFolder" {
+			eventType = 16
+		}
+		return r.lifecycleFolder(ctx, input.ExpectedVaultID, input.FolderID, eventType)
+	case "MoveCaptures":
+		var input struct {
+			Type                    string   `json:"type"`
+			ExpectedVaultID         string   `json:"expectedVaultId"`
+			BundleIDs               []string `json:"bundleIds"`
+			DestinationCollectionID string   `json:"destinationCollectionId"`
+		}
+		if err := decode(raw, &input); err != nil {
+			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "MoveCaptures contains invalid fields")
+		}
+		return r.moveCaptures(ctx, input.ExpectedVaultID, input.BundleIDs, input.DestinationCollectionID)
+	case "DeleteCaptures", "RestoreCaptures":
+		var input struct {
+			Type            string   `json:"type"`
+			ExpectedVaultID string   `json:"expectedVaultId"`
+			BundleIDs       []string `json:"bundleIds"`
+		}
+		if err := decode(raw, &input); err != nil {
+			return nil, commandError("APPLICATION_PROTOCOL_INVALID", input.Type+" contains invalid fields")
+		}
+		eventType := uint64(4)
+		if input.Type == "RestoreCaptures" {
+			eventType = 5
+		}
+		return r.lifecycleCaptures(ctx, input.ExpectedVaultID, input.BundleIDs, eventType)
+	case "CreateTag":
+		var input struct {
+			Type            string `json:"type"`
+			ExpectedVaultID string `json:"expectedVaultId"`
+			Name            string `json:"name"`
+		}
+		if err := decode(raw, &input); err != nil {
+			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "CreateTag contains invalid fields")
+		}
+		return r.createTag(ctx, input.ExpectedVaultID, input.Name)
+	case "MergeTags":
+		var input struct {
+			Type             string   `json:"type"`
+			ExpectedVaultID  string   `json:"expectedVaultId"`
+			SourceTagIDs     []string `json:"sourceTagIds"`
+			DestinationTagID string   `json:"destinationTagId"`
+		}
+		if err := decode(raw, &input); err != nil {
+			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "MergeTags contains invalid fields")
+		}
+		return r.mergeTags(ctx, input.ExpectedVaultID, input.SourceTagIDs, input.DestinationTagID)
+	case "RevertTagMerge":
+		var input struct {
+			Type            string `json:"type"`
+			ExpectedVaultID string `json:"expectedVaultId"`
+			RedirectCauseID string `json:"redirectCauseId"`
+		}
+		if err := decode(raw, &input); err != nil {
+			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "RevertTagMerge contains invalid fields")
+		}
+		return r.revertTagMerge(ctx, input.ExpectedVaultID, input.RedirectCauseID)
+	case "ResolveTagMergeConflict":
+		var input struct {
+			Type                string   `json:"type"`
+			ExpectedVaultID     string   `json:"expectedVaultId"`
+			SubjectTagIDs       []string `json:"subjectTagIds"`
+			ConflictingCauseIDs []string `json:"conflictingCauseIds"`
+			Redirects           []struct {
+				SourceTagID      string `json:"sourceTagId"`
+				DestinationTagID string `json:"destinationTagId"`
+			} `json:"redirects"`
+		}
+		if err := decode(raw, &input); err != nil {
+			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "ResolveTagMergeConflict contains invalid fields")
+		}
+		redirects := make([]contentRedirectInput, 0, len(input.Redirects))
+		for _, redirect := range input.Redirects {
+			redirects = append(redirects, contentRedirectInput{source: redirect.SourceTagID, destination: redirect.DestinationTagID})
+		}
+		return r.resolveTagMergeConflict(ctx, input.ExpectedVaultID, input.SubjectTagIDs, input.ConflictingCauseIDs, redirects)
+	case "RenameTag":
+		var input struct {
+			Type            string `json:"type"`
+			ExpectedVaultID string `json:"expectedVaultId"`
+			TagID           string `json:"tagId"`
+			Name            string `json:"name"`
+		}
+		if err := decode(raw, &input); err != nil {
+			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "RenameTag contains invalid fields")
+		}
+		return r.renameTag(ctx, input.ExpectedVaultID, input.TagID, input.Name)
+	case "AssignTag":
+		var input struct {
+			Type            string `json:"type"`
+			ExpectedVaultID string `json:"expectedVaultId"`
+			TagID           string `json:"tagId"`
+			TargetKind      string `json:"targetKind"`
+			TargetID        string `json:"targetId"`
+		}
+		if err := decode(raw, &input); err != nil {
+			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "AssignTag contains invalid fields")
+		}
+		return r.assignTag(ctx, input.ExpectedVaultID, input.TagID, input.TargetKind, input.TargetID)
+	case "RemoveTagAssignments":
+		var input struct {
+			Type            string `json:"type"`
+			ExpectedVaultID string `json:"expectedVaultId"`
+			TagID           string `json:"tagId"`
+			TargetKind      string `json:"targetKind"`
+			TargetID        string `json:"targetId"`
+		}
+		if err := decode(raw, &input); err != nil {
+			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "RemoveTagAssignments contains invalid fields")
+		}
+		return r.removeTagAssignments(ctx, input.ExpectedVaultID, input.TagID, input.TargetKind, input.TargetID)
+	case "DeleteTag", "RestoreTag":
+		var input struct {
+			Type            string `json:"type"`
+			ExpectedVaultID string `json:"expectedVaultId"`
+			TagID           string `json:"tagId"`
+		}
+		if err := decode(raw, &input); err != nil {
+			return nil, commandError("APPLICATION_PROTOCOL_INVALID", input.Type+" contains invalid fields")
+		}
+		eventType := uint64(22)
+		if input.Type == "RestoreTag" {
+			eventType = 23
+		}
+		return r.tagEvent(ctx, input.ExpectedVaultID, input.TagID, eventType, nil)
+	case "CreateNote":
+		var input struct {
+			Type            string  `json:"type"`
+			ExpectedVaultID string  `json:"expectedVaultId"`
+			TargetKind      string  `json:"targetKind"`
+			TargetID        string  `json:"targetId"`
+			Title           *string `json:"title"`
+			Body            string  `json:"body"`
+		}
+		if err := decode(raw, &input); err != nil {
+			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "CreateNote contains invalid fields")
+		}
+		return r.createNote(ctx, input.ExpectedVaultID, input.TargetKind, input.TargetID, input.Title, input.Body)
+	case "ReviseNote":
+		var input struct {
+			Type            string  `json:"type"`
+			ExpectedVaultID string  `json:"expectedVaultId"`
+			NoteID          string  `json:"noteId"`
+			Title           *string `json:"title"`
+			Body            string  `json:"body"`
+		}
+		if err := decode(raw, &input); err != nil {
+			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "ReviseNote contains invalid fields")
+		}
+		return r.reviseNote(ctx, input.ExpectedVaultID, input.NoteID, input.Title, input.Body)
+	case "DeleteNote", "RestoreNote":
+		var input struct {
+			Type            string `json:"type"`
+			ExpectedVaultID string `json:"expectedVaultId"`
+			NoteID          string `json:"noteId"`
+		}
+		if err := decode(raw, &input); err != nil {
+			return nil, commandError("APPLICATION_PROTOCOL_INVALID", input.Type+" contains invalid fields")
+		}
+		eventType := uint64(29)
+		if input.Type == "RestoreNote" {
+			eventType = 30
+		}
+		return r.lifecycleNote(ctx, input.ExpectedVaultID, input.NoteID, eventType)
+	case "ResolveNoteConflict":
+		var input struct {
+			Type                string   `json:"type"`
+			ExpectedVaultID     string   `json:"expectedVaultId"`
+			NoteID              string   `json:"noteId"`
+			ConflictingCauseIDs []string `json:"conflictingCauseIds"`
+			RetainedOriginal    *struct {
+				Title *string `json:"title"`
+				Body  string  `json:"body"`
+			} `json:"retainedOriginal"`
+			SplitNotes []struct {
+				Title *string `json:"title"`
+				Body  string  `json:"body"`
+			} `json:"splitNotes"`
+		}
+		if err := decode(raw, &input); err != nil {
+			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "ResolveNoteConflict contains invalid fields")
+		}
+		var retainedTitle *string
+		var retainedBody *string
+		if input.RetainedOriginal != nil {
+			retainedTitle = input.RetainedOriginal.Title
+			retainedBody = &input.RetainedOriginal.Body
+		}
+		split := make([]noteSplitInput, 0, len(input.SplitNotes))
+		for _, item := range input.SplitNotes {
+			split = append(split, noteSplitInput{title: item.Title, body: item.Body})
+		}
+		return r.resolveNoteConflict(ctx, input.ExpectedVaultID, input.NoteID, input.ConflictingCauseIDs, retainedTitle, retainedBody, split)
 	case "CaptureActivePage":
 		var input struct {
 			Type            string `json:"type"`

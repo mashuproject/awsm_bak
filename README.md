@@ -94,10 +94,11 @@ global freshness claims, automatic redundancy tracking, and user-facing AI featu
 in this release. Desktop page capture and the extension-to-desktop Capture Bundle bridge are not
 available. The desktop Runtime records authenticated Invitation Acceptance artifacts through
 `AcceptInvitation`; the external Redemption Authority and joining Client remain outside that
-servicing boundary. Remaining Authority/Key-Epoch authoring families beyond the implemented
-Invitation and role ceremonies, conflict/rebase authoring, and the remaining cross-surface journeys
-remain explicit parity work;
-see the living specifications and roadmap.
+servicing boundary. The Go Runtime also authors the canonical Collection, Folder, Capture, Tag, and
+Note Content families with scoped conflict handling. Remaining parity work is the rest of the Wails
+organization interaction surface, browser-to-desktop Content journeys, and formal convergence,
+restart/crash, sparse, native-package, and cross-language evidence; see the living specifications
+and roadmap.
 Complete Export now
 authenticates and carries multi-Key-Epoch, adopted-Vacuum, Feature Manifest, and Streamable
 Artifact closures. Runtime projections expose Complete, Sparse, and Unavailable Replica state;

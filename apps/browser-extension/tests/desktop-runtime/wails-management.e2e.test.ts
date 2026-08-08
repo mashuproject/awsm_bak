@@ -181,6 +181,127 @@ test("Wails Vault surface renders the selected Vault management slice", async ({
   });
 });
 
+test("Wails Vault surface authors basic Library content", async ({ page }) => {
+  const vaultId = "a".repeat(64);
+  const collectionId = "b".repeat(64);
+  await page.addInitScript(
+    ({ selectedVaultId, selectedCollectionId }) => {
+      const state = {
+        selectedVaultId,
+        vaults: [
+          {
+            vaultId: selectedVaultId,
+            label: "Authoring archive",
+            lifecycle: "Open",
+            access: "Authoring",
+            replicaAvailability: "Complete",
+            selected: true,
+          },
+        ],
+      };
+      const projection: {
+        captures: unknown[];
+        collections: Array<{ title: string }>;
+        folders: Array<{ folderId: string; name: string; lifecycle: string }>;
+        tags: Array<{ tagId: string; name: string; lifecycle: string; redirectedTo: null }>;
+        tagAssignments: unknown[];
+        notes: unknown[];
+        conflicts: unknown[];
+      } = {
+        captures: [],
+        collections: [
+          {
+            collectionId: selectedCollectionId,
+            explicitTitle: null,
+            title: "Reading",
+            tailBundleId: null,
+            activeCaptureCount: 0,
+            redirectedTo: null,
+            folderId: null,
+          },
+        ],
+        folders: [],
+        tags: [],
+        tagAssignments: [],
+        notes: [],
+        conflicts: [],
+      };
+      const authority = {
+        vaultId: selectedVaultId,
+        activeMemberIds: ["1".repeat(64)],
+        administratorIds: ["1".repeat(64)],
+        administratorConflicts: [],
+        activeInvitationIds: [],
+        invitationConflictIds: [],
+        activeClientCredentialIds: ["2".repeat(64)],
+        effectiveRecoveryCredentialIds: [],
+        recoveryConflicts: [],
+        keyEpochConflicts: [],
+        currentKeyEpochIds: ["3".repeat(64)],
+        lifecycle: "Open",
+      };
+      (globalThis as unknown as { go: unknown }).go = {
+        main: {
+          desktopBinding: {
+            PendingPairings: async () => [],
+            ListGrants: async () => [],
+            RuntimeAddress: () => "127.0.0.1:37373",
+            VaultCommand: async (request: Record<string, unknown>) => {
+              if (request.type === "GetState") return state;
+              if (request.type === "ListLibraryProjection") return projection;
+              if (request.type === "ListRemotes") return [];
+              if (request.type === "GetAuthorityState") return authority;
+              if (request.type === "CreateFolder") {
+                projection.folders.push({
+                  folderId: "4".repeat(64),
+                  name: String(request.name),
+                  lifecycle: "Active",
+                });
+                return { eventRecordId: "5".repeat(64), folderId: "4".repeat(64) };
+              }
+              if (request.type === "CreateTag") {
+                projection.tags.push({
+                  tagId: "6".repeat(64),
+                  name: String(request.name),
+                  lifecycle: "Active",
+                  redirectedTo: null,
+                });
+                return { eventRecordId: "7".repeat(64), tagId: "6".repeat(64) };
+              }
+              if (request.type === "SetCollectionTitle") {
+                const collection = projection.collections[0];
+                if (collection !== undefined) collection.title = String(request.title);
+                return { eventRecordId: "8".repeat(64) };
+              }
+              if (request.type === "CreateNote") {
+                projection.notes.push({});
+                return { eventRecordId: "9".repeat(64), noteId: "a".repeat(64) };
+              }
+              throw new Error(`unexpected command: ${request.type}`);
+            },
+          },
+        },
+      };
+    },
+    { selectedVaultId: vaultId, selectedCollectionId: collectionId },
+  );
+
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Author Library content" })).toBeVisible();
+  await page.getByLabel("Folder name").fill("Projects");
+  await page.getByRole("button", { name: "Create Folder" }).click();
+  await expect(page.getByText("Folder created.")).toBeVisible();
+  await page.getByLabel("Tag name").fill("Reading");
+  await page.getByRole("button", { name: "Create Tag" }).click();
+  await expect(page.getByText("Tag created.")).toBeVisible();
+  await page.getByLabel("Explicit title").fill("Books");
+  await page.getByRole("button", { name: "Set Collection Title" }).click();
+  await expect(page.getByText("Collection title updated.")).toBeVisible();
+  await page.getByLabel("Note body").fill("A note from Wails.");
+  await page.getByRole("button", { name: "Create Note" }).click();
+  await expect(page.getByText("Note created.")).toBeVisible();
+});
+
 test("Wails Vault surface authors an Invitation through the Runtime command boundary", async ({
   page,
 }, testInfo) => {
