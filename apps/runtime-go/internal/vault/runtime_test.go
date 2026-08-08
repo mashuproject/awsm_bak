@@ -574,6 +574,17 @@ func TestResolveInvitationConflictAuthorsTypeEightAfterTwoAcceptanceBranches(t *
 	if _, conflict := finalAuthority.invitationConflicts[invitationID]; conflict {
 		t.Fatal("Invitation conflict remained after type-8 resolution")
 	}
+	restarted, err := New(ctx, runtime.store, dependencies)
+	if err != nil {
+		t.Fatalf("restart after Invitation resolution: %v", err)
+	}
+	restartedAuthority, err := replayReplicaAuthorityState(restarted.replicas[vaultID], nil, nil)
+	if err != nil {
+		t.Fatalf("replay restarted resolved Invitation: %v", err)
+	}
+	if _, conflict := restartedAuthority.invitationConflicts[invitationID]; conflict {
+		t.Fatal("restarted Runtime restored the resolved Invitation conflict")
+	}
 }
 
 func TestStateExposesSparseReplicaAvailability(t *testing.T) {
