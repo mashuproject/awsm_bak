@@ -15,9 +15,11 @@ async function packagedCanonicalExtension(testInfo: TestInfo): Promise<{
 }> {
   const extensionPath = testInfo.outputPath("canonical-extension");
   await cp(extensionBuildPath, extensionPath, { recursive: true });
+  // This test opens popup.html directly instead of invoking the browser action; grant only its
+  // loopback capture fixture origin in the copied test artifact.
   const manifestPath = resolve(extensionPath, "manifest.json");
   const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as Record<string, unknown>;
-  manifest.host_permissions = ["<all_urls>"];
+  manifest.host_permissions = ["http://127.0.0.1/*"];
   await writeFile(manifestPath, JSON.stringify(manifest));
   const context = await chromium.launchPersistentContext(testInfo.outputPath("canonical-profile"), {
     channel: "chromium",
@@ -36,10 +38,11 @@ async function popup(
 ): Promise<Page> {
   if (activePage !== undefined) await activePage.bringToFront();
   const page = await client.context.newPage();
+  if (activePage !== undefined) await activePage.bringToFront();
   await page.setViewportSize({ width: 400, height: 700 });
   await page.goto(`chrome-extension://${client.extensionId}/popup.html`);
   if (activePage !== undefined) {
-    await page.evaluate(async (activeUrl) => {
+    await page.evaluate(async () => {
       const extensionApi = (
         globalThis as unknown as {
           chrome: {
@@ -47,28 +50,19 @@ async function popup(
               sendMessage(message: unknown, ...rest: unknown[]): unknown;
             };
             tabs: {
-              query(value: unknown): Promise<readonly { id?: number; url?: string }[]>;
+              query(
+                value: unknown,
+              ): Promise<readonly { id?: number; url?: string; active?: boolean }[]>;
               update(id: number, value: { active: true }): Promise<unknown>;
             };
           };
         }
       ).chrome;
       const tabs = await extensionApi.tabs.query({});
-      const activeTab = tabs.find((tab) => tab.id !== undefined && tab.url === activeUrl);
+      const activeTab = tabs.find((tab) => tab.id !== undefined && tab.active);
       if (activeTab?.id === undefined) throw new Error("Active Capture fixture tab is missing.");
       await extensionApi.tabs.update(activeTab.id, { active: true });
-      const nativeSendMessage = extensionApi.runtime.sendMessage.bind(extensionApi.runtime);
-      extensionApi.runtime.sendMessage = (message: unknown, ...rest: unknown[]) =>
-        nativeSendMessage(
-          typeof message === "object" &&
-            message !== null &&
-            "type" in message &&
-            message.type === "CaptureActivePage"
-            ? { ...message, tabId: activeTab.id }
-            : message,
-          ...rest,
-        );
-    }, activePage.url());
+    });
   }
   return page;
 }
@@ -217,10 +211,11 @@ test("runs the canonical local Vault ceremony through a packaged extension", asy
     await expect(library.getByText("Vault · Field Notes")).toBeVisible();
     await expect(library.getByText("Capture a page from the popup to add it here.")).toBeVisible();
 
+    await activePage.bringToFront();
     await first.getByRole("button", { name: "Archive this page" }).click();
     await expect(first.getByRole("heading", { name: "Recent captures" })).toBeVisible();
     await expect(first.getByText("Captured fixture")).toBeVisible();
-    await expect(library.getByText("Captured fixture")).toBeVisible();
+    await expect(library.getByLabel("Captures").getByText("Captured fixture")).toBeVisible();
     await expect(library.getByText("Available locally")).toBeVisible();
 
     await first.setViewportSize({ width: 360, height: 700 });
@@ -238,7 +233,7 @@ test("runs the canonical local Vault ceremony through a packaged extension", asy
     await expectReadableContrast(library);
     await library.screenshot({ path: testInfo.outputPath("canonical-library.png") });
     await library.setViewportSize({ width: 360, height: 700 });
-    await expect(library.getByText("Captured fixture")).toBeVisible();
+    await expect(library.getByLabel("Captures").getByText("Captured fixture")).toBeVisible();
     await expectReadableContrast(library);
     await library.screenshot({ path: testInfo.outputPath("canonical-library-narrow.png") });
 

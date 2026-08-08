@@ -14,6 +14,7 @@ import type {
   DesktopRuntimeConnectionStatus,
 } from "../../src/hosts/desktop/runtime-connection";
 import { getDesktopRuntimeConnection } from "../../src/hosts/desktop/runtime-connection-factory";
+import { getActiveCaptureTabId } from "../../src/hosts/shared/active-tab";
 import {
   requestHostedReplicaPermission,
   requestHostedReplicaPermissions,
@@ -1056,7 +1057,11 @@ function CaptureSurface({
           busy={busy}
           onClick={() =>
             void run(async () => {
-              await client.captureActivePage({ expectedVaultId: vault.vaultId });
+              const tabId = await getActiveCaptureTabId();
+              await client.captureActivePage({
+                expectedVaultId: vault.vaultId,
+                ...(tabId === undefined ? {} : { tabId }),
+              });
               announce("Page archived.");
             })
           }

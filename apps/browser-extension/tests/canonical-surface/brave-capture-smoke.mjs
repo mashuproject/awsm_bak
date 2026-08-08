@@ -90,6 +90,23 @@ async function startBrave(root, extensionPath, port) {
   return child;
 }
 
+function terminateBrave(root, child) {
+  if (child?.pid !== undefined) {
+    try {
+      process.kill(-child.pid, "SIGKILL");
+    } catch {
+      // The browser process group already exited.
+    }
+  }
+  try {
+    execFileSync("pkill", ["-KILL", "-f", "--", `--user-data-dir=${resolve(root, "profile")}`], {
+      stdio: "ignore",
+    });
+  } catch {
+    // The exact temporary profile has no remaining browser process.
+  }
+}
+
 async function main() {
   const root = await mkdtemp("/tmp/awsm-brave-capture-");
   let child;
@@ -103,9 +120,11 @@ async function main() {
   try {
     const extensionPath = resolve(root, "extension");
     await cp(extensionBuild, extensionPath, { recursive: true });
+    // popup.html is opened as a CDP page, so the test cannot invoke Brave's toolbar action to
+    // grant activeTab. Grant only this test fixture origin in the copied artifact instead.
     const manifestPath = resolve(extensionPath, "manifest.json");
     const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-    manifest.host_permissions = ["<all_urls>"];
+    manifest.host_permissions = ["http://127.0.0.1/*"];
     await writeFile(manifestPath, JSON.stringify(manifest));
 
     await new Promise((resolveServer, rejectServer) => {
@@ -129,21 +148,14 @@ async function main() {
     const popup = await context.newPage();
     await popup.setViewportSize({ width: 400, height: 700 });
     await popup.goto(`chrome-extension://${extensionId}/popup.html`);
-    await popup.evaluate(async (activeUrl) => {
+    await activePage.bringToFront();
+    await popup.evaluate(async () => {
       const api = globalThis.chrome;
       const tabs = await api.tabs.query({});
-      const active = tabs.find((tab) => tab.id !== undefined && tab.url === activeUrl);
+      const active = tabs.find((tab) => tab.id !== undefined && tab.active);
       if (active?.id === undefined) throw new Error("Capture fixture tab is missing.");
       await api.tabs.update(active.id, { active: true });
-      const send = api.runtime.sendMessage.bind(api.runtime);
-      api.runtime.sendMessage = (message, ...rest) =>
-        send(
-          message && typeof message === "object" && message.type === "CaptureActivePage"
-            ? { ...message, tabId: active.id }
-            : message,
-          ...rest,
-        );
-    }, fixtureUrl);
+    });
     await popup.getByRole("heading", { name: "Create your local Vault" }).waitFor();
     await popup.getByLabel("Vault name").fill("Brave capture proof");
     await popup.getByRole("button", { name: "Create Vault" }).click();
@@ -158,17 +170,20 @@ async function main() {
     await popup.getByText("Brave capture fixture").waitFor();
     console.log("Brave capture E2E passed.");
   } finally {
-    if (browser !== undefined) await browser.close().catch(() => undefined);
-    await new Promise((resolveClose) => server.close(() => resolveClose()));
-    if (child?.exitCode === null) {
-      try {
-        process.kill(-child.pid, "SIGKILL");
-      } catch {
-        // The browser process group already exited.
-      }
+    terminateBrave(root, child);
+    if (browser !== undefined) {
+      void browser.close().catch(() => undefined);
+    }
+    if (server.listening) {
+      server.closeAllConnections();
+      await Promise.race([
+        new Promise((resolveClose) => server.close(() => resolveClose())),
+        new Promise((resolveClose) => setTimeout(resolveClose, 1_000)),
+      ]);
     }
     await rm(root, { recursive: true, force: true });
   }
 }
 
 await main();
+process.exit(0);
