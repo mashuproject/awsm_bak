@@ -87,6 +87,105 @@ func TestReplicaContentReplayConvergesAcrossDeterministicRandomizedInsertionOrde
 	}
 }
 
+func TestReplicaContentReplayConvergesAcrossThreeReplicas(t *testing.T) {
+	prepared := deterministicCreation(t)
+	collectionIDs := [][32]byte{
+		filledCreationID(211),
+		filledCreationID(212),
+		filledCreationID(213),
+		filledCreationID(214),
+	}
+	events := make([]canonical.Event, 0, len(collectionIDs)+1)
+	for index, collectionID := range collectionIDs {
+		event, err := canonical.SignEvent(canonical.EventInput{
+			VaultID: prepared.IDs.VaultID, GenerationID: prepared.IDs.GenerationID,
+			ParentRecordIDs: []canonical.Identifier{prepared.Genesis.RecordID}, AuthorityParentIDs: []canonical.Identifier{prepared.Genesis.RecordID},
+			RequiredFeatureSetID: prepared.RequiredFeatureSetID, Extensions: map[string][]byte{}, Family: canonical.ContentFamily, Type: 7,
+			SignerCredentialID: prepared.IDs.ClientCredentialID, AssertedAt: int64(400 + index),
+			Body: canonical.Map{0: collectionID[:], 1: "Collection"},
+		}, ed25519.PrivateKey(prepared.ClientKeys.SigningSecretKey))
+		if err != nil {
+			t.Fatalf("sign Collection event %d: %v", index, err)
+		}
+		events = append(events, event)
+	}
+	mergeParents := make([]canonical.Identifier, 0, len(events))
+	for _, event := range events {
+		mergeParents = append(mergeParents, event.RecordID)
+	}
+	sort.Slice(mergeParents, func(left, right int) bool {
+		return bytes.Compare(mergeParents[left][:], mergeParents[right][:]) < 0
+	})
+	mergeCollectionID := filledCreationID(215)
+	merge, err := canonical.SignEvent(canonical.EventInput{
+		VaultID: prepared.IDs.VaultID, GenerationID: prepared.IDs.GenerationID,
+		ParentRecordIDs: mergeParents, AuthorityParentIDs: mergeParents,
+		RequiredFeatureSetID: prepared.RequiredFeatureSetID, Extensions: map[string][]byte{}, Family: canonical.ContentFamily, Type: 7,
+		SignerCredentialID: prepared.IDs.ClientCredentialID, AssertedAt: 500,
+		Body: canonical.Map{0: mergeCollectionID[:], 1: "Collection"},
+	}, ed25519.PrivateKey(prepared.ClientKeys.SigningSecretKey))
+	if err != nil {
+		t.Fatalf("sign merged Collection event: %v", err)
+	}
+	events = append(events, merge)
+
+	newReplica := func() *Replica {
+		replica, err := NewReplica(prepared.Baseline)
+		if err != nil {
+			t.Fatalf("NewReplica: %v", err)
+		}
+		if err := replica.AdmitEvent(prepared.Genesis, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+			t.Fatalf("Admit Genesis: %v", err)
+		}
+		return replica
+	}
+	orders := [][]int{
+		{0, 1, 2, 3, 4},
+		{3, 1, 0, 2, 4},
+		{2, 0, 3, 1, 4},
+	}
+	var referenceProjection []byte
+	var referenceState ReplicaState
+	for replicaIndex, order := range orders {
+		replica := newReplica()
+		for _, eventIndex := range order {
+			if err := replica.AdmitEvent(events[eventIndex], ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+				t.Fatalf("replica %d admit event %d: %v", replicaIndex, eventIndex, err)
+			}
+		}
+		projection, err := ProjectLibraryProjection(replica)
+		if err != nil {
+			t.Fatalf("replica %d project Library: %v", replicaIndex, err)
+		}
+		projectionJSON, err := json.Marshal(projection)
+		if err != nil {
+			t.Fatalf("replica %d marshal projection: %v", replicaIndex, err)
+		}
+		state := replica.State()
+		if replicaIndex == 0 {
+			referenceProjection = projectionJSON
+			referenceState = state
+			continue
+		}
+		if !bytes.Equal(projectionJSON, referenceProjection) {
+			t.Fatalf("replica %d Library projection changed with arrival order %v", replicaIndex, order)
+		}
+		if !sameIdentifierSlice(state.CausalFrontier, referenceState.CausalFrontier) ||
+			!sameIdentifierSlice(state.AuthorityFrontier, referenceState.AuthorityFrontier) {
+			t.Fatalf("replica %d frontiers = %#v, want causal %#v authority %#v", replicaIndex, state, referenceState.CausalFrontier, referenceState.AuthorityFrontier)
+		}
+		for _, event := range events {
+			got, ok := replica.Record(event.RecordID)
+			if !ok {
+				t.Fatalf("replica %d lost admitted event %x", replicaIndex, event.RecordID)
+			}
+			if got.RecordID != event.RecordID || !bytes.Equal(got.Bytes, event.Bytes) {
+				t.Fatalf("replica %d retained different bytes for %x", replicaIndex, event.RecordID)
+			}
+		}
+	}
+}
+
 func TestReplicaAdmitsAuthenticatedCreationAndTracksFrontiers(t *testing.T) {
 	prepared := deterministicCreation(t)
 	replica, err := NewReplica(prepared.Baseline)
