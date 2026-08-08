@@ -2,9 +2,9 @@
 
 ## Current state
 
-This handoff was recorded from `main` at base commit `5a91ace` (`test(runtime): share browser crypto conformance vectors`) before release preparation. The source changes described here were subsequently committed and pushed to `main`; the package remained at `0.3.4` while the complete pre-versioning matrix ran. That matrix is now green, so release preparation has advanced the package to the next patch candidate, `0.3.5`. The worktree contains the Go parity changes and the browser-capture follow-up below; there are no unrelated edits.
+This handoff was recorded from `main` at base commit `5a91ace` (`test(runtime): share browser crypto conformance vectors`) before release preparation. The source changes described here were subsequently committed and pushed to `main`; the package remained at `0.3.4` while the complete pre-versioning matrix ran. That matrix was green before the patch version changed, so the package advanced to `0.3.5`. The exact candidate commit `84c18a2` was then pushed, passed hosted `validate-only`, Firefox signing, and local signed-candidate proof, and was published as the joint `v0.3.5` release. The exact tag was deployed to staging and its public website publication was verified below. The larger Go/Wails semantic-parity objective remains incomplete.
 
-The larger Go/Wails semantic-parity objective is not complete. This handoff covers one concrete parity correction: Go Library and Search Materializations now use the installation-wrapped local-storage boundary required by `docs/specifications/runtime/storage.md`.
+This handoff covers one concrete parity correction: Go Library and Search Materializations now use the installation-wrapped local-storage boundary required by `docs/specifications/runtime/storage.md`.
 
 Capture remains extension-only. The extension-to-desktop Capture Bundle bridge is still out of scope.
 
@@ -113,6 +113,14 @@ These were run against the current source after the implementation:
 
 The first Chrome desktop attempt was launched concurrently with Firefox and failed because both fixtures use the fixed `127.0.0.1:37373` port. The serial Chrome rerun passed. Do not run those two fixed-port desktop lanes in parallel.
 
+## v0.3.5 release and staging publication
+
+- The release candidate was committed and pushed before release as `84c18a2` (`chore(release): prepare v0.3.5`). The tag `v0.3.5` points to that exact commit; the published GitHub Release contains the Chrome, Firefox, Linux, macOS, and Windows assets with checksums.
+- Hosted `validate-only` run `31263000113` passed the browser archive job and all desktop matrix jobs. Firefox signing run `31263176182` passed, and its signed XPI passed local Stable/ESR production and E2E proof with commit status `awsm/firefox-signed-local-proof=success`. The tag-driven joint publish run `31263535483` passed.
+- The exact tag archive was deployed to staging at `awsm.parasquid.dev`. The loopback origin was healthy before CDN mutation; Postgres and Redis container identities were preserved while only `coordination-server` was recreated. Production was not touched.
+- The staging website was checked against the loopback origin across all 11 canonical public paths, both `Accept-Encoding: identity` and `gzip, deflate, br, zstd`, and three successive requests per combination. Two independent 66-request passes succeeded: cacheable pages returned fresh `MISS`-to-`HIT` behavior, comparison pages remained `DYNAMIC`, and every body matched the origin. `/up` returned `200` with `DYNAMIC` and private revalidation, while `/session/status` returned `200` with `DYNAMIC` and `private, no-store`.
+- Headless Chromium renders of the deployed site were inspected at desktop `1440x900` and narrow `390x844` viewports; both primary and narrow pages rendered correctly.
+
 ## Native and Docker evidence
 
 - Host Fedora prerequisite attempt was made earlier: `sudo dnf install -y pkgconf-pkg-config gtk3-devel webkit2gtk4.0-devel xorg-x11-server-Xvfb`. It was blocked by the interactive sudo password prompt, not by an untried dependency.
@@ -131,9 +139,6 @@ The first Chrome desktop attempt was launched concurrently with Firefox and fail
 1. Continue the larger parity audit: remaining shared cross-language command/replay and Complete
    Export vectors, randomized multi-Replica/restart/crash/authority-conflict/Sparse hydration
    coverage, and any still-missing native-package evidence. Do not claim that audit is complete.
-2. Complete the version-bound release workflow: validate the exact `0.3.5` commit through hosted
-   `validate-only`, obtain the signed Firefox local-proof status, then tag and publish the release
-   artifacts and the public website according to the release guidance.
 
 ## Useful commands
 
