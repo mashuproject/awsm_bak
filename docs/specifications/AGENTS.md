@@ -67,7 +67,9 @@ search aid, not as normative authority.
 
 ## VALIDATION
 
-The target conformance suite described by `docs/architecture/19-testing-strategy.md` is not yet
-implemented. Documentation changes must search canonical terms and affected Object, Event, and
-protocol names across living documents; check every codec, unknown-field rule, dependency, and
-invariant manually.
+The full target conformance suite described by `docs/architecture/19-testing-strategy.md` remains
+broader than the current focused suites. The shared browser/Go canonical crypto corpus currently
+lives at `apps/test-vectors/canonical-v1.json` and must be extended, rather than duplicated, when
+another cross-language primitive is brought to parity. Documentation changes must search canonical
+terms and affected Object, Event, and protocol names across living documents; check every codec,
+unknown-field rule, dependency, and invariant manually.

@@ -50,7 +50,8 @@ projection, state-only Fork checkpointing, Membership and Administrator role cha
 creation/attachment/materialization, phrase-authenticated Hosted recovery into an authoring-capable
 Sparse Replica, receiver pull, Artifact hydration, the read-only
 `GetAuthorityState` projection (including Invitation state), and encrypted Go-to-Go
-transfer import/export. Focused tests use browser-derived vectors and restart/Host-boundary proofs.
+transfer import/export. Focused tests use the shared browser/Go vector corpus in
+`apps/test-vectors/canonical-v1.json` and restart/Host-boundary proofs.
 The Go Runtime also exposes browser-compatible Complete Export/Import for authenticated
 multi-Key-Epoch and adopted-Vacuum closures, including Feature Manifest and Streamable Artifact
 wrappers. Complete Import remains authoring-free. The Go Runtime implements Membership and

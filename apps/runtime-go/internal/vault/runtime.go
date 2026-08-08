@@ -982,8 +982,8 @@ func objectIDFromBytes(vaultID canonical.Identifier, encoded []byte) (canonical.
 // TransferPackageVaultID validates and reads the identity carried by the
 // current Runtime-owned transfer snapshot. The Application layer uses it to
 // bind a staged transfer to the Vault ID that was authorized when the transfer
-// began; a future Complete Export decoder will provide the same check for its
-// authenticated manifest.
+// began. Complete Export identity is validated by its authenticated Manifest
+// decoder instead of this transfer-only helper.
 func TransferPackageVaultID(payload []byte) (string, error) {
 	var packageValue TransferPackage
 	if err := decode(json.RawMessage(payload), &packageValue); err != nil {

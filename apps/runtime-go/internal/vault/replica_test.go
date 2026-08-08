@@ -15,16 +15,14 @@ import (
 
 func TestReplicaContentReplayConvergesAcrossDeterministicRandomizedInsertionOrders(t *testing.T) {
 	prepared := deterministicCreation(t)
-	collectionIDs := [][32]byte{filledCreationID(201), filledCreationID(202), filledCreationID(203)}
-	children := make([]canonical.Event, 0, len(collectionIDs))
-	parents := []canonical.Identifier{prepared.Genesis.RecordID}
+	collectionIDs := [][32]byte{
+		filledCreationID(201), filledCreationID(202), filledCreationID(203), filledCreationID(204),
+	}
+	children := make([]canonical.Event, 0, len(collectionIDs)+1)
 	for index, collectionID := range collectionIDs {
-		if index == 2 {
-			parents = []canonical.Identifier{children[0].RecordID, children[1].RecordID}
-		}
 		event, err := canonical.SignEvent(canonical.EventInput{
 			VaultID: prepared.IDs.VaultID, GenerationID: prepared.IDs.GenerationID,
-			ParentRecordIDs: append([]canonical.Identifier(nil), parents...), AuthorityParentIDs: append([]canonical.Identifier(nil), parents...),
+			ParentRecordIDs: []canonical.Identifier{prepared.Genesis.RecordID}, AuthorityParentIDs: []canonical.Identifier{prepared.Genesis.RecordID},
 			RequiredFeatureSetID: prepared.RequiredFeatureSetID, Extensions: map[string][]byte{}, Family: canonical.ContentFamily, Type: 7,
 			SignerCredentialID: prepared.IDs.ClientCredentialID, AssertedAt: int64(300 + index),
 			Body: canonical.Map{0: collectionID[:], 1: "Collection"},
@@ -34,6 +32,25 @@ func TestReplicaContentReplayConvergesAcrossDeterministicRandomizedInsertionOrde
 		}
 		children = append(children, event)
 	}
+	mergeParents := make([]canonical.Identifier, 0, len(children))
+	for _, event := range children {
+		mergeParents = append(mergeParents, event.RecordID)
+	}
+	sort.Slice(mergeParents, func(left, right int) bool {
+		return bytes.Compare(mergeParents[left][:], mergeParents[right][:]) < 0
+	})
+	mergeCollectionID := filledCreationID(205)
+	merge, err := canonical.SignEvent(canonical.EventInput{
+		VaultID: prepared.IDs.VaultID, GenerationID: prepared.IDs.GenerationID,
+		ParentRecordIDs: mergeParents, AuthorityParentIDs: mergeParents,
+		RequiredFeatureSetID: prepared.RequiredFeatureSetID, Extensions: map[string][]byte{}, Family: canonical.ContentFamily, Type: 7,
+		SignerCredentialID: prepared.IDs.ClientCredentialID, AssertedAt: 304,
+		Body: canonical.Map{0: mergeCollectionID[:], 1: "Collection"},
+	}, ed25519.PrivateKey(prepared.ClientKeys.SigningSecretKey))
+	if err != nil {
+		t.Fatalf("sign merged Collection event: %v", err)
+	}
+	children = append(children, merge)
 
 	baseline := func() *Replica {
 		replica, err := NewReplica(prepared.Baseline)
@@ -62,8 +79,8 @@ func TestReplicaContentReplayConvergesAcrossDeterministicRandomizedInsertionOrde
 
 	random := rand.New(rand.NewSource(42))
 	for attempt := 0; attempt < 24; attempt++ {
-		siblings := random.Perm(2)
-		order := []int{siblings[0], siblings[1], 2}
+		siblings := random.Perm(len(collectionIDs))
+		order := append(append([]int(nil), siblings...), len(collectionIDs))
 		candidate := baseline()
 		for _, index := range order {
 			if err := candidate.AdmitEvent(children[index], ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {

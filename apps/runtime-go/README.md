@@ -86,6 +86,8 @@ authenticated Event and Baseline codecs, Record IDs, Object IDs, and causal DAG 
 HPKE, and Key Envelope services. `internal/storage` provides the opaque Compact/Streamable envelope
 codec. Focused vectors are generated from the browser implementation, and Runtime integration tests
 prove restartable authenticated replay, remote sync boundaries, and destination rewrapping.
+The committed `apps/test-vectors/canonical-v1.json` corpus is consumed directly by both the Go and
+browser test suites; extend that corpus before adding another cross-language primitive.
 
 The desktop window does not acquire pages; Capture remains an extension-only surface and the
 extension-to-desktop Capture Bundle bridge is intentionally out of scope for this release. The
@@ -165,5 +167,5 @@ test are `script/package-linux-appimage.sh` and `script/packaged-desktop-smoke.m
 These proofs cover the process boundary, Runtime API grant lifecycle, canonical Vault Command
 envelope, authenticated replay, Hosted Replica sync boundaries, Library Storage Relief and
 hydration, local Search materialization and filtering, and encrypted transfer staging. They do not
-claim desktop page Capture, the extension-to-desktop Capture Bundle bridge, unresolved Authority
-authoring families, or user-facing AI semantics.
+claim desktop page Capture, the extension-to-desktop Capture Bundle bridge, or user-facing AI
+semantics.

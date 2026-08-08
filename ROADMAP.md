@@ -113,10 +113,11 @@ Collection title, Note, Folder, and Tag authoring through the extension's authen
 Command boundary. The test-only fixture supplies the initial authenticated Collection without a
 Capture Bundle bridge.
 
-Remaining evidence work is deliberately narrow: extend the existing initial cross-language vectors
-to the complete current Go command/replay surface and keep the randomized multi-Replica,
-restart/crash, authority/conflict, Sparse hydration, and native-package proofs aligned as the
-semantic boundary grows.
+Remaining evidence work is deliberately narrow: extend the shared cross-language corpus beyond its
+current Recovery and Key Epoch derivation set to the remaining canonical command/replay and
+Complete Export boundaries, and keep the randomized multi-Replica, restart/crash,
+authority/conflict, Sparse hydration, and native-package proofs aligned as the semantic boundary
+grows.
 
 Capture remains extension-only and the extension-to-desktop Capture Bundle bridge remains out of
 scope. Existing Complete Export/Import, authenticated replay, Library projection, Hosted Replica,

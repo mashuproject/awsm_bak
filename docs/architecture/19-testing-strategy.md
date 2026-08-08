@@ -75,10 +75,12 @@ self-asserted successor Baseline.
 The Go Runtime's current canonical substrate includes cross-language Event signature, Baseline
 shape, Record ID, Recovery Phrase, Credential, Key Epoch, compact encryption, HPKE, Key Envelope,
 opaque storage, and initial-creation vectors generated from the browser implementation, plus pure
-causal-DAG collision and cycle tests. The creation test asserts stable browser-derived Baseline
-and Genesis byte digests. Runtime replay additionally has deterministic randomized insertion-order
-and three-Replica convergence tests, while authority, conflict, restart, Sparse, hydration, Fork,
-Vacuum, and GC scenarios are covered by the focused Vault suites.
+causal-DAG collision and cycle tests. The shared Recovery and Key Epoch derivation corpus at
+`apps/test-vectors/canonical-v1.json` is consumed directly by both the Go and browser suites; the
+creation test asserts stable browser-derived Baseline and Genesis byte digests. Runtime replay
+additionally has deterministic randomized insertion-order coverage across all 24 permutations of
+four siblings plus their merge, and three-Replica convergence tests, while authority, conflict,
+restart, Sparse, hydration, Fork, Vacuum, and GC scenarios are covered by the focused Vault suites.
 
 # Reducer model tests
 
