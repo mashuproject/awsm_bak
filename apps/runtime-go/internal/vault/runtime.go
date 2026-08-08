@@ -1554,6 +1554,16 @@ func (r *Runtime) Handle(ctx context.Context, raw json.RawMessage) (any, error) 
 			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "GarbageCollect contains invalid fields")
 		}
 		return r.garbageCollectExpected(ctx, input.ExpectedVaultID)
+	case "ReauthorizeCapture":
+		var input struct {
+			Type            string `json:"type"`
+			ExpectedVaultID string `json:"expectedVaultId"`
+			SourceRecordID  string `json:"sourceRecordId"`
+		}
+		if err := decode(raw, &input); err != nil {
+			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "ReauthorizeCapture contains invalid fields")
+		}
+		return r.reauthorizeCapture(ctx, input.ExpectedVaultID, input.SourceRecordID)
 	case "CaptureActivePage":
 		var input struct {
 			Type            string `json:"type"`

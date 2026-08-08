@@ -96,11 +96,11 @@ container for authenticated multi-Key-Epoch and adopted-Vacuum closures, includi
 Manifest and Streamable Artifact wrappers. Imported Replicas are readable but have no selected
 authoring Credential or private key. The Runtime command boundary implements Membership and
 Administrator role changes, Invitation creation/Acceptance recording/cancellation/conflict
-resolution, Client Credential ending, Key Envelope delivery, Feature Activation, and Administrator
-rotation. The external Redemption Authority and joining Client exchange the Join Request and
-receipts outside the Runtime; `AcceptInvitation` commits their exact result. Event Re-authoring
-for eligible unpublished Capture work, conflict/rebase authoring, and remaining cross-surface
-journeys are unresolved. Runtime
+resolution, Client Credential ending, Key Envelope delivery, Feature Activation, Administrator
+rotation, and same-Vault Event Re-authoring for eligible stale Bundle Registered Capture Events.
+The external Redemption Authority and joining Client exchange the Join Request and receipts outside
+the Runtime; `AcceptInvitation` commits their exact result. Conflict/rebase authoring and remaining
+cross-surface journeys are unresolved. Runtime
 projections expose Complete, Sparse, and Unavailable Replica state; on-demand hydration remains
 the user action for Sparse content.
 
@@ -149,5 +149,5 @@ test are `script/package-linux-appimage.sh` and `script/packaged-desktop-smoke.m
 These proofs cover the process boundary, Runtime API grant lifecycle, canonical Vault Command
 envelope, authenticated replay, Hosted Replica sync boundaries, Library Storage Relief and
 hydration, and encrypted transfer staging. They do not claim desktop page Capture, the
-extension-to-desktop Capture Bundle bridge, Event Re-authoring for eligible unpublished Capture
-work, unresolved Authority authoring families, or user-facing search/AI semantics.
+extension-to-desktop Capture Bundle bridge, unresolved Authority authoring families, or user-facing
+search/AI semantics.

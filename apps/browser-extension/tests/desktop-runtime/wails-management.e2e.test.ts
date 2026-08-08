@@ -252,6 +252,13 @@ test("Wails Vault surface authors an Invitation through the Runtime command boun
                 recoveryCredentialId: "9".repeat(64),
                 eventRecordId: "a".repeat(64),
               };
+            if (request.type === "ReauthorizeCapture")
+              return {
+                sourceRecordId: "b".repeat(64),
+                bundleId: "c".repeat(64),
+                descriptorObjectId: "d".repeat(64),
+                eventRecordId: "e".repeat(64),
+              };
             throw new Error(`unexpected command: ${request.type}`);
           },
           PendingTransfers: async () => [],
@@ -274,6 +281,9 @@ test("Wails Vault surface authors an Invitation through the Runtime command boun
   await page.getByLabel("Consumed Invitation receipt CBOR").fill("consumed-receipt");
   await page.getByRole("button", { name: "Record Invitation acceptance" }).click();
   await expect(page.getByRole("heading", { name: "Invitation accepted." })).toBeVisible();
+  await page.getByLabel("Source Bundle Registered Event ID").fill("b".repeat(64));
+  await page.getByRole("button", { name: "Re-author Capture" }).click();
+  await expect(page.getByRole("heading", { name: "Capture re-authoring recorded." })).toBeVisible();
   await page.screenshot({
     path: testInfo.outputPath("desktop-invitation-wide.png"),
     fullPage: true,
@@ -467,9 +477,11 @@ test("Wails Vault projections reconcile from a Runtime invalidation without relo
       },
     };
     (globalThis as unknown as { mutateAndEmit: () => void }).mutateAndEmit = () => {
-      state.vaults[0].access = "ReadOnly";
-      state.vaults[0].replicaAvailability = "Sparse";
-      state.vaults[0].missingArtifactCount = 1;
+      const selectedVault = state.vaults[0];
+      if (selectedVault === undefined) throw new Error("selected Vault fixture is missing");
+      selectedVault.access = "ReadOnly";
+      selectedVault.replicaAvailability = "Sparse";
+      selectedVault.missingArtifactCount = 1;
       authority.activeClientCredentialIds = [];
       emitInvalidation();
     };

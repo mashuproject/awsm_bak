@@ -110,8 +110,6 @@ contract:
 
 - implement the remaining Authority and Key-Epoch authoring families beyond the current
   Membership, role, Key Envelope, Feature, Invitation, and conflict-resolution boundaries;
-- implement Event Re-authoring for eligible unpublished Capture work and the remaining
-  dependency-bearing organization cases defined by the Fork specification;
 - complete conflict/rebase authoring and the remaining sparse/on-demand hydration journeys through
   live Wails and Runtime projections; and
 - complete the remaining browser-to-desktop Vault journeys and formal cross-language,

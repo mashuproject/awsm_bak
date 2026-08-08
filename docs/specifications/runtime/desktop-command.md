@@ -41,7 +41,7 @@ creation and selection, Recovery Phrase ceremonies, `RecoverMember`, state-only 
 authenticated Library checkpoint, `CloseVault`, authenticated `EndMembership`, `GrantAdministrator`,
 `EndAdministrator`, `EndClientCredential`, `DeliverKeyEnvelope`, `ActivateFeature`, Administrator `RotateKeyEpoch`, `VacuumVault`, `ListLibrary`, Storage Relief/GC
 through the Runtime API, `CreateInvitation`, `AcceptInvitation`, `CancelInvitation`, and
-`ResolveInvitationConflict`, the read-only `GetAuthorityState` projection, Hosted Replica
+`ResolveInvitationConflict`, `ReauthorizeCapture`, the read-only `GetAuthorityState` projection, Hosted Replica
 creation/attachment/materialization, receiver pull, and Artifact hydration. Capture remains an
 extension-only surface; the extension-to-desktop Capture Bundle bridge is not implemented.
 Unsupported desktop capabilities return a canonical application error rather than pretending that
@@ -59,6 +59,15 @@ installs a readable Replica without importing a Client Credential private key. T
 implementation accepts the browser Complete Export container for authenticated multi-Key-Epoch
 and adopted-Vacuum closures, including Feature Manifest and Streamable Artifact wrappers. Commands
 never log passphrases, package bytes, keys, or bearer tokens.
+
+`ReauthorizeCapture` accepts `{ "type": "ReauthorizeCapture", "expectedVaultId": "...", "sourceRecordId": "..." }`.
+The source must be an authenticated stale `Bundle Registered` Event whose Descriptor and complete
+Artifact wrapper closure are locally readable. The Runtime derives the recovered Bundle ID from
+the target Vault ID and source Record ID, rebuilds the Descriptor with the exact re-authoring
+provenance tuple, signs a new current-Generation `Bundle Registered` Event, and commits the new
+Descriptor/Event wrappers atomically. The source Record is never edited, rebased, or added as a
+target dependency. Repeating the request is idempotent across restart; organization, Authority,
+conflict-resolution, Lifecycle, Feature Activation, and Key Epoch Events remain ineligible.
 
 The Wails Vault view exposes these same Commands through its Authority, Complete Export and Import
 panels and its Library list. An authoring Client may explicitly end its current Client Credential;

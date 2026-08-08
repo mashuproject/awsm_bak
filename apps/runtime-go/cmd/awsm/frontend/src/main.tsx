@@ -1304,6 +1304,93 @@ function ClientCredentialRecovery({
   );
 }
 
+function CaptureRecoveryOperations({
+  binding,
+  vaultId,
+  enabled,
+  refresh,
+  onError,
+  onStatus,
+}: {
+  readonly binding: DesktopBinding;
+  readonly vaultId: string;
+  readonly enabled: boolean;
+  readonly refresh: () => void;
+  readonly onError: (error: unknown) => void;
+  readonly onStatus: (message: string) => void;
+}): React.ReactElement {
+  const [sourceRecordId, setSourceRecordId] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  const [completed, setCompleted] = React.useState(false);
+
+  const reauthorize = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setBusy(true);
+    setCompleted(false);
+    try {
+      await binding.VaultCommand?.({
+        type: "ReauthorizeCapture",
+        expectedVaultId: vaultId,
+        sourceRecordId: sourceRecordId.trim(),
+      });
+      refresh();
+      setCompleted(true);
+      onStatus("Capture re-authoring recorded.");
+    } catch (error) {
+      onError(error);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="grid gap-4" aria-labelledby="capture-recovery-heading">
+      <div className="grid gap-2">
+        <h3
+          id="capture-recovery-heading"
+          className="font-display text-2xl font-bold leading-tight text-awsm-ink"
+        >
+          Capture recovery
+        </h3>
+        <p className="max-w-[65ch] text-base leading-relaxed text-awsm-text-muted">
+          Recover an authenticated stale Bundle Registered Event after a Generation transition. The
+          source Event remains unchanged and the request is deterministic across retries.
+        </p>
+      </div>
+      {!enabled ? (
+        <Notice tone="info" title="Capture recovery unavailable">
+          Open an authoring Vault to re-author a Capture.
+        </Notice>
+      ) : null}
+      <Card>
+        <CardHeader>
+          <CardTitle>Re-author a Capture</CardTitle>
+          <CardDescription>
+            Enter the source Bundle Registered Event Record ID from the authenticated predecessor.
+          </CardDescription>
+        </CardHeader>
+        <form className="grid max-w-xl gap-5" onSubmit={reauthorize}>
+          <Field label="Source Bundle Registered Event ID">
+            <input
+              className={`${inputClassName} font-mono text-xs`}
+              value={sourceRecordId}
+              onChange={(event) => setSourceRecordId(event.target.value)}
+              aria-label="Source Bundle Registered Event ID"
+              spellCheck={false}
+              required
+              disabled={!enabled || busy}
+            />
+          </Field>
+          <Button type="submit" busy={busy} disabled={!enabled || busy}>
+            Re-author Capture
+          </Button>
+          {completed ? <Notice tone="success" title="Capture re-authoring recorded." /> : null}
+        </form>
+      </Card>
+    </section>
+  );
+}
+
 function AuthorityOperations({
   binding,
   vaultId,
@@ -2472,6 +2559,14 @@ function VaultsView({
                 binding={binding}
                 vaultId={selected.vaultId}
                 authority={authority}
+                enabled={selected.lifecycle === "Open" && selected.access === "Authoring"}
+                refresh={refresh}
+                onError={onError}
+                onStatus={onStatus}
+              />
+              <CaptureRecoveryOperations
+                binding={binding}
+                vaultId={selected.vaultId}
                 enabled={selected.lifecycle === "Open" && selected.access === "Authoring"}
                 refresh={refresh}
                 onError={onError}
