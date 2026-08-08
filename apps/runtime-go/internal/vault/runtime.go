@@ -1410,6 +1410,37 @@ func (r *Runtime) Handle(ctx context.Context, raw json.RawMessage) (any, error) 
 			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "ListLibraryProjection contains invalid fields")
 		}
 		return r.listLibraryProjection(input.ExpectedVaultID)
+	case "Search":
+		var input struct {
+			Type            string   `json:"type"`
+			ExpectedVaultID string   `json:"expectedVaultId"`
+			Query           string   `json:"query"`
+			Scope           string   `json:"scope"`
+			Hosts           []string `json:"hosts"`
+			CollectionIDs   []string `json:"collectionIds"`
+			TagIDs          []string `json:"tagIds"`
+			CapturedFrom    *int64   `json:"capturedFrom"`
+			CapturedBefore  *int64   `json:"capturedBefore"`
+		}
+		if err := decode(raw, &input); err != nil {
+			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "Search contains invalid fields")
+		}
+		query, err := makeSearchQuery(input.Scope, input.Query, input.Hosts, input.CollectionIDs, input.TagIDs, input.CapturedFrom, input.CapturedBefore)
+		if err != nil {
+			return nil, err
+		}
+		results, _, err := r.searchProjection(ctx, input.ExpectedVaultID, query)
+		return results, err
+	case "SearchCoverage":
+		var input struct {
+			Type            string `json:"type"`
+			ExpectedVaultID string `json:"expectedVaultId"`
+		}
+		if err := decode(raw, &input); err != nil {
+			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "SearchCoverage contains invalid fields")
+		}
+		_, coverage, err := r.loadSearchMaterialization(ctx, input.ExpectedVaultID)
+		return coverage, err
 	case "GetAuthorityState":
 		var input struct {
 			Type            string `json:"type"`

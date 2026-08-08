@@ -131,6 +131,15 @@ type LibraryProjection = {
   readonly conflicts: readonly LibraryConflict[];
 };
 
+type LibrarySearchResult = {
+  readonly kind: "Capture" | "Collection" | "Note";
+  readonly id: string;
+  readonly title: string;
+  readonly passageId: string;
+  readonly snippet: string;
+  readonly score: number;
+};
+
 type AuthorityState = {
   readonly vaultId: string;
   readonly activeMemberIds: readonly string[];
@@ -1089,6 +1098,116 @@ function LibraryAuthoringOperations({
             </Button>
           </form>
         </div>
+      </Card>
+    </section>
+  );
+}
+
+function LibrarySearch({
+  binding,
+  vaultId,
+  onError,
+}: {
+  readonly binding: DesktopBinding;
+  readonly vaultId: string;
+  readonly onError: (error: unknown) => void;
+}): React.ReactElement {
+  const [query, setQuery] = React.useState("");
+  const [scope, setScope] = React.useState<"Active" | "Deleted">("Active");
+  const [results, setResults] = React.useState<readonly LibrarySearchResult[]>([]);
+  const [coverage, setCoverage] = React.useState<{
+    indexedCaptures: number;
+    eligibleCaptures: number;
+  }>();
+  const [busy, setBusy] = React.useState(false);
+  const search = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (binding.VaultCommand === undefined)
+      return onError(new Error("Vault commands are unavailable."));
+    setBusy(true);
+    try {
+      const [value, coverageValue] = await Promise.all([
+        binding.VaultCommand({
+          type: "Search",
+          expectedVaultId: vaultId,
+          query,
+          scope,
+          hosts: [],
+          collectionIds: [],
+          tagIds: [],
+        }),
+        binding.VaultCommand({ type: "SearchCoverage", expectedVaultId: vaultId }),
+      ]);
+      setResults((Array.isArray(value) ? value : []) as readonly LibrarySearchResult[]);
+      setCoverage(coverageValue as { indexedCaptures: number; eligibleCaptures: number });
+    } catch (error) {
+      onError(error);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <section className="grid gap-4" aria-labelledby="library-search-heading">
+      <Card>
+        <CardHeader>
+          <CardTitle>Search this Vault</CardTitle>
+          <CardDescription>
+            Search stays local to the authenticated Library projection. Heavy Capture content is
+            indexed only when it is locally available.
+          </CardDescription>
+        </CardHeader>
+        <form
+          className="mt-5 grid gap-4 sm:grid-cols-[1fr_auto_auto]"
+          onSubmit={(event) => void search(event)}
+        >
+          <Field label="Search query">
+            <input
+              className={inputClassName}
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              required
+              disabled={busy}
+            />
+          </Field>
+          <label className="grid gap-2 text-sm font-bold leading-tight text-awsm-ink">
+            Scope
+            <select
+              className={inputClassName}
+              value={scope}
+              onChange={(event) => setScope(event.target.value as "Active" | "Deleted")}
+              disabled={busy}
+            >
+              <option value="Active">Active</option>
+              <option value="Deleted">Deleted</option>
+            </select>
+          </label>
+          <Button type="submit" busy={busy} disabled={busy || query.trim() === ""}>
+            Search
+          </Button>
+        </form>
+        {coverage !== undefined ? (
+          <p className="mt-4 text-sm text-awsm-text-muted">
+            Indexed {coverage.indexedCaptures} of {coverage.eligibleCaptures} Capture records.
+          </p>
+        ) : null}
+        {results.length > 0 ? (
+          <ul className="mt-4 grid gap-3" aria-label="Search results">
+            {results.map((result) => (
+              <li
+                key={`${result.kind}:${result.id}:${result.passageId}`}
+                className="grid gap-1 border-t border-awsm-border-subtle pt-3"
+              >
+                <strong className="text-awsm-ink">{result.title}</strong>
+                <span className="text-xs font-semibold uppercase text-awsm-text-muted">
+                  {result.kind}
+                </span>
+                <span className="text-sm text-awsm-text-muted">{result.snippet}</span>
+              </li>
+            ))}
+          </ul>
+        ) : query !== "" && !busy ? (
+          <p className="mt-4 text-sm text-awsm-text-muted">No matching local results.</p>
+        ) : null}
       </Card>
     </section>
   );
@@ -2871,6 +2990,7 @@ function VaultsView({
               onStatus={onStatus}
             />
             <LibrarySemanticSummary projection={libraryProjection} />
+            <LibrarySearch binding={binding} vaultId={selected.vaultId} onError={onError} />
             <LibraryAuthoringOperations
               binding={binding}
               vaultId={selected.vaultId}
@@ -2953,6 +3073,7 @@ function LibraryView({
         onStatus={onStatus}
       />
       <LibrarySemanticSummary projection={libraryProjection} />
+      <LibrarySearch binding={binding} vaultId={vault.vaultId} onError={onError} />
       <LibraryAuthoringOperations
         binding={binding}
         vaultId={vault.vaultId}

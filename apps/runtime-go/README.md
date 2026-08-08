@@ -149,6 +149,6 @@ test are `script/package-linux-appimage.sh` and `script/packaged-desktop-smoke.m
 
 These proofs cover the process boundary, Runtime API grant lifecycle, canonical Vault Command
 envelope, authenticated replay, Hosted Replica sync boundaries, Library Storage Relief and
-hydration, and encrypted transfer staging. They do not claim desktop page Capture, the
-extension-to-desktop Capture Bundle bridge, unresolved Authority authoring families, or user-facing
-search/AI semantics.
+hydration, local Search materialization and filtering, and encrypted transfer staging. They do not
+claim desktop page Capture, the extension-to-desktop Capture Bundle bridge, unresolved Authority
+authoring families, or user-facing AI semantics.

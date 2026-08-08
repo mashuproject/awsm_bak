@@ -4,8 +4,8 @@ import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { expect, test } from "@playwright/test";
 import { download as downloadGeckodriver } from "geckodriver";
-import { Builder, By, until } from "selenium-webdriver";
-import firefox from "selenium-webdriver/firefox.js";
+import { By, until } from "selenium-webdriver";
+import { Context, Driver, Options, ServiceBuilder } from "selenium-webdriver/firefox.js";
 
 const PACKAGE_ROOT = resolve(import.meta.dirname, "../..");
 const REPOSITORY_ROOT = resolve(PACKAGE_ROOT, "../..");
@@ -77,18 +77,14 @@ async function createDriver(lane) {
     browserConfiguration.geckodriver.version,
     DRIVER_CACHE,
   );
-  const options = new firefox.Options()
+  const options = new Options()
     .setBinary(resolve(PACKAGE_ROOT, configuration.executable))
     .addArguments("-headless")
     .setPreference("xpinstall.signatures.required", false);
-  const service = new firefox.ServiceBuilder(geckodriverBinary).addArguments(
-    "--allow-system-access",
-  );
-  return new Builder()
-    .forBrowser("firefox")
-    .setFirefoxOptions(options)
-    .setFirefoxService(service)
+  const service = new ServiceBuilder(geckodriverBinary)
+    .addArguments("--allow-system-access")
     .build();
+  return Driver.createSession(options, service);
 }
 
 async function installExtension(driver, testInfo) {
@@ -104,12 +100,12 @@ async function installExtension(driver, testInfo) {
 }
 
 async function extensionUrls(driver) {
-  await driver.setContext(firefox.Context.CHROME);
+  await driver.setContext(Context.CHROME);
   const popupUrl = await driver.executeScript(
     "return WebExtensionPolicy.getByID(arguments[0]).getURL('popup.html');",
     FIREFOX_EXTENSION_ID,
   );
-  await driver.setContext(firefox.Context.CONTENT);
+  await driver.setContext(Context.CONTENT);
   return { popupUrl };
 }
 

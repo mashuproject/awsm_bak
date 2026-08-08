@@ -4,8 +4,8 @@ import { createServer } from "node:http";
 import { resolve } from "node:path";
 import { expect, test } from "@playwright/test";
 import { download as downloadGeckodriver } from "geckodriver";
-import { Builder, By, until } from "selenium-webdriver";
-import firefox from "selenium-webdriver/firefox.js";
+import { By, until } from "selenium-webdriver";
+import { Context, Driver, Options, ServiceBuilder } from "selenium-webdriver/firefox.js";
 
 const PACKAGE_ROOT = resolve(import.meta.dirname, "../..");
 const EXTENSION_PATH = resolve(
@@ -48,18 +48,14 @@ async function createDriver(lane) {
     browserConfiguration.geckodriver.version,
     DRIVER_CACHE,
   );
-  const options = new firefox.Options()
+  const options = new Options()
     .setBinary(resolve(PACKAGE_ROOT, configuration.executable))
     .addArguments("-headless");
   if (!SIGNED_INSTALL) options.setPreference("xpinstall.signatures.required", false);
-  const service = new firefox.ServiceBuilder(geckodriverBinary).addArguments(
-    "--allow-system-access",
-  );
-  return new Builder()
-    .forBrowser("firefox")
-    .setFirefoxOptions(options)
-    .setFirefoxService(service)
+  const service = new ServiceBuilder(geckodriverBinary)
+    .addArguments("--allow-system-access")
     .build();
+  return Driver.createSession(options, service);
 }
 
 async function send(driver, request) {
@@ -76,7 +72,7 @@ async function send(driver, request) {
 }
 
 async function grantActiveTab(driver) {
-  await driver.setContext(firefox.Context.CHROME);
+  await driver.setContext(Context.CHROME);
   try {
     await driver.executeScript(
       `
@@ -86,12 +82,12 @@ async function grantActiveTab(driver) {
       FIREFOX_EXTENSION_ID,
     );
   } finally {
-    await driver.setContext(firefox.Context.CONTENT);
+    await driver.setContext(Context.CONTENT);
   }
 }
 
 async function restartBackground(driver) {
-  await driver.setContext(firefox.Context.CHROME);
+  await driver.setContext(Context.CHROME);
   try {
     await driver.executeAsyncScript(
       `
@@ -106,7 +102,7 @@ async function restartBackground(driver) {
       FIREFOX_EXTENSION_ID,
     );
   } finally {
-    await driver.setContext(firefox.Context.CONTENT);
+    await driver.setContext(Context.CONTENT);
   }
 }
 
@@ -120,7 +116,7 @@ for (const lane of lanes) {
       if (process.env.AWSM_FIREFOX_NARROW === "true")
         await driver.manage().window().setRect({ width: 520, height: 760 });
       expect(await driver.installAddon(EXTENSION_PATH, !SIGNED_INSTALL)).toBe(FIREFOX_EXTENSION_ID);
-      await driver.setContext(firefox.Context.CHROME);
+      await driver.setContext(Context.CHROME);
       const popupUrl = await driver.executeScript(
         "return WebExtensionPolicy.getByID(arguments[0]).getURL('popup.html');",
         FIREFOX_EXTENSION_ID,
@@ -129,27 +125,23 @@ for (const lane of lanes) {
         "return WebExtensionPolicy.getByID(arguments[0]).getURL('library.html');",
         FIREFOX_EXTENSION_ID,
       );
-      await driver.setContext(firefox.Context.CONTENT);
+      await driver.setContext(Context.CONTENT);
       await driver.get(popupUrl);
       await driver.wait(
         until.elementLocated(By.xpath("//h1[normalize-space()='Create your local Vault']")),
         10_000,
       );
-      await driver.findElement(By.css('input[name="vault-name"]')).sendKeys("Firefox Field Notes");
+      await driver.findElement(By.id("awsm-vault-name")).sendKeys("Firefox Field Notes");
       await driver.findElement(By.xpath("//button[normalize-space()='Create Vault']")).click();
       await driver.wait(
         until.elementLocated(By.xpath("//h1[normalize-space()='Protect your Vault']")),
         10_000,
       );
-      const phraseField = await driver.findElement(
-        By.css('textarea[aria-label="Recovery Phrase"]'),
-      );
+      const phraseField = await driver.findElement(By.id("awsm-recovery-phrase"));
       const recoveryPhrase = await driver.executeScript("return arguments[0].value;", phraseField);
       expect(recoveryPhrase.trim()).not.toBe("");
       await driver
-        .findElement(
-          By.xpath("//label[normalize-space()='Type the Recovery Phrase to continue']/input"),
-        )
+        .findElement(By.id("awsm-type-the-recovery-phrase-to-continue"))
         .sendKeys(recoveryPhrase);
       await driver
         .findElement(By.xpath("//button[normalize-space()='Confirm Recovery Phrase']"))

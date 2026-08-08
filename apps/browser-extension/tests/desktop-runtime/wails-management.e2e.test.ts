@@ -201,7 +201,15 @@ test("Wails Vault surface authors basic Library content", async ({ page }) => {
       };
       const projection: {
         captures: unknown[];
-        collections: Array<{ title: string }>;
+        collections: Array<{
+          collectionId: string;
+          explicitTitle: null;
+          title: string;
+          tailBundleId: null;
+          activeCaptureCount: number;
+          redirectedTo: null;
+          folderId: null;
+        }>;
         folders: Array<{ folderId: string; name: string; lifecycle: string }>;
         tags: Array<{ tagId: string; name: string; lifecycle: string; redirectedTo: null }>;
         tagAssignments: unknown[];
@@ -249,6 +257,24 @@ test("Wails Vault surface authors basic Library content", async ({ page }) => {
             VaultCommand: async (request: Record<string, unknown>) => {
               if (request.type === "GetState") return state;
               if (request.type === "ListLibraryProjection") return projection;
+              if (request.type === "Search")
+                return [
+                  {
+                    kind: "Collection",
+                    id: selectedCollectionId,
+                    title: "Books",
+                    passageId: "c".repeat(64),
+                    snippet: "Books in the local Library.",
+                    score: 1,
+                  },
+                ];
+              if (request.type === "SearchCoverage")
+                return {
+                  eligibleCaptures: 0,
+                  indexedCaptures: 0,
+                  unavailableHeavyContent: 0,
+                  failedCaptures: 0,
+                };
               if (request.type === "ListRemotes") return [];
               if (request.type === "GetAuthorityState") return authority;
               if (request.type === "CreateFolder") {
@@ -300,6 +326,11 @@ test("Wails Vault surface authors basic Library content", async ({ page }) => {
   await page.getByLabel("Note body").fill("A note from Wails.");
   await page.getByRole("button", { name: "Create Note" }).click();
   await expect(page.getByText("Note created.")).toBeVisible();
+  await page.getByLabel("Search query").fill("Books");
+  await page.getByRole("button", { name: "Search" }).click();
+  await expect(page.getByRole("list", { name: "Search results" })).toContainText(
+    "Books in the local Library.",
+  );
 });
 
 test("Wails Vault surface authors an Invitation through the Runtime command boundary", async ({

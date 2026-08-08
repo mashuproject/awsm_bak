@@ -50,6 +50,28 @@ surface; the extension-to-desktop Capture Bundle bridge is not implemented.
 Unsupported desktop capabilities return a canonical application error rather than pretending that
 the operation succeeded. Desktop page acquisition is intentionally unsupported.
 
+The local Search materialization is also available through:
+
+```json
+{
+  "type": "Search",
+  "expectedVaultId": "<vault id>",
+  "query": "<keyword or quoted phrase>",
+  "scope": "Active",
+  "hosts": [],
+  "collectionIds": [],
+  "tagIds": []
+}
+```
+
+`Search` returns deterministic Capture, Collection, and Note results with bounded HTML-escaped
+snippets, passage IDs, and BM25F-style scores. Collection filters match any selected Collection;
+Tag filters match all selected Tags; and capture dates use an inclusive lower bound and exclusive
+upper bound. `SearchCoverage` returns the current local materialization coverage. The materialization
+is persisted in the local Runtime state store and rebuilt when the authenticated generation or
+causal frontier changes; it is never a Vault Record, Object, synchronization payload, or source of
+authority.
+
 The same boundary exposes these portability Commands:
 
 ```json

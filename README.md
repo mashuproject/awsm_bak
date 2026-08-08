@@ -189,9 +189,10 @@ build opens its Vault-management window by default. After installing the extensi
 **Connect Desktop Runtime**, allow the loopback permission, and approve the pairing in the desktop
 window.
 
-The desktop Runtime can create, select, recover, Fork, close, Vacuum, and manage Hosted Replica
-metadata for its own Vaults. It does not capture pages yet; use the extension's page-capture flow
-for extension-owned Vaults. The extension-to-desktop Capture Bundle bridge is not implemented.
+The desktop Runtime can create, select, recover, Fork, close, Vacuum, search, and manage Hosted
+Replica metadata for its own Vaults. Search is a local projection over authenticated Library data.
+It does not capture pages yet; use the extension's page-capture flow for extension-owned Vaults.
+The extension-to-desktop Capture Bundle bridge is not implemented.
 
 ## Try a Capture
 
@@ -292,9 +293,9 @@ corepack pnpm ui:storybook:build
 
 The Desktop Runtime browser proofs pair the extension with the real loopback Go process in Chrome,
 Firefox Stable, and Firefox ESR, then prove encrypted grant persistence, revocation, the canonical
-Vault Command envelope, one-use transfer staging, and local Artifact Storage Relief followed by
-Library refresh. The Wails bridge proof exercises the same Vault-management presentation without
-exposing bearer tokens. Native Wails startup is an
+Vault Command envelope, one-use transfer staging, local Artifact Storage Relief followed by
+Library refresh, and local Search from the Wails Library surface. The Wails bridge proof exercises
+the same Vault-management presentation without exposing bearer tokens. Native Wails startup is an
 additional local lane; run `corepack pnpm test:runtime:wails` on a host with GTK 3, WebKitGTK 4,
 and `xvfb-run`. The CI equivalent is `AWSM_RUNTIME_WAILS=1 corepack pnpm test:runtime:smoke`.
 
