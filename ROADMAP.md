@@ -101,24 +101,28 @@ streaming, uncertain completion, rollback and omission detection, quota, relocat
 loopback impersonation, TLS, and unavailable-backend Prepared Data. Two independent Runtimes must
 not co-own one Replica namespace; that becomes ordinary Replica synchronization.
 
-## Complete Go Runtime semantic parity
+## Complete Go Runtime semantic parity evidence
 
 **Status:** Candidate
 
-The headless Go Runtime now authors the canonical Collection, Folder, Capture, Tag, and Note
-Content families through the authenticated Client/Key-Epoch boundary, and the Wails surface has
-authoring, Search, organization lifecycle, assignment, merge, and scoped conflict-resolution
-controls. Remaining parity work is:
+The Go Runtime and Wails surface implement the current authenticated Collection, Folder, Capture,
+Tag, and Note Content families, Search, Library projections, synchronization, hydration, Storage
+Relief, Garbage Collection, Fork/Vacuum/Closure semantics, Hosted Replica behavior, and
+Complete Export/Import. The packaged Chromium proof now exercises fresh desktop Vault selection and
+Folder/Tag authoring through the extension's authenticated Content Command boundary.
 
-- complete browser-to-desktop Vault journeys for the Content Commands and formalize randomized
-  multi-Replica convergence, restart/crash, authority/conflict, sparse hydration, and
-  cross-language evidence; and
-- run native Wails packaging/build proofs on every supported desktop dependency set.
+Remaining evidence work is deliberately narrow:
 
-Capture remains extension-only and the extension-to-desktop Capture Bundle bridge is out of scope
-for this release. Complete Export/Import, authenticated replay, Library projection, Hosted Replica
-behavior, pull, hydration, Storage Relief, Garbage Collection, Fork checkpointing, Vacuum adoption,
-multi-Key-Epoch closures, and adopted-Vacuum closures are implemented current behavior and are not
+- seed a desktop-owned Collection without using the out-of-scope Capture Bundle bridge, then prove
+  browser-to-desktop Collection title and Note journeys; and
+- add formal cross-language vectors plus randomized multi-Replica convergence, restart/crash,
+  authority/conflict, sparse hydration, and native-package proofs at the exact current candidate
+  boundary.
+
+Capture remains extension-only and the extension-to-desktop Capture Bundle bridge remains out of
+scope. Existing Complete Export/Import, authenticated replay, Library projection, Hosted Replica,
+pull, hydration, Storage Relief, Garbage Collection, Fork checkpointing, Vacuum adoption,
+multi-Key-Epoch, and adopted-Vacuum behavior are implemented current behavior and are not separate
 roadmap items.
 
 ## Zero-knowledge web Client

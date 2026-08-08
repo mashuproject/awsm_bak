@@ -96,9 +96,9 @@ available. The desktop Runtime records authenticated Invitation Acceptance artif
 `AcceptInvitation`; the external Redemption Authority and joining Client remain outside that
 servicing boundary. The Go Runtime also authors the canonical Collection, Folder, Capture, Tag, and
 Note Content families with scoped conflict handling. Remaining parity work is browser-to-desktop
-Content journeys and formal convergence,
-restart/crash, sparse, native-package, and cross-language evidence; see the living specifications
-and roadmap.
+Content journeys that require an existing Collection plus formal convergence, restart/crash, sparse,
+native-package, and cross-language evidence; the packaged Chromium proof currently covers fresh
+desktop Vault selection plus Folder and Tag authoring. See the living specifications and roadmap.
 Complete Export now
 authenticates and carries multi-Key-Epoch, adopted-Vacuum, Feature Manifest, and Streamable
 Artifact closures. Runtime projections expose Complete, Sparse, and Unavailable Replica state;
@@ -189,8 +189,9 @@ build opens its Vault-management window by default. After installing the extensi
 **Connect Desktop Runtime**, allow the loopback permission, and approve the pairing in the desktop
 window.
 
-The desktop Runtime can create, select, recover, Fork, close, Vacuum, search, and manage Hosted
-Replica metadata for its own Vaults. Search is a local projection over authenticated Library data.
+The desktop Runtime can create, select, recover, Fork, close, Vacuum, search, author authenticated
+Library Content, and manage Hosted Replica metadata for its own Vaults. Search is a local projection
+over authenticated Library data.
 It does not capture pages yet; use the extension's page-capture flow for extension-owned Vaults.
 The extension-to-desktop Capture Bundle bridge is not implemented.
 
@@ -305,7 +306,8 @@ Flatpak by default; set `AWSM_BRAVE_EXECUTABLE` for a directly installed Brave b
 When a Desktop Runtime grant is restored, the separate Library page uses the same Vault selection
 router and reads a selected desktop Vault through the Runtime API rather than copying its bytes
 into browser storage. The real packaged Chromium lane also proves this selection path from a fresh
-extension with a desktop-owned Vault created through the public Runtime API.
+extension with a desktop-owned Vault created through the public Runtime API, including Folder and
+Tag authoring through the authenticated Content Command boundary.
 
 The shared application components live in `packages/ui`. Start the interactive Storybook when
 checking one component or state in isolation:

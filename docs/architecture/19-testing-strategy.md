@@ -257,7 +257,11 @@ duplicate. The native Brave lane is separate browser-capture evidence and does n
 extension-only Capture boundary.
 The packaged Chromium Desktop Runtime lane also creates a desktop-owned Vault through the public
 pairing and Vault-creation API, connects a fresh extension before any browser-local Vault exists,
-and proves that Archive and Library select and read that desktop Vault.
+and proves that Archive and Library select and read that desktop Vault. It then creates a Folder and
+Tag from the Library page through the authenticated Content Command boundary and verifies the live
+projection. Collection title and Note browser journeys require a seeded Collection; the desktop
+fixture intentionally starts empty because page Capture remains extension-only and the Capture Bundle
+bridge is out of scope.
 
 The shared presentation package has a separate component-level review surface. Run
 `corepack pnpm test:ui` for the deterministic theme-contract unit tests,

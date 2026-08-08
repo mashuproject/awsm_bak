@@ -118,6 +118,47 @@ describe("canonical application", () => {
     expect(runtime.listLibrary).toHaveBeenCalledWith(expectedVaultId);
   });
 
+  it("routes authenticated Content Commands with a fresh command context", async () => {
+    const runtime = {
+      listCollections: vi.fn().mockResolvedValue([]),
+      createFolder: vi.fn().mockResolvedValue({
+        folderId: "b".repeat(64),
+        eventRecordId: "c".repeat(64),
+      }),
+    };
+    const application = new CanonicalApplication(
+      runtime as never,
+      () => 1234,
+      undefined,
+      () => "command-id",
+    );
+    const expectedVaultId = "a".repeat(64);
+
+    await expect(
+      application.handle({
+        type: "CreateFolder",
+        expectedVaultId,
+        name: "Archive",
+        parentFolderId: null,
+      }),
+    ).resolves.toEqual({
+      folderId: "b".repeat(64),
+      eventRecordId: "c".repeat(64),
+    });
+    expect(runtime.createFolder).toHaveBeenCalledWith({
+      expectedVaultId,
+      name: "Archive",
+      parentFolderId: null,
+      commandId: "command-id",
+      assertedAt: 1234,
+    });
+
+    await expect(application.handle({ type: "ListCollections", expectedVaultId })).resolves.toEqual(
+      [],
+    );
+    expect(runtime.listCollections).toHaveBeenCalledWith(expectedVaultId);
+  });
+
   it("keeps Hosted Replica setup and listing on exact selected-Vault Commands", async () => {
     const runtime = {
       listRemotes: vi.fn().mockResolvedValue([]),

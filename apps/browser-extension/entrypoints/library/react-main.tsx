@@ -83,6 +83,310 @@ function LibrarySidebar({ vaultLabel }: { readonly vaultLabel?: string }): React
   );
 }
 
+function LibraryContentPanel({
+  vaultId,
+  collections,
+  folders,
+  tags,
+  notes,
+  busy,
+  onMutated,
+  onError,
+}: {
+  readonly vaultId: string;
+  readonly collections: Awaited<ReturnType<CanonicalPopupApplicationClient["listCollections"]>>;
+  readonly folders: Awaited<ReturnType<CanonicalPopupApplicationClient["listFolders"]>>;
+  readonly tags: Awaited<ReturnType<CanonicalPopupApplicationClient["listTags"]>>;
+  readonly notes: Awaited<ReturnType<CanonicalPopupApplicationClient["listNotes"]>>;
+  readonly busy: boolean;
+  readonly onMutated: (message: string) => Promise<void>;
+  readonly onError: (reason: unknown) => void;
+}): React.ReactElement {
+  const [folderName, setFolderName] = React.useState("");
+  const [tagName, setTagName] = React.useState("");
+  const [collectionId, setCollectionId] = React.useState(collections[0]?.collectionId ?? "");
+  const [collectionTitle, setCollectionTitle] = React.useState("");
+  const [noteTargetKind, setNoteTargetKind] = React.useState<"Collection" | "Capture">(
+    "Collection",
+  );
+  const [noteTargetId, setNoteTargetId] = React.useState(collections[0]?.collectionId ?? "");
+  const [noteTitle, setNoteTitle] = React.useState("");
+  const [noteBody, setNoteBody] = React.useState("");
+  const [action, setAction] = React.useState<string>();
+
+  React.useEffect(() => {
+    if (collectionId === "" && collections[0] !== undefined)
+      setCollectionId(collections[0].collectionId);
+    if (noteTargetId === "" && collections[0] !== undefined)
+      setNoteTargetId(collections[0].collectionId);
+  }, [collectionId, collections, noteTargetId]);
+
+  const run = async (name: string, operation: () => Promise<unknown>) => {
+    setAction(name);
+    try {
+      await operation();
+      await onMutated(`${name} completed`);
+    } catch (reason) {
+      onError(reason);
+    } finally {
+      setAction(undefined);
+    }
+  };
+
+  const submitFolder = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    await run("Folder creation", async () => {
+      await client.createFolder({
+        expectedVaultId: vaultId,
+        name: folderName.trim(),
+        parentFolderId: null,
+      });
+      setFolderName("");
+    });
+  };
+  const submitTag = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    await run("Tag creation", async () => {
+      await client.createTag({ expectedVaultId: vaultId, name: tagName.trim() });
+      setTagName("");
+    });
+  };
+  const submitCollectionTitle = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    await run("Collection title", () =>
+      client.setCollectionTitle({
+        expectedVaultId: vaultId,
+        collectionId,
+        title: collectionTitle.trim() === "" ? null : collectionTitle.trim(),
+      }),
+    );
+  };
+  const submitNote = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    await run("Note creation", async () => {
+      await client.createNote({
+        expectedVaultId: vaultId,
+        targetKind: noteTargetKind,
+        targetId: noteTargetId,
+        title: noteTitle.trim() === "" ? null : noteTitle.trim(),
+        body: noteBody,
+      });
+      setNoteTitle("");
+      setNoteBody("");
+    });
+  };
+
+  return (
+    <section
+      className="grid gap-4 border-t-2 border-awsm-border-subtle pt-6"
+      aria-labelledby="library-content-heading"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2
+          id="library-content-heading"
+          className="font-display text-2xl font-bold leading-tight text-awsm-ink"
+        >
+          Vault content
+        </h2>
+        <span className="text-sm text-awsm-text-muted">
+          {collections.length} Collections · {folders.length} Folders · {tags.length} Tags ·{" "}
+          {notes.length} Notes
+        </span>
+      </div>
+      <p className="text-sm leading-relaxed text-awsm-text-muted">
+        Content is authenticated into the selected Vault and projected live from its Event history.
+        Capture remains available only from the extension popup.
+      </p>
+      <div className="grid gap-3 text-sm text-awsm-text-muted md:grid-cols-3">
+        <div>
+          <h3 className="font-semibold text-awsm-ink">Folders</h3>
+          {folders.length === 0 ? (
+            <p>None yet.</p>
+          ) : (
+            <ul aria-label="Folders">
+              {folders.map((folder) => (
+                <li key={folder.folderId}>{folder.name}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+        <div>
+          <h3 className="font-semibold text-awsm-ink">Tags</h3>
+          {tags.length === 0 ? (
+            <p>None yet.</p>
+          ) : (
+            <ul aria-label="Tags">
+              {tags.map((tag) => (
+                <li key={tag.tagId}>{tag.name}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+        <div>
+          <h3 className="font-semibold text-awsm-ink">Notes</h3>
+          {notes.length === 0 ? (
+            <p>None yet.</p>
+          ) : (
+            <ul aria-label="Notes">
+              {notes.map((note) => (
+                <li key={note.noteId}>{note.versions[0]?.title ?? "Untitled note"}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+      <div className="grid gap-4 md:grid-cols-2">
+        <form
+          className="grid gap-2 rounded border-2 border-awsm-border-subtle p-4"
+          onSubmit={(event) => void submitFolder(event)}
+        >
+          <h3 className="font-display text-lg font-bold text-awsm-ink">Create Folder</h3>
+          <label
+            className="grid gap-1 text-sm font-semibold text-awsm-ink"
+            htmlFor="library-folder-name"
+          >
+            Folder name
+            <input
+              id="library-folder-name"
+              value={folderName}
+              onChange={(event) => setFolderName(event.target.value)}
+              required
+            />
+          </label>
+          <Button type="submit" busy={action === "Folder creation" || busy}>
+            Create Folder
+          </Button>
+        </form>
+        <form
+          className="grid gap-2 rounded border-2 border-awsm-border-subtle p-4"
+          onSubmit={(event) => void submitTag(event)}
+        >
+          <h3 className="font-display text-lg font-bold text-awsm-ink">Create Tag</h3>
+          <label
+            className="grid gap-1 text-sm font-semibold text-awsm-ink"
+            htmlFor="library-tag-name"
+          >
+            Tag name
+            <input
+              id="library-tag-name"
+              value={tagName}
+              onChange={(event) => setTagName(event.target.value)}
+              required
+            />
+          </label>
+          <Button type="submit" busy={action === "Tag creation" || busy}>
+            Create Tag
+          </Button>
+        </form>
+        <form
+          className="grid gap-2 rounded border-2 border-awsm-border-subtle p-4"
+          onSubmit={(event) => void submitCollectionTitle(event)}
+        >
+          <h3 className="font-display text-lg font-bold text-awsm-ink">Set Collection title</h3>
+          <label
+            className="grid gap-1 text-sm font-semibold text-awsm-ink"
+            htmlFor="library-collection-id"
+          >
+            Collection
+            <select
+              id="library-collection-id"
+              value={collectionId}
+              onChange={(event) => setCollectionId(event.target.value)}
+              required
+            >
+              {collections.map((collection) => (
+                <option key={collection.collectionId} value={collection.collectionId}>
+                  {collection.title}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label
+            className="grid gap-1 text-sm font-semibold text-awsm-ink"
+            htmlFor="library-collection-title"
+          >
+            New title
+            <input
+              id="library-collection-title"
+              value={collectionTitle}
+              onChange={(event) => setCollectionTitle(event.target.value)}
+            />
+          </label>
+          <Button
+            type="submit"
+            busy={action === "Collection title" || busy}
+            disabled={collectionId === ""}
+          >
+            Save title
+          </Button>
+        </form>
+        <form
+          className="grid gap-2 rounded border-2 border-awsm-border-subtle p-4"
+          onSubmit={(event) => void submitNote(event)}
+        >
+          <h3 className="font-display text-lg font-bold text-awsm-ink">Create Note</h3>
+          <label
+            className="grid gap-1 text-sm font-semibold text-awsm-ink"
+            htmlFor="library-note-target-kind"
+          >
+            Target kind
+            <select
+              id="library-note-target-kind"
+              value={noteTargetKind}
+              onChange={(event) => {
+                const kind = event.target.value as "Collection" | "Capture";
+                setNoteTargetKind(kind);
+                setNoteTargetId(kind === "Collection" ? (collections[0]?.collectionId ?? "") : "");
+              }}
+            >
+              <option value="Collection">Collection</option>
+              <option value="Capture">Capture</option>
+            </select>
+          </label>
+          <label
+            className="grid gap-1 text-sm font-semibold text-awsm-ink"
+            htmlFor="library-note-target-id"
+          >
+            Target
+            <input
+              id="library-note-target-id"
+              value={noteTargetId}
+              onChange={(event) => setNoteTargetId(event.target.value)}
+              required
+            />
+          </label>
+          <label
+            className="grid gap-1 text-sm font-semibold text-awsm-ink"
+            htmlFor="library-note-title"
+          >
+            Note title
+            <input
+              id="library-note-title"
+              value={noteTitle}
+              onChange={(event) => setNoteTitle(event.target.value)}
+            />
+          </label>
+          <label
+            className="grid gap-1 text-sm font-semibold text-awsm-ink"
+            htmlFor="library-note-body"
+          >
+            Note body
+            <textarea
+              id="library-note-body"
+              value={noteBody}
+              onChange={(event) => setNoteBody(event.target.value)}
+              required
+            />
+          </label>
+          <Button type="submit" busy={action === "Note creation" || busy}>
+            Create Note
+          </Button>
+        </form>
+      </div>
+    </section>
+  );
+}
+
 function LibraryApp(): React.ReactElement {
   const [state, setState] =
     React.useState<Awaited<ReturnType<CanonicalPopupApplicationClient["state"]>>>();
@@ -91,6 +395,18 @@ function LibraryApp(): React.ReactElement {
   >([]);
   const [remotes, setRemotes] = React.useState<
     Awaited<ReturnType<CanonicalPopupApplicationClient["listRemotes"]>>
+  >([]);
+  const [collections, setCollections] = React.useState<
+    Awaited<ReturnType<CanonicalPopupApplicationClient["listCollections"]>>
+  >([]);
+  const [folders, setFolders] = React.useState<
+    Awaited<ReturnType<CanonicalPopupApplicationClient["listFolders"]>>
+  >([]);
+  const [tags, setTags] = React.useState<
+    Awaited<ReturnType<CanonicalPopupApplicationClient["listTags"]>>
+  >([]);
+  const [notes, setNotes] = React.useState<
+    Awaited<ReturnType<CanonicalPopupApplicationClient["listNotes"]>>
   >([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string>();
@@ -112,10 +428,21 @@ function LibraryApp(): React.ReactElement {
               client.listLibrary(selectedVaultId),
               client.listRemotes(selectedVaultId),
             ]);
+      const nextCollections =
+        selectedVaultId === undefined ? [] : await client.listCollections(selectedVaultId);
+      const nextFolders =
+        selectedVaultId === undefined ? [] : await client.listFolders(selectedVaultId);
+      const nextTags = selectedVaultId === undefined ? [] : await client.listTags(selectedVaultId);
+      const nextNotes =
+        selectedVaultId === undefined ? [] : await client.listNotes(selectedVaultId);
       if (current !== generation.current) return;
       setState(nextState);
       setItems(nextItems);
       setRemotes(nextRemotes);
+      setCollections(nextCollections);
+      setFolders(nextFolders);
+      setTags(nextTags);
+      setNotes(nextNotes);
       setError(undefined);
     } catch (reason) {
       if (current === generation.current) setError(errorMessage(reason));
@@ -168,6 +495,11 @@ function LibraryApp(): React.ReactElement {
     } finally {
       setRetrieving(undefined);
     }
+  };
+
+  const contentMutated = async (message: string) => {
+    setAnnounce(message);
+    await reconcile();
   };
 
   const vault =
@@ -277,6 +609,18 @@ function LibraryApp(): React.ReactElement {
               ) : null}
             </section>
           )}
+          {vault !== undefined ? (
+            <LibraryContentPanel
+              vaultId={vault.vaultId}
+              collections={collections}
+              folders={folders}
+              tags={tags}
+              notes={notes}
+              busy={loading}
+              onMutated={contentMutated}
+              onError={(reason) => setError(errorMessage(reason))}
+            />
+          ) : null}
         </div>
       </AppShell>
     </AppearanceProvider>

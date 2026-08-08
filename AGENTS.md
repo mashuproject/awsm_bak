@@ -226,6 +226,12 @@ Discover current build, test, lint, and development commands from repository man
 
 Invoke the repository-pinned pnpm through Corepack: use `corepack pnpm`, not a bare `pnpm` command.
 
+Treat missing test or build libraries as installable prerequisites, not as environment limitations,
+until installation has actually been attempted. Before declaring a browser, desktop, native-shell,
+or packaging lane blocked, inspect its documented dependency set, install the required packages in
+the current environment or its test container, and rerun the lane. Report the concrete installation
+failure only when the install attempt itself fails or the dependency is genuinely unavailable.
+
 ### Test-first workflow and test maintenance
 
 - For every new or changed production behavior, first run the smallest relevant test and record the

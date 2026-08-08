@@ -104,6 +104,175 @@ export type CanonicalApplicationRequest =
       readonly type: "HydrateArtifact";
       readonly expectedVaultId: string;
       readonly artifactId: string;
+    }
+  | CanonicalContentApplicationRequest;
+
+type CanonicalContentApplicationRequest =
+  | {
+      readonly type: "Search";
+      readonly expectedVaultId: string;
+      readonly query: string;
+      readonly scope: "Active" | "Deleted";
+      readonly hosts: readonly string[];
+      readonly collectionIds: readonly string[];
+      readonly tagIds: readonly string[];
+      readonly capturedFrom?: number;
+      readonly capturedBefore?: number;
+    }
+  | { readonly type: "SearchCoverage"; readonly expectedVaultId: string }
+  | { readonly type: "ListCollections"; readonly expectedVaultId: string }
+  | { readonly type: "ListFolders"; readonly expectedVaultId: string }
+  | { readonly type: "ListTags"; readonly expectedVaultId: string }
+  | { readonly type: "ListTagAssignments"; readonly expectedVaultId: string }
+  | { readonly type: "ListNotes"; readonly expectedVaultId: string }
+  | { readonly type: "ListLibraryConflicts"; readonly expectedVaultId: string }
+  | {
+      readonly type: "CreateFolder";
+      readonly expectedVaultId: string;
+      readonly name: string;
+      readonly parentFolderId: string | null;
+    }
+  | {
+      readonly type: "RenameFolder";
+      readonly expectedVaultId: string;
+      readonly folderId: string;
+      readonly name: string;
+    }
+  | {
+      readonly type: "PlaceFolder";
+      readonly expectedVaultId: string;
+      readonly folderId: string;
+      readonly parentFolderId: string | null;
+    }
+  | { readonly type: "DeleteFolder"; readonly expectedVaultId: string; readonly folderId: string }
+  | { readonly type: "RestoreFolder"; readonly expectedVaultId: string; readonly folderId: string }
+  | {
+      readonly type: "PlaceCollectionInFolder";
+      readonly expectedVaultId: string;
+      readonly collectionId: string;
+      readonly folderId: string | null;
+    }
+  | {
+      readonly type: "ResolveFolderConflict";
+      readonly expectedVaultId: string;
+      readonly subjectFolderIds: readonly string[];
+      readonly conflictingCauseIds: readonly string[];
+      readonly placements: readonly {
+        readonly folderId: string;
+        readonly parentFolderId: string | null;
+      }[];
+    }
+  | {
+      readonly type: "SetCollectionTitle";
+      readonly expectedVaultId: string;
+      readonly collectionId: string;
+      readonly title: string | null;
+    }
+  | {
+      readonly type: "MergeCollections";
+      readonly expectedVaultId: string;
+      readonly sourceCollectionIds: readonly string[];
+      readonly destinationCollectionId: string;
+    }
+  | {
+      readonly type: "RevertCollectionMerge";
+      readonly expectedVaultId: string;
+      readonly redirectCauseId: string;
+    }
+  | {
+      readonly type: "ResolveCollectionMergeConflict";
+      readonly expectedVaultId: string;
+      readonly subjectCollectionIds: readonly string[];
+      readonly conflictingCauseIds: readonly string[];
+      readonly redirects: readonly {
+        readonly sourceCollectionId: string;
+        readonly destinationCollectionId: string;
+      }[];
+    }
+  | {
+      readonly type: "MoveCaptures";
+      readonly expectedVaultId: string;
+      readonly bundleIds: readonly string[];
+      readonly destinationCollectionId: string;
+    }
+  | {
+      readonly type: "DeleteCaptures";
+      readonly expectedVaultId: string;
+      readonly bundleIds: readonly string[];
+    }
+  | {
+      readonly type: "RestoreCaptures";
+      readonly expectedVaultId: string;
+      readonly bundleIds: readonly string[];
+    }
+  | { readonly type: "CreateTag"; readonly expectedVaultId: string; readonly name: string }
+  | {
+      readonly type: "RenameTag";
+      readonly expectedVaultId: string;
+      readonly tagId: string;
+      readonly name: string;
+    }
+  | {
+      readonly type: "AssignTag";
+      readonly expectedVaultId: string;
+      readonly tagId: string;
+      readonly targetKind: "Collection" | "Capture";
+      readonly targetId: string;
+    }
+  | {
+      readonly type: "RemoveTagAssignments";
+      readonly expectedVaultId: string;
+      readonly tagId: string;
+      readonly targetKind: "Collection" | "Capture";
+      readonly targetId: string;
+    }
+  | { readonly type: "DeleteTag"; readonly expectedVaultId: string; readonly tagId: string }
+  | { readonly type: "RestoreTag"; readonly expectedVaultId: string; readonly tagId: string }
+  | {
+      readonly type: "MergeTags";
+      readonly expectedVaultId: string;
+      readonly sourceTagIds: readonly string[];
+      readonly destinationTagId: string;
+    }
+  | {
+      readonly type: "RevertTagMerge";
+      readonly expectedVaultId: string;
+      readonly redirectCauseId: string;
+    }
+  | {
+      readonly type: "ResolveTagMergeConflict";
+      readonly expectedVaultId: string;
+      readonly subjectTagIds: readonly string[];
+      readonly conflictingCauseIds: readonly string[];
+      readonly redirects: readonly {
+        readonly sourceTagId: string;
+        readonly destinationTagId: string;
+      }[];
+    }
+  | {
+      readonly type: "CreateNote";
+      readonly expectedVaultId: string;
+      readonly targetKind: "Collection" | "Capture";
+      readonly targetId: string;
+      readonly title: string | null;
+      readonly body: string;
+    }
+  | {
+      readonly type: "ReviseNote";
+      readonly expectedVaultId: string;
+      readonly noteId: string;
+      readonly title: string | null;
+      readonly body: string;
+    }
+  | { readonly type: "DeleteNote"; readonly expectedVaultId: string; readonly noteId: string }
+  | { readonly type: "RestoreNote"; readonly expectedVaultId: string; readonly noteId: string }
+  | {
+      readonly type: "ResolveNoteConflict";
+      readonly expectedVaultId: string;
+      readonly noteId: string;
+      readonly conflictingCauseIds: readonly string[];
+      readonly retainedOriginal: { readonly title: string | null; readonly body: string } | null;
+      readonly splitNotes: readonly { readonly title: string | null; readonly body: string }[];
     };
 
 type CanonicalApplicationRuntime = Pick<
@@ -136,7 +305,98 @@ type CanonicalApplicationRuntime = Pick<
   | "materializeHostedReplica"
   | "pullHostedReplicas"
   | "hydrateArtifact"
->;
+> &
+  Partial<
+    Pick<
+      CanonicalClientRuntime,
+      | "search"
+      | "searchCoverage"
+      | "listCollections"
+      | "listFolders"
+      | "listTags"
+      | "listTagAssignments"
+      | "listNotes"
+      | "listLibraryConflicts"
+      | "createFolder"
+      | "renameFolder"
+      | "placeFolder"
+      | "deleteFolder"
+      | "restoreFolder"
+      | "placeCollectionInFolder"
+      | "resolveFolderConflict"
+      | "setCollectionTitle"
+      | "mergeCollections"
+      | "revertCollectionMerge"
+      | "resolveCollectionMergeConflict"
+      | "moveCaptures"
+      | "deleteCaptures"
+      | "restoreCaptures"
+      | "createTag"
+      | "renameTag"
+      | "assignTag"
+      | "removeTagAssignments"
+      | "deleteTag"
+      | "restoreTag"
+      | "createNote"
+      | "reviseNote"
+      | "deleteNote"
+      | "restoreNote"
+      | "resolveNoteConflict"
+    >
+  >;
+
+const contentRuntimeMethods = {
+  Search: "search",
+  SearchCoverage: "searchCoverage",
+  ListCollections: "listCollections",
+  ListFolders: "listFolders",
+  ListTags: "listTags",
+  ListTagAssignments: "listTagAssignments",
+  ListNotes: "listNotes",
+  ListLibraryConflicts: "listLibraryConflicts",
+  CreateFolder: "createFolder",
+  RenameFolder: "renameFolder",
+  PlaceFolder: "placeFolder",
+  DeleteFolder: "deleteFolder",
+  RestoreFolder: "restoreFolder",
+  PlaceCollectionInFolder: "placeCollectionInFolder",
+  SetCollectionTitle: "setCollectionTitle",
+  MergeCollections: "mergeCollections",
+  RevertCollectionMerge: "revertCollectionMerge",
+  MoveCaptures: "moveCaptures",
+  DeleteCaptures: "deleteCaptures",
+  RestoreCaptures: "restoreCaptures",
+  CreateTag: "createTag",
+  RenameTag: "renameTag",
+  AssignTag: "assignTag",
+  RemoveTagAssignments: "removeTagAssignments",
+  DeleteTag: "deleteTag",
+  RestoreTag: "restoreTag",
+  MergeTags: "mergeTags",
+  RevertTagMerge: "revertTagMerge",
+  CreateNote: "createNote",
+  ReviseNote: "reviseNote",
+  DeleteNote: "deleteNote",
+  RestoreNote: "restoreNote",
+  ResolveFolderConflict: "resolveFolderConflict",
+  ResolveCollectionMergeConflict: "resolveCollectionMergeConflict",
+  ResolveTagMergeConflict: "resolveTagMergeConflict",
+  ResolveNoteConflict: "resolveNoteConflict",
+} as const;
+
+const contentReadRuntimeMethods = new Set<keyof typeof contentRuntimeMethods>([
+  "SearchCoverage",
+  "ListCollections",
+  "ListFolders",
+  "ListTags",
+  "ListTagAssignments",
+  "ListNotes",
+  "ListLibraryConflicts",
+]);
+
+function typeToRuntimeMethod(type: keyof typeof contentRuntimeMethods): string {
+  return contentRuntimeMethods[type];
+}
 
 interface CanonicalApplicationPageCapture {
   captureActivePage(tabId?: number): Promise<{
@@ -172,6 +432,29 @@ function nullableText(value: unknown): value is string | null {
 
 function tabId(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function stringArray(value: unknown): value is readonly string[] {
+  return Array.isArray(value) && value.every((entry) => typeof entry === "string");
+}
+
+function targetKind(value: unknown): value is "Collection" | "Capture" {
+  return value === "Collection" || value === "Capture";
+}
+
+function nonnegativeNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function contentRecordArray(
+  value: unknown,
+  keys: readonly string[],
+  validate: (entry: Readonly<Record<string, unknown>>) => boolean,
+): value is readonly Readonly<Record<string, unknown>>[] {
+  return (
+    Array.isArray(value) &&
+    value.every((entry) => plainRecord(entry) && exactKeys(entry, keys) && validate(entry))
+  );
 }
 
 export function decodeCanonicalApplicationRequest(value: unknown): CanonicalApplicationRequest {
@@ -453,6 +736,467 @@ export function decodeCanonicalApplicationRequest(value: unknown): CanonicalAppl
         };
       }
       break;
+    case "Search": {
+      const optionalKeys = [
+        ...(Object.hasOwn(value, "capturedFrom") ? ["capturedFrom"] : []),
+        ...(Object.hasOwn(value, "capturedBefore") ? ["capturedBefore"] : []),
+      ];
+      if (
+        exactKeys(value, [
+          "type",
+          "expectedVaultId",
+          "query",
+          "scope",
+          "hosts",
+          "collectionIds",
+          "tagIds",
+          ...optionalKeys,
+        ]) &&
+        text(value.expectedVaultId) &&
+        text(value.query) &&
+        (value.scope === "Active" || value.scope === "Deleted") &&
+        stringArray(value.hosts) &&
+        stringArray(value.collectionIds) &&
+        stringArray(value.tagIds) &&
+        (!Object.hasOwn(value, "capturedFrom") || nonnegativeNumber(value.capturedFrom)) &&
+        (!Object.hasOwn(value, "capturedBefore") || nonnegativeNumber(value.capturedBefore))
+      ) {
+        return {
+          type: value.type,
+          expectedVaultId: value.expectedVaultId,
+          query: value.query,
+          scope: value.scope,
+          hosts: value.hosts,
+          collectionIds: value.collectionIds,
+          tagIds: value.tagIds,
+          ...(Object.hasOwn(value, "capturedFrom")
+            ? { capturedFrom: value.capturedFrom as number }
+            : {}),
+          ...(Object.hasOwn(value, "capturedBefore")
+            ? { capturedBefore: value.capturedBefore as number }
+            : {}),
+        };
+      }
+      break;
+    }
+    case "SearchCoverage":
+    case "ListCollections":
+    case "ListFolders":
+    case "ListTags":
+    case "ListTagAssignments":
+    case "ListNotes":
+    case "ListLibraryConflicts":
+      if (exactKeys(value, ["type", "expectedVaultId"]) && text(value.expectedVaultId)) {
+        return { type: value.type, expectedVaultId: value.expectedVaultId };
+      }
+      break;
+    case "CreateFolder":
+      if (
+        exactKeys(value, ["type", "expectedVaultId", "name", "parentFolderId"]) &&
+        text(value.expectedVaultId) &&
+        text(value.name) &&
+        nullableText(value.parentFolderId)
+      ) {
+        return {
+          type: value.type,
+          expectedVaultId: value.expectedVaultId,
+          name: value.name,
+          parentFolderId: value.parentFolderId,
+        };
+      }
+      break;
+    case "RenameFolder":
+      if (
+        exactKeys(value, ["type", "expectedVaultId", "folderId", "name"]) &&
+        text(value.expectedVaultId) &&
+        text(value.folderId) &&
+        text(value.name)
+      ) {
+        return {
+          type: value.type,
+          expectedVaultId: value.expectedVaultId,
+          folderId: value.folderId,
+          name: value.name,
+        };
+      }
+      break;
+    case "PlaceFolder":
+      if (
+        exactKeys(value, ["type", "expectedVaultId", "folderId", "parentFolderId"]) &&
+        text(value.expectedVaultId) &&
+        text(value.folderId) &&
+        nullableText(value.parentFolderId)
+      ) {
+        return {
+          type: value.type,
+          expectedVaultId: value.expectedVaultId,
+          folderId: value.folderId,
+          parentFolderId: value.parentFolderId,
+        };
+      }
+      break;
+    case "DeleteFolder":
+    case "RestoreFolder":
+      if (
+        exactKeys(value, ["type", "expectedVaultId", "folderId"]) &&
+        text(value.expectedVaultId) &&
+        text(value.folderId)
+      ) {
+        return {
+          type: value.type,
+          expectedVaultId: value.expectedVaultId,
+          folderId: value.folderId,
+        };
+      }
+      break;
+    case "PlaceCollectionInFolder":
+      if (
+        exactKeys(value, ["type", "expectedVaultId", "collectionId", "folderId"]) &&
+        text(value.expectedVaultId) &&
+        text(value.collectionId) &&
+        nullableText(value.folderId)
+      ) {
+        return {
+          type: value.type,
+          expectedVaultId: value.expectedVaultId,
+          collectionId: value.collectionId,
+          folderId: value.folderId,
+        };
+      }
+      break;
+    case "SetCollectionTitle":
+      if (
+        exactKeys(value, ["type", "expectedVaultId", "collectionId", "title"]) &&
+        text(value.expectedVaultId) &&
+        text(value.collectionId) &&
+        nullableText(value.title)
+      ) {
+        return {
+          type: value.type,
+          expectedVaultId: value.expectedVaultId,
+          collectionId: value.collectionId,
+          title: value.title,
+        };
+      }
+      break;
+    case "MergeCollections":
+      if (
+        exactKeys(value, [
+          "type",
+          "expectedVaultId",
+          "sourceCollectionIds",
+          "destinationCollectionId",
+        ]) &&
+        text(value.expectedVaultId) &&
+        stringArray(value.sourceCollectionIds) &&
+        text(value.destinationCollectionId)
+      ) {
+        return {
+          type: value.type,
+          expectedVaultId: value.expectedVaultId,
+          sourceCollectionIds: value.sourceCollectionIds,
+          destinationCollectionId: value.destinationCollectionId,
+        };
+      }
+      break;
+    case "RevertCollectionMerge":
+      if (
+        exactKeys(value, ["type", "expectedVaultId", "redirectCauseId"]) &&
+        text(value.expectedVaultId) &&
+        text(value.redirectCauseId)
+      ) {
+        return {
+          type: value.type,
+          expectedVaultId: value.expectedVaultId,
+          redirectCauseId: value.redirectCauseId,
+        };
+      }
+      break;
+    case "MoveCaptures":
+      if (
+        exactKeys(value, ["type", "expectedVaultId", "bundleIds", "destinationCollectionId"]) &&
+        text(value.expectedVaultId) &&
+        stringArray(value.bundleIds) &&
+        text(value.destinationCollectionId)
+      ) {
+        return {
+          type: value.type,
+          expectedVaultId: value.expectedVaultId,
+          bundleIds: value.bundleIds,
+          destinationCollectionId: value.destinationCollectionId,
+        };
+      }
+      break;
+    case "DeleteCaptures":
+    case "RestoreCaptures":
+      if (
+        exactKeys(value, ["type", "expectedVaultId", "bundleIds"]) &&
+        text(value.expectedVaultId) &&
+        stringArray(value.bundleIds)
+      ) {
+        return {
+          type: value.type,
+          expectedVaultId: value.expectedVaultId,
+          bundleIds: value.bundleIds,
+        };
+      }
+      break;
+    case "ResolveCollectionMergeConflict":
+      if (
+        exactKeys(value, [
+          "type",
+          "expectedVaultId",
+          "subjectCollectionIds",
+          "conflictingCauseIds",
+          "redirects",
+        ]) &&
+        text(value.expectedVaultId) &&
+        stringArray(value.subjectCollectionIds) &&
+        stringArray(value.conflictingCauseIds) &&
+        contentRecordArray(
+          value.redirects,
+          ["sourceCollectionId", "destinationCollectionId"],
+          (entry) => text(entry.sourceCollectionId) && text(entry.destinationCollectionId),
+        )
+      ) {
+        return {
+          type: value.type,
+          expectedVaultId: value.expectedVaultId,
+          subjectCollectionIds: value.subjectCollectionIds,
+          conflictingCauseIds: value.conflictingCauseIds,
+          redirects: value.redirects as readonly {
+            readonly sourceCollectionId: string;
+            readonly destinationCollectionId: string;
+          }[],
+        };
+      }
+      break;
+    case "ResolveFolderConflict":
+      if (
+        exactKeys(value, [
+          "type",
+          "expectedVaultId",
+          "subjectFolderIds",
+          "conflictingCauseIds",
+          "placements",
+        ]) &&
+        text(value.expectedVaultId) &&
+        stringArray(value.subjectFolderIds) &&
+        stringArray(value.conflictingCauseIds) &&
+        contentRecordArray(
+          value.placements,
+          ["folderId", "parentFolderId"],
+          (entry) => text(entry.folderId) && nullableText(entry.parentFolderId),
+        )
+      ) {
+        return {
+          type: value.type,
+          expectedVaultId: value.expectedVaultId,
+          subjectFolderIds: value.subjectFolderIds,
+          conflictingCauseIds: value.conflictingCauseIds,
+          placements: value.placements as readonly {
+            readonly folderId: string;
+            readonly parentFolderId: string | null;
+          }[],
+        };
+      }
+      break;
+    case "CreateTag":
+      if (
+        exactKeys(value, ["type", "expectedVaultId", "name"]) &&
+        text(value.expectedVaultId) &&
+        text(value.name)
+      ) {
+        return { type: value.type, expectedVaultId: value.expectedVaultId, name: value.name };
+      }
+      break;
+    case "RenameTag":
+      if (
+        exactKeys(value, ["type", "expectedVaultId", "tagId", "name"]) &&
+        text(value.expectedVaultId) &&
+        text(value.tagId) &&
+        text(value.name)
+      ) {
+        return {
+          type: value.type,
+          expectedVaultId: value.expectedVaultId,
+          tagId: value.tagId,
+          name: value.name,
+        };
+      }
+      break;
+    case "AssignTag":
+    case "RemoveTagAssignments":
+      if (
+        exactKeys(value, ["type", "expectedVaultId", "tagId", "targetKind", "targetId"]) &&
+        text(value.expectedVaultId) &&
+        text(value.tagId) &&
+        targetKind(value.targetKind) &&
+        text(value.targetId)
+      ) {
+        return {
+          type: value.type,
+          expectedVaultId: value.expectedVaultId,
+          tagId: value.tagId,
+          targetKind: value.targetKind,
+          targetId: value.targetId,
+        };
+      }
+      break;
+    case "DeleteTag":
+    case "RestoreTag":
+      if (
+        exactKeys(value, ["type", "expectedVaultId", "tagId"]) &&
+        text(value.expectedVaultId) &&
+        text(value.tagId)
+      ) {
+        return { type: value.type, expectedVaultId: value.expectedVaultId, tagId: value.tagId };
+      }
+      break;
+    case "MergeTags":
+      if (
+        exactKeys(value, ["type", "expectedVaultId", "sourceTagIds", "destinationTagId"]) &&
+        text(value.expectedVaultId) &&
+        stringArray(value.sourceTagIds) &&
+        text(value.destinationTagId)
+      ) {
+        return {
+          type: value.type,
+          expectedVaultId: value.expectedVaultId,
+          sourceTagIds: value.sourceTagIds,
+          destinationTagId: value.destinationTagId,
+        };
+      }
+      break;
+    case "RevertTagMerge":
+      if (
+        exactKeys(value, ["type", "expectedVaultId", "redirectCauseId"]) &&
+        text(value.expectedVaultId) &&
+        text(value.redirectCauseId)
+      ) {
+        return {
+          type: value.type,
+          expectedVaultId: value.expectedVaultId,
+          redirectCauseId: value.redirectCauseId,
+        };
+      }
+      break;
+    case "ResolveTagMergeConflict":
+      if (
+        exactKeys(value, [
+          "type",
+          "expectedVaultId",
+          "subjectTagIds",
+          "conflictingCauseIds",
+          "redirects",
+        ]) &&
+        text(value.expectedVaultId) &&
+        stringArray(value.subjectTagIds) &&
+        stringArray(value.conflictingCauseIds) &&
+        contentRecordArray(
+          value.redirects,
+          ["sourceTagId", "destinationTagId"],
+          (entry) => text(entry.sourceTagId) && text(entry.destinationTagId),
+        )
+      ) {
+        return {
+          type: value.type,
+          expectedVaultId: value.expectedVaultId,
+          subjectTagIds: value.subjectTagIds,
+          conflictingCauseIds: value.conflictingCauseIds,
+          redirects: value.redirects as readonly {
+            readonly sourceTagId: string;
+            readonly destinationTagId: string;
+          }[],
+        };
+      }
+      break;
+    case "CreateNote":
+      if (
+        exactKeys(value, ["type", "expectedVaultId", "targetKind", "targetId", "title", "body"]) &&
+        text(value.expectedVaultId) &&
+        targetKind(value.targetKind) &&
+        text(value.targetId) &&
+        nullableText(value.title) &&
+        text(value.body)
+      ) {
+        return {
+          type: value.type,
+          expectedVaultId: value.expectedVaultId,
+          targetKind: value.targetKind,
+          targetId: value.targetId,
+          title: value.title,
+          body: value.body,
+        };
+      }
+      break;
+    case "ReviseNote":
+      if (
+        exactKeys(value, ["type", "expectedVaultId", "noteId", "title", "body"]) &&
+        text(value.expectedVaultId) &&
+        text(value.noteId) &&
+        nullableText(value.title) &&
+        text(value.body)
+      ) {
+        return {
+          type: value.type,
+          expectedVaultId: value.expectedVaultId,
+          noteId: value.noteId,
+          title: value.title,
+          body: value.body,
+        };
+      }
+      break;
+    case "DeleteNote":
+    case "RestoreNote":
+      if (
+        exactKeys(value, ["type", "expectedVaultId", "noteId"]) &&
+        text(value.expectedVaultId) &&
+        text(value.noteId)
+      ) {
+        return { type: value.type, expectedVaultId: value.expectedVaultId, noteId: value.noteId };
+      }
+      break;
+    case "ResolveNoteConflict":
+      if (
+        exactKeys(value, [
+          "type",
+          "expectedVaultId",
+          "noteId",
+          "conflictingCauseIds",
+          "retainedOriginal",
+          "splitNotes",
+        ]) &&
+        text(value.expectedVaultId) &&
+        text(value.noteId) &&
+        stringArray(value.conflictingCauseIds) &&
+        (value.retainedOriginal === null ||
+          (plainRecord(value.retainedOriginal) &&
+            exactKeys(value.retainedOriginal, ["title", "body"]) &&
+            nullableText(value.retainedOriginal.title) &&
+            text(value.retainedOriginal.body))) &&
+        contentRecordArray(
+          value.splitNotes,
+          ["title", "body"],
+          (entry) => nullableText(entry.title) && text(entry.body),
+        )
+      ) {
+        return {
+          type: value.type,
+          expectedVaultId: value.expectedVaultId,
+          noteId: value.noteId,
+          conflictingCauseIds: value.conflictingCauseIds,
+          retainedOriginal: value.retainedOriginal as {
+            readonly title: string | null;
+            readonly body: string;
+          } | null,
+          splitNotes: value.splitNotes as readonly {
+            readonly title: string | null;
+            readonly body: string;
+          }[],
+        };
+      }
+      break;
   }
   throw new TypeError("Unsupported application Command");
 }
@@ -470,6 +1214,21 @@ export class CanonicalApplication {
     const result = await operation();
     await this.notifyStateChanged();
     return result;
+  }
+
+  private invokeContentCommand(
+    type: keyof typeof contentRuntimeMethods,
+    input: Record<string, unknown>,
+  ): Promise<unknown> {
+    const method = typeToRuntimeMethod(type) as keyof CanonicalApplicationRuntime;
+    const operation = this.runtime[method];
+    if (typeof operation !== "function") {
+      throw Object.assign(new Error("This Client does not implement that Content Command."), {
+        id: "CONTENT_COMMAND_UNAVAILABLE",
+      });
+    }
+    const value = contentReadRuntimeMethods.has(type) ? input.expectedVaultId : input;
+    return (operation as (value: unknown) => Promise<unknown>).call(this.runtime, value);
   }
 
   async handle(value: unknown): Promise<unknown> {
@@ -622,6 +1381,89 @@ export class CanonicalApplication {
       case "HydrateArtifact": {
         const { type: _type, ...input } = request;
         return this.mutate(() => this.runtime.hydrateArtifact(input));
+      }
+      case "Search": {
+        const { type: _type, ...input } = request;
+        return this.invokeContentCommand("Search", input);
+      }
+      case "SearchCoverage":
+        return this.invokeContentCommand("SearchCoverage", {
+          expectedVaultId: request.expectedVaultId,
+        });
+      case "ListCollections":
+        return this.invokeContentCommand("ListCollections", {
+          expectedVaultId: request.expectedVaultId,
+        });
+      case "ListFolders":
+        return this.invokeContentCommand("ListFolders", {
+          expectedVaultId: request.expectedVaultId,
+        });
+      case "ListTags":
+        return this.invokeContentCommand("ListTags", { expectedVaultId: request.expectedVaultId });
+      case "ListTagAssignments":
+        return this.invokeContentCommand("ListTagAssignments", {
+          expectedVaultId: request.expectedVaultId,
+        });
+      case "ListNotes":
+        return this.invokeContentCommand("ListNotes", { expectedVaultId: request.expectedVaultId });
+      case "ListLibraryConflicts":
+        return this.invokeContentCommand("ListLibraryConflicts", {
+          expectedVaultId: request.expectedVaultId,
+        });
+      case "CreateFolder": {
+        const { type: _type, ...input } = request;
+        return this.mutate(() =>
+          this.invokeContentCommand("CreateFolder", {
+            ...input,
+            commandId: this.createCaptureCommandId(),
+            assertedAt: this.now(),
+          }),
+        );
+      }
+      case "RenameFolder":
+      case "PlaceFolder":
+      case "DeleteFolder":
+      case "RestoreFolder":
+      case "PlaceCollectionInFolder":
+      case "SetCollectionTitle":
+      case "MergeCollections":
+      case "RevertCollectionMerge":
+      case "MoveCaptures":
+      case "DeleteCaptures":
+      case "RestoreCaptures":
+      case "CreateTag":
+      case "RenameTag":
+      case "AssignTag":
+      case "RemoveTagAssignments":
+      case "DeleteTag":
+      case "RestoreTag":
+      case "MergeTags":
+      case "RevertTagMerge":
+      case "CreateNote":
+      case "ReviseNote":
+      case "DeleteNote":
+      case "RestoreNote": {
+        const { type, ...input } = request;
+        return this.mutate(() =>
+          this.invokeContentCommand(type, {
+            ...input,
+            commandId: this.createCaptureCommandId(),
+            assertedAt: this.now(),
+          }),
+        );
+      }
+      case "ResolveFolderConflict":
+      case "ResolveCollectionMergeConflict":
+      case "ResolveTagMergeConflict":
+      case "ResolveNoteConflict": {
+        const { type, ...input } = request;
+        return this.mutate(() =>
+          this.invokeContentCommand(type, {
+            ...input,
+            commandId: this.createCaptureCommandId(),
+            assertedAt: this.now(),
+          }),
+        );
       }
     }
   }

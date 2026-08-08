@@ -187,6 +187,12 @@ export type CanonicalClientLibraryConflict =
       readonly candidateRecordIds: readonly string[];
     }
   | {
+      readonly kind: "TagMerge";
+      readonly reason: "MultipleDestinations" | "Cycle";
+      readonly subjectTagIds: readonly string[];
+      readonly candidateRecordIds: readonly string[];
+    }
+  | {
       readonly kind: "Folder";
       readonly subjectFolderIds: readonly string[];
       readonly candidateRecordIds: readonly string[];

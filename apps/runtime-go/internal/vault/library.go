@@ -135,6 +135,53 @@ type ClientNoteSummary struct {
 	Versions   []ClientNoteVersionSummary `json:"versions"`
 }
 
+type ClientLibraryConflictSummary struct {
+	Kind                  string   `json:"kind"`
+	Reason                string   `json:"reason,omitempty"`
+	BundleID              string   `json:"bundleId,omitempty"`
+	RegistrationRecordIDs []string `json:"registrationRecordIds,omitempty"`
+	SubjectCollectionIDs  []string `json:"subjectCollectionIds,omitempty"`
+	SubjectTagIDs         []string `json:"subjectTagIds,omitempty"`
+	SubjectFolderIDs      []string `json:"subjectFolderIds,omitempty"`
+	NoteID                string   `json:"noteId,omitempty"`
+	CandidateRecordIDs    []string `json:"candidateRecordIds,omitempty"`
+}
+
+func clientLibraryConflictSummaries(values []LibraryConflict) ([]ClientLibraryConflictSummary, error) {
+	result := make([]ClientLibraryConflictSummary, 0, len(values))
+	for _, value := range values {
+		summary := ClientLibraryConflictSummary{
+			Kind: value.Kind, Reason: value.Reason, CandidateRecordIDs: value.CandidateRecordIDs,
+		}
+		switch value.Kind {
+		case "CaptureIdentity":
+			if len(value.SubjectIDs) != 1 {
+				return nil, errors.New("Capture identity conflict has an invalid subject set")
+			}
+			summary.BundleID = value.SubjectIDs[0]
+			summary.RegistrationRecordIDs = value.CandidateRecordIDs
+			summary.Reason = ""
+			summary.CandidateRecordIDs = nil
+		case "CollectionMerge":
+			summary.SubjectCollectionIDs = value.SubjectIDs
+		case "TagMerge":
+			summary.SubjectTagIDs = value.SubjectIDs
+		case "Folder":
+			summary.SubjectFolderIDs = value.SubjectIDs
+		case "Note":
+			if len(value.SubjectIDs) != 1 {
+				return nil, errors.New("Note conflict has an invalid subject set")
+			}
+			summary.NoteID = value.SubjectIDs[0]
+			summary.Reason = ""
+		default:
+			return nil, fmt.Errorf("unsupported Library conflict kind %q", value.Kind)
+		}
+		result = append(result, summary)
+	}
+	return result, nil
+}
+
 func clientTagAssignmentSummaries(values []LibraryTagAssignment) []ClientTagAssignmentSummary {
 	result := make([]ClientTagAssignmentSummary, 0, len(values))
 	for _, value := range values {

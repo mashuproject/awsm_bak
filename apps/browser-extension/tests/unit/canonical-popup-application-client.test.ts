@@ -136,6 +136,73 @@ describe("canonical popup application client", () => {
     });
   });
 
+  it("carries authenticated Content Commands through the selected backend", async () => {
+    const transport = {
+      request: vi
+        .fn()
+        .mockResolvedValueOnce({
+          folderId: "b".repeat(64),
+          eventRecordId: "c".repeat(64),
+        })
+        .mockResolvedValue({ eventRecordId: "c".repeat(64) }),
+      subscribe: vi.fn(() => () => undefined),
+    };
+    const client = createCanonicalPopupApplicationClient(transport);
+    const expectedVaultId = "a".repeat(64);
+
+    await expect(
+      client.createFolder({
+        expectedVaultId,
+        name: "Archive",
+        parentFolderId: null,
+      }),
+    ).resolves.toEqual({ folderId: "b".repeat(64), eventRecordId: "c".repeat(64) });
+    expect(transport.request).toHaveBeenCalledWith({
+      type: "CreateFolder",
+      expectedVaultId,
+      name: "Archive",
+      parentFolderId: null,
+    });
+
+    await expect(
+      client.mergeTags({
+        expectedVaultId,
+        sourceTagIds: ["d".repeat(64)],
+        destinationTagId: "e".repeat(64),
+      }),
+    ).resolves.toEqual({ eventRecordId: "c".repeat(64) });
+    expect(transport.request).toHaveBeenCalledWith({
+      type: "MergeTags",
+      expectedVaultId,
+      sourceTagIds: ["d".repeat(64)],
+      destinationTagId: "e".repeat(64),
+    });
+  });
+
+  it("decodes the canonical Tag merge conflict shape from the desktop Runtime", async () => {
+    const transport = {
+      request: vi.fn().mockResolvedValue([
+        {
+          kind: "TagMerge",
+          reason: "MultipleDestinations",
+          subjectTagIds: ["a".repeat(64)],
+          candidateRecordIds: ["b".repeat(64)],
+        },
+      ]),
+      subscribe: vi.fn(() => () => undefined),
+    };
+    const client = createCanonicalPopupApplicationClient(transport);
+
+    await expect(client.listLibraryConflicts("c".repeat(64))).resolves.toEqual([
+      {
+        kind: "TagMerge",
+        reason: "MultipleDestinations",
+        subjectTagIds: ["a".repeat(64)],
+        candidateRecordIds: ["b".repeat(64)],
+      },
+    ]);
+  });
+
   it("exposes only the non-secret identity of a resumable Vault creation", async () => {
     const client = createCanonicalPopupApplicationClient({
       request: vi.fn().mockResolvedValue({

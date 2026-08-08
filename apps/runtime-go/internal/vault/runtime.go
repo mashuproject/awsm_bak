@@ -1435,7 +1435,7 @@ func (r *Runtime) Handle(ctx context.Context, raw json.RawMessage) (any, error) 
 		case "ListNotes":
 			return clientNoteSummaries(projection.Notes), nil
 		default:
-			return projection.Conflicts, nil
+			return clientLibraryConflictSummaries(projection.Conflicts)
 		}
 	case "Search":
 		var input struct {

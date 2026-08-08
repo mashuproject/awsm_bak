@@ -254,6 +254,15 @@ test("selects a desktop-owned Vault before any browser-local Vault exists", asyn
     const library = await libraryOpened;
     await expect(library.getByText("Desktop archive", { exact: true })).toBeVisible();
     await expect(library.getByText("Capture a page from the popup to add it here.")).toBeVisible();
+    await expect(library.getByRole("heading", { name: "Vault content" })).toBeVisible();
+
+    await library.getByLabel("Folder name").fill("Desktop folder");
+    await library.getByRole("button", { name: "Create Folder" }).click();
+    await expect(library.getByRole("list", { name: "Folders" })).toContainText("Desktop folder");
+
+    await library.getByLabel("Tag name").fill("Desktop tag");
+    await library.getByRole("button", { name: "Create Tag" }).click();
+    await expect(library.getByRole("list", { name: "Tags" })).toContainText("Desktop tag");
   } finally {
     await extension.context.close();
     await fixture.command({ command: "revoke-all" });
