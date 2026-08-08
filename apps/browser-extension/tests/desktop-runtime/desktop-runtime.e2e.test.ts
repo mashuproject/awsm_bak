@@ -33,7 +33,7 @@ interface Fixture {
 
 async function startFixture(): Promise<Fixture> {
   const dataDir = await mkdtemp(resolve(repositoryRoot, ".tmp-runtime-e2e-"));
-  const child = spawn("go", ["run", "./cmd/e2e-fixture", "--data-dir", dataDir], {
+  const child = spawn("go", ["run", "-tags", "e2e", "./cmd/e2e-fixture", "--data-dir", dataDir], {
     cwd: resolve(repositoryRoot, "apps/runtime-go"),
     stdio: ["pipe", "pipe", "pipe"],
   });
@@ -98,7 +98,7 @@ async function runtimeCommand(address: string, token: string, value: object): Pr
   return payload.value;
 }
 
-async function createDesktopVault(fixture: Fixture): Promise<void> {
+async function createDesktopVault(fixture: Fixture): Promise<string> {
   const pairingResponse = await fetch(`http://${fixture.address}/api/awsm/runtime/pairings`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -140,6 +140,7 @@ async function createDesktopVault(fixture: Fixture): Promise<void> {
   })) as Record<string, unknown>;
   if (typeof confirmed.vaultId !== "string")
     throw new Error("Runtime setup Vault was not created.");
+  return confirmed.vaultId;
 }
 
 async function packagedExtension(testInfo: TestInfo): Promise<{
@@ -240,7 +241,12 @@ test("selects a desktop-owned Vault before any browser-local Vault exists", asyn
 }, testInfo) => {
   test.setTimeout(90_000);
   const fixture = await startFixture();
-  await createDesktopVault(fixture);
+  const vaultId = await createDesktopVault(fixture);
+  const seeded = await fixture.command({ command: "seed-collection", vaultId });
+  expect(seeded).toMatchObject({ ok: true });
+  if (typeof seeded.collectionId !== "string") {
+    throw new Error("Runtime fixture did not return the seeded Collection identity.");
+  }
   const extension = await packagedExtension(testInfo);
   try {
     const first = await popup(extension.context, extension.extensionId);
@@ -253,8 +259,23 @@ test("selects a desktop-owned Vault before any browser-local Vault exists", asyn
     await first.getByRole("button", { name: "Open Library" }).click();
     const library = await libraryOpened;
     await expect(library.getByText("Desktop archive", { exact: true })).toBeVisible();
-    await expect(library.getByText("Capture a page from the popup to add it here.")).toBeVisible();
+    await expect(
+      library
+        .locator('section[aria-labelledby="active-captures-heading"]')
+        .getByText("Seeded Collection", { exact: true }),
+    ).toBeVisible();
     await expect(library.getByRole("heading", { name: "Vault content" })).toBeVisible();
+    await expect(library.getByText("1 Collections · 0 Folders · 0 Tags · 0 Notes")).toBeVisible();
+    await expect(library.locator("#library-collection-id")).toHaveValue(seeded.collectionId);
+
+    await library.getByLabel("New title").fill("Desktop collection");
+    await library.getByRole("button", { name: "Save title" }).click();
+    await expect(library.locator("#library-collection-id")).toContainText("Desktop collection");
+
+    await library.getByLabel("Note title").fill("Desktop note");
+    await library.getByLabel("Note body").fill("Created through the desktop Content boundary.");
+    await library.getByRole("button", { name: "Create Note" }).click();
+    await expect(library.getByRole("list", { name: "Notes" })).toContainText("Desktop note");
 
     await library.getByLabel("Folder name").fill("Desktop folder");
     await library.getByRole("button", { name: "Create Folder" }).click();

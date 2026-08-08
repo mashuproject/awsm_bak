@@ -109,15 +109,14 @@ The Go Runtime and Wails surface implement the current authenticated Collection,
 Tag, and Note Content families, Search, Library projections, synchronization, hydration, Storage
 Relief, Garbage Collection, Fork/Vacuum/Closure semantics, Hosted Replica behavior, and
 Complete Export/Import. The packaged Chromium proof now exercises fresh desktop Vault selection and
-Folder/Tag authoring through the extension's authenticated Content Command boundary.
+Collection title, Note, Folder, and Tag authoring through the extension's authenticated Content
+Command boundary. The test-only fixture supplies the initial authenticated Collection without a
+Capture Bundle bridge.
 
-Remaining evidence work is deliberately narrow:
-
-- seed a desktop-owned Collection without using the out-of-scope Capture Bundle bridge, then prove
-  browser-to-desktop Collection title and Note journeys; and
-- add formal cross-language vectors plus randomized multi-Replica convergence, restart/crash,
-  authority/conflict, sparse hydration, and native-package proofs at the exact current candidate
-  boundary.
+Remaining evidence work is deliberately narrow: extend the existing initial cross-language vectors
+to the complete current Go command/replay surface and keep the randomized multi-Replica,
+restart/crash, authority/conflict, Sparse hydration, and native-package proofs aligned as the
+semantic boundary grows.
 
 Capture remains extension-only and the extension-to-desktop Capture Bundle bridge remains out of
 scope. Existing Complete Export/Import, authenticated replay, Library projection, Hosted Replica,

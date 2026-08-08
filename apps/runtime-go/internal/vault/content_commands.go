@@ -710,8 +710,7 @@ func (r *Runtime) createNote(ctx context.Context, id, targetKind, targetText str
 	if err != nil {
 		return nil, err
 	}
-	result["noteId"] = noteText
-	return result, nil
+	return map[string]string{"eventRecordId": result["eventRecordId"], "noteId": noteText}, nil
 }
 
 func (r *Runtime) reviseNote(ctx context.Context, id, noteText string, title *string, body string) (any, error) {

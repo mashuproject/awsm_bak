@@ -19,6 +19,7 @@ type command struct {
 	Name      string `json:"command"`
 	GrantID   string `json:"grantId,omitempty"`
 	PairingID string `json:"pairingId,omitempty"`
+	VaultID   string `json:"vaultId,omitempty"`
 }
 
 func main() {
@@ -56,6 +57,13 @@ func main() {
 			write(approveNext(app))
 		case "revoke-all":
 			write(revokeAll(app))
+		case "seed-collection":
+			collectionID, err := seedCollection(app, context.Background(), input.VaultID)
+			if err != nil {
+				write(map[string]any{"ok": false, "error": "collection seed failed"})
+			} else {
+				write(map[string]any{"ok": true, "collectionId": collectionID})
+			}
 		case "shutdown":
 			write(map[string]any{"ok": true})
 			return

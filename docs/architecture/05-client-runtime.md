@@ -78,11 +78,11 @@ copies the authenticated Library checkpoint into a fresh Initial Baseline and re
 Objects and Feature Manifest closure without source Content Event re-authoring. Event Re-authoring
 for eligible unpublished Capture work, and authenticated Collection, Folder, Capture, Tag, and Note
 Content authoring now share the same Go boundary. The packaged browser proof covers fresh desktop
-Vault selection and Folder/Tag authoring; a desktop-created empty Vault has no Collection until
-Capture or an imported Content closure supplies one, while the Capture Bundle bridge remains
-intentionally out of scope. Remaining parity work is the seeded Collection/Note browser journey and
-formal randomized, restart/crash, authority/conflict, sparse, native-package, and cross-language
-evidence.
+Vault selection, Collection title and Note authoring, and Folder/Tag authoring. Its test-only Go
+fixture admits a valid authenticated Bundle Descriptor and Bundle Registered Event to supply the
+initial Collection; the browser then performs the title and Note mutations through the public
+Runtime Command boundary. This exercises desktop Collection content without creating a Capture
+Bundle bridge. Page Capture remains extension-only.
 
 The move boundary is an explicit one-use transfer ceremony, not synchronization. The source
 Client seals a transfer package with the transfer secret, the desktop process authenticates and

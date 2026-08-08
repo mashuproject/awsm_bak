@@ -95,10 +95,12 @@ in this release. Desktop page capture and the extension-to-desktop Capture Bundl
 available. The desktop Runtime records authenticated Invitation Acceptance artifacts through
 `AcceptInvitation`; the external Redemption Authority and joining Client remain outside that
 servicing boundary. The Go Runtime also authors the canonical Collection, Folder, Capture, Tag, and
-Note Content families with scoped conflict handling. Remaining parity work is browser-to-desktop
-Content journeys that require an existing Collection plus formal convergence, restart/crash, sparse,
-native-package, and cross-language evidence; the packaged Chromium proof currently covers fresh
-desktop Vault selection plus Folder and Tag authoring. See the living specifications and roadmap.
+Note Content families with scoped conflict handling. The packaged Chromium proof also seeds a valid
+authenticated desktop Collection in its test-only Go fixture, then proves Collection title and Note
+authoring through the public Runtime Command boundary; it does not add a Capture Bundle bridge.
+Formal convergence, restart/crash, sparse, native-package, and cross-language evidence remains
+covered by the focused Runtime and packaging lanes described in the testing strategy. See the living
+specifications and roadmap.
 Complete Export now
 authenticates and carries multi-Key-Epoch, adopted-Vacuum, Feature Manifest, and Streamable
 Artifact closures. Runtime projections expose Complete, Sparse, and Unavailable Replica state;

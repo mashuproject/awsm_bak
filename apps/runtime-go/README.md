@@ -143,6 +143,12 @@ Native Wails startup is a separate local smoke lane and requires GTK 3, WebKitGT
 corepack pnpm test:runtime:wails
 ```
 
+On Fedora, install `pkgconf-pkg-config`, `gtk3-devel`, `webkit2gtk4.0-devel`, and `xorg-x11-server-Xvfb`, then verify
+`pkg-config --exists gtk+-3.0 webkit2gtk-4.0`. When host sudo installation is unavailable, the
+repository agent guidance documents a disposable `golang:1.25-bookworm` Docker build using
+`libgtk-3-dev`, `libwebkit2gtk-4.0-dev`, `pkg-config`, and `xvfb`; use that recorded fallback rather
+than treating missing native libraries as an unexamined environment limitation.
+
 The optional Brave lane builds the canonical extension and proves page capture in a real installed
 Brave browser over CDP. It defaults to the `com.brave.Browser` Flatpak; set `AWSM_BRAVE_EXECUTABLE`
 when using a directly installed Brave binary:

@@ -39,9 +39,13 @@ browser's CDP endpoint. It defaults to the `com.brave.Browser` Flatpak and accep
 `AWSM_BRAVE_EXECUTABLE` for a directly installed Brave binary. This is browser capture evidence;
 it does not expand the desktop Runtime's extension-only Capture boundary.
 
-Native Wails startup is run locally with `corepack pnpm test:runtime:wails` and under `xvfb-run`; CI
-keeps that lane opt-in with `AWSM_RUNTIME_WAILS=1 corepack pnpm test:runtime:smoke` because GTK 3 and
-WebKitGTK are host prerequisites.
+Native Wails startup is run locally with `corepack pnpm test:runtime:wails` and under `xvfb-run`. On
+Fedora the prerequisite package set is `pkgconf-pkg-config`, `gtk3-devel`, `webkit2gtk4.0-devel`, and
+`xorg-x11-server-Xvfb`; verify it with `pkg-config --exists gtk+-3.0 webkit2gtk-4.0`. The equivalent
+Debian-based Docker build installs `pkg-config`, `libgtk-3-dev`, `libwebkit2gtk-4.0-dev`, and `xvfb`
+before building with the `desktop,production` tags. CI keeps the runtime smoke lane opt-in with
+`AWSM_RUNTIME_WAILS=1 corepack pnpm test:runtime:smoke` because GTK 3 and WebKitGTK are native
+prerequisites.
 The native Wails build uses both `desktop` and `production` tags. These process tests cover pairing,
 approval, connection, encrypted grant persistence, revocation, the Vault Command boundary, and
 transfer staging; they do not prove full Go Vault semantics. Before the Go Runtime claims semantic
@@ -72,8 +76,9 @@ The Go Runtime's current canonical substrate includes cross-language Event signa
 shape, Record ID, Recovery Phrase, Credential, Key Epoch, compact encryption, HPKE, Key Envelope,
 opaque storage, and initial-creation vectors generated from the browser implementation, plus pure
 causal-DAG collision and cycle tests. The creation test asserts stable browser-derived Baseline
-and Genesis byte digests. This is an initial conformance proof, not a claim that the Go command
-path has integrated replay or the complete vector suite.
+and Genesis byte digests. Runtime replay additionally has deterministic randomized insertion-order
+and three-Replica convergence tests, while authority, conflict, restart, Sparse, hydration, Fork,
+Vacuum, and GC scenarios are covered by the focused Vault suites.
 
 # Reducer model tests
 
@@ -259,9 +264,10 @@ The packaged Chromium Desktop Runtime lane also creates a desktop-owned Vault th
 pairing and Vault-creation API, connects a fresh extension before any browser-local Vault exists,
 and proves that Archive and Library select and read that desktop Vault. It then creates a Folder and
 Tag from the Library page through the authenticated Content Command boundary and verifies the live
-projection. Collection title and Note browser journeys require a seeded Collection; the desktop
-fixture intentionally starts empty because page Capture remains extension-only and the Capture Bundle
-bridge is out of scope.
+projection. The same test-only fixture admits a valid authenticated Bundle Descriptor and Bundle
+Registered Event, then the browser sets the Collection title and creates a Note through the public
+Runtime Command boundary. Page Capture remains extension-only and the Capture Bundle bridge is out
+of scope.
 
 The shared presentation package has a separate component-level review surface. Run
 `corepack pnpm test:ui` for the deterministic theme-contract unit tests,
@@ -274,7 +280,9 @@ their real bindings, state transitions, and responsive shells.
 
 # Invariants
 
-- Tests never seed authoritative rows behind public boundaries for an end-to-end proof.
+- Product-facing E2E setup never bypasses validation with arbitrary authoritative rows; a test-only
+  fixture may admit a fully authenticated canonical closure when the public journey intentionally
+  starts from existing Vault content.
 - Determinism is checked across order, restart, process, and implementation.
 - Confidential fixtures and credentials never enter tracked evidence.
 - Destructive staging tests use isolated disposable data and explicit authorization.

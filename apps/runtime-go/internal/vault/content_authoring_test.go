@@ -179,7 +179,7 @@ func TestCreateReviseDeleteRestoreNoteAuthorsObjectClosureAndRestarts(t *testing
 		t.Fatalf("CreateNote: %v", err)
 	}
 	created, ok := result.(map[string]string)
-	if !ok || created["noteId"] == "" || created["eventRecordId"] == "" {
+	if !ok || len(created) != 2 || created["noteId"] == "" || created["eventRecordId"] == "" {
 		t.Fatalf("CreateNote result = %#v", result)
 	}
 	projection, err := ProjectLibraryProjection(runtime.replicas[vaultID])

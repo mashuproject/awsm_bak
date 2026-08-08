@@ -232,6 +232,28 @@ or packaging lane blocked, inspect its documented dependency set, install the re
 the current environment or its test container, and rerun the lane. Report the concrete installation
 failure only when the install attempt itself fails or the dependency is genuinely unavailable.
 
+For native Wails builds on Fedora Linux, the required host packages are `pkgconf-pkg-config`,
+`gtk3-devel`, `webkit2gtk4.0-devel`, and `xorg-x11-server-Xvfb`; verify the development files before
+running the lane with `pkg-config --exists gtk+-3.0 webkit2gtk-4.0`. Install them with
+`sudo dnf install -y pkgconf-pkg-config gtk3-devel webkit2gtk4.0-devel xorg-x11-server-Xvfb` and then rerun
+`corepack pnpm test:runtime:wails`. If host installation fails because sudo credentials are not
+available, use the documented disposable Docker fallback rather than repeating the same host probe:
+
+```bash
+docker run --rm \
+  -v "$PWD:/workspace" -w /workspace/apps/runtime-go \
+  golang:1.25-bookworm bash -c \
+  'export PATH=/usr/local/go/bin:$PATH; \
+   apt-get update -qq && \
+   apt-get install --no-install-recommends -y pkg-config libgtk-3-dev libwebkit2gtk-4.0-dev xvfb && \
+   go build -tags desktop,production -o /tmp/awsm-desktop ./cmd/awsm'
+```
+
+The Docker command is a build proof; native Wails runtime smoke still needs an X server, so use
+`xvfb-run` around the executable or enable `AWSM_RUNTIME_WAILS=1 corepack pnpm test:runtime:smoke`
+in an image that includes the same packages. Record both the package-install attempt and the
+resulting rerun in the handoff when a native lane is investigated.
+
 ### Test-first workflow and test maintenance
 
 - For every new or changed production behavior, first run the smallest relevant test and record the
