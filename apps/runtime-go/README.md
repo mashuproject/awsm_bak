@@ -97,7 +97,7 @@ Manifest and Streamable Artifact wrappers. Imported Replicas are readable but ha
 authoring Credential or private key. Event Re-authoring for eligible unpublished Capture work,
 remaining Authority/Key-Epoch authoring families beyond the implemented Membership/Administrator
 role changes, Client Credential ending, Key Envelope delivery, Feature Activation, and
-Administrator rotation, Invitation enrollment/conflict ceremonies, conflict/rebase authoring, and
+Administrator rotation, Invitation enrollment ceremonies, conflict/rebase authoring, and
 remaining cross-surface journeys are unresolved. Runtime projections expose
 Complete, Sparse, and Unavailable Replica state; on-demand hydration remains the user action for
 Sparse content.

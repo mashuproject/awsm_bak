@@ -93,7 +93,7 @@ Current limits are intentional: direct peer transports, complete Authority-branc
 global freshness claims, automatic redundancy tracking, and user-facing AI features are not shipped
 in this release. Desktop page capture and the extension-to-desktop Capture Bundle bridge are not
 available. Event Re-authoring for eligible unpublished Capture work, remaining Authority/Key-Epoch
-authoring families beyond Invitation creation/cancellation, conflict/rebase authoring, and the
+authoring families beyond Invitation creation/cancellation/resolution, conflict/rebase authoring, and the
 remaining cross-surface journeys remain explicit parity work; see the living specifications and roadmap.
 Complete Export now
 authenticates and carries multi-Key-Epoch, adopted-Vacuum, Feature Manifest, and Streamable

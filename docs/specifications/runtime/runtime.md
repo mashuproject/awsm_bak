@@ -55,8 +55,8 @@ The Go Runtime also exposes browser-compatible Complete Export/Import for authen
 multi-Key-Epoch and adopted-Vacuum closures, including Feature Manifest and Streamable Artifact
 wrappers. Complete Import remains authoring-free. The Go Runtime implements Membership and
 Administrator role changes, Invitation creation and cancellation, Client Credential ending, Key
-Envelope delivery, Feature Activation, and Administrator rotation. Invitation enrollment and
-conflict resolution; Event Re-authoring for eligible unpublished Capture work; conflict/rebase
+Envelope delivery, Feature Activation, Administrator rotation, and Invitation conflict resolution.
+Invitation enrollment; Event Re-authoring for eligible unpublished Capture work; conflict/rebase
 authoring; and the remaining cross-surface journeys remain explicit parity boundaries.
 Runtime projections expose Complete, Sparse, and Unavailable Replica state, with on-demand
 hydration as the Sparse action. Capture remains extension-only, and Fork itself copies

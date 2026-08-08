@@ -105,6 +105,11 @@ receipt:
 
 Both payloads use unpadded base64url. The Runtime does not manufacture, replay, or persist
 authority challenges, receipt keys, or capability secrets.
+`ResolveInvitationConflict` authors a type-8 resolution for a current Invitation conflict. Its
+`resolution` field is the unpadded-base64url canonical CBOR body with fields `0..4` from the Vault
+Authority specification. The Runtime requires an unambiguous active Administrator, the complete
+current conflict candidate set, and an outcome accepted by authenticated replay before committing
+the Event.
 `ActivateFeature` authors a type-14 Feature Activation Event from complete canonical Feature
 Manifest bytes, stores each Manifest as an authenticated dependency, and advances the current
 Required Feature Set while preserving the Baseline's original Feature Set identity.

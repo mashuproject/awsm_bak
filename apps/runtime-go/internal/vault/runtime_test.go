@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"sort"
 	"sync"
 	"testing"
 
@@ -397,6 +398,181 @@ func TestCancelInvitationAuthorsVerifiedTerminalEventFromAuthorityReceipt(t *tes
 	authority := authorityResult.(AuthorityStateSummary)
 	if len(authority.ActiveInvitationIDs) != 0 || len(authority.InvitationConflictIDs) != 0 {
 		t.Fatalf("authority after CancelInvitation = %#v", authority)
+	}
+}
+
+func TestResolveInvitationConflictRequiresCurrentConflict(t *testing.T) {
+	ctx := context.Background()
+	runtime, err := New(ctx, store.NewMemoryState(), memoryDependencies(t))
+	if err != nil {
+		t.Fatalf("create Runtime: %v", err)
+	}
+	vaultID, _ := createVaultWithPhraseForTest(t, runtime, "Invitation resolution")
+	resolution := canonical.Map{
+		0: bytes.Repeat([]byte{21}, 32),
+		1: canonicalSetValues([]canonical.Value{bytes.Repeat([]byte{22}, 32)}),
+		2: canonicalSetValues([]canonical.Value{bytes.Repeat([]byte{23}, 32)}),
+		3: uint64(2),
+		4: nil,
+	}
+	resolutionBytes, err := canonical.EncodeValue(resolution)
+	if err != nil {
+		t.Fatalf("encode Invitation resolution: %v", err)
+	}
+	_, err = runtime.Handle(ctx, mustJSON(map[string]any{
+		"type":            "ResolveInvitationConflict",
+		"expectedVaultId": vaultID,
+		"resolution":      base64.RawURLEncoding.EncodeToString(resolutionBytes),
+	}))
+	if err == nil {
+		t.Fatal("ResolveInvitationConflict succeeded without a current conflict")
+	}
+	command, ok := err.(*CommandError)
+	if !ok || command.ID != "INVITATION_CONFLICT_UNAVAILABLE" {
+		t.Fatalf("ResolveInvitationConflict error = %#v, want INVITATION_CONFLICT_UNAVAILABLE", err)
+	}
+}
+
+func TestResolveInvitationConflictAuthorsTypeEightAfterTwoAcceptanceBranches(t *testing.T) {
+	ctx := context.Background()
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, store.NewMemoryState(), dependencies)
+	if err != nil {
+		t.Fatalf("create Runtime: %v", err)
+	}
+	prepared := deterministicCreation(t)
+	vaultID := installPreparedCreationForTest(t, runtime, dependencies, prepared)
+	capabilities := []canonical.Value{canonical.Map{
+		0: "awsm.vault", 1: prepared.IDs.FirstMemberID[:], 2: prepared.IDs.VaultID[:], 3: "awsm.vault.join", 4: []byte{},
+	}}
+	creation, firstAcceptance, _ := signInvitationAcceptanceFixture(t, prepared, capabilities, capabilities)
+	sealAndAdmit := func(event canonical.Event) {
+		t.Helper()
+		encoded, sealErr := awsmcrypto.SealCompactItem(awsmcrypto.CompactItemInput{
+			VaultID: prepared.IDs.VaultID, KeyEpochID: prepared.KeyEpochID, KeyEpochKey: prepared.KeyEpochKey,
+			PayloadType: 1, PayloadBytes: event.Bytes,
+		})
+		if sealErr != nil {
+			t.Fatalf("seal Invitation Event: %v", sealErr)
+		}
+		if admitErr := runtime.AdmitOpaqueEvent(ctx, vaultID, encoded); admitErr != nil {
+			t.Fatalf("admit Invitation Event: %v", admitErr)
+		}
+	}
+	sealAndAdmit(creation)
+	sealAndAdmit(firstAcceptance)
+
+	invitationID := filledCreationID(250)
+	memberID := filledCreationID(180)
+	clientID := filledCreationID(181)
+	recoveryID := filledCreationID(182)
+	clientEnvelopeID := filledCreationID(183)
+	recoveryEnvelopeID := filledCreationID(184)
+	receiptID := filledCreationID(185)
+	redemptionKey := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x71}, ed25519.SeedSize))
+	receiptKey := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x73}, ed25519.SeedSize))
+	clientKey := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x84}, ed25519.SeedSize))
+	recoveryKey := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x85}, ed25519.SeedSize))
+	clientCertificate := canonical.Map{0: clientID[:], 1: memberID[:], 2: []byte(clientKey.Public().(ed25519.PublicKey)), 3: bytes.Repeat([]byte{0x86}, 32)}
+	recoveryDescriptor := canonical.Map{0: recoveryID[:], 1: memberID[:], 2: uint64(0), 3: []byte(recoveryKey.Public().(ed25519.PublicKey)), 4: bytes.Repeat([]byte{0x87}, 32)}
+	joinPrefix := canonical.Map{0: invitationID[:], 1: canonicalSetValues(capabilities), 2: memberID[:], 3: clientCertificate, 4: recoveryDescriptor}
+	joinPrefixBytes, err := canonical.EncodeValue(joinPrefix)
+	if err != nil {
+		t.Fatalf("encode second Join Request prefix: %v", err)
+	}
+	joinTranscript, err := canonical.Transcript("awsm:invitation-join-request:v1", joinPrefixBytes)
+	if err != nil {
+		t.Fatalf("second Join Request transcript: %v", err)
+	}
+	join := canonical.Map{
+		0: invitationID[:], 1: canonicalSetValues(capabilities), 2: memberID[:], 3: clientCertificate, 4: recoveryDescriptor,
+		5: ed25519.Sign(clientKey, joinTranscript), 6: ed25519.Sign(recoveryKey, joinTranscript), 7: ed25519.Sign(redemptionKey, joinTranscript),
+	}
+	joinBytes, err := canonical.EncodeValue(join)
+	if err != nil {
+		t.Fatalf("encode second Join Request: %v", err)
+	}
+	joinIDTranscript, err := canonical.Transcript("awsm:invitation-join-request-id:v1", joinBytes)
+	if err != nil {
+		t.Fatalf("second Join Request ID transcript: %v", err)
+	}
+	joinRequestID := sha256.Sum256(joinIDTranscript)
+	recoverySlot := canonical.Map{0: prepared.KeyEpochID[:], 1: uint64(1), 2: recoveryID[:], 3: uint64(0), 4: recoveryEnvelopeID[:]}
+	clientSlot := canonical.Map{0: prepared.KeyEpochID[:], 1: uint64(2), 2: clientID[:], 3: nil, 4: clientEnvelopeID[:]}
+	proposal := canonical.Map{
+		0: invitationID[:], 1: joinRequestID[:], 2: canonicalSetValues([]canonical.Value{creation.RecordID[:]}), 3: memberID[:],
+		4: clientCertificate, 5: recoveryDescriptor, 6: canonicalSetValues(capabilities), 7: canonicalSetValues([]canonical.Value{recoverySlot, clientSlot}),
+	}
+	proposalBytes, err := canonical.EncodeValue(proposal)
+	if err != nil {
+		t.Fatalf("encode second Acceptance Proposal: %v", err)
+	}
+	proposalIDTranscript, err := canonical.Transcript("awsm:invitation-acceptance-proposal-id:v1", proposalBytes)
+	if err != nil {
+		t.Fatalf("second Acceptance Proposal ID transcript: %v", err)
+	}
+	proposalID := sha256.Sum256(proposalIDTranscript)
+	receipt := canonical.Map{0: invitationID[:], 1: uint64(1), 2: joinRequestID[:], 3: proposalID[:], 4: receiptID[:], 5: nil}
+	receiptPrefixBytes, err := canonical.EncodeValue(canonical.Map{0: receipt[0], 1: receipt[1], 2: receipt[2], 3: receipt[3], 4: receipt[4]})
+	if err != nil {
+		t.Fatalf("encode second receipt prefix: %v", err)
+	}
+	receiptTranscript, err := canonical.Transcript("awsm:invitation-receipt:v1", receiptPrefixBytes)
+	if err != nil {
+		t.Fatalf("second receipt transcript: %v", err)
+	}
+	receipt[5] = ed25519.Sign(receiptKey, receiptTranscript)
+	dependenciesList := []canonical.Dependency{{Type: 7, ID: recoveryEnvelopeID}, {Type: 7, ID: clientEnvelopeID}}
+	sort.Slice(dependenciesList, func(left, right int) bool {
+		return bytes.Compare(dependenciesList[left].ID[:], dependenciesList[right].ID[:]) < 0
+	})
+	secondAcceptance, err := canonical.SignEvent(canonical.EventInput{
+		VaultID: prepared.IDs.VaultID, GenerationID: prepared.IDs.GenerationID,
+		ParentRecordIDs: []canonical.Identifier{creation.RecordID}, AuthorityParentIDs: []canonical.Identifier{creation.RecordID}, Dependencies: dependenciesList,
+		RequiredFeatureSetID: prepared.RequiredFeatureSetID, Extensions: map[string][]byte{}, Family: canonical.AuthorityFamily, Type: 6,
+		SignerCredentialID: prepared.IDs.ClientCredentialID, AssertedAt: 209, Body: canonical.Map{0: join, 1: proposal, 2: receipt},
+	}, ed25519.PrivateKey(prepared.ClientKeys.SigningSecretKey))
+	if err != nil {
+		t.Fatalf("sign second Acceptance: %v", err)
+	}
+	sealAndAdmit(secondAcceptance)
+	authority, err := replayReplicaAuthorityState(runtime.replicas[vaultID], nil, nil)
+	if err != nil {
+		t.Fatalf("replay Invitation conflict: %v", err)
+	}
+	candidates := authority.invitationCandidates[invitationID]
+	if len(candidates) != 2 {
+		t.Fatalf("Invitation candidates = %#v, want two", candidates)
+	}
+	receiptIDs := make([]canonical.Value, 0, len(candidates))
+	recordIDs := make([]canonical.Value, 0, len(candidates))
+	for _, candidate := range candidates {
+		receiptIDs = append(receiptIDs, candidate.receiptID[:])
+		recordIDs = append(recordIDs, candidate.recordID[:])
+	}
+	resolutionBytes, err := canonical.EncodeValue(canonical.Map{
+		0: invitationID[:], 1: canonicalSetValues(receiptIDs), 2: canonicalSetValues(recordIDs), 3: uint64(2), 4: nil,
+	})
+	if err != nil {
+		t.Fatalf("encode conflict resolution: %v", err)
+	}
+	result, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "ResolveInvitationConflict", "expectedVaultId": vaultID,
+		"resolution": base64.RawURLEncoding.EncodeToString(resolutionBytes),
+	}))
+	if err != nil {
+		t.Fatalf("ResolveInvitationConflict: %v", err)
+	}
+	resolved, ok := result.(map[string]string)
+	if !ok || resolved["invitationId"] != hexIdentifier(invitationID) || resolved["eventRecordId"] == "" || resolved["outcome"] != "2" {
+		t.Fatalf("ResolveInvitationConflict result = %#v", result)
+	}
+	finalAuthority, err := replayReplicaAuthorityState(runtime.replicas[vaultID], nil, nil)
+	if err != nil {
+		t.Fatalf("replay resolved Invitation: %v", err)
+	}
+	if _, conflict := finalAuthority.invitationConflicts[invitationID]; conflict {
+		t.Fatal("Invitation conflict remained after type-8 resolution")
 	}
 }
 
