@@ -1,6 +1,6 @@
 module ApplicationHelper
   PUBLIC_REPOSITORY = "https://github.com/mashuproject/awsm_bak".freeze
-  CURRENT_RELEASE_TAG = "v0.3.4".freeze
+  CURRENT_RELEASE_TAG = "v0.3.5".freeze
 
   def public_product_links
     {

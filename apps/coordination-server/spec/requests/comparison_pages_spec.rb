@@ -15,7 +15,7 @@ RSpec.describe "Comparison pages", type: :request do
       "Choose the archive that fits your work.",
       "AWSM today",
       "Desktop Runtime",
-      "v0.3.4",
+      "v0.3.5",
       "hosted web reader",
       "Wayback Machine",
       "ArchiveBox",
@@ -31,7 +31,7 @@ RSpec.describe "Comparison pages", type: :request do
     expect(response.body).to include('href="/"')
     expect(response.body).to include('href="/glossary#local-first"')
     expect(response.body).to include(
-      'href="https://github.com/mashuproject/awsm_bak/releases/tag/v0.3.4"'
+      'href="https://github.com/mashuproject/awsm_bak/releases/tag/v0.3.5"'
     )
   end
 

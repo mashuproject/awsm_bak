@@ -25,7 +25,7 @@ RSpec.describe "Plan 16 product site", type: :request do
       "Windows installer (untested)",
       "macOS disk image (untested)",
       "Current public release",
-      "Release v0.3.4",
+      "Release v0.3.5",
       "Sign in"
     )
     expect(response.body).not_to include(
@@ -45,7 +45,7 @@ RSpec.describe "Plan 16 product site", type: :request do
       "href=\"https://github.com/mashuproject/awsm_bak/blob/main/docs/guides/install-desktop-runtime.md\""
     )
     expect(response.body).to include(
-      'href="https://github.com/mashuproject/awsm_bak/releases/tag/v0.3.4"'
+      'href="https://github.com/mashuproject/awsm_bak/releases/tag/v0.3.5"'
     )
 
     document = Nokogiri::HTML(response.body)

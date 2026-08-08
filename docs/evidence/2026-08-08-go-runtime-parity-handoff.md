@@ -2,7 +2,7 @@
 
 ## Current state
 
-This checkout is on `main` at base commit `5a91ace` (`test(runtime): share browser crypto conformance vectors`). The change set below is the unversioned source to commit and push before release preparation. The package remains at `0.3.4`; no `0.3.5` candidate number has been created or consumed. The worktree contains the Go parity changes and the browser-capture follow-up below; there are no unrelated edits.
+This handoff was recorded from `main` at base commit `5a91ace` (`test(runtime): share browser crypto conformance vectors`) before release preparation. The source changes described here were subsequently committed and pushed to `main`; the package remained at `0.3.4` while the complete pre-versioning matrix ran. That matrix is now green, so release preparation has advanced the package to the next patch candidate, `0.3.5`. The worktree contains the Go parity changes and the browser-capture follow-up below; there are no unrelated edits.
 
 The larger Go/Wails semantic-parity objective is not complete. This handoff covers one concrete parity correction: Go Library and Search Materializations now use the installation-wrapped local-storage boundary required by `docs/specifications/runtime/storage.md`.
 
@@ -105,6 +105,8 @@ These were run against the current source after the implementation:
   2/2 in each lane.
 - `corepack pnpm test:e2e:design` passed 7/7 after the inspected Library wide, dark, and narrow
   snapshots were regenerated for the intentional control-sizing change.
+- `corepack pnpm test:e2e:cross-browser` passed: Chrome canonical and hosted recovery passed 1/1
+  each, and Firefox Stable/ESR production and E2E Capture passed 2/2 in each lane.
 - `corepack pnpm --filter @awsm/browser-extension test:e2e:canonical-surface` reached successful
   Capture, then failed later at `assertInteractiveTargets(library)` in the unavailable Library
   state before the shared Library form-control fix; the focused rerun passed 1/1 afterward.
@@ -128,12 +130,10 @@ The first Chrome desktop attempt was launched concurrently with Firefox and fail
 
 1. Continue the larger parity audit: remaining shared cross-language command/replay and Complete
    Export vectors, randomized multi-Replica/restart/crash/authority-conflict/Sparse hydration
-   coverage, and any still-missing native-package evidence.
-2. Complete the remaining desktop, sync, coordination, and native-package release gates; the
-   focused Chrome surface, full Chrome, Firefox, Brave, and design browser lanes are green.
-3. After the change set is pushed, keep the release unversioned at `0.3.4` until the complete
-   pre-versioning gates pass; only then prepare the `0.3.5` candidate. Do not claim the larger parity
-   audit is complete.
+   coverage, and any still-missing native-package evidence. Do not claim that audit is complete.
+2. Complete the version-bound release workflow: validate the exact `0.3.5` commit through hosted
+   `validate-only`, obtain the signed Firefox local-proof status, then tag and publish the release
+   artifacts and the public website according to the release guidance.
 
 ## Useful commands
 
