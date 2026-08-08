@@ -303,6 +303,10 @@ test("Wails Vault surface authors basic Library content", async ({ page }) => {
                 projection.notes.push({});
                 return { eventRecordId: "9".repeat(64), noteId: "a".repeat(64) };
               }
+              if (request.type === "AssignTag")
+                return { eventRecordId: "b".repeat(64), assignmentId: "c".repeat(64) };
+              if (request.type === "PlaceCollectionInFolder")
+                return { eventRecordId: "d".repeat(64) };
               throw new Error(`unexpected command: ${request.type}`);
             },
           },
@@ -331,6 +335,18 @@ test("Wails Vault surface authors basic Library content", async ({ page }) => {
   await expect(page.getByRole("list", { name: "Search results" })).toContainText(
     "Books in the local Library.",
   );
+  await page.getByLabel("Tag", { exact: true }).last().selectOption("6".repeat(64));
+  await page.getByLabel("Tag target", { exact: true }).selectOption(collectionId);
+  await page.getByRole("button", { name: "Assign Tag" }).click();
+  await expect(page.getByText("Tag assigned.")).toBeVisible();
+  await page.getByLabel("Collection placement", { exact: true }).selectOption(collectionId);
+  await page.getByLabel("Destination Folder", { exact: true }).selectOption("4".repeat(64));
+  await page.getByRole("button", { name: "Place Collection in Folder" }).click();
+  await expect(page.getByText("Collection placed.")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Advanced Library operations" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Assign Tag" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Move Captures" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Resolve Library conflicts" })).toBeVisible();
 });
 
 test("Wails Vault surface authors an Invitation through the Runtime command boundary", async ({

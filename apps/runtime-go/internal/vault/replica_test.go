@@ -4,12 +4,88 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"crypto/sha256"
+	"encoding/json"
+	"math/rand"
 	"sort"
 	"testing"
 
 	"github.com/mashuproject/awsm_bak/apps/runtime-go/internal/canonical"
 	awsmcrypto "github.com/mashuproject/awsm_bak/apps/runtime-go/internal/crypto"
 )
+
+func TestReplicaContentReplayConvergesAcrossDeterministicRandomizedInsertionOrders(t *testing.T) {
+	prepared := deterministicCreation(t)
+	collectionIDs := [][32]byte{filledCreationID(201), filledCreationID(202), filledCreationID(203)}
+	children := make([]canonical.Event, 0, len(collectionIDs))
+	parents := []canonical.Identifier{prepared.Genesis.RecordID}
+	for index, collectionID := range collectionIDs {
+		if index == 2 {
+			parents = []canonical.Identifier{children[0].RecordID, children[1].RecordID}
+		}
+		event, err := canonical.SignEvent(canonical.EventInput{
+			VaultID: prepared.IDs.VaultID, GenerationID: prepared.IDs.GenerationID,
+			ParentRecordIDs: append([]canonical.Identifier(nil), parents...), AuthorityParentIDs: append([]canonical.Identifier(nil), parents...),
+			RequiredFeatureSetID: prepared.RequiredFeatureSetID, Extensions: map[string][]byte{}, Family: canonical.ContentFamily, Type: 7,
+			SignerCredentialID: prepared.IDs.ClientCredentialID, AssertedAt: int64(300 + index),
+			Body: canonical.Map{0: collectionID[:], 1: "Collection"},
+		}, ed25519.PrivateKey(prepared.ClientKeys.SigningSecretKey))
+		if err != nil {
+			t.Fatalf("sign Collection event %d: %v", index, err)
+		}
+		children = append(children, event)
+	}
+
+	baseline := func() *Replica {
+		replica, err := NewReplica(prepared.Baseline)
+		if err != nil {
+			t.Fatalf("NewReplica: %v", err)
+		}
+		if err := replica.AdmitEvent(prepared.Genesis, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+			t.Fatalf("Admit Genesis: %v", err)
+		}
+		return replica
+	}
+	first := baseline()
+	for _, event := range children {
+		if err := first.AdmitEvent(event, ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+			t.Fatalf("Admit ordered event: %v", err)
+		}
+	}
+	wantProjection, err := ProjectLibraryProjection(first)
+	if err != nil {
+		t.Fatalf("Project ordered Replica: %v", err)
+	}
+	wantJSON, err := json.Marshal(wantProjection)
+	if err != nil {
+		t.Fatalf("marshal ordered projection: %v", err)
+	}
+
+	random := rand.New(rand.NewSource(42))
+	for attempt := 0; attempt < 24; attempt++ {
+		siblings := random.Perm(2)
+		order := []int{siblings[0], siblings[1], 2}
+		candidate := baseline()
+		for _, index := range order {
+			if err := candidate.AdmitEvent(children[index], ed25519.PublicKey(prepared.ClientKeys.SigningPublicKey)); err != nil {
+				t.Fatalf("attempt %d admit event %d: %v", attempt, index, err)
+			}
+		}
+		gotProjection, err := ProjectLibraryProjection(candidate)
+		if err != nil {
+			t.Fatalf("attempt %d project Replica: %v", attempt, err)
+		}
+		gotJSON, err := json.Marshal(gotProjection)
+		if err != nil {
+			t.Fatalf("attempt %d marshal projection: %v", attempt, err)
+		}
+		if !bytes.Equal(gotJSON, wantJSON) {
+			t.Fatalf("attempt %d projection changed with insertion order %v", attempt, order)
+		}
+		if got, want := candidate.State().CausalFrontier, first.State().CausalFrontier; !sameIdentifierSlice(got, want) {
+			t.Fatalf("attempt %d causal frontier = %#v, want %#v", attempt, got, want)
+		}
+	}
+}
 
 func TestReplicaAdmitsAuthenticatedCreationAndTracksFrontiers(t *testing.T) {
 	prepared := deterministicCreation(t)

@@ -77,10 +77,8 @@ local Vaults; the extension-to-desktop Capture Bundle bridge is not implemented.
 copies the authenticated Library checkpoint into a fresh Initial Baseline and rewraps its referenced
 Objects and Feature Manifest closure without source Content Event re-authoring. Event Re-authoring
 for eligible unpublished Capture work, and authenticated Collection, Folder, Capture, Tag, and Note
-Content authoring now share the same Go boundary. Remaining parity work is Wails workflow coverage
-for the remaining advanced organization assignment/merge/conflict controls, browser-to-desktop Content
-journeys, and formal randomized, restart/crash, authority/conflict, sparse, and cross-language
-evidence.
+Content authoring now share the same Go boundary. Remaining parity work is browser-to-desktop Content
+journeys and formal randomized, restart/crash, authority/conflict, sparse, and cross-language evidence.
 
 The move boundary is an explicit one-use transfer ceremony, not synchronization. The source
 Client seals a transfer package with the transfer secret, the desktop process authenticates and

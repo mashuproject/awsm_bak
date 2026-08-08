@@ -107,11 +107,10 @@ not co-own one Replica namespace; that becomes ordinary Replica synchronization.
 
 The headless Go Runtime now authors the canonical Collection, Folder, Capture, Tag, and Note
 Content families through the authenticated Client/Key-Epoch boundary, and the Wails surface has
-basic authoring plus Search and organization lifecycle controls. Remaining parity work is:
+authoring, Search, organization lifecycle, assignment, merge, and scoped conflict-resolution
+controls. Remaining parity work is:
 
-- expose the remaining advanced organization assignment, merge, and scoped conflict-resolution
-  Commands in the Wails interaction surface with focused visual and keyboard evidence;
-- complete browser-to-desktop Vault journeys for those Content Commands and formalize randomized
+- complete browser-to-desktop Vault journeys for the Content Commands and formalize randomized
   multi-Replica convergence, restart/crash, authority/conflict, sparse hydration, and
   cross-language evidence; and
 - run native Wails packaging/build proofs on every supported desktop dependency set and add a

@@ -1531,6 +1531,608 @@ function LibraryOrganizationOperations({
   );
 }
 
+function LibraryAdvancedOperations({
+  binding,
+  vaultId,
+  projection,
+  enabled,
+  refresh,
+  onError,
+  onStatus,
+}: {
+  readonly binding: DesktopBinding;
+  readonly vaultId: string;
+  readonly projection: LibraryProjection;
+  readonly enabled: boolean;
+  readonly refresh: () => void;
+  readonly onError: (error: unknown) => void;
+  readonly onStatus: (message: string) => void;
+}): React.ReactElement {
+  const [collectionId, setCollectionId] = React.useState("");
+  const [destinationFolderId, setDestinationFolderId] = React.useState("");
+  const [folderPlacementId, setFolderPlacementId] = React.useState("");
+  const [parentFolderId, setParentFolderId] = React.useState("");
+  const [captureIds, setCaptureIds] = React.useState("");
+  const [destinationCollectionId, setDestinationCollectionId] = React.useState("");
+  const [tagId, setTagId] = React.useState("");
+  const [tagTarget, setTagTarget] = React.useState("");
+  const [tagTargetKind, setTagTargetKind] = React.useState<"Collection" | "Capture">("Collection");
+  const [sourceTagId, setSourceTagId] = React.useState("");
+  const [mergeTagDestinationId, setMergeTagDestinationId] = React.useState("");
+  const [redirectCauseId, setRedirectCauseId] = React.useState("");
+  const [noteId, setNoteId] = React.useState("");
+  const [noteTitle, setNoteTitle] = React.useState("");
+  const [noteBody, setNoteBody] = React.useState("");
+  const [conflictIndex, setConflictIndex] = React.useState("");
+  const [resolutionJson, setResolutionJson] = React.useState("{}");
+  const [busy, setBusy] = React.useState<string>();
+  const activeCollections = projection.collections.filter(
+    ({ redirectedTo }) => redirectedTo === null,
+  );
+  const activeFolders = projection.folders.filter(({ lifecycle }) => lifecycle === "Active");
+  const activeTags = projection.tags.filter(({ lifecycle }) => lifecycle === "Active");
+  const activeCaptures = projection.captures.filter(({ lifecycle }) => lifecycle === "Active");
+  const tagTargets =
+    tagTargetKind === "Collection"
+      ? activeCollections.map(({ collectionId: id, title }) => ({
+          id,
+          label: `Collection · ${title}`,
+        }))
+      : activeCaptures.map(({ bundleId: id, title, finalUrl }) => ({
+          id,
+          label: `Capture · ${displayCaptureTitle(title, finalUrl)}`,
+        }));
+  const selectedNote = projection.notes.find(({ noteId: id }) => id === noteId);
+  const selectedConflict =
+    conflictIndex === "" ? undefined : projection.conflicts[Number(conflictIndex)];
+
+  const invoke = async (
+    key: string,
+    type: string,
+    payload: Record<string, unknown>,
+    label: string,
+  ) => {
+    if (binding.VaultCommand === undefined)
+      return onError(new Error("Vault commands are unavailable."));
+    setBusy(key);
+    try {
+      await binding.VaultCommand({ type, expectedVaultId: vaultId, ...payload });
+      refresh();
+      onStatus(`${label}.`);
+    } catch (error) {
+      onError(error);
+    } finally {
+      setBusy(undefined);
+    }
+  };
+
+  const parseIDs = (value: string): string[] =>
+    value
+      .split(/[\s,]+/u)
+      .map((item) => item.trim())
+      .filter((item) => item !== "");
+
+  const resolveConflict = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (selectedConflict === undefined) return;
+    let resolution: Record<string, unknown>;
+    try {
+      const parsed: unknown = JSON.parse(resolutionJson);
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+        throw new Error("Conflict resolution must be a JSON object.");
+      resolution = parsed as Record<string, unknown>;
+    } catch (error) {
+      onError(error);
+      return;
+    }
+    const common = {
+      subjectCollectionIds:
+        selectedConflict.kind === "CollectionMerge" ? selectedConflict.subjectIds : undefined,
+      subjectFolderIds:
+        selectedConflict.kind === "Folder" ? selectedConflict.subjectIds : undefined,
+      subjectTagIds: selectedConflict.kind === "TagMerge" ? selectedConflict.subjectIds : undefined,
+      conflictingCauseIds: selectedConflict.candidateRecordIds,
+    };
+    if (selectedConflict.kind === "CollectionMerge") {
+      void invoke(
+        "resolve-collection-conflict",
+        "ResolveCollectionMergeConflict",
+        { ...common, redirects: Array.isArray(resolution.redirects) ? resolution.redirects : [] },
+        "Collection conflict resolved",
+      );
+    } else if (selectedConflict.kind === "Folder") {
+      void invoke(
+        "resolve-folder-conflict",
+        "ResolveFolderConflict",
+        {
+          ...common,
+          placements: Array.isArray(resolution.placements) ? resolution.placements : [],
+        },
+        "Folder conflict resolved",
+      );
+    } else if (selectedConflict.kind === "TagMerge") {
+      void invoke(
+        "resolve-tag-conflict",
+        "ResolveTagMergeConflict",
+        { ...common, redirects: Array.isArray(resolution.redirects) ? resolution.redirects : [] },
+        "Tag conflict resolved",
+      );
+    } else if (selectedConflict.kind === "Note") {
+      void invoke(
+        "resolve-note-conflict",
+        "ResolveNoteConflict",
+        {
+          noteId: selectedConflict.subjectIds[0],
+          retainedOriginal: resolution.retainedOriginal ?? null,
+          splitNotes: Array.isArray(resolution.splitNotes) ? resolution.splitNotes : [],
+        },
+        "Note conflict resolved",
+      );
+    } else {
+      onError(new Error(`Unsupported Library conflict kind: ${selectedConflict.kind}`));
+    }
+  };
+
+  return (
+    <section className="grid gap-4" aria-labelledby="library-advanced-heading">
+      <Card>
+        <CardHeader>
+          <CardTitle>Advanced Library operations</CardTitle>
+          <CardDescription>
+            Assign, move, revise, merge, and resolve authenticated Library content through the same
+            Runtime command boundary.
+          </CardDescription>
+        </CardHeader>
+        <div className="mt-5 grid gap-5 lg:grid-cols-2">
+          <div className="grid gap-3">
+            <Field label="Collection placement">
+              <select
+                className={inputClassName}
+                value={collectionId}
+                onChange={(event) => setCollectionId(event.target.value)}
+                disabled={!enabled || busy !== undefined}
+              >
+                <option value="">Choose a Collection</option>
+                {activeCollections.map(({ collectionId: id, title }) => (
+                  <option key={id} value={id}>
+                    {title}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Destination Folder">
+              <select
+                className={inputClassName}
+                value={destinationFolderId}
+                onChange={(event) => setDestinationFolderId(event.target.value)}
+                disabled={!enabled || busy !== undefined}
+              >
+                <option value="">Root level</option>
+                {activeFolders.map(({ folderId: id, name }) => (
+                  <option key={id} value={id}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Button
+              type="button"
+              busy={busy === "place-collection"}
+              disabled={!enabled || busy !== undefined || collectionId === ""}
+              onClick={() =>
+                void invoke(
+                  "place-collection",
+                  "PlaceCollectionInFolder",
+                  {
+                    collectionId,
+                    folderId: destinationFolderId === "" ? null : destinationFolderId,
+                  },
+                  "Collection placed",
+                )
+              }
+            >
+              Place Collection in Folder
+            </Button>
+          </div>
+          <div className="grid gap-3">
+            <Field label="Folder placement">
+              <select
+                className={inputClassName}
+                value={folderPlacementId}
+                onChange={(event) => setFolderPlacementId(event.target.value)}
+                disabled={!enabled || busy !== undefined}
+              >
+                <option value="">Choose a Folder</option>
+                {activeFolders.map(({ folderId: id, name }) => (
+                  <option key={id} value={id}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Parent Folder">
+              <select
+                className={inputClassName}
+                value={parentFolderId}
+                onChange={(event) => setParentFolderId(event.target.value)}
+                disabled={!enabled || busy !== undefined}
+              >
+                <option value="">Root level</option>
+                {activeFolders
+                  .filter(({ folderId: id }) => id !== folderPlacementId)
+                  .map(({ folderId: id, name }) => (
+                    <option key={id} value={id}>
+                      {name}
+                    </option>
+                  ))}
+              </select>
+            </Field>
+            <Button
+              type="button"
+              busy={busy === "place-folder"}
+              disabled={!enabled || busy !== undefined || folderPlacementId === ""}
+              onClick={() =>
+                void invoke(
+                  "place-folder",
+                  "PlaceFolder",
+                  {
+                    folderId: folderPlacementId,
+                    parentFolderId: parentFolderId === "" ? null : parentFolderId,
+                  },
+                  "Folder placed",
+                )
+              }
+            >
+              Place Folder
+            </Button>
+          </div>
+          <div className="grid gap-3">
+            <Field
+              label="Capture IDs to move"
+              description="Enter one or more Capture IDs separated by spaces or commas."
+            >
+              <input
+                className={inputClassName}
+                value={captureIds}
+                onChange={(event) => setCaptureIds(event.target.value)}
+                disabled={!enabled || busy !== undefined}
+              />
+            </Field>
+            <Field label="Destination Collection">
+              <select
+                className={inputClassName}
+                value={destinationCollectionId}
+                onChange={(event) => setDestinationCollectionId(event.target.value)}
+                disabled={!enabled || busy !== undefined}
+              >
+                <option value="">Choose a Collection</option>
+                {activeCollections.map(({ collectionId: id, title }) => (
+                  <option key={id} value={id}>
+                    {title}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                busy={busy === "move-captures"}
+                disabled={
+                  !enabled ||
+                  busy !== undefined ||
+                  parseIDs(captureIds).length === 0 ||
+                  destinationCollectionId === ""
+                }
+                onClick={() =>
+                  void invoke(
+                    "move-captures",
+                    "MoveCaptures",
+                    { bundleIds: parseIDs(captureIds), destinationCollectionId },
+                    "Captures moved",
+                  )
+                }
+              >
+                Move Captures
+              </Button>
+              <Button
+                type="button"
+                variant="danger"
+                busy={busy === "delete-captures"}
+                disabled={!enabled || busy !== undefined || parseIDs(captureIds).length === 0}
+                onClick={() =>
+                  void invoke(
+                    "delete-captures",
+                    "DeleteCaptures",
+                    { bundleIds: parseIDs(captureIds) },
+                    "Captures deleted",
+                  )
+                }
+              >
+                Delete Captures
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                busy={busy === "restore-captures"}
+                disabled={!enabled || busy !== undefined || parseIDs(captureIds).length === 0}
+                onClick={() =>
+                  void invoke(
+                    "restore-captures",
+                    "RestoreCaptures",
+                    { bundleIds: parseIDs(captureIds) },
+                    "Captures restored",
+                  )
+                }
+              >
+                Restore Captures
+              </Button>
+            </div>
+          </div>
+          <div className="grid gap-3">
+            <Field label="Tag">
+              <select
+                className={inputClassName}
+                value={tagId}
+                onChange={(event) => setTagId(event.target.value)}
+                disabled={!enabled || busy !== undefined}
+              >
+                <option value="">Choose a Tag</option>
+                {activeTags.map(({ tagId: id, name }) => (
+                  <option key={id} value={id}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <label className="grid gap-2 text-sm font-bold leading-tight text-awsm-ink">
+              Target kind
+              <select
+                className={inputClassName}
+                value={tagTargetKind}
+                onChange={(event) => {
+                  setTagTargetKind(event.target.value as "Collection" | "Capture");
+                  setTagTarget("");
+                }}
+                disabled={!enabled || busy !== undefined}
+              >
+                <option value="Collection">Collection</option>
+                <option value="Capture">Capture</option>
+              </select>
+            </label>
+            <Field label="Tag target">
+              <select
+                className={inputClassName}
+                value={tagTarget}
+                onChange={(event) => setTagTarget(event.target.value)}
+                disabled={!enabled || busy !== undefined}
+              >
+                <option value="">Choose a target</option>
+                {tagTargets.map(({ id, label }) => (
+                  <option key={id} value={id}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                busy={busy === "assign-tag"}
+                disabled={!enabled || busy !== undefined || tagId === "" || tagTarget === ""}
+                onClick={() =>
+                  void invoke(
+                    "assign-tag",
+                    "AssignTag",
+                    { tagId, targetKind: tagTargetKind, targetId: tagTarget },
+                    "Tag assigned",
+                  )
+                }
+              >
+                Assign Tag
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                busy={busy === "remove-tag"}
+                disabled={!enabled || busy !== undefined || tagId === "" || tagTarget === ""}
+                onClick={() =>
+                  void invoke(
+                    "remove-tag",
+                    "RemoveTagAssignments",
+                    { tagId, targetKind: tagTargetKind, targetId: tagTarget },
+                    "Tag assignments removed",
+                  )
+                }
+              >
+                Remove Tag Assignments
+              </Button>
+            </div>
+          </div>
+          <div className="grid gap-3">
+            <Field label="Note to revise">
+              <select
+                className={inputClassName}
+                value={noteId}
+                onChange={(event) => setNoteId(event.target.value)}
+                disabled={!enabled || busy !== undefined}
+              >
+                <option value="">Choose a Note</option>
+                {projection.notes.map(({ noteId: id, versions }) => (
+                  <option key={id} value={id}>
+                    {versions?.[0]?.title ?? "Note"}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Revision title">
+              <input
+                className={inputClassName}
+                value={noteTitle}
+                onChange={(event) => setNoteTitle(event.target.value)}
+                disabled={!enabled || busy !== undefined || selectedNote === undefined}
+              />
+            </Field>
+            <Field label="Revision body">
+              <textarea
+                className={`${inputClassName} min-h-24 resize-y`}
+                value={noteBody}
+                onChange={(event) => setNoteBody(event.target.value)}
+                disabled={!enabled || busy !== undefined || selectedNote === undefined}
+              />
+            </Field>
+            <Button
+              type="button"
+              busy={busy === "revise-note"}
+              disabled={!enabled || busy !== undefined || selectedNote === undefined}
+              onClick={() =>
+                void invoke(
+                  "revise-note",
+                  "ReviseNote",
+                  { noteId, title: noteTitle === "" ? null : noteTitle, body: noteBody },
+                  "Note revised",
+                )
+              }
+            >
+              Revise Note
+            </Button>
+          </div>
+          <div className="grid gap-3">
+            <Field label="Source Tag to merge">
+              <select
+                className={inputClassName}
+                value={sourceTagId}
+                onChange={(event) => setSourceTagId(event.target.value)}
+                disabled={!enabled || busy !== undefined}
+              >
+                <option value="">Choose a source Tag</option>
+                {activeTags.map(({ tagId: id, name }) => (
+                  <option key={id} value={id}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Merge destination Tag">
+              <select
+                className={inputClassName}
+                value={mergeTagDestinationId}
+                onChange={(event) => setMergeTagDestinationId(event.target.value)}
+                disabled={!enabled || busy !== undefined}
+              >
+                <option value="">Choose a destination Tag</option>
+                {activeTags
+                  .filter(({ tagId: id }) => id !== sourceTagId)
+                  .map(({ tagId: id, name }) => (
+                    <option key={id} value={id}>
+                      {name}
+                    </option>
+                  ))}
+              </select>
+            </Field>
+            <Button
+              type="button"
+              busy={busy === "merge-tag"}
+              disabled={
+                !enabled || busy !== undefined || sourceTagId === "" || mergeTagDestinationId === ""
+              }
+              onClick={() =>
+                void invoke(
+                  "merge-tag",
+                  "MergeTags",
+                  { sourceTagIds: [sourceTagId], destinationTagId: mergeTagDestinationId },
+                  "Tags merged",
+                )
+              }
+            >
+              Merge Tags
+            </Button>
+            <Field label="Redirect Cause ID to revert">
+              <input
+                className={inputClassName}
+                value={redirectCauseId}
+                onChange={(event) => setRedirectCauseId(event.target.value)}
+                disabled={!enabled || busy !== undefined}
+              />
+            </Field>
+            <Button
+              type="button"
+              variant="secondary"
+              busy={busy === "revert-tag"}
+              disabled={!enabled || busy !== undefined || redirectCauseId === ""}
+              onClick={() =>
+                void invoke(
+                  "revert-tag",
+                  "RevertTagMerge",
+                  { redirectCauseId },
+                  "Tag merge reverted",
+                )
+              }
+            >
+              Revert Tag Merge
+            </Button>
+          </div>
+        </div>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle>Resolve Library conflicts</CardTitle>
+          <CardDescription>
+            Select a current Content conflict. The JSON value supplies only the selected kind's
+            replacement placements, redirects, or split Note bodies; subjects and Causes come from
+            the authenticated projection.
+          </CardDescription>
+        </CardHeader>
+        <form className="mt-5 grid gap-3" onSubmit={resolveConflict}>
+          <Field label="Library conflict">
+            <select
+              className={inputClassName}
+              value={conflictIndex}
+              onChange={(event) => setConflictIndex(event.target.value)}
+              disabled={!enabled || busy !== undefined}
+            >
+              <option value="">Choose a conflict</option>
+              {projection.conflicts.map((conflict, index) => (
+                <option key={`${conflict.kind}:${index}`} value={String(index)}>
+                  {conflict.kind} · {conflict.reason}
+                </option>
+              ))}
+            </select>
+          </Field>
+          {selectedConflict === undefined ? null : (
+            <p className="text-sm leading-relaxed text-awsm-text-muted">
+              Subjects: {selectedConflict.subjectIds.join(", ")} · Causes:{" "}
+              {selectedConflict.candidateRecordIds.join(", ")}
+            </p>
+          )}
+          <Field
+            label="Conflict resolution JSON"
+            description="Collection/Tag: {&quot;redirects&quot;: []}; Folder: {&quot;placements&quot;: []}; Note: {&quot;retainedOriginal&quot;: null, &quot;splitNotes&quot;: []}."
+          >
+            <textarea
+              className={`${inputClassName} min-h-28 resize-y font-mono text-xs`}
+              value={resolutionJson}
+              onChange={(event) => setResolutionJson(event.target.value)}
+              disabled={!enabled || busy !== undefined || selectedConflict === undefined}
+            />
+          </Field>
+          <Button
+            type="submit"
+            busy={
+              busy === "resolve-collection-conflict" ||
+              busy === "resolve-folder-conflict" ||
+              busy === "resolve-tag-conflict" ||
+              busy === "resolve-note-conflict"
+            }
+            disabled={!enabled || busy !== undefined || selectedConflict === undefined}
+          >
+            Resolve Conflict
+          </Button>
+        </form>
+      </Card>
+    </section>
+  );
+}
+
 function AuthoritySummary({
   authority,
 }: {
@@ -3318,6 +3920,15 @@ function VaultsView({
               onError={onError}
               onStatus={onStatus}
             />
+            <LibraryAdvancedOperations
+              binding={binding}
+              vaultId={selected.vaultId}
+              projection={libraryProjection}
+              enabled={selected.lifecycle === "Open" && selected.access === "Authoring"}
+              refresh={refresh}
+              onError={onError}
+              onStatus={onStatus}
+            />
             <LibraryAuthoringOperations
               binding={binding}
               vaultId={selected.vaultId}
@@ -3402,6 +4013,15 @@ function LibraryView({
       <LibrarySemanticSummary projection={libraryProjection} />
       <LibrarySearch binding={binding} vaultId={vault.vaultId} onError={onError} />
       <LibraryOrganizationOperations
+        binding={binding}
+        vaultId={vault.vaultId}
+        projection={libraryProjection}
+        enabled={vault.lifecycle === "Open" && vault.access === "Authoring"}
+        refresh={refresh}
+        onError={onError}
+        onStatus={onStatus}
+      />
+      <LibraryAdvancedOperations
         binding={binding}
         vaultId={vault.vaultId}
         projection={libraryProjection}
