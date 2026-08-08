@@ -5,7 +5,8 @@ description: Safely prepare, sign, prove, publish, and verify tag-driven Chrome 
 
 # Release Browser Extension
 
-Release one exact reviewed commit through separate Firefox-candidate and publication phases. Keep
+Release one exact reviewed commit through separate Firefox-candidate and publication phases. The
+publication includes the public website as well as the browser and desktop artifacts. Keep
 real-browser proof local. Let hosted automation build, sign, preserve provenance, enforce proof,
 package checksums, and publish only the already-proven bytes.
 
@@ -26,6 +27,21 @@ Keep repository guidance portable. Never add private domains, host aliases, depl
 account identifiers, profiles, credentials, or operational topology to tracked source or this
 skill.
 
+## Test before choosing the immutable candidate
+
+Freeze the intended code and public website content first. Run the complete applicable local
+pre-versioning matrix against that content while the package still has its current version,
+including website build, content, design, and rendered checks, plus the affected browser, desktop,
+packaging, and integration proofs. Do not bump the package or application version, update
+version-bound release references, create a tag, or consume an immutable Firefox/AMO candidate
+number while a test or validation gate is failing. Fix the current source and rerun the failing
+gate instead.
+
+Only after every applicable pre-versioning gate is green may the candidate version be bumped once.
+Then rerun the version-bound packaging, manifest, archive, checksum, and release validation gates
+against the exact candidate commit. A failure after the bump but before an external candidate is
+consumed is fixed in that same unsubmitted candidate; it does not require burning another version.
+
 ## Choose and prepare the immutable candidate
 
 Resolve the version from the package, remote tags and Releases, public download links, SemVer
@@ -34,6 +50,8 @@ Release.
 
 Update every owned version, artifact reference, release note, installation guide, public site,
 rendered assertion, architecture/testing document, superseded plan, and Roadmap entry together.
+The website is part of the release candidate, not optional follow-up work: its copy, distribution
+state, download links, and release links must correspond to the exact candidate commit.
 Keep the Roadmap forward-looking.
 
 Run all repository-declared gates applicable to the final candidate, including:
@@ -151,13 +169,14 @@ inspect the failure and prove whether a Release exists before recovery. A failed
 Release requires explicit recovery authority; prefer a new version when preserving an immutable
 audit trail.
 
-## Verify publication and optional staging
+## Verify publication and website
 
 Independently inspect the public non-draft, non-prerelease Release and exact tag commit. Download
 each published asset and checksum into a fresh temporary directory; verify checksums, archive
 integrity, root manifests, released version, Firefox signature, and exact expected asset set.
 
-When staging is separately authorized:
+Publish the exact verified tag to the explicitly authorized website deployment target. Do not deploy
+a dirty worktree or a later unverified commit. Then:
 
 1. re-inspect live topology and isolation;
 2. deploy an archive made from the exact verified tag, never a dirty worktree;
@@ -174,6 +193,11 @@ When staging is separately authorized:
 11. inspect the rendered distribution copy and Release links at primary and narrow widths; and
 12. prove production and unrelated cache targets were not changed.
 
+For an authorized staging website target, apply the numbered deployment and cache safeguards above.
+For another target, use that target's separately authorized deployment and live-state controls;
+release publication alone never grants permission to mutate it.
+
 Finish by reporting the version, Release URL, tagged commit, candidate and tag workflow runs,
 proof-status result, artifact and checksum verification, local browser and full test results,
-staging result when applicable, commits pushed, and final worktree state.
+website deployment target and verification result, staging result when applicable, commits pushed,
+and final worktree state.

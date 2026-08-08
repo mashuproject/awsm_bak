@@ -301,6 +301,24 @@ lowest useful layer plus the complete user-level scenario. Record the audit scop
 matches are safe. Only after that closure audit and the entire unsigned matrix pass may the next
 immutable version be submitted to AMO.
 
+## RELEASE SEQUENCING AND PUBLICATION
+
+- Treat each browser/desktop release as one publication that includes the public website. Include
+  the release's website copy, installation guidance, download links, and visible distribution state
+  in the same candidate scope as the extension and desktop artifacts.
+- Freeze the intended code and website content first, then run the complete applicable
+  pre-versioning test and validation matrix while the package still has its current version. Do not
+  bump the package or application version, update version-bound release references, create a tag,
+  or consume an immutable Firefox/AMO candidate number merely to discover a failing test.
+- Only after every applicable pre-versioning gate is green may the candidate version be bumped once.
+  Rerun all version-bound builds, archive checks, manifest checks, and release validation against
+  that exact version before signing or publishing. If those checks fail before an external candidate
+  is consumed, fix the same unsubmitted candidate rather than burning another version number.
+- Publish the exact verified tag's website content through the explicitly authorized deployment
+  target and independently verify its liveness, current release/download links, response bodies, and
+  rendered primary and narrow states. A verified GitHub Release without verified website publication
+  is incomplete. Do not infer permission to deploy to production from permission to publish a release.
+
 The repository uses a shared 100-column code-formatting style in root Biome and Prettier
 configuration; Markdown retains its 80-column prose style. The browser-extension package owns its
 JavaScript, TypeScript, JSON, and CSS formatting through Biome. Run
