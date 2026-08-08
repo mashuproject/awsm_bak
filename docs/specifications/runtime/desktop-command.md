@@ -68,9 +68,10 @@ The local Search materialization is also available through:
 snippets, passage IDs, and BM25F-style scores. Collection filters match any selected Collection;
 Tag filters match all selected Tags; and capture dates use an inclusive lower bound and exclusive
 upper bound. `SearchCoverage` returns the current local materialization coverage. The materialization
-is persisted in the local Runtime state store and rebuilt when the authenticated generation or
-causal frontier changes; it is never a Vault Record, Object, synchronization payload, or source of
-authority.
+is an installation-wrapped, replaceable local snapshot in the Runtime state store and is rebuilt
+when the authenticated generation or causal frontier changes or when its wrapper cannot be opened;
+it is never a Vault Record, Object, synchronization payload, or source of authority. Library
+Materializations follow the same boundary.
 
 The same boundary exposes these portability Commands:
 

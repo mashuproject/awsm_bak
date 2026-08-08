@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/mashuproject/awsm_bak/apps/runtime-go/internal/canonical"
+	"github.com/mashuproject/awsm_bak/apps/runtime-go/internal/securestore"
 	"github.com/mashuproject/awsm_bak/apps/runtime-go/internal/store"
 	"golang.org/x/text/unicode/norm"
 )
@@ -117,9 +118,11 @@ func (r *Runtime) loadSearchMaterialization(ctx context.Context, id string) ([]s
 	}
 	key := searchMaterializationStatePrefix + id
 	if encoded, getErr := r.store.Get(ctx, key); getErr == nil {
-		var cached persistedSearchMaterialization
-		if json.Unmarshal(encoded, &cached) == nil && cached.Context == contextID {
-			return restoreSearchDocuments(cached.Documents), cached.Coverage, nil
+		if plaintext, openErr := openLocalMaterialization(r.deps.Secrets, "awsm:search-materialization:v1", id, contextID, encoded); openErr == nil {
+			var cached persistedSearchMaterialization
+			if json.Unmarshal(plaintext, &cached) == nil && cached.Context == contextID {
+				return restoreSearchDocuments(cached.Documents), cached.Coverage, nil
+			}
 		}
 	} else if !errors.Is(getErr, store.ErrStateNotFound) {
 		return nil, SearchCoverage{}, commandError("SEARCH_UNAVAILABLE", "The local Search projection could not be read.")
@@ -141,9 +144,16 @@ func (r *Runtime) loadSearchMaterialization(ctx context.Context, id string) ([]s
 			UnavailableHeavyContent: len(projection.Captures),
 		},
 	}
-	encoded, err := json.Marshal(cached)
+	plaintext, err := json.Marshal(cached)
 	if err != nil {
 		return nil, SearchCoverage{}, commandError("SEARCH_UNAVAILABLE", "The local Search projection could not be encoded.")
+	}
+	encoded, err := sealLocalMaterialization(r.deps.Secrets, "awsm:search-materialization:v1", id, contextID, plaintext)
+	if err != nil {
+		if errors.Is(err, securestore.ErrUnavailable) {
+			return documents, cached.Coverage, nil
+		}
+		return nil, SearchCoverage{}, commandError("SEARCH_UNAVAILABLE", "The local Search projection could not be protected.")
 	}
 	if err := r.store.Put(ctx, key, encoded); err != nil {
 		return nil, SearchCoverage{}, commandError("SEARCH_UNAVAILABLE", "The local Search projection could not be stored.")

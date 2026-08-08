@@ -3370,26 +3370,19 @@ func (r *Runtime) listRemotes(id string) (any, error) {
 }
 
 func (r *Runtime) listLibrary(id string) (any, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	if err := r.requireExpectedLocked(&id); err != nil {
-		return nil, err
-	}
-	if _, err := r.vaultLockedRead(id); err != nil {
-		return nil, err
-	}
-	replica := r.replicas[id]
-	if replica == nil {
-		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The authenticated Vault Replica is unavailable.")
-	}
-	items, err := ProjectLibrary(replica)
+	value, err := r.listLibraryProjection(id)
 	if err != nil {
-		return nil, commandError("LIBRARY_UNAVAILABLE", "The Vault Library could not be rebuilt from authenticated state.")
+		return nil, err
 	}
-	return items, nil
+	projection, ok := value.(LibraryProjection)
+	if !ok {
+		return nil, commandError("LIBRARY_UNAVAILABLE", "The Vault Library projection has an invalid shape.")
+	}
+	return projection.Captures, nil
 }
 
 func (r *Runtime) listLibraryProjection(id string) (any, error) {
+	ctx := context.Background()
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	if err := r.requireExpectedLocked(&id); err != nil {
@@ -3401,11 +3394,19 @@ func (r *Runtime) listLibraryProjection(id string) (any, error) {
 	replica := r.replicas[id]
 	if replica == nil {
 		return nil, commandError("VAULT_REPLAY_UNAVAILABLE", "The authenticated Vault Replica is unavailable.")
+	}
+	contextID, err := r.libraryMaterializationContextLocked(id)
+	if err != nil {
+		return nil, err
+	}
+	if projection, ok := r.loadLibraryMaterialization(ctx, id, contextID); ok {
+		return projection, nil
 	}
 	projection, err := ProjectLibraryProjection(replica)
 	if err != nil {
 		return nil, commandError("LIBRARY_UNAVAILABLE", "The Vault Library could not be rebuilt from authenticated state.")
 	}
+	r.saveLibraryMaterialization(ctx, id, contextID, projection)
 	return projection, nil
 }
 

@@ -80,6 +80,13 @@ existing Host Replica, inspect opaque Replica candidates during attachment, rena
 resume, materialize, pull, and retire a binding. Retirement is local metadata cleanup and does
 not contact or delete the Hosted Replica.
 
+Library and Search are replaceable local Materializations, not a second Vault database. The Go
+Runtime stores their current Frontier-bound snapshots only after sealing them with an
+installation-local XChaCha20-Poly1305 key held by `internal/securestore`; the state store never
+receives their decrypted projection or Search documents. A missing, stale, unauthentic, or
+unavailable Materialization is discarded and rebuilt from the authenticated Replica. The key is
+not exported, synchronized, or included in Vault state.
+
 The `internal/canonical` package provides strict canonical CBOR values, transcript framing,
 authenticated Event and Baseline codecs, Record IDs, Object IDs, and causal DAG validation.
 `internal/crypto` provides browser-compatible BIP39, Credential, Key Epoch, compact encryption,

@@ -205,6 +205,10 @@ works with zero Remotes, and treats later absence or corrupt hydration honestly.
 can Capture without first hydrating unrelated wrappers. Library proofs delete a local wrapper after
 its Frontier-bound Materialization is cached, then require a fresh Library read to show that exact
 Capture unavailable and expose only its explicit retrieval action at primary and narrow widths.
+Go Runtime tests additionally assert that Library and Search Materializations are encrypted before
+they enter the local state store, that their installation-local wrapping key survives Runtime
+restart without entering Vault state, and that the authenticated Replica remains the rebuild source
+when a cached wrapper is absent or invalid.
 
 # Vacuum, Fork, Closure, and history
 

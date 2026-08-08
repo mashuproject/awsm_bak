@@ -207,6 +207,149 @@ func TestRuntimeListLibraryProjectionCommandReturnsSemanticProjection(t *testing
 	}
 }
 
+func TestRuntimeLibraryMaterializationIsInstallationWrappedAndSurvivesRestart(t *testing.T) {
+	ctx := context.Background()
+	state := store.NewMemoryState()
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatalf("create Runtime: %v", err)
+	}
+	vaultID := createVaultForTest(t, runtime, "Wrapped Library materialization")
+	if _, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "ListLibraryProjection", "expectedVaultId": vaultID,
+	})); err != nil {
+		t.Fatalf("ListLibraryProjection: %v", err)
+	}
+
+	encoded, err := state.Get(ctx, libraryMaterializationStatePrefix+vaultID)
+	if err != nil {
+		t.Fatalf("read Library materialization: %v", err)
+	}
+	if bytes.Contains(encoded, []byte(`"captures"`)) || bytes.Contains(encoded, []byte(vaultID)) {
+		t.Fatalf("Library materialization is plaintext: %s", encoded)
+	}
+	if _, err := dependencies.Secrets.Get(localMaterializationSecretService, localMaterializationSecretAccount); err != nil {
+		t.Fatalf("installation materialization key: %v", err)
+	}
+
+	restarted, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatalf("restart Runtime: %v", err)
+	}
+	result, err := restarted.Handle(ctx, mustJSON(map[string]any{
+		"type": "ListLibraryProjection", "expectedVaultId": vaultID,
+	}))
+	if err != nil {
+		t.Fatalf("ListLibraryProjection after restart: %v", err)
+	}
+	projection, ok := result.(LibraryProjection)
+	if !ok || len(projection.Captures) != 0 || len(projection.Collections) != 0 {
+		t.Fatalf("restarted Library projection = %#v", result)
+	}
+}
+
+func TestRuntimeLibraryMaterializationRefreshesAvailabilityAfterStorageRelief(t *testing.T) {
+	ctx := context.Background()
+	state := store.NewMemoryState()
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatalf("create Runtime: %v", err)
+	}
+	vaultID := createVaultForTest(t, runtime, "Library availability")
+	value := runtime.vaults[vaultID]
+	vaultIdentifier := mustIdentifier(t, vaultID)
+	featureSetID := mustIdentifier(t, value.Canonical.RequiredFeatureSetID)
+	epochID := mustIdentifier(t, value.Canonical.KeyEpochID)
+	epochBytes, err := dependencies.Secrets.Get(trustedSecretService, epochSecretAccount(vaultID, value.Canonical.KeyEpochID))
+	if err != nil {
+		t.Fatalf("read Key Epoch Secret: %v", err)
+	}
+	epochSecret, err := decodeEpochSecret(epochBytes, vaultIdentifier, epochID)
+	if err != nil {
+		t.Fatalf("decode Key Epoch Secret: %v", err)
+	}
+	objectBytes := validTestArtifactObjectBytes(t, vaultIdentifier, featureSetID, "cached Library artifact")
+	artifactID, err := canonical.VaultObjectID(vaultIdentifier, 2, objectBytes)
+	if err != nil {
+		t.Fatalf("derive Artifact Object ID: %v", err)
+	}
+	objectEnvelope, err := awsmcrypto.SealCompactItem(awsmcrypto.CompactItemInput{
+		VaultID: vaultIdentifier, KeyEpochID: epochID, KeyEpochKey: epochSecret.key, PayloadType: 2, PayloadBytes: objectBytes,
+	})
+	if err != nil {
+		t.Fatalf("seal Artifact Object: %v", err)
+	}
+	if err := runtime.AdmitOpaqueObject(ctx, vaultID, objectEnvelope); err != nil {
+		t.Fatalf("admit Artifact Object: %v", err)
+	}
+	bundleID, _ := admitForkBundleRegisteredEvent(t, runtime, dependencies, vaultID, artifactID)
+
+	result, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "ListLibraryProjection", "expectedVaultId": vaultID,
+	}))
+	if err != nil {
+		t.Fatalf("seed ListLibraryProjection: %v", err)
+	}
+	projection, ok := result.(LibraryProjection)
+	if !ok || len(projection.Captures) != 1 || projection.Captures[0].BundleID != hexIdentifier(bundleID) || !projection.Captures[0].AvailableLocally {
+		t.Fatalf("seeded Library projection = %#v", result)
+	}
+
+	if _, err := runtime.StorageRelief(ctx, vaultID, []string{hexIdentifier(artifactID)}); err != nil {
+		t.Fatalf("Storage Relief: %v", err)
+	}
+	result, err = runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "ListLibraryProjection", "expectedVaultId": vaultID,
+	}))
+	if err != nil {
+		t.Fatalf("ListLibraryProjection after Storage Relief: %v", err)
+	}
+	projection, ok = result.(LibraryProjection)
+	if !ok || len(projection.Captures) != 1 || projection.Captures[0].BundleID != hexIdentifier(bundleID) || projection.Captures[0].AvailableLocally {
+		t.Fatalf("Library projection after Storage Relief = %#v", result)
+	}
+}
+
+func TestRuntimeLibraryMaterializationRebuildsAfterTamper(t *testing.T) {
+	ctx := context.Background()
+	state := store.NewMemoryState()
+	dependencies := memoryDependencies(t)
+	runtime, err := New(ctx, state, dependencies)
+	if err != nil {
+		t.Fatalf("create Runtime: %v", err)
+	}
+	vaultID := createVaultForTest(t, runtime, "Tampered Library materialization")
+	if _, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "ListLibraryProjection", "expectedVaultId": vaultID,
+	})); err != nil {
+		t.Fatalf("seed ListLibraryProjection: %v", err)
+	}
+	key := libraryMaterializationStatePrefix + vaultID
+	encoded, err := state.Get(ctx, key)
+	if err != nil {
+		t.Fatalf("read Library materialization: %v", err)
+	}
+	tampered := append([]byte(nil), encoded...)
+	tampered[len(tampered)-1] ^= 1
+	if err := state.Put(ctx, key, tampered); err != nil {
+		t.Fatalf("tamper Library materialization: %v", err)
+	}
+	if _, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "ListLibraryProjection", "expectedVaultId": vaultID,
+	})); err != nil {
+		t.Fatalf("rebuild ListLibraryProjection: %v", err)
+	}
+	replacement, err := state.Get(ctx, key)
+	if err != nil {
+		t.Fatalf("read rebuilt Library materialization: %v", err)
+	}
+	if bytes.Equal(replacement, tampered) {
+		t.Fatal("tampered Library materialization was not replaced")
+	}
+}
+
 func TestRuntimeGetAuthorityStateCommandReturnsPortableProjection(t *testing.T) {
 	ctx := context.Background()
 	runtime, err := New(ctx, store.NewMemoryState(), memoryDependencies(t))
