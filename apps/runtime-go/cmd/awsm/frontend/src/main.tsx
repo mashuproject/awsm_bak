@@ -1213,6 +1213,324 @@ function LibrarySearch({
   );
 }
 
+function LibraryOrganizationOperations({
+  binding,
+  vaultId,
+  projection,
+  enabled,
+  refresh,
+  onError,
+  onStatus,
+}: {
+  readonly binding: DesktopBinding;
+  readonly vaultId: string;
+  readonly projection: LibraryProjection;
+  readonly enabled: boolean;
+  readonly refresh: () => void;
+  readonly onError: (error: unknown) => void;
+  readonly onStatus: (message: string) => void;
+}): React.ReactElement {
+  const [folderId, setFolderId] = React.useState("");
+  const [folderName, setFolderName] = React.useState("");
+  const [tagId, setTagId] = React.useState("");
+  const [tagName, setTagName] = React.useState("");
+  const [noteId, setNoteId] = React.useState("");
+  const [sourceCollectionId, setSourceCollectionId] = React.useState("");
+  const [destinationCollectionId, setDestinationCollectionId] = React.useState("");
+  const [busy, setBusy] = React.useState<string>();
+  const invoke = async (
+    key: string,
+    type: string,
+    payload: Record<string, unknown>,
+    label: string,
+  ) => {
+    if (binding.VaultCommand === undefined)
+      return onError(new Error("Vault commands are unavailable."));
+    setBusy(key);
+    try {
+      await binding.VaultCommand({ type, expectedVaultId: vaultId, ...payload });
+      refresh();
+      onStatus(`${label}.`);
+    } catch (error) {
+      onError(error);
+    } finally {
+      setBusy(undefined);
+    }
+  };
+  const confirmAndInvoke = (
+    key: string,
+    type: string,
+    payload: Record<string, unknown>,
+    label: string,
+    question: string,
+  ) => {
+    if (window.confirm(question)) void invoke(key, type, payload, label);
+  };
+  const selectedFolder = projection.folders.find((folder) => folder.folderId === folderId);
+  const selectedTag = projection.tags.find((tag) => tag.tagId === tagId);
+  const selectedNote = projection.notes.find((note) => note.noteId === noteId);
+  const canMergeCollections =
+    sourceCollectionId !== "" &&
+    destinationCollectionId !== "" &&
+    sourceCollectionId !== destinationCollectionId;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Organization lifecycle</CardTitle>
+        <CardDescription>
+          Rename, retire, restore, assign, and merge authenticated Library content. Every action
+          authors an Event and refreshes the live projection.
+        </CardDescription>
+      </CardHeader>
+      <div className="mt-5 grid gap-5 lg:grid-cols-2">
+        <form
+          className="grid gap-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (selectedFolder === undefined) return;
+            void invoke(
+              "rename-folder",
+              "RenameFolder",
+              { folderId, name: folderName },
+              "Folder renamed",
+            );
+          }}
+        >
+          <Field label="Folder">
+            <select
+              className={inputClassName}
+              value={folderId}
+              onChange={(event) => setFolderId(event.target.value)}
+              disabled={!enabled || busy !== undefined}
+            >
+              <option value="">Choose a Folder</option>
+              {projection.folders.map((folder) => (
+                <option key={folder.folderId} value={folder.folderId}>
+                  {folder.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="New folder name">
+            <input
+              className={inputClassName}
+              value={folderName}
+              onChange={(event) => setFolderName(event.target.value)}
+              disabled={!enabled || busy !== undefined || selectedFolder === undefined}
+            />
+          </Field>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="submit"
+              busy={busy === "rename-folder"}
+              disabled={
+                !enabled ||
+                busy !== undefined ||
+                selectedFolder === undefined ||
+                folderName.trim() === ""
+              }
+            >
+              Rename Folder
+            </Button>
+            <Button
+              type="button"
+              variant="danger"
+              busy={busy === "delete-folder"}
+              disabled={!enabled || busy !== undefined || selectedFolder === undefined}
+              onClick={() =>
+                confirmAndInvoke(
+                  "delete-folder",
+                  "DeleteFolder",
+                  { folderId },
+                  "Folder deleted",
+                  "Delete this Folder?",
+                )
+              }
+            >
+              Delete Folder
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              busy={busy === "restore-folder"}
+              disabled={!enabled || busy !== undefined || selectedFolder === undefined}
+              onClick={() =>
+                void invoke("restore-folder", "RestoreFolder", { folderId }, "Folder restored")
+              }
+            >
+              Restore Folder
+            </Button>
+          </div>
+        </form>
+        <form
+          className="grid gap-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (selectedTag === undefined) return;
+            void invoke("rename-tag", "RenameTag", { tagId, name: tagName }, "Tag renamed");
+          }}
+        >
+          <Field label="Tag">
+            <select
+              className={inputClassName}
+              value={tagId}
+              onChange={(event) => setTagId(event.target.value)}
+              disabled={!enabled || busy !== undefined}
+            >
+              <option value="">Choose a Tag</option>
+              {projection.tags.map((tag) => (
+                <option key={tag.tagId} value={tag.tagId}>
+                  {tag.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="New tag name">
+            <input
+              className={inputClassName}
+              value={tagName}
+              onChange={(event) => setTagName(event.target.value)}
+              disabled={!enabled || busy !== undefined || selectedTag === undefined}
+            />
+          </Field>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="submit"
+              busy={busy === "rename-tag"}
+              disabled={
+                !enabled || busy !== undefined || selectedTag === undefined || tagName.trim() === ""
+              }
+            >
+              Rename Tag
+            </Button>
+            <Button
+              type="button"
+              variant="danger"
+              busy={busy === "delete-tag"}
+              disabled={!enabled || busy !== undefined || selectedTag === undefined}
+              onClick={() =>
+                confirmAndInvoke(
+                  "delete-tag",
+                  "DeleteTag",
+                  { tagId },
+                  "Tag deleted",
+                  "Delete this Tag?",
+                )
+              }
+            >
+              Delete Tag
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              busy={busy === "restore-tag"}
+              disabled={!enabled || busy !== undefined || selectedTag === undefined}
+              onClick={() => void invoke("restore-tag", "RestoreTag", { tagId }, "Tag restored")}
+            >
+              Restore Tag
+            </Button>
+          </div>
+        </form>
+        <div className="grid gap-3">
+          <Field label="Collection to merge">
+            <select
+              className={inputClassName}
+              value={sourceCollectionId}
+              onChange={(event) => setSourceCollectionId(event.target.value)}
+              disabled={!enabled || busy !== undefined}
+            >
+              <option value="">Choose a source Collection</option>
+              {projection.collections.map((collection) => (
+                <option key={collection.collectionId} value={collection.collectionId}>
+                  {collection.title}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Merge destination">
+            <select
+              className={inputClassName}
+              value={destinationCollectionId}
+              onChange={(event) => setDestinationCollectionId(event.target.value)}
+              disabled={!enabled || busy !== undefined}
+            >
+              <option value="">Choose a destination Collection</option>
+              {projection.collections.map((collection) => (
+                <option key={collection.collectionId} value={collection.collectionId}>
+                  {collection.title}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Button
+            type="button"
+            busy={busy === "merge-collection"}
+            disabled={!enabled || busy !== undefined || !canMergeCollections}
+            onClick={() =>
+              confirmAndInvoke(
+                "merge-collection",
+                "MergeCollections",
+                { sourceCollectionIds: [sourceCollectionId], destinationCollectionId },
+                "Collections merged",
+                "Merge the selected Collection into the destination?",
+              )
+            }
+          >
+            Merge Collections
+          </Button>
+        </div>
+        <div className="grid gap-3">
+          <Field label="Note">
+            <select
+              className={inputClassName}
+              value={noteId}
+              onChange={(event) => setNoteId(event.target.value)}
+              disabled={!enabled || busy !== undefined}
+            >
+              <option value="">Choose a Note</option>
+              {projection.notes.map((note) => (
+                <option key={note.noteId} value={note.noteId}>
+                  {note.versions?.[0]?.title ?? "Note"}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="danger"
+              busy={busy === "delete-note"}
+              disabled={!enabled || busy !== undefined || selectedNote === undefined}
+              onClick={() =>
+                confirmAndInvoke(
+                  "delete-note",
+                  "DeleteNote",
+                  { noteId },
+                  "Note deleted",
+                  "Delete this Note?",
+                )
+              }
+            >
+              Delete Note
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              busy={busy === "restore-note"}
+              disabled={!enabled || busy !== undefined || selectedNote === undefined}
+              onClick={() =>
+                void invoke("restore-note", "RestoreNote", { noteId }, "Note restored")
+              }
+            >
+              Restore Note
+            </Button>
+          </div>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 function AuthoritySummary({
   authority,
 }: {
@@ -2991,6 +3309,15 @@ function VaultsView({
             />
             <LibrarySemanticSummary projection={libraryProjection} />
             <LibrarySearch binding={binding} vaultId={selected.vaultId} onError={onError} />
+            <LibraryOrganizationOperations
+              binding={binding}
+              vaultId={selected.vaultId}
+              projection={libraryProjection}
+              enabled={selected.lifecycle === "Open" && selected.access === "Authoring"}
+              refresh={refresh}
+              onError={onError}
+              onStatus={onStatus}
+            />
             <LibraryAuthoringOperations
               binding={binding}
               vaultId={selected.vaultId}
@@ -3074,6 +3401,15 @@ function LibraryView({
       />
       <LibrarySemanticSummary projection={libraryProjection} />
       <LibrarySearch binding={binding} vaultId={vault.vaultId} onError={onError} />
+      <LibraryOrganizationOperations
+        binding={binding}
+        vaultId={vault.vaultId}
+        projection={libraryProjection}
+        enabled={vault.lifecycle === "Open" && vault.access === "Authoring"}
+        refresh={refresh}
+        onError={onError}
+        onStatus={onStatus}
+      />
       <LibraryAuthoringOperations
         binding={binding}
         vaultId={vault.vaultId}

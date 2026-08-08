@@ -314,10 +314,10 @@ test("Wails Vault surface authors basic Library content", async ({ page }) => {
 
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Author Library content" })).toBeVisible();
-  await page.getByLabel("Folder name").fill("Projects");
+  await page.getByLabel("Folder name", { exact: true }).fill("Projects");
   await page.getByRole("button", { name: "Create Folder" }).click();
   await expect(page.getByText("Folder created.")).toBeVisible();
-  await page.getByLabel("Tag name").fill("Reading");
+  await page.getByLabel("Tag name", { exact: true }).fill("Reading");
   await page.getByRole("button", { name: "Create Tag" }).click();
   await expect(page.getByText("Tag created.")).toBeVisible();
   await page.getByLabel("Explicit title").fill("Books");

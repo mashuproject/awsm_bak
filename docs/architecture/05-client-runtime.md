@@ -78,7 +78,7 @@ copies the authenticated Library checkpoint into a fresh Initial Baseline and re
 Objects and Feature Manifest closure without source Content Event re-authoring. Event Re-authoring
 for eligible unpublished Capture work, and authenticated Collection, Folder, Capture, Tag, and Note
 Content authoring now share the same Go boundary. Remaining parity work is Wails workflow coverage
-for the remaining organization lifecycle/merge/conflict controls, browser-to-desktop Content
+for the remaining advanced organization assignment/merge/conflict controls, browser-to-desktop Content
 journeys, and formal randomized, restart/crash, authority/conflict, sparse, and cross-language
 evidence.
 
