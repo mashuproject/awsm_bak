@@ -177,12 +177,14 @@ func (a *Application) Shutdown(ctx context.Context) error {
 		a.server = nil
 		a.listener = nil
 		a.mu.Unlock()
-		if server != nil {
-			result = server.Shutdown(ctx)
-		}
 		if a.config.ReadyFile != "" {
-			if err := os.Remove(a.config.ReadyFile); err != nil && !errors.Is(err, os.ErrNotExist) && result == nil {
+			if err := os.Remove(a.config.ReadyFile); err != nil && !errors.Is(err, os.ErrNotExist) {
 				result = fmt.Errorf("remove runtime ready file: %w", err)
+			}
+		}
+		if server != nil {
+			if err := server.Shutdown(ctx); err != nil && result == nil {
+				result = err
 			}
 		}
 		baseErr := a.base.ResetBootstrapState()

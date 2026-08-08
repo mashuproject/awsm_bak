@@ -7,6 +7,10 @@ import (
 	"embed"
 	"fmt"
 	"io/fs"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/mashuproject/awsm_bak/apps/runtime-go/internal/application"
 	"github.com/wailsapp/wails/v2"
@@ -23,6 +27,16 @@ func defaultMode() string {
 }
 
 func runDesktop(app *application.Application) error {
+	shutdownSignals := make(chan os.Signal, 1)
+	signal.Notify(shutdownSignals, os.Interrupt, syscall.SIGTERM, syscall.SIGINT)
+	defer signal.Stop(shutdownSignals)
+	go func() {
+		<-shutdownSignals
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = app.Shutdown(ctx)
+	}()
+
 	assets, err := fs.Sub(frontend, "frontend/dist")
 	if err != nil {
 		return fmt.Errorf("prepare desktop assets: %w", err)
