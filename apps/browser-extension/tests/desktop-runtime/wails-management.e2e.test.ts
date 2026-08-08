@@ -181,6 +181,98 @@ test("Wails Vault surface renders the selected Vault management slice", async ({
   });
 });
 
+test("Wails Vault surface authors an Invitation through the Runtime command boundary", async ({
+  page,
+}, testInfo) => {
+  const vaultId = "b".repeat(64);
+  await page.addInitScript((selectedVaultId) => {
+    const state = {
+      selectedVaultId,
+      vaults: [
+        {
+          vaultId: selectedVaultId,
+          label: "Invitation archive",
+          lifecycle: "Open",
+          access: "Authoring",
+          replicaAvailability: "Complete",
+          missingArtifactCount: 0,
+          clientCredentialId: "2".repeat(64),
+          selected: true,
+        },
+      ],
+    };
+    const authority = {
+      vaultId: selectedVaultId,
+      activeMemberIds: ["1".repeat(64)],
+      administratorIds: ["1".repeat(64)],
+      administratorConflicts: [],
+      activeInvitationIds: [],
+      invitationConflictIds: [],
+      activeClientCredentialIds: ["2".repeat(64)],
+      effectiveRecoveryCredentialIds: ["3".repeat(64)],
+      recoveryConflicts: [],
+      keyEpochConflicts: [],
+      currentKeyEpochIds: ["4".repeat(64)],
+      lifecycle: "Open",
+    };
+    (globalThis as unknown as { go: unknown }).go = {
+      main: {
+        desktopBinding: {
+          PendingPairings: async () => [],
+          ListGrants: async () => [],
+          RuntimeAddress: () => "127.0.0.1:37373",
+          VaultCommand: async (request: { type: string }) => {
+            if (request.type === "GetState") return state;
+            if (request.type === "ListLibraryProjection")
+              return {
+                captures: [],
+                collections: [],
+                folders: [],
+                tags: [],
+                tagAssignments: [],
+                notes: [],
+                conflicts: [],
+              };
+            if (request.type === "ListRemotes") return [];
+            if (request.type === "GetAuthorityState") return authority;
+            if (request.type === "CreateInvitation")
+              return {
+                invitationId: "5".repeat(64),
+                eventRecordId: "6".repeat(64),
+                redemptionSecret: "redemption-secret",
+                cancellationSecret: "cancellation-secret",
+                redemptionVerifier: "redemption-verifier",
+                cancellationVerifier: "cancellation-verifier",
+              };
+            throw new Error(`unexpected command: ${request.type}`);
+          },
+          PendingTransfers: async () => [],
+        },
+      },
+    };
+  }, vaultId);
+
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Invitation operations" })).toBeVisible();
+  await page.getByLabel("Invitation capability CBOR values").fill("capability-cbor");
+  await page.getByLabel("Redemption Authority ID").fill("authority-id");
+  await page.getByLabel("Receipt verification key").fill("receipt-key");
+  await page.getByRole("button", { name: "Create Invitation" }).click();
+  await expect(page.getByRole("heading", { name: "Invitation created." })).toBeVisible();
+  await expect(page.getByLabel("Redemption Capability seed")).toHaveValue("redemption-secret");
+  await expect(page.getByLabel("Cancellation Capability seed")).toHaveValue("cancellation-secret");
+  await page.screenshot({
+    path: testInfo.outputPath("desktop-invitation-wide.png"),
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator("body")).not.toHaveCSS("overflow-x", "scroll");
+  await page.screenshot({
+    path: testInfo.outputPath("desktop-invitation-narrow.png"),
+    fullPage: true,
+  });
+});
+
 test("Wails Vault projections reconcile from a Runtime invalidation without reload", async ({
   page,
 }) => {

@@ -844,7 +844,7 @@ function AuthoritySummary({
         </h3>
         <p className="max-w-[65ch] text-base leading-relaxed text-awsm-text-muted">
           Membership, credentials, Administrators, and Key Epochs are derived from authenticated
-          Vault Events. This view is read-only.
+          Vault Events. The operation forms below use the exact Runtime Command boundary.
         </p>
       </div>
       {conflictCount > 0 ? (
@@ -895,6 +895,267 @@ function AuthoritySummary({
           </div>
         </dl>
       </Card>
+    </section>
+  );
+}
+
+function InvitationOperations({
+  binding,
+  vaultId,
+  authority,
+  enabled,
+  refresh,
+  onError,
+  onStatus,
+}: {
+  readonly binding: DesktopBinding;
+  readonly vaultId: string;
+  readonly authority: AuthorityState;
+  readonly enabled: boolean;
+  readonly refresh: () => void;
+  readonly onError: (error: unknown) => void;
+  readonly onStatus: (message: string) => void;
+}): React.ReactElement {
+  const [capabilityInput, setCapabilityInput] = React.useState("");
+  const [redemptionAuthorityId, setRedemptionAuthorityId] = React.useState("");
+  const [receiptVerificationKey, setReceiptVerificationKey] = React.useState("");
+  const [cancellationRequest, setCancellationRequest] = React.useState("");
+  const [cancelledReceipt, setCancelledReceipt] = React.useState("");
+  const [resolution, setResolution] = React.useState("");
+  const [created, setCreated] = React.useState<Record<string, string>>();
+  const [busy, setBusy] = React.useState<string>();
+
+  const invoke = async (
+    key: string,
+    command: Record<string, unknown>,
+    message: string,
+    after?: (result: unknown) => void,
+  ) => {
+    setBusy(key);
+    try {
+      const result = await binding.VaultCommand?.(command);
+      after?.(result);
+      refresh();
+      onStatus(message);
+    } catch (error) {
+      onError(error);
+    } finally {
+      setBusy(undefined);
+    }
+  };
+
+  const create = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const capabilities = capabilityInput
+      .split(/\r?\n/)
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0);
+    void invoke(
+      "create",
+      {
+        type: "CreateInvitation",
+        expectedVaultId: vaultId,
+        capabilities,
+        redemptionAuthorityId: redemptionAuthorityId.trim(),
+        receiptVerificationKey: receiptVerificationKey.trim(),
+      },
+      "Invitation created.",
+      (result) => setCreated(result as Record<string, string>),
+    );
+  };
+
+  const cancel = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void invoke(
+      "cancel",
+      {
+        type: "CancelInvitation",
+        expectedVaultId: vaultId,
+        cancellationRequest: cancellationRequest.trim(),
+        cancelledReceipt: cancelledReceipt.trim(),
+      },
+      "Invitation cancellation recorded.",
+    );
+  };
+
+  const resolve = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void invoke(
+      "resolve",
+      {
+        type: "ResolveInvitationConflict",
+        expectedVaultId: vaultId,
+        resolution: resolution.trim(),
+      },
+      "Invitation conflict resolved.",
+    );
+  };
+
+  return (
+    <section className="grid gap-4" aria-labelledby="invitation-operations-heading">
+      <div className="grid gap-2">
+        <h3
+          id="invitation-operations-heading"
+          className="font-display text-2xl font-bold leading-tight text-awsm-ink"
+        >
+          Invitation operations
+        </h3>
+        <p className="max-w-[65ch] text-base leading-relaxed text-awsm-text-muted">
+          Administrators author the canonical Invitation Events. Capability values are canonical
+          CBOR encoded as unpadded base64url, one value per line.
+        </p>
+      </div>
+      {!enabled ? (
+        <Notice tone="info" title="Invitation authoring unavailable">
+          Open an authoring Vault to create, cancel, or resolve Invitations.
+        </Notice>
+      ) : null}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>Create an Invitation</CardTitle>
+            <CardDescription>
+              The capability seeds are returned once and are not stored in the Vault.
+            </CardDescription>
+          </CardHeader>
+          <form className="grid gap-5" onSubmit={create}>
+            <Field label="Invitation capability CBOR values">
+              <textarea
+                className={`${inputClassName} min-h-24 resize-y font-mono text-xs`}
+                value={capabilityInput}
+                onChange={(event) => setCapabilityInput(event.target.value)}
+                aria-label="Invitation capability CBOR values"
+                spellCheck={false}
+                required
+                disabled={!enabled || busy !== undefined}
+              />
+            </Field>
+            <Field label="Redemption Authority ID">
+              <input
+                className={`${inputClassName} font-mono text-xs`}
+                value={redemptionAuthorityId}
+                onChange={(event) => setRedemptionAuthorityId(event.target.value)}
+                aria-label="Redemption Authority ID"
+                spellCheck={false}
+                required
+                disabled={!enabled || busy !== undefined}
+              />
+            </Field>
+            <Field label="Receipt verification key">
+              <input
+                className={`${inputClassName} font-mono text-xs`}
+                value={receiptVerificationKey}
+                onChange={(event) => setReceiptVerificationKey(event.target.value)}
+                aria-label="Receipt verification key"
+                spellCheck={false}
+                required
+                disabled={!enabled || busy !== undefined}
+              />
+            </Field>
+            <Button
+              type="submit"
+              busy={busy === "create"}
+              disabled={!enabled || busy !== undefined}
+            >
+              Create Invitation
+            </Button>
+            {created !== undefined ? (
+              <div className="grid gap-4 border-t-2 border-awsm-border-subtle pt-4">
+                <Notice tone="success" title="Invitation created.">
+                  Record {displayIdentifier(created.eventRecordId ?? "")} is now in this Vault.
+                </Notice>
+                <Field label="Redemption Capability seed">
+                  <input
+                    className={`${inputClassName} font-mono text-xs`}
+                    value={created.redemptionSecret ?? ""}
+                    readOnly
+                    aria-label="Redemption Capability seed"
+                  />
+                </Field>
+                <Field label="Cancellation Capability seed">
+                  <input
+                    className={`${inputClassName} font-mono text-xs`}
+                    value={created.cancellationSecret ?? ""}
+                    readOnly
+                    aria-label="Cancellation Capability seed"
+                  />
+                </Field>
+              </div>
+            ) : null}
+          </form>
+        </Card>
+        {authority.activeInvitationIds.length > 0 ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>Record cancellation</CardTitle>
+              <CardDescription>
+                Paste the authority-produced canonical request and receipt to close an Invitation.
+              </CardDescription>
+            </CardHeader>
+            <form className="grid gap-5" onSubmit={cancel}>
+              <Field label="Cancellation request CBOR">
+                <textarea
+                  className={`${inputClassName} min-h-24 resize-y font-mono text-xs`}
+                  value={cancellationRequest}
+                  onChange={(event) => setCancellationRequest(event.target.value)}
+                  aria-label="Cancellation request CBOR"
+                  spellCheck={false}
+                  required
+                  disabled={!enabled || busy !== undefined}
+                />
+              </Field>
+              <Field label="Cancelled receipt CBOR">
+                <textarea
+                  className={`${inputClassName} min-h-24 resize-y font-mono text-xs`}
+                  value={cancelledReceipt}
+                  onChange={(event) => setCancelledReceipt(event.target.value)}
+                  aria-label="Cancelled receipt CBOR"
+                  spellCheck={false}
+                  required
+                  disabled={!enabled || busy !== undefined}
+                />
+              </Field>
+              <Button
+                type="submit"
+                busy={busy === "cancel"}
+                disabled={!enabled || busy !== undefined}
+              >
+                Record Invitation cancellation
+              </Button>
+            </form>
+          </Card>
+        ) : null}
+      </div>
+      {authority.invitationConflictIds.length > 0 ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Resolve Invitation conflict</CardTitle>
+            <CardDescription>
+              Supply the canonical resolution body naming every visible Invitation branch.
+            </CardDescription>
+          </CardHeader>
+          <form className="grid gap-5" onSubmit={resolve}>
+            <Field label="Invitation resolution CBOR">
+              <textarea
+                className={`${inputClassName} min-h-24 resize-y font-mono text-xs`}
+                value={resolution}
+                onChange={(event) => setResolution(event.target.value)}
+                aria-label="Invitation resolution CBOR"
+                spellCheck={false}
+                required
+                disabled={!enabled || busy !== undefined}
+              />
+            </Field>
+            <Button
+              type="submit"
+              busy={busy === "resolve"}
+              disabled={!enabled || busy !== undefined}
+            >
+              Resolve Invitation conflict
+            </Button>
+          </form>
+        </Card>
+      ) : null}
     </section>
   );
 }
@@ -1786,7 +2047,20 @@ function VaultsView({
               </>
             ) : null}
           </ActionRow>
-          {authority !== undefined ? <AuthoritySummary authority={authority} /> : null}
+          {authority !== undefined ? (
+            <>
+              <AuthoritySummary authority={authority} />
+              <InvitationOperations
+                binding={binding}
+                vaultId={selected.vaultId}
+                authority={authority}
+                enabled={selected.lifecycle === "Open" && selected.access === "Authoring"}
+                refresh={refresh}
+                onError={onError}
+                onStatus={onStatus}
+              />
+            </>
+          ) : null}
           <section className="grid gap-4" aria-labelledby="library-heading">
             <h3
               id="library-heading"
