@@ -4,6 +4,7 @@ import {
   AppShell,
   Button,
   EmptyState,
+  inputClassName,
   Notice,
   SidebarNav,
 } from "@awsm/ui";
@@ -248,6 +249,7 @@ function LibraryContentPanel({
             Folder name
             <input
               id="library-folder-name"
+              className={inputClassName}
               value={folderName}
               onChange={(event) => setFolderName(event.target.value)}
               required
@@ -269,6 +271,7 @@ function LibraryContentPanel({
             Tag name
             <input
               id="library-tag-name"
+              className={inputClassName}
               value={tagName}
               onChange={(event) => setTagName(event.target.value)}
               required
@@ -290,6 +293,7 @@ function LibraryContentPanel({
             Collection
             <select
               id="library-collection-id"
+              className={inputClassName}
               value={collectionId}
               onChange={(event) => setCollectionId(event.target.value)}
               required
@@ -308,6 +312,7 @@ function LibraryContentPanel({
             New title
             <input
               id="library-collection-title"
+              className={inputClassName}
               value={collectionTitle}
               onChange={(event) => setCollectionTitle(event.target.value)}
             />
@@ -332,6 +337,7 @@ function LibraryContentPanel({
             Target kind
             <select
               id="library-note-target-kind"
+              className={inputClassName}
               value={noteTargetKind}
               onChange={(event) => {
                 const kind = event.target.value as "Collection" | "Capture";
@@ -350,6 +356,7 @@ function LibraryContentPanel({
             Target
             <input
               id="library-note-target-id"
+              className={inputClassName}
               value={noteTargetId}
               onChange={(event) => setNoteTargetId(event.target.value)}
               required
@@ -362,6 +369,7 @@ function LibraryContentPanel({
             Note title
             <input
               id="library-note-title"
+              className={inputClassName}
               value={noteTitle}
               onChange={(event) => setNoteTitle(event.target.value)}
             />
@@ -373,6 +381,7 @@ function LibraryContentPanel({
             Note body
             <textarea
               id="library-note-body"
+              className={inputClassName}
               value={noteBody}
               onChange={(event) => setNoteBody(event.target.value)}
               required
