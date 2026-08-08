@@ -304,7 +304,8 @@ capture in an installed Brave browser through its CDP endpoint. It uses the `com
 Flatpak by default; set `AWSM_BRAVE_EXECUTABLE` for a directly installed Brave binary.
 When a Desktop Runtime grant is restored, the separate Library page uses the same Vault selection
 router and reads a selected desktop Vault through the Runtime API rather than copying its bytes
-into browser storage.
+into browser storage. The real packaged Chromium lane also proves this selection path from a fresh
+extension with a desktop-owned Vault created through the public Runtime API.
 
 The shared application components live in `packages/ui`. Start the interactive Storybook when
 checking one component or state in isolation:

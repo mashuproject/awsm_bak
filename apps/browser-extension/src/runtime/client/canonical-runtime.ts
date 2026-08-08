@@ -51,6 +51,9 @@ export interface CanonicalClientVaultSummary {
   readonly label: string | null;
   readonly lifecycle: "Open" | "Closed";
   readonly access: "Authoring" | "ReadOnly";
+  readonly replicaAvailability?: "Complete" | "Sparse" | "Unavailable";
+  readonly missingArtifactCount?: number;
+  readonly clientCredentialId?: string;
   readonly selected: boolean;
 }
 

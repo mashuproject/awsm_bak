@@ -103,6 +103,35 @@ describe("desktop-backed Vault application router", () => {
     });
   });
 
+  it("restores a desktop selection when the browser-local backend has no Vault", async () => {
+    const local = transport({ vaults: [] });
+    const desktop = {
+      status: () => ({
+        kind: "Connected" as const,
+        grantId: "grant",
+        clientName: "extension",
+        scopes: [],
+      }),
+      command: vi.fn(async (request: { type: string }) => {
+        if (request.type === "GetState")
+          return { selectedVaultId: desktopVault.vaultId, vaults: [desktopVault] };
+        return [];
+      }),
+    };
+    const router = new DesktopRuntimeApplicationRouter(local);
+    router.setDesktopConnection(desktop as never);
+
+    await expect(router.request({ type: "GetState" })).resolves.toEqual({
+      selectedVaultId: desktopVault.vaultId,
+      vaults: [{ ...desktopVault, selected: true }],
+    });
+    await router.request({ type: "ListLibrary", expectedVaultId: desktopVault.vaultId });
+    expect(desktop.command).toHaveBeenCalledWith({
+      type: "ListLibrary",
+      expectedVaultId: desktopVault.vaultId,
+    });
+  });
+
   it("surfaces a local/desktop Vault identity collision instead of hiding one backend", async () => {
     const local = transport({ selectedVaultId: localVault.vaultId, vaults: [localVault] });
     const desktop = {

@@ -26,6 +26,7 @@ const extensionBuildPath =
 
 interface Fixture {
   readonly process: ChildProcessWithoutNullStreams;
+  readonly address: string;
   command(value: object): Promise<Record<string, unknown>>;
   close(): Promise<void>;
 }
@@ -67,6 +68,7 @@ async function startFixture(): Promise<Fixture> {
   };
   return {
     process: child,
+    address: ready.address,
     command,
     async close() {
       try {
@@ -78,6 +80,66 @@ async function startFixture(): Promise<Fixture> {
       }
     },
   };
+}
+
+async function runtimeCommand(address: string, token: string, value: object): Promise<unknown> {
+  const response = await fetch(`http://${address}/api/awsm/runtime/command`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(value),
+  });
+  const payload = (await response.json()) as Record<string, unknown>;
+  if (!response.ok || payload.ok !== true) {
+    throw new Error("Runtime setup Command failed.");
+  }
+  return payload.value;
+}
+
+async function createDesktopVault(fixture: Fixture): Promise<void> {
+  const pairingResponse = await fetch(`http://${fixture.address}/api/awsm/runtime/pairings`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ clientName: "desktop-content-setup", scopes: ["runtime.vault"] }),
+  });
+  const pairing = (await pairingResponse.json()) as Record<string, unknown>;
+  if (
+    !pairingResponse.ok ||
+    typeof pairing.pairingId !== "string" ||
+    typeof pairing.code !== "string"
+  ) {
+    throw new Error("Runtime setup pairing failed.");
+  }
+  await expect(fixture.command({ command: "approve-next" })).resolves.toMatchObject({ ok: true });
+  const grantResponse = await fetch(
+    `http://${fixture.address}/api/awsm/runtime/pairings/${encodeURIComponent(pairing.pairingId)}/redeem`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: pairing.code, scopes: ["runtime.vault"] }),
+    },
+  );
+  const grant = (await grantResponse.json()) as Record<string, unknown>;
+  if (!grantResponse.ok || typeof grant.token !== "string") {
+    throw new Error("Runtime setup grant failed.");
+  }
+  const begin = (await runtimeCommand(fixture.address, grant.token, {
+    type: "BeginVaultCreation",
+    expectedVaultId: null,
+    label: "Desktop archive",
+  })) as Record<string, unknown>;
+  if (typeof begin.setupId !== "string" || typeof begin.recoveryPhrase !== "string") {
+    throw new Error("Runtime setup creation did not return a recovery ceremony.");
+  }
+  const confirmed = (await runtimeCommand(fixture.address, grant.token, {
+    type: "ConfirmVaultCreation",
+    setupId: begin.setupId,
+    recoveryPhrase: begin.recoveryPhrase,
+  })) as Record<string, unknown>;
+  if (typeof confirmed.vaultId !== "string")
+    throw new Error("Runtime setup Vault was not created.");
 }
 
 async function packagedExtension(testInfo: TestInfo): Promise<{
@@ -133,6 +195,7 @@ test("connects the extension to a real Runtime and recovers revocation", async (
   const extension = await packagedExtension(testInfo);
   try {
     const first = await popup(extension.context, extension.extensionId);
+    await expect(first.getByRole("heading", { name: "Desktop Runtime" })).toBeVisible();
     await createVault(first);
     await first.getByRole("button", { name: "Vault settings" }).click();
     await expect(first.getByRole("heading", { name: "Desktop Runtime" })).toBeVisible();
@@ -168,6 +231,32 @@ test("connects the extension to a real Runtime and recovers revocation", async (
     await expect(reopened.getByText("Desktop Runtime access was revoked.")).toBeVisible();
   } finally {
     await extension.context.close();
+    await fixture.close();
+  }
+});
+
+test("selects a desktop-owned Vault before any browser-local Vault exists", async ({
+  browser: _browser,
+}, testInfo) => {
+  test.setTimeout(90_000);
+  const fixture = await startFixture();
+  await createDesktopVault(fixture);
+  const extension = await packagedExtension(testInfo);
+  try {
+    const first = await popup(extension.context, extension.extensionId);
+    await expect(first.getByRole("heading", { name: "Desktop Runtime" })).toBeVisible();
+    const approval = fixture.command({ command: "approve-next" });
+    await first.getByRole("button", { name: "Connect Desktop Runtime" }).click();
+    await expect(approval).resolves.toMatchObject({ ok: true });
+    await expect(first.getByRole("heading", { name: "Archive this page" })).toBeVisible();
+    const libraryOpened = extension.context.waitForEvent("page");
+    await first.getByRole("button", { name: "Open Library" }).click();
+    const library = await libraryOpened;
+    await expect(library.getByText("Desktop archive", { exact: true })).toBeVisible();
+    await expect(library.getByText("Capture a page from the popup to add it here.")).toBeVisible();
+  } finally {
+    await extension.context.close();
+    await fixture.command({ command: "revoke-all" });
     await fixture.close();
   }
 });

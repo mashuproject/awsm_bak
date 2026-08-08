@@ -255,6 +255,9 @@ Library page restores the optional Desktop Runtime grant and uses the same Vault
 popup, so a selected desktop Vault is read from the desktop Runtime rather than a browser-local
 duplicate. The native Brave lane is separate browser-capture evidence and does not change the
 extension-only Capture boundary.
+The packaged Chromium Desktop Runtime lane also creates a desktop-owned Vault through the public
+pairing and Vault-creation API, connects a fresh extension before any browser-local Vault exists,
+and proves that Archive and Library select and read that desktop Vault.
 
 The shared presentation package has a separate component-level review surface. Run
 `corepack pnpm test:ui` for the deterministic theme-contract unit tests,

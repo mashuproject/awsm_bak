@@ -104,6 +104,38 @@ describe("canonical popup application client", () => {
     );
   });
 
+  it("accepts the current Desktop Runtime Vault availability fields", async () => {
+    const client = createCanonicalPopupApplicationClient({
+      request: vi.fn().mockResolvedValue({
+        selectedVaultId: "a".repeat(64),
+        vaults: [
+          {
+            vaultId: "a".repeat(64),
+            label: "Desktop archive",
+            lifecycle: "Open",
+            access: "Authoring",
+            replicaAvailability: "Complete",
+            missingArtifactCount: 0,
+            clientCredentialId: "b".repeat(64),
+            selected: true,
+          },
+        ],
+      }),
+      subscribe: vi.fn(() => () => undefined),
+    });
+
+    await expect(client.state()).resolves.toMatchObject({
+      selectedVaultId: "a".repeat(64),
+      vaults: [
+        expect.objectContaining({
+          replicaAvailability: "Complete",
+          missingArtifactCount: 0,
+          clientCredentialId: "b".repeat(64),
+        }),
+      ],
+    });
+  });
+
   it("exposes only the non-secret identity of a resumable Vault creation", async () => {
     const client = createCanonicalPopupApplicationClient({
       request: vi.fn().mockResolvedValue({

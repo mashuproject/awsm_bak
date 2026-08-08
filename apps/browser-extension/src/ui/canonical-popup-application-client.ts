@@ -213,13 +213,35 @@ function protocolError(): CanonicalPopupApplicationClientError {
 }
 
 function decodeVaultSummary(value: unknown): CanonicalClientVaultSummary {
+  const hasReplicaAvailability = plainRecord(value) && Object.hasOwn(value, "replicaAvailability");
+  const hasMissingArtifactCount =
+    plainRecord(value) && Object.hasOwn(value, "missingArtifactCount");
+  const hasClientCredentialId = plainRecord(value) && Object.hasOwn(value, "clientCredentialId");
   if (
     !plainRecord(value) ||
-    !exactKeys(value, ["vaultId", "label", "lifecycle", "access", "selected"]) ||
+    !exactKeys(value, [
+      "vaultId",
+      "label",
+      "lifecycle",
+      "access",
+      ...(hasReplicaAvailability ? ["replicaAvailability"] : []),
+      ...(hasMissingArtifactCount ? ["missingArtifactCount"] : []),
+      ...(hasClientCredentialId ? ["clientCredentialId"] : []),
+      "selected",
+    ]) ||
     !identifier(value.vaultId) ||
     !(value.label === null || typeof value.label === "string") ||
     !(value.lifecycle === "Open" || value.lifecycle === "Closed") ||
     !(value.access === "Authoring" || value.access === "ReadOnly") ||
+    (hasReplicaAvailability &&
+      value.replicaAvailability !== "Complete" &&
+      value.replicaAvailability !== "Sparse" &&
+      value.replicaAvailability !== "Unavailable") ||
+    (hasMissingArtifactCount &&
+      (typeof value.missingArtifactCount !== "number" ||
+        !Number.isSafeInteger(value.missingArtifactCount) ||
+        value.missingArtifactCount < 0)) ||
+    (hasClientCredentialId && !identifier(value.clientCredentialId)) ||
     typeof value.selected !== "boolean"
   ) {
     throw protocolError();
@@ -229,6 +251,13 @@ function decodeVaultSummary(value: unknown): CanonicalClientVaultSummary {
     label: value.label,
     lifecycle: value.lifecycle,
     access: value.access,
+    ...(hasReplicaAvailability
+      ? { replicaAvailability: value.replicaAvailability as "Complete" | "Sparse" | "Unavailable" }
+      : {}),
+    ...(hasMissingArtifactCount
+      ? { missingArtifactCount: value.missingArtifactCount as number }
+      : {}),
+    ...(hasClientCredentialId ? { clientCredentialId: value.clientCredentialId as string } : {}),
     selected: value.selected,
   };
 }

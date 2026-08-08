@@ -60,10 +60,17 @@ export class DesktopRuntimeApplicationRouter implements CanonicalPopupApplicatio
     const vaults = [...this.localState.vaults, ...(this.desktopState?.vaults ?? [])].map(
       (vault): CanonicalClientVaultSummary => ({ ...vault, selected: false }),
     );
-    const selectedVaultId =
-      this.activeBackend === "desktop"
-        ? this.desktopState?.selectedVaultId
-        : this.localState.selectedVaultId;
+    const preferredState = this.activeBackend === "desktop" ? this.desktopState : this.localState;
+    const fallbackBackend = this.activeBackend === "desktop" ? "local" : "desktop";
+    const fallbackState = fallbackBackend === "desktop" ? this.desktopState : this.localState;
+    if (
+      preferredState?.selectedVaultId === undefined &&
+      fallbackState?.selectedVaultId !== undefined
+    ) {
+      this.activeBackend = fallbackBackend;
+    }
+    const selectedState = this.activeBackend === "desktop" ? this.desktopState : this.localState;
+    const selectedVaultId = selectedState?.selectedVaultId;
     if (selectedVaultId !== undefined) {
       const selected = vaults.find((vault) => vault.vaultId === selectedVaultId);
       if (selected !== undefined) {
@@ -71,10 +78,7 @@ export class DesktopRuntimeApplicationRouter implements CanonicalPopupApplicatio
         vaults[index] = { ...selected, selected: true };
       }
     }
-    const pending =
-      this.activeBackend === "desktop"
-        ? this.desktopState?.pendingVaultCreation
-        : this.localState.pendingVaultCreation;
+    const pending = selectedState?.pendingVaultCreation;
     return {
       ...(selectedVaultId === undefined ? {} : { selectedVaultId }),
       ...(pending === undefined ? {} : { pendingVaultCreation: pending }),

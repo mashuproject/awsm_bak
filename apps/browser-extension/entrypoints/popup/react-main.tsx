@@ -190,9 +190,11 @@ function Status({
 function DesktopRuntimePanel({
   busy,
   run,
+  onConnected,
 }: {
   readonly busy: boolean;
   readonly run: (operation: () => Promise<void>) => Promise<void>;
+  readonly onConnected?: () => Promise<void>;
 }): React.ReactElement {
   const [connection, setConnection] = React.useState<CanonicalDesktopRuntimeConnection>();
   const [status, setStatus] = React.useState<DesktopRuntimeConnectionStatus>({
@@ -269,6 +271,7 @@ function DesktopRuntimePanel({
                 const nextStatus = await next.connect({ permissionAlreadyGranted: true });
                 setStatus(nextStatus);
                 applicationRouter.setDesktopConnection(next);
+                await onConnected?.();
               })
             }
           >
@@ -671,7 +674,12 @@ function PopupApp(): React.ReactElement {
     <div className="awsm-app-root canonical-popup grid gap-6 p-5" aria-busy={busy}>
       <BrandHeader title={title} />
       {error !== undefined ? <Status message={error} kind="error" /> : null}
-      <div className="grid gap-6">{body}</div>
+      <div className="grid gap-6">
+        {body}
+        {presentation.kind === "CreateVault" || presentation.kind === "SelectVault" ? (
+          <DesktopRuntimePanel busy={busy} run={run} onConnected={refresh} />
+        ) : null}
+      </div>
       <p id="announcer" ref={announcer} className="awsm-sr-only" aria-live="polite" />
     </div>
   );
@@ -1183,7 +1191,7 @@ function SettingsSurface({
         refresh={refresh}
         announce={announce}
       />
-      <DesktopRuntimePanel busy={busy} run={run} />
+      <DesktopRuntimePanel busy={busy} run={run} onConnected={refresh} />
     </>
   );
 }
