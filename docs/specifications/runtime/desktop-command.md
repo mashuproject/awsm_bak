@@ -62,7 +62,9 @@ never log passphrases, package bytes, keys, or bearer tokens.
 The Wails Vault view exposes these same Commands through its Authority, Complete Export and Import
 panels and its Library list. An authoring Client may explicitly end its current Client Credential;
 the Runtime records the type-10 Authority Event and the local view becomes read-only. An Open Vault
-with an unambiguous active Administrator exposes an
+without an active local Client Credential exposes a Recovery Phrase ceremony for `RecoverMember`;
+the phrase is sent only for that command and the view does not display or persist the resulting
+credential secret. An Open Vault with an unambiguous active Administrator exposes an
 explicitly confirmed `RotateKeyEpoch` action; the Runtime authors the type-12 Authority Event,
 stores recipient Key Envelopes, advances the current Key Epoch, and refreshes the projection.
 The Runtime command boundary also supports `EndMembership` for self-resignation or an unambiguous

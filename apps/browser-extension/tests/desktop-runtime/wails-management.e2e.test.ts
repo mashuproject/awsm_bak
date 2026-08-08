@@ -341,6 +341,73 @@ test("Wails Vault surface authors an Administrator role change", async ({ page }
   await expect(page.getByRole("heading", { name: "Administrator granted." })).toBeVisible();
 });
 
+test("Wails Vault surface recovers an imported Open Replica", async ({ page }) => {
+  const vaultId = "d".repeat(64);
+  await page.addInitScript((selectedVaultId) => {
+    const state = {
+      selectedVaultId,
+      vaults: [
+        {
+          vaultId: selectedVaultId,
+          label: "Imported archive",
+          lifecycle: "Open",
+          access: "ReadOnly",
+          replicaAvailability: "Complete",
+          missingArtifactCount: 0,
+          selected: true,
+        },
+      ],
+    };
+    const authority = {
+      vaultId: selectedVaultId,
+      activeMemberIds: ["1".repeat(64)],
+      administratorIds: ["1".repeat(64)],
+      administratorConflicts: [],
+      activeInvitationIds: [],
+      invitationConflictIds: [],
+      activeClientCredentialIds: [],
+      effectiveRecoveryCredentialIds: ["3".repeat(64)],
+      recoveryConflicts: [],
+      keyEpochConflicts: [],
+      currentKeyEpochIds: ["4".repeat(64)],
+      lifecycle: "Open",
+    };
+    (globalThis as unknown as { go: unknown }).go = {
+      main: {
+        desktopBinding: {
+          PendingPairings: async () => [],
+          ListGrants: async () => [],
+          RuntimeAddress: () => "127.0.0.1:37373",
+          VaultCommand: async (request: { type: string }) => {
+            if (request.type === "GetState") return state;
+            if (request.type === "ListLibraryProjection")
+              return {
+                captures: [],
+                collections: [],
+                folders: [],
+                tags: [],
+                tagAssignments: [],
+                notes: [],
+                conflicts: [],
+              };
+            if (request.type === "ListRemotes") return [];
+            if (request.type === "GetAuthorityState") return authority;
+            if (request.type === "RecoverMember") return { clientCredentialId: "5".repeat(64) };
+            throw new Error(`unexpected command: ${request.type}`);
+          },
+          PendingTransfers: async () => [],
+        },
+      },
+    };
+  }, vaultId);
+
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Recover this Client Credential" })).toBeVisible();
+  await page.getByLabel("Recovery Phrase").fill("abandon abandon abandon abandon abandon abandon");
+  await page.getByRole("button", { name: "Recover Member" }).click();
+  await expect(page.getByRole("heading", { name: "Client Credential recovered." })).toBeVisible();
+});
+
 test("Wails Vault projections reconcile from a Runtime invalidation without reload", async ({
   page,
 }) => {

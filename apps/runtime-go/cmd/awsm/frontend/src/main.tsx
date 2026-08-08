@@ -1160,6 +1160,72 @@ function InvitationOperations({
   );
 }
 
+function ClientCredentialRecovery({
+  binding,
+  vaultId,
+  refresh,
+  onError,
+  onStatus,
+}: {
+  readonly binding: DesktopBinding;
+  readonly vaultId: string;
+  readonly refresh: () => void;
+  readonly onError: (error: unknown) => void;
+  readonly onStatus: (message: string) => void;
+}): React.ReactElement {
+  const [phrase, setPhrase] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  const [completed, setCompleted] = React.useState(false);
+  const recover = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setBusy(true);
+    try {
+      await binding.VaultCommand?.({
+        type: "RecoverMember",
+        expectedVaultId: vaultId,
+        recoveryPhrase: phrase,
+      });
+      setPhrase("");
+      setCompleted(true);
+      refresh();
+      onStatus("Client Credential recovered.");
+    } catch (error) {
+      onError(error);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Card expressive>
+      <CardHeader>
+        <CardTitle>Recover this Client Credential</CardTitle>
+        <CardDescription>
+          This Open Replica is readable but has no active local Client Credential. The Recovery
+          Phrase is used only for this ceremony and is never stored.
+        </CardDescription>
+      </CardHeader>
+      <form className="grid max-w-xl gap-5" onSubmit={recover}>
+        <Field label="Recovery Phrase">
+          <input
+            className={inputClassName}
+            type="password"
+            value={phrase}
+            onChange={(event) => setPhrase(event.target.value)}
+            aria-label="Recovery Phrase"
+            autoComplete="off"
+            required
+            disabled={busy}
+          />
+        </Field>
+        <Button type="submit" busy={busy}>
+          Recover Member
+        </Button>
+        {completed ? <Notice tone="success" title="Client Credential recovered." /> : null}
+      </form>
+    </Card>
+  );
+}
+
 function AuthorityOperations({
   binding,
   vaultId,
@@ -2312,6 +2378,15 @@ function VaultsView({
               </>
             ) : null}
           </ActionRow>
+          {selected.lifecycle === "Open" && selected.access === "ReadOnly" ? (
+            <ClientCredentialRecovery
+              binding={binding}
+              vaultId={selected.vaultId}
+              refresh={refresh}
+              onError={onError}
+              onStatus={onStatus}
+            />
+          ) : null}
           {authority !== undefined ? (
             <>
               <AuthoritySummary authority={authority} />
