@@ -1160,6 +1160,271 @@ function InvitationOperations({
   );
 }
 
+function AuthorityOperations({
+  binding,
+  vaultId,
+  authority,
+  enabled,
+  refresh,
+  onError,
+  onStatus,
+}: {
+  readonly binding: DesktopBinding;
+  readonly vaultId: string;
+  readonly authority: AuthorityState;
+  readonly enabled: boolean;
+  readonly refresh: () => void;
+  readonly onError: (error: unknown) => void;
+  readonly onStatus: (message: string) => void;
+}): React.ReactElement {
+  const [targetMemberId, setTargetMemberId] = React.useState("");
+  const [keyEpochId, setKeyEpochId] = React.useState("");
+  const [targetKind, setTargetKind] = React.useState("2");
+  const [targetCredentialId, setTargetCredentialId] = React.useState("");
+  const [targetRevision, setTargetRevision] = React.useState("");
+  const [manifestInput, setManifestInput] = React.useState("");
+  const [busy, setBusy] = React.useState<string>();
+  const [completed, setCompleted] = React.useState<string>();
+
+  const invoke = async (key: string, command: Record<string, unknown>, message: string) => {
+    setBusy(key);
+    try {
+      await binding.VaultCommand?.(command);
+      refresh();
+      setCompleted(message);
+      onStatus(message);
+    } catch (error) {
+      onError(error);
+    } finally {
+      setBusy(undefined);
+    }
+  };
+
+  const target = targetMemberId.trim();
+  const credential = targetCredentialId.trim();
+  const epoch = keyEpochId.trim();
+  const revision = targetRevision.trim();
+  const manifests = manifestInput
+    .split(/\r?\n/)
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+
+  return (
+    <section className="grid gap-4" aria-labelledby="authority-operations-heading">
+      <div className="grid gap-2">
+        <h3
+          id="authority-operations-heading"
+          className="font-display text-2xl font-bold leading-tight text-awsm-ink"
+        >
+          Authority operations
+        </h3>
+        <p className="max-w-[65ch] text-base leading-relaxed text-awsm-text-muted">
+          These actions author authenticated Authority Events against the current complete Authority
+          Frontier.
+        </p>
+      </div>
+      {!enabled ? (
+        <Notice tone="info" title="Authority authoring unavailable">
+          Open an authoring Vault to change membership, deliver keys, or activate Features.
+        </Notice>
+      ) : null}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>Membership and roles</CardTitle>
+            <CardDescription>
+              Use a canonical Member ID from the current Authority projection ({" "}
+              {authority.activeMemberIds.length} active members).
+            </CardDescription>
+          </CardHeader>
+          <div className="grid gap-5">
+            <Field label="Target Member ID">
+              <input
+                className={`${inputClassName} font-mono text-xs`}
+                value={targetMemberId}
+                onChange={(event) => setTargetMemberId(event.target.value)}
+                aria-label="Target Member ID"
+                spellCheck={false}
+                required
+                disabled={!enabled || busy !== undefined}
+              />
+            </Field>
+            <div className="flex flex-wrap gap-3">
+              <Button
+                busy={busy === "grant"}
+                disabled={!enabled || busy !== undefined}
+                onClick={() =>
+                  void invoke(
+                    "grant",
+                    {
+                      type: "GrantAdministrator",
+                      expectedVaultId: vaultId,
+                      targetMemberId: target,
+                    },
+                    "Administrator granted.",
+                  )
+                }
+              >
+                Grant Administrator
+              </Button>
+              <Button
+                variant="secondary"
+                busy={busy === "end-administrator"}
+                disabled={!enabled || busy !== undefined}
+                onClick={() => {
+                  if (!window.confirm("End this Administrator role?")) return;
+                  void invoke(
+                    "end-administrator",
+                    { type: "EndAdministrator", expectedVaultId: vaultId, targetMemberId: target },
+                    "Administrator ended.",
+                  );
+                }}
+              >
+                End Administrator
+              </Button>
+              <Button
+                variant="danger"
+                busy={busy === "end-membership"}
+                disabled={!enabled || busy !== undefined}
+                onClick={() => {
+                  if (!window.confirm("End this Member's Vault membership?")) return;
+                  void invoke(
+                    "end-membership",
+                    { type: "EndMembership", expectedVaultId: vaultId, targetMemberId: target },
+                    "Membership ended.",
+                  );
+                }}
+              >
+                End membership
+              </Button>
+            </div>
+          </div>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle>Deliver a Key Envelope</CardTitle>
+            <CardDescription>
+              Deliver one established Key Epoch to an eligible Client or Recovery Credential slot.
+            </CardDescription>
+          </CardHeader>
+          <form
+            className="grid gap-5"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void invoke(
+                "deliver",
+                {
+                  type: "DeliverKeyEnvelope",
+                  expectedVaultId: vaultId,
+                  keyEpochId: epoch,
+                  targetKind: Number(targetKind),
+                  targetCredentialId: credential,
+                  targetRevision: revision === "" ? null : Number(revision),
+                },
+                "Key Envelope delivered.",
+              );
+            }}
+          >
+            <Field label="Key Epoch ID">
+              <input
+                className={`${inputClassName} font-mono text-xs`}
+                value={keyEpochId}
+                onChange={(event) => setKeyEpochId(event.target.value)}
+                aria-label="Key Epoch ID"
+                spellCheck={false}
+                required
+                disabled={!enabled || busy !== undefined}
+              />
+            </Field>
+            <Field label="Target Credential ID">
+              <input
+                className={`${inputClassName} font-mono text-xs`}
+                value={targetCredentialId}
+                onChange={(event) => setTargetCredentialId(event.target.value)}
+                aria-label="Target Credential ID"
+                spellCheck={false}
+                required
+                disabled={!enabled || busy !== undefined}
+              />
+            </Field>
+            <div className="grid gap-5 sm:grid-cols-2">
+              <Field label="Target kind">
+                <select
+                  className={inputClassName}
+                  value={targetKind}
+                  onChange={(event) => setTargetKind(event.target.value)}
+                  aria-label="Target kind"
+                  disabled={!enabled || busy !== undefined}
+                >
+                  <option value="1">Recovery Credential</option>
+                  <option value="2">Client Credential</option>
+                </select>
+              </Field>
+              <Field label="Target revision">
+                <input
+                  className={inputClassName}
+                  type="number"
+                  min="0"
+                  value={targetRevision}
+                  onChange={(event) => setTargetRevision(event.target.value)}
+                  aria-label="Target revision"
+                  disabled={!enabled || busy !== undefined}
+                />
+              </Field>
+            </div>
+            <Button
+              type="submit"
+              busy={busy === "deliver"}
+              disabled={!enabled || busy !== undefined}
+            >
+              Deliver Key Envelope
+            </Button>
+          </form>
+        </Card>
+      </div>
+      <Card>
+        <CardHeader>
+          <CardTitle>Activate Features</CardTitle>
+          <CardDescription>
+            Add complete canonical Feature Manifest values, one unpadded base64url value per line.
+          </CardDescription>
+        </CardHeader>
+        <form
+          className="grid gap-5"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void invoke(
+              "features",
+              { type: "ActivateFeature", expectedVaultId: vaultId, manifests },
+              "Features activated.",
+            );
+          }}
+        >
+          <Field label="Feature Manifest values">
+            <textarea
+              className={`${inputClassName} min-h-24 resize-y font-mono text-xs`}
+              value={manifestInput}
+              onChange={(event) => setManifestInput(event.target.value)}
+              aria-label="Feature Manifest values"
+              spellCheck={false}
+              required
+              disabled={!enabled || busy !== undefined}
+            />
+          </Field>
+          <Button
+            type="submit"
+            busy={busy === "features"}
+            disabled={!enabled || busy !== undefined}
+          >
+            Activate Features
+          </Button>
+        </form>
+      </Card>
+      {completed !== undefined ? <Notice tone="success" title={completed} /> : null}
+    </section>
+  );
+}
+
 function HostedReplicas({
   binding,
   vaultId,
@@ -2051,6 +2316,15 @@ function VaultsView({
             <>
               <AuthoritySummary authority={authority} />
               <InvitationOperations
+                binding={binding}
+                vaultId={selected.vaultId}
+                authority={authority}
+                enabled={selected.lifecycle === "Open" && selected.access === "Authoring"}
+                refresh={refresh}
+                onError={onError}
+                onStatus={onStatus}
+              />
+              <AuthorityOperations
                 binding={binding}
                 vaultId={selected.vaultId}
                 authority={authority}

@@ -70,6 +70,11 @@ Administrator's removal of another Member, deriving closure when no Administrato
 `DeliverKeyEnvelope` for a missing eligible Client or Recovery slot in an established Key Epoch.
 `GrantAdministrator` and `EndAdministrator` author type-3 and type-4 role Events for an
 unambiguous Administrator; ending the final Administrator derives closure.
+The Wails Authority panel exposes these role changes and `EndMembership` with an explicit
+confirmation for ending a role or Member. It also exposes `DeliverKeyEnvelope` for a selected
+Key Epoch and credential slot, and `ActivateFeature` for complete canonical Feature Manifest
+values. These forms submit the same exact Command payloads as the loopback boundary and refresh
+the derived Authority projection after a successful Event.
 `CreateInvitation` authors the type-5 Invitation Creation Event for an unambiguous Administrator.
 Its `capabilities` array contains unpadded-base64url canonical CBOR capability descriptors in
 canonical byte order. `redemptionAuthorityId` and `receiptVerificationKey` are unpadded-base64url

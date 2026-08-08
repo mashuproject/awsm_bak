@@ -273,6 +273,74 @@ test("Wails Vault surface authors an Invitation through the Runtime command boun
   });
 });
 
+test("Wails Vault surface authors an Administrator role change", async ({ page }) => {
+  const vaultId = "c".repeat(64);
+  await page.addInitScript((selectedVaultId) => {
+    const state = {
+      selectedVaultId,
+      vaults: [
+        {
+          vaultId: selectedVaultId,
+          label: "Authority archive",
+          lifecycle: "Open",
+          access: "Authoring",
+          replicaAvailability: "Complete",
+          missingArtifactCount: 0,
+          clientCredentialId: "2".repeat(64),
+          selected: true,
+        },
+      ],
+    };
+    const authority = {
+      vaultId: selectedVaultId,
+      activeMemberIds: ["1".repeat(64), "3".repeat(64)],
+      administratorIds: ["1".repeat(64)],
+      administratorConflicts: [],
+      activeInvitationIds: [],
+      invitationConflictIds: [],
+      activeClientCredentialIds: ["2".repeat(64)],
+      effectiveRecoveryCredentialIds: ["4".repeat(64)],
+      recoveryConflicts: [],
+      keyEpochConflicts: [],
+      currentKeyEpochIds: ["5".repeat(64)],
+      lifecycle: "Open",
+    };
+    (globalThis as unknown as { go: unknown }).go = {
+      main: {
+        desktopBinding: {
+          PendingPairings: async () => [],
+          ListGrants: async () => [],
+          RuntimeAddress: () => "127.0.0.1:37373",
+          VaultCommand: async (request: { type: string }) => {
+            if (request.type === "GetState") return state;
+            if (request.type === "ListLibraryProjection")
+              return {
+                captures: [],
+                collections: [],
+                folders: [],
+                tags: [],
+                tagAssignments: [],
+                notes: [],
+                conflicts: [],
+              };
+            if (request.type === "ListRemotes") return [];
+            if (request.type === "GetAuthorityState") return authority;
+            if (request.type === "GrantAdministrator") return { eventRecordId: "6".repeat(64) };
+            throw new Error(`unexpected command: ${request.type}`);
+          },
+          PendingTransfers: async () => [],
+        },
+      },
+    };
+  }, vaultId);
+
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Authority operations" })).toBeVisible();
+  await page.getByLabel("Target Member ID").fill("3".repeat(64));
+  await page.getByRole("button", { name: "Grant Administrator" }).click();
+  await expect(page.getByRole("heading", { name: "Administrator granted." })).toBeVisible();
+});
+
 test("Wails Vault projections reconcile from a Runtime invalidation without reload", async ({
   page,
 }) => {
