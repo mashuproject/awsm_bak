@@ -37,9 +37,13 @@ access. The production artifact itself is not mutated.
    Vitest tests, with 2 skipped tests.
 5. Chrome and Firefox production packaging/security verification passed. Firefox Stable and ESR
    production capture passed 2/2 each.
-6. The packaged Chromium canonical journey reached and completed Capture, then failed later at a
-   44px interactive-target assertion in the unavailable Library state. That visual-gate failure is
-   separate from the capture fix and remains open.
+6. The packaged Chromium canonical journey initially reached and completed Capture, then failed
+   later at a 44px interactive-target assertion in the unavailable Library state because the
+   Library forms omitted the shared input-control class. After applying that class to the Library
+   inputs, selects, and textarea, the focused canonical surface passed 1/1.
+7. `corepack pnpm test:e2e:design` first exposed the corresponding stale Library wide snapshot;
+   after regenerating and inspecting the affected wide, dark, and narrow Library states, the full
+   design suite passed 7/7.
 
 ## Implemented in this worktree
 
@@ -95,9 +99,15 @@ These were run against the current source after the implementation:
   the smoke teardown was changed to terminate the exact detached Flatpak profile/process group.
   The known Wayland/Vulkan warning was present but did not affect the capture result. Verification
   found no remaining test Brave process or `/tmp/awsm-brave-capture-*` directory.
+- `corepack pnpm test:e2e:chrome` passed: the canonical surface and hosted-recovery lanes both
+  passed after the Library control sizing fix.
+- `corepack pnpm test:e2e:firefox` passed production and E2E Capture in Firefox Stable and ESR,
+  2/2 in each lane.
+- `corepack pnpm test:e2e:design` passed 7/7 after the inspected Library wide, dark, and narrow
+  snapshots were regenerated for the intentional control-sizing change.
 - `corepack pnpm --filter @awsm/browser-extension test:e2e:canonical-surface` reached successful
   Capture, then failed later at `assertInteractiveTargets(library)` in the unavailable Library
-  state. This remains a separate visual gate, not a Capture failure.
+  state before the shared Library form-control fix; the focused rerun passed 1/1 afterward.
 
 The first Chrome desktop attempt was launched concurrently with Firefox and failed because both fixtures use the fixed `127.0.0.1:37373` port. The serial Chrome rerun passed. Do not run those two fixed-port desktop lanes in parallel.
 
@@ -119,8 +129,8 @@ The first Chrome desktop attempt was launched concurrently with Firefox and fail
 1. Continue the larger parity audit: remaining shared cross-language command/replay and Complete
    Export vectors, randomized multi-Replica/restart/crash/authority-conflict/Sparse hydration
    coverage, and any still-missing native-package evidence.
-2. If a completely green browser-gate record is required, repair the separate unavailable-Library
-   interactive-target assertion exposed after the Capture step.
+2. Complete the remaining desktop, sync, coordination, and native-package release gates; the
+   focused Chrome surface, full Chrome, Firefox, Brave, and design browser lanes are green.
 3. After the change set is pushed, keep the release unversioned at `0.3.4` until the complete
    pre-versioning gates pass; only then prepare the `0.3.5` candidate. Do not claim the larger parity
    audit is complete.
