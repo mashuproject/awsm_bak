@@ -54,20 +54,25 @@ type LibraryTag struct {
 }
 
 type LibraryTagAssignment struct {
-	AssignmentID string `json:"assignmentId"`
-	TagID        string `json:"tagId"`
-	TargetKind   uint64 `json:"targetKind"`
-	TargetID     string `json:"targetId"`
-	Active       bool   `json:"active"`
+	AssignmentID    string `json:"assignmentId"`
+	AssignedCauseID string `json:"assignedCauseId"`
+	TagID           string `json:"tagId"`
+	EffectiveTagID  string `json:"effectiveTagId"`
+	TargetKind      uint64 `json:"targetKind"`
+	TargetID        string `json:"targetId"`
+	Active          bool   `json:"active"`
 }
 
 type LibraryNoteVersion struct {
-	HeadCauseID     string  `json:"headCauseId"`
-	ContentObjectID *string `json:"contentObjectId"`
-	Title           *string `json:"title"`
-	Body            *string `json:"body"`
-	BodyDialect     *string `json:"bodyDialect"`
-	AssertedAt      int64   `json:"assertedAt"`
+	HeadCauseID        string  `json:"headCauseId"`
+	ContentObjectID    *string `json:"contentObjectId"`
+	Title              *string `json:"title"`
+	Body               *string `json:"body"`
+	BodyDialect        *string `json:"bodyDialect"`
+	OriginVaultID      string  `json:"originVaultId"`
+	MemberID           string  `json:"memberId"`
+	ClientCredentialID string  `json:"clientCredentialId"`
+	AssertedAt         int64   `json:"assertedAt"`
 }
 
 type LibraryNote struct {
@@ -98,6 +103,72 @@ type LibraryProjection struct {
 	captureState   []libraryCaptureCheckpoint
 	noteState      []libraryNoteCheckpoint
 	conflictState  []libraryConflictCheckpoint
+}
+
+type ClientTagAssignmentSummary struct {
+	AssignmentID    string `json:"assignmentId"`
+	AssignedCauseID string `json:"assignedCauseId"`
+	TagID           string `json:"tagId"`
+	EffectiveTagID  string `json:"effectiveTagId"`
+	TargetKind      string `json:"targetKind"`
+	TargetID        string `json:"targetId"`
+	Active          bool   `json:"active"`
+}
+
+type ClientNoteVersionSummary struct {
+	HeadCauseID        string  `json:"headCauseId"`
+	ContentObjectID    *string `json:"contentObjectId"`
+	Title              *string `json:"title"`
+	Body               *string `json:"body"`
+	BodyDialect        *string `json:"bodyDialect"`
+	OriginVaultID      string  `json:"originVaultId"`
+	MemberID           string  `json:"memberId"`
+	ClientCredentialID string  `json:"clientCredentialId"`
+	AssertedAt         int64   `json:"assertedAt"`
+}
+
+type ClientNoteSummary struct {
+	NoteID     string                     `json:"noteId"`
+	TargetKind string                     `json:"targetKind"`
+	TargetID   string                     `json:"targetId"`
+	State      string                     `json:"state"`
+	Versions   []ClientNoteVersionSummary `json:"versions"`
+}
+
+func clientTagAssignmentSummaries(values []LibraryTagAssignment) []ClientTagAssignmentSummary {
+	result := make([]ClientTagAssignmentSummary, 0, len(values))
+	for _, value := range values {
+		targetKind := "Capture"
+		if value.TargetKind == 1 {
+			targetKind = "Collection"
+		}
+		result = append(result, ClientTagAssignmentSummary{
+			AssignmentID: value.AssignmentID, AssignedCauseID: value.AssignedCauseID,
+			TagID: value.TagID, EffectiveTagID: value.EffectiveTagID, TargetKind: targetKind,
+			TargetID: value.TargetID, Active: value.Active,
+		})
+	}
+	return result
+}
+
+func clientNoteSummaries(values []LibraryNote) []ClientNoteSummary {
+	result := make([]ClientNoteSummary, 0, len(values))
+	for _, value := range values {
+		targetKind := "Capture"
+		if value.TargetKind == 1 {
+			targetKind = "Collection"
+		}
+		versions := make([]ClientNoteVersionSummary, 0, len(value.Versions))
+		for _, version := range value.Versions {
+			versions = append(versions, ClientNoteVersionSummary{
+				HeadCauseID: version.HeadCauseID, ContentObjectID: version.ContentObjectID, Title: version.Title,
+				Body: version.Body, BodyDialect: version.BodyDialect, OriginVaultID: version.OriginVaultID,
+				MemberID: version.MemberID, ClientCredentialID: version.ClientCredentialID, AssertedAt: version.AssertedAt,
+			})
+		}
+		result = append(result, ClientNoteSummary{NoteID: value.NoteID, TargetKind: targetKind, TargetID: value.TargetID, State: value.State, Versions: versions})
+	}
+	return result
 }
 
 type libraryCapture struct {
@@ -915,9 +986,13 @@ func ProjectLibraryProjection(replica *Replica) (LibraryProjection, error) {
 		}
 		tag := tags[assignment.tagID]
 		assignmentProjection = append(assignmentProjection, LibraryTagAssignment{
-			AssignmentID: hexIdentifier(assignmentID), TagID: hexIdentifier(assignment.tagID), TargetKind: assignment.targetKind,
+			AssignmentID: hexIdentifier(assignmentID), AssignedCauseID: hexIdentifier(assignment.causeID),
+			TagID: hexIdentifier(assignment.tagID), EffectiveTagID: hexIdentifier(assignment.tagID), TargetKind: assignment.targetKind,
 			TargetID: hexIdentifier(assignment.targetID), Active: tag != nil && tag.lifecycle == "Active",
 		})
+		if effective, ok := tagRedirected[assignment.tagID]; ok {
+			assignmentProjection[len(assignmentProjection)-1].EffectiveTagID = hexIdentifier(effective)
+		}
 	}
 	sort.Slice(assignmentProjection, func(left, right int) bool {
 		return assignmentProjection[left].AssignmentID < assignmentProjection[right].AssignmentID
@@ -964,7 +1039,11 @@ func ProjectLibraryProjection(replica *Replica) (LibraryProjection, error) {
 		}
 		versions := make([]LibraryNoteVersion, 0, len(headVersions))
 		for _, version := range headVersions {
-			projected := LibraryNoteVersion{HeadCauseID: hexIdentifier(version.causeID), Title: version.title, Body: version.body, BodyDialect: version.dialect, AssertedAt: version.assertedAt}
+			originVaultID, memberID, credentialID, attributionErr := noteAttributionIDs(version.attribution)
+			if attributionErr != nil {
+				return LibraryProjection{}, attributionErr
+			}
+			projected := LibraryNoteVersion{HeadCauseID: hexIdentifier(version.causeID), Title: version.title, Body: version.body, BodyDialect: version.dialect, OriginVaultID: originVaultID, MemberID: memberID, ClientCredentialID: credentialID, AssertedAt: version.assertedAt}
 			if version.contentID != nil {
 				projected.ContentObjectID = pointerString(hexIdentifier(*version.contentID))
 			}
@@ -1083,6 +1162,26 @@ func ProjectLibraryProjection(replica *Replica) (LibraryProjection, error) {
 	}
 	sort.Slice(captureState, func(left, right int) bool { return captureState[left].bundleID < captureState[right].bundleID })
 	return LibraryProjection{Captures: items, Collections: collections, Folders: folderProjection, Tags: tagProjection, TagAssignments: assignmentProjection, Notes: noteProjection, Conflicts: conflicts, captureState: captureState, noteState: noteState, conflictState: conflictState}, nil
+}
+
+func noteAttributionIDs(value canonical.Value) (string, string, string, error) {
+	attribution, ok := replicaMapValue(value)
+	if !ok {
+		return "", "", "", errors.New("Note attribution is invalid")
+	}
+	originVaultID, ok := replicaIdentifier(attribution, 0)
+	if !ok {
+		return "", "", "", errors.New("Note attribution Vault ID is invalid")
+	}
+	memberID, ok := replicaIdentifier(attribution, 1)
+	if !ok {
+		return "", "", "", errors.New("Note attribution Member ID is invalid")
+	}
+	credentialID, ok := replicaIdentifier(attribution, 2)
+	if !ok {
+		return "", "", "", errors.New("Note attribution Credential ID is invalid")
+	}
+	return hexIdentifier(originVaultID), hexIdentifier(memberID), hexIdentifier(credentialID), nil
 }
 
 func orderedContentEvents(replica *Replica) ([]canonical.Event, error) {

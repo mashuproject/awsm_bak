@@ -39,7 +39,7 @@ Content-Type: application/json
 The body is one tagged `CanonicalApplicationRequest`. The Go Runtime implements `GetState`, Vault
 creation and selection, Recovery Phrase ceremonies, `RecoverMember`, state-only Fork from the
 authenticated Library checkpoint, `CloseVault`, authenticated Authority and Key-Epoch commands,
-`VacuumVault`, `ListLibrary`, Storage Relief/GC through the Runtime API, Hosted Replica
+`VacuumVault`, `ListLibrary` and its Collection/Folder/Tag/Note/conflict projections, Storage Relief/GC through the Runtime API, Hosted Replica
 creation/attachment/materialization, receiver pull, Artifact hydration, and the authenticated
 Content command families: Collection title, merge/revert/conflict resolution, Folder creation and
 organization, Capture lifecycle and routing, Tag creation/assignment/lifecycle/merge/revert/conflict

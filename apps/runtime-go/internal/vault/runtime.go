@@ -1410,6 +1410,33 @@ func (r *Runtime) Handle(ctx context.Context, raw json.RawMessage) (any, error) 
 			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "ListLibraryProjection contains invalid fields")
 		}
 		return r.listLibraryProjection(input.ExpectedVaultID)
+	case "ListCollections", "ListFolders", "ListTags", "ListTagAssignments", "ListNotes", "ListLibraryConflicts":
+		var input struct {
+			Type            string `json:"type"`
+			ExpectedVaultID string `json:"expectedVaultId"`
+		}
+		if err := decode(raw, &input); err != nil {
+			return nil, commandError("APPLICATION_PROTOCOL_INVALID", input.Type+" contains invalid fields")
+		}
+		value, err := r.listLibraryProjection(input.ExpectedVaultID)
+		if err != nil {
+			return nil, err
+		}
+		projection := value.(LibraryProjection)
+		switch input.Type {
+		case "ListCollections":
+			return projection.Collections, nil
+		case "ListFolders":
+			return projection.Folders, nil
+		case "ListTags":
+			return projection.Tags, nil
+		case "ListTagAssignments":
+			return clientTagAssignmentSummaries(projection.TagAssignments), nil
+		case "ListNotes":
+			return clientNoteSummaries(projection.Notes), nil
+		default:
+			return projection.Conflicts, nil
+		}
 	case "Search":
 		var input struct {
 			Type            string   `json:"type"`

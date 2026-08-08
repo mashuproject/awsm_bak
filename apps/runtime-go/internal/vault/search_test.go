@@ -78,6 +78,13 @@ func TestSearchIndexesAuthenticatedLibraryProjection(t *testing.T) {
 	if !ok || coverage.EligibleCaptures != 1 || coverage.IndexedCaptures != 1 {
 		t.Fatalf("Search coverage = %#v", coverageValue)
 	}
+	for _, command := range []string{"ListCollections", "ListFolders", "ListTags", "ListTagAssignments", "ListNotes", "ListLibraryConflicts"} {
+		if _, err := runtime.Handle(ctx, mustJSON(map[string]any{
+			"type": command, "expectedVaultId": vaultID,
+		})); err != nil {
+			t.Fatalf("%s: %v", command, err)
+		}
+	}
 	restarted, err := New(ctx, state, dependencies)
 	if err != nil {
 		t.Fatalf("restart Runtime: %v", err)
