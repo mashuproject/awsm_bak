@@ -54,8 +54,8 @@ transfer import/export. Focused tests use browser-derived vectors and restart/Ho
 The Go Runtime also exposes browser-compatible Complete Export/Import for authenticated
 multi-Key-Epoch and adopted-Vacuum closures, including Feature Manifest and Streamable Artifact
 wrappers. Complete Import remains authoring-free. Remaining Authority and Key-Epoch authoring
-families beyond the implemented Membership/Administrator role changes, Client Credential ending,
-Key Envelope delivery, Feature Activation, and Administrator rotation; Event Re-authoring for
+families beyond the implemented Membership/Administrator role changes, Invitation creation, Client
+Credential ending, Key Envelope delivery, Feature Activation, and Administrator rotation; Event Re-authoring for
 eligible unpublished Capture work; conflict/rebase authoring; and the remaining cross-surface
 journeys remain explicit parity boundaries.
 Runtime projections expose Complete, Sparse, and Unavailable Replica state, with on-demand

@@ -254,6 +254,63 @@ func TestRuntimeGetAuthorityStateCommandReturnsPortableProjection(t *testing.T) 
 	}
 }
 
+func TestCreateInvitationAuthorsPortableInvitationAndReturnsCapabilitySecrets(t *testing.T) {
+	ctx := context.Background()
+	runtime, err := New(ctx, store.NewMemoryState(), memoryDependencies(t))
+	if err != nil {
+		t.Fatalf("create Runtime: %v", err)
+	}
+	vaultID, _ := createVaultWithPhraseForTest(t, runtime, "Invitation authoring")
+	value := runtime.vaults[vaultID]
+	if value == nil || value.Canonical == nil {
+		t.Fatal("created Vault has no canonical state")
+	}
+	memberID, err := decodeHexIdentifier(value.Canonical.MemberID)
+	if err != nil {
+		t.Fatalf("decode member ID: %v", err)
+	}
+	vaultIdentifier, err := decodeHexIdentifier(vaultID)
+	if err != nil {
+		t.Fatalf("decode Vault ID: %v", err)
+	}
+	capability, err := canonical.EncodeValue(canonical.Map{
+		0: "awsm.vault", 1: memberID[:], 2: vaultIdentifier[:], 3: "awsm.vault.join", 4: []byte{},
+	})
+	if err != nil {
+		t.Fatalf("encode Invitation capability: %v", err)
+	}
+	result, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type":                   "CreateInvitation",
+		"expectedVaultId":        vaultID,
+		"capabilities":           []string{base64.RawURLEncoding.EncodeToString(capability)},
+		"redemptionAuthorityId":  base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32)),
+		"receiptVerificationKey": base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{8}, 32)),
+	}))
+	if err != nil {
+		t.Fatalf("CreateInvitation: %v", err)
+	}
+	created, ok := result.(map[string]string)
+	if !ok || created["invitationId"] == "" || created["eventRecordId"] == "" || created["redemptionSecret"] == "" || created["cancellationSecret"] == "" {
+		t.Fatalf("CreateInvitation result = %#v", result)
+	}
+	authorityResult, err := runtime.Handle(ctx, mustJSON(map[string]any{
+		"type": "GetAuthorityState", "expectedVaultId": vaultID,
+	}))
+	if err != nil {
+		t.Fatalf("GetAuthorityState after CreateInvitation: %v", err)
+	}
+	authority, ok := authorityResult.(AuthorityStateSummary)
+	if !ok || len(authority.ActiveInvitationIDs) != 1 || authority.ActiveInvitationIDs[0] != created["invitationId"] {
+		t.Fatalf("authority after CreateInvitation = %#v", authorityResult)
+	}
+	if _, err := base64.RawURLEncoding.DecodeString(created["redemptionSecret"]); err != nil {
+		t.Fatalf("redemption secret encoding: %v", err)
+	}
+	if _, err := base64.RawURLEncoding.DecodeString(created["cancellationSecret"]); err != nil {
+		t.Fatalf("cancellation secret encoding: %v", err)
+	}
+}
+
 func TestStateExposesSparseReplicaAvailability(t *testing.T) {
 	ctx := context.Background()
 	dependencies := memoryDependencies(t)

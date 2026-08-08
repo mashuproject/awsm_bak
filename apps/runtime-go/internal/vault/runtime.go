@@ -1309,6 +1309,18 @@ func (r *Runtime) Handle(ctx context.Context, raw json.RawMessage) (any, error) 
 			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "EndAdministrator contains invalid fields")
 		}
 		return r.changeAdministrator(ctx, input.ExpectedVaultID, input.TargetMemberID, false)
+	case "CreateInvitation":
+		var input struct {
+			Type                   string   `json:"type"`
+			ExpectedVaultID        string   `json:"expectedVaultId"`
+			Capabilities           []string `json:"capabilities"`
+			RedemptionAuthorityID  string   `json:"redemptionAuthorityId"`
+			ReceiptVerificationKey string   `json:"receiptVerificationKey"`
+		}
+		if err := decode(raw, &input); err != nil {
+			return nil, commandError("APPLICATION_PROTOCOL_INVALID", "CreateInvitation contains invalid fields")
+		}
+		return r.createInvitation(ctx, input.ExpectedVaultID, input.Capabilities, input.RedemptionAuthorityID, input.ReceiptVerificationKey)
 	case "ActivateFeature":
 		var input struct {
 			Type            string   `json:"type"`

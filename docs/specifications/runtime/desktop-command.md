@@ -70,6 +70,26 @@ Administrator's removal of another Member, deriving closure when no Administrato
 `DeliverKeyEnvelope` for a missing eligible Client or Recovery slot in an established Key Epoch.
 `GrantAdministrator` and `EndAdministrator` author type-3 and type-4 role Events for an
 unambiguous Administrator; ending the final Administrator derives closure.
+`CreateInvitation` authors the type-5 Invitation Creation Event for an unambiguous Administrator.
+Its `capabilities` array contains unpadded-base64url canonical CBOR capability descriptors in
+canonical byte order. `redemptionAuthorityId` and `receiptVerificationKey` are unpadded-base64url
+32-byte values supplied by the independently operated Redemption Authority:
+
+```json
+{
+  "type": "CreateInvitation",
+  "expectedVaultId": "<vault id>",
+  "capabilities": ["<canonical capability CBOR>"],
+  "redemptionAuthorityId": "<32-byte base64url>",
+  "receiptVerificationKey": "<32-byte base64url>"
+}
+```
+
+The result returns the Invitation ID, creation Record ID, public verifiers, and one-use
+base64url-encoded 32-byte Redemption and Cancellation Capability seeds. The Runtime does not
+persist those seeds or impersonate the Redemption Authority; subsequent Join, Acceptance, and
+Cancellation ceremonies require the exact external authority receipts defined by the Vault
+Authority specification.
 `ActivateFeature` authors a type-14 Feature Activation Event from complete canonical Feature
 Manifest bytes, stores each Manifest as an authenticated dependency, and advances the current
 Required Feature Set while preserving the Baseline's original Feature Set identity.
